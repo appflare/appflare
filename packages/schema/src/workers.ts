@@ -21,10 +21,12 @@ import type { EntryWorkerPlaceholders } from "./placeholders";
  * manifest's `d1.DB`.
  *
  * Where a wrangler config names another Worker of the entry (a service
- * binding's `service`, a Durable Object binding's `script_name`), the packer
- * records `{{workerName:<name>}}` instead, and the manager puts the installed
- * Worker's name in its place. A Worker is deployed only after the Workers it
- * names, so the entry's Workers must not name each other in a cycle.
+ * binding's `service`, a Durable Object or Workflow binding's `script_name`),
+ * the packer records `{{workerName:<name>}}` instead, and the manager puts the
+ * installed Worker's name in its place. A Worker is deployed only after the
+ * Workers it names, so the entry's Workers must not name each other in a
+ * cycle. A Workflow is created with the Worker that defines it (its binding
+ * names no other Worker); a binding in another Worker runs that Workflow.
  *
  * Imports only types, so `artifact.ts` can use it without a cycle at load time.
  */
@@ -79,19 +81,39 @@ export function entryWorkerRefName(value: unknown): string | null {
 
 /**
  * The entry Workers a binding names: a service binding's `service`, or a
- * Durable Object binding's `script_name`, when the packer recorded it as
- * `{{workerName:<name>}}`.
+ * Durable Object or Workflow binding's `script_name`, when the packer
+ * recorded it as `{{workerName:<name>}}`.
  */
 export function bindingEntryRefs(binding: WorkerBinding): string[] {
   if (binding.type === "service") {
     const name = entryWorkerRefName(binding.service);
     return name === null ? [] : [name];
   }
-  if (binding.type === "durable_object_namespace") {
+  if (binding.type === "durable_object_namespace" || binding.type === "workflow") {
     const name = entryWorkerRefName(binding.script_name);
     return name === null ? [] : [name];
   }
   return [];
+}
+
+/**
+ * Whether a `workflow` binding defines its Workflow: it names no script, so
+ * uploading its Worker creates (or updates) the Workflow to run that Worker's
+ * class. One whose `script_name` names another Worker runs the Workflow that
+ * Worker defines instead, as wrangler 4.136.2 tells them apart
+ * (`checkWorkflowConflicts`: a binding with no `script_name`, or the
+ * Worker's own name, is deployed with it).
+ */
+export function definesWorkflow(binding: WorkerBinding): boolean {
+  return (
+    binding.type === "workflow" &&
+    (typeof binding.script_name !== "string" || binding.script_name.length === 0)
+  );
+}
+
+/** A `workflow` binding's Workflow name as the app's wrangler config gives it (`workflow_name`). */
+export function upstreamWorkflowName(binding: WorkerBinding): string {
+  return typeof binding.workflow_name === "string" ? binding.workflow_name : binding.name;
 }
 
 /** The entry Workers a Worker's bindings name, each once. */
@@ -380,6 +402,10 @@ export function entryWorkerProblems(manifest: {
   const names = new Set(all.map((w) => w.name));
   const types = new Map<string, { type: string; worker: string; shape: string }>();
   const workflowOwners = new Map<string, string>();
+  /** Each Workflow a Worker defines, by its name in the wrangler config. */
+  const workflowsDefined = new Map<string, { worker: string; className: unknown }>();
+  /** Workflow bindings that run a Workflow another Worker of the entry defines. */
+  const workflowRuns: Array<{ worker: string; target: string; binding: WorkerBinding }> = [];
   const doClasses = new Map<string, { className: unknown; worker: string }>();
   for (const w of all) {
     for (const binding of w.worker.bindings) {
@@ -406,7 +432,7 @@ export function entryWorkerProblems(manifest: {
           );
         }
       }
-      if (binding.type === "workflow") {
+      if (definesWorkflow(binding)) {
         const owner = workflowOwners.get(binding.name);
         if (owner !== undefined) {
           problems.push(
@@ -414,6 +440,20 @@ export function entryWorkerProblems(manifest: {
           );
         }
         workflowOwners.set(binding.name, w.name);
+        // Workflow names are the account's: two Workers defining one would
+        // take it from each other.
+        const name = upstreamWorkflowName(binding);
+        const defined = workflowsDefined.get(name);
+        if (defined !== undefined && defined.worker !== w.name) {
+          problems.push(
+            `The Workers "${defined.worker}" and "${w.name}" both define the Workflow "${name}"; a Workflow belongs to one Worker, and the others bind it with its script_name.`,
+          );
+        } else if (defined === undefined) {
+          workflowsDefined.set(name, { worker: w.name, className: binding.class_name });
+        }
+      } else if (binding.type === "workflow") {
+        const target = entryWorkerRefName(binding.script_name);
+        if (target !== null) workflowRuns.push({ worker: w.name, target, binding });
       }
       if (binding.type === "plain_text" || binding.type === "json") continue;
       const shape = SHARED_RESOURCE_TYPES.has(binding.type)
@@ -431,6 +471,27 @@ export function entryWorkerProblems(manifest: {
           `The binding ${binding.name} is declared differently in the Workers "${seen.worker}" and "${w.name}"; bindings of one name share one resource.`,
         );
       }
+    }
+  }
+  // A binding that runs another Worker's Workflow names it the way that
+  // Worker's own binding does, class included: Cloudflare looks the Workflow
+  // up by name and runs it as its Worker defined it.
+  for (const run of workflowRuns) {
+    if (!names.has(run.target) || run.target === run.worker) continue; // Refused above.
+    const name = upstreamWorkflowName(run.binding);
+    const defined = workflowsDefined.get(name);
+    if (defined === undefined || defined.worker !== run.target) {
+      problems.push(
+        `Workflow binding ${run.binding.name} of the Worker "${run.worker}" runs the Workflow "${name}" of the Worker "${run.target}", which defines no Workflow of that name.`,
+      );
+    } else if (
+      run.binding.class_name !== undefined &&
+      defined.className !== undefined &&
+      run.binding.class_name !== defined.className
+    ) {
+      problems.push(
+        `Workflow binding ${run.binding.name} of the Worker "${run.worker}" names the class ${String(run.binding.class_name)}, but the Worker "${run.target}" runs the Workflow "${name}" with ${String(defined.className)}.`,
+      );
     }
   }
   for (const binding of Object.keys(manifest.d1)) {

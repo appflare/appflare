@@ -1628,6 +1628,72 @@ describe("settings change job, an app of several Workers", () => {
     expect(JSON.stringify(r.logs)).not.toContain(JOBS_KEY);
   });
 
+  it("sends both Workers the recorded name of a Workflow one runs and the other defines", async () => {
+    const siteAudit = {
+      type: "workflow",
+      name: "SITE_AUDIT",
+      workflow_name: "site-audit",
+      class_name: "SiteAudit",
+    };
+    const jobs = fakeAccount(null, {
+      worker: "cut-jobs",
+      deployments: [{ id: "dep-j", versions: [{ version_id: JOBS_OLD, percentage: 100 }] }],
+    });
+    const r = await reconfigure({
+      app: {
+        ...TWO,
+        // Under another binding name than the defining Worker's.
+        bindings: [
+          ...(TWO.bindings ?? []),
+          { ...siteAudit, name: "AUDIT", script_name: "{{workerName:jobs}}" },
+        ],
+        otherWorkers: [
+          { name: "jobs", bindings: [{ type: "kv_namespace", name: "CUT_KV" }, siteAudit] },
+        ],
+      },
+      resources: [
+        ...RESOURCES,
+        { kind: "worker", name: "cut-jobs", cfId: "cut-jobs" },
+        { kind: "secret", binding: "JOBS_KEY", name: "JOBS_KEY" },
+        { kind: "workflow", binding: "SITE_AUDIT", name: "cut-site-audit" },
+      ],
+      request: {
+        vars: { HOME_PAGE: "links", TITLE: "My links" },
+        secrets: { set: { JOBS_KEY }, unset: [] },
+      },
+      front: async (request) =>
+        /\/workers\/(scripts|workers)\/cut-jobs\b/.test(request.url) ||
+        request.url.includes("-cut-jobs.")
+          ? jobs.fetch(request.url, request)
+          : null,
+    });
+    expect(r.error).toBeNull();
+    expect(r.job?.status).toBe("succeeded");
+    const workflowsOf = (metadata: Record<string, unknown> | undefined) =>
+      ((metadata?.bindings ?? []) as Array<Record<string, unknown>>).filter(
+        (b) => b.type === "workflow",
+      );
+    expect(workflowsOf(jobs.state.versions[0]?.metadata)).toEqual([
+      {
+        type: "workflow",
+        name: "SITE_AUDIT",
+        workflow_name: "cut-site-audit",
+        class_name: "SiteAudit",
+      },
+    ]);
+    expect(workflowsOf(r.fake.state.versions[0]?.metadata)).toEqual([
+      {
+        type: "workflow",
+        name: "AUDIT",
+        workflow_name: "cut-site-audit",
+        class_name: "SiteAudit",
+        script_name: "cut-jobs",
+      },
+    ]);
+    // No Workflow is created or checked by a settings change.
+    expect(r.step.names.some((n) => n.startsWith("check Workflow"))).toBe(false);
+  });
+
   it("keeps a private Worker off workers.dev and skips its preview check", async () => {
     const jobs = fakeAccount(null, {
       worker: "cut-jobs",

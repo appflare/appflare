@@ -27,7 +27,8 @@ credentials.
   before `wrangler deploy` (Vite, React Router, OpenNext) and has no `build.command`
   in its wrangler config names that step in `install.buildCommand`.
 - **It is self-contained.** Durable Objects and Workflows must be defined by the app's
-  own Worker, not bound from another Worker. The only service binding an app may have
+  own Worker (or, in an app of several Workers, by another Worker of the same entry),
+  not bound from a Worker outside the app. The only service binding an app may have
   is one to its own Worker (its `service` is the wrangler config's own `name`, as
   OpenNext's `WORKER_SELF_REFERENCE` is), optionally with an `entrypoint`. A service
   binding to any other Worker fails the pack, because an app must never be able to
@@ -262,7 +263,12 @@ Points that need care:
   `.appflare.wrangler.jsonc`, so relative paths resolve as before, bundles from it,
   and prints each change in the pack log. A TOML config is patched the same way and
   written as JSONC. A build command that reads the wrangler config itself still sees
-  it unpatched. Only these keys may be patched: `main` and `assets`, with paths
+  it unpatched. When the build generated the config that gets deployed (the
+  Cloudflare Vite plugin's `dist/<name>/wrangler.json`, which `install.wranglerConfig`
+  leads to through the build's redirect), the patch applies to that generated config
+  instead, after the build, and the patched copy is written beside it: adding a rate
+  limit or a binding works the same, but `main`, `assets.directory` and `build` of a
+  generated config are the build's, so a patch that sets them fails the pack. Only these keys may be patched: `main` and `assets`, with paths
   relative to the config and without `..`; `build`, only
   to `null` when `install.buildCommand` builds instead; `services`, only to leave
   bindings out or to add one that points at a Worker of the same entry;
@@ -353,9 +359,11 @@ Points that need care:
   run `wrangler deploy` next to. When the build leaves `.wrangler/deploy/config.json`
   beside it, as the Cloudflare Vite plugin does, the packer follows that redirect to
   the config the build generated, exactly as `wrangler deploy` does, and records both
-  paths in the artifact. Do not point `install.wranglerConfig` at the generated config
-  itself: wrangler then reads it as a hand-written config and refuses fields that
-  build tools write, such as `legacy_env`. When the repository keeps its config only
+  paths in the artifact. A generated config named directly also packs (the packer
+  drops `legacy_env`, which older versions of the plugin write and wrangler accepts
+  only through the redirect), but then relative paths in it, such as a D1 binding's
+  `migrations_dir`, resolve from the build's output directory, so prefer the app's
+  own config. When the repository keeps its config only
   as a template, such as `wrangler.toml.example` or `wrangler.jsonc.template`, name
   the template: the packer copies it to its real name (`wrangler.toml`) beside itself
   before the build runs and wrangler reads it. A real file of that name already in
@@ -789,14 +797,41 @@ as one app:
   A queue one Worker sends to and another consumes is one queue. Bindings of one
   name must be of one type and declared alike.
 - **Bindings between the Workers.** A service binding whose `service` is another
-  Worker's wrangler `name`, and a Durable Object binding whose `script_name` is,
-  are pointed at that Worker as installed. Durable Objects may live in any of the
-  Workers. Each Worker is deployed after the Workers it binds to, with the primary
-  as late as possible.
+  Worker's wrangler `name`, and a Durable Object or Workflow binding whose
+  `script_name` is, are pointed at that Worker as installed. Durable Objects and
+  Workflows may live in any of the Workers. Each Worker is deployed after the Workers
+  it binds to, with the primary as late as possible.
+- **Workflows run from another Worker.** A Workflow belongs to the Worker whose
+  wrangler config binds it without a `script_name` (or with its own `name`): the
+  manager creates it with that Worker, names it `<install Worker name>-<workflow
+  name>` like any other, and deletes it on uninstall. Another Worker of the entry
+  runs it with a binding of the same `name` and `class_name` and a `script_name`
+  naming the Worker that defines it, as wrangler's cross-script Workflow bindings
+  do; the binding is pointed at that Worker as installed:
 
-The pack fails on a service binding to any Worker outside the entry, on Workers that
-bind each other in a cycle, on a Workflow bound from a Worker other than the one
-that defines it, and on one D1 binding with different migrations in two Workers.
+  ```jsonc
+  // wrangler.audit.jsonc (the Worker "audit")
+  "workflows": [{ "name": "site-audit", "binding": "SITE_AUDIT", "class_name": "SiteAudit" }]
+  // wrangler.jsonc (the primary Worker)
+  "workflows": [
+    { "name": "site-audit", "binding": "SITE_AUDIT", "class_name": "SiteAudit", "script_name": "open-seo-audit" }
+  ]
+  ```
+
+- **Workers built together by the Cloudflare Vite plugin.** A Vite app whose
+  `vite.config.ts` builds other Workers (the plugin's `auxiliaryWorkers`) generates
+  one config per Worker, `dist/<name>/wrangler.json`, and leaves one redirect,
+  `.wrangler/deploy/config.json`, which points at the entry Worker's config and lists
+  the others. Name each Worker's own config, `wrangler.jsonc` and, say,
+  `wrangler.audit.jsonc`, just as for one Worker: the packer reads which config each
+  generated one came from and packs the right one for each Worker. One
+  `install.buildCommand` builds them all.
+
+The pack fails on a service binding to any Worker outside the entry (the manager
+refuses to install a Durable Object or Workflow binding to one), on Workers that bind
+each other in a cycle, on a Workflow binding to another Worker of the entry that defines no Workflow
+of that name and class, on two Workers that define one Workflow, and on one D1
+binding with different migrations in two Workers.
 
 ## 2. Open a pull request
 

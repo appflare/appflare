@@ -1757,8 +1757,9 @@ export const catalogInstallSchema = z
           "each Worker's name, wrangler config and optional build command. Exactly " +
           "one is `primary`: it answers the app's address and health check, and its " +
           "`wranglerConfig` is `install.wranglerConfig`. Service bindings between these Workers, " +
-          "and Durable Object bindings to a class in another of them, are pointed at the installed " +
-          "Workers; bindings of the same name share one resource. Artifact tier only. On Workers " +
+          "Durable Object bindings to a class in another of them, and Workflow bindings to a " +
+          "Workflow another of them defines are pointed at the installed Workers; bindings of the " +
+          "same name share one resource. Artifact tier only. On Workers " +
           'Free the manager installs at most three Workers per app, so an entry of more must set `"plan": "paid"`.',
       )
       .optional(),

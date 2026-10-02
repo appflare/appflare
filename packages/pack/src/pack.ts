@@ -33,6 +33,7 @@ import {
   type DoMigration,
   installDirList,
   LATEST_ARTIFACT_FORMAT,
+  PATCHED_WRANGLER_CONFIG,
   secretTargets,
   strictArtifactManifestSchema,
   type WorkerModule,
@@ -43,7 +44,12 @@ import {
 import ignore from "ignore";
 import { unstable_readConfig } from "wrangler";
 import { DEFAULT_BUILD_TIMEOUT_MS, runBuildCommands } from "./build-command.ts";
-import { applyConfigPatches, workerSpecs, writeInlineConfigs } from "./config-patch.ts";
+import {
+  applyConfigPatches,
+  readableWranglerConfig,
+  workerSpecs,
+  writeInlineConfigs,
+} from "./config-patch.ts";
 import {
   checkoutRelative,
   copyTemplateConfig,
@@ -287,8 +293,19 @@ function buildAssetIgnore(dir: string): ReturnType<typeof ignore> {
   if (existsSync(ignoreFile)) {
     patterns.push(...readFileSync(ignoreFile, "utf8").split("\n"));
   }
+  // Last, so no line of `.assetsignore` can bring them back.
+  patterns.push(...NEVER_ASSET_FILES);
   return ignore().add(patterns);
 }
+
+/**
+ * Files never collected as static assets, at any depth, whatever
+ * `.assetsignore` says: the wrangler config the packer writes (a patched or
+ * inline config, or a generated config without `legacy_env`), which may sit
+ * in a build's output directory that is also the assets directory, and would
+ * otherwise be served publicly.
+ */
+export const NEVER_ASSET_FILES = [PATCHED_WRANGLER_CONFIG] as const;
 
 /**
  * Directories never collected as static assets, at any depth, whatever
@@ -476,9 +493,16 @@ function readWorkerConfig(
   logger: (m: string) => void,
   patched?: WranglerConfigTarget,
 ): ReadWorkerConfig {
-  // A template was copied to its real name before the build; that is what wrangler reads.
+  // A template was copied to its real name before the build; that is what
+  // wrangler reads. A config the build generated is read as wrangler reads it
+  // through the build's redirect.
   const target =
-    patched ?? resolveWranglerConfig(checkoutDir, copyTemplateConfig(checkoutDir, declared));
+    patched ??
+    readableWranglerConfig(
+      checkoutDir,
+      resolveWranglerConfig(checkoutDir, copyTemplateConfig(checkoutDir, declared)),
+      logger,
+    );
   const wranglerConfig = {
     // The catalog's path, a template included; `effective` is what was read.
     declared: checkoutRelative(checkoutDir, path.resolve(checkoutDir, declared)),

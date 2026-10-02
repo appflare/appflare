@@ -2420,7 +2420,7 @@
             "additionalProperties": false,
             "description": "One Worker of an entry that installs as several Workers."
           },
-          "description": "For an app that installs as several Workers deployed together (for example an API and a web front end), 2 to 24 of them: each Worker's name, wrangler config and optional build command. Exactly one is `primary`: it answers the app's address and health check, and its `wranglerConfig` is `install.wranglerConfig`. Service bindings between these Workers, and Durable Object bindings to a class in another of them, are pointed at the installed Workers; bindings of the same name share one resource. Artifact tier only. On Workers Free the manager installs at most three Workers per app, so an entry of more must set `\"plan\": \"paid\"`."
+          "description": "For an app that installs as several Workers deployed together (for example an API and a web front end), 2 to 24 of them: each Worker's name, wrangler config and optional build command. Exactly one is `primary`: it answers the app's address and health check, and its `wranglerConfig` is `install.wranglerConfig`. Service bindings between these Workers, Durable Object bindings to a class in another of them, and Workflow bindings to a Workflow another of them defines are pointed at the installed Workers; bindings of the same name share one resource. Artifact tier only. On Workers Free the manager installs at most three Workers per app, so an entry of more must set `\"plan\": \"paid\"`."
         }
       },
       "required": [

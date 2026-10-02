@@ -1503,6 +1503,54 @@ describe("uninstall job, an app of several Workers", () => {
     ]);
   });
 
+  it("deletes a Workflow another Worker defines once, by name, after every Worker", async () => {
+    await seedInstall();
+    // As the install records it: the audit Worker defines SITE_AUDIT, which
+    // the primary Worker runs; one row for the Workflow, under its binding.
+    await env.DB.prepare(
+      `INSERT INTO resources (id, install_id, kind, binding, name, cf_id, created_at)
+       VALUES ('i1:worker:cut-audit', 'i1', 'worker', NULL, 'cut-audit', 'cut-audit', 1),
+              ('i1:workflow:SITE_AUDIT', 'i1', 'workflow', 'SITE_AUDIT', 'cut-site-audit', NULL, 1)`,
+    ).run();
+    const fake = fakeWorld({
+      scripts: new Set(["appflare", "cut", "cut-audit"]),
+      workflows: new Set(["cut-jobs", "cut-site-audit"]),
+    });
+    const r = await uninstall({ installId: "i1", deleteResources: [] }, fake);
+    expect(r.error).toBeNull();
+    expect(r.job?.status).toBe("succeeded");
+    const calls = fake.world.calls;
+    expect(calls.indexOf("DELETE /workers/scripts/cut-audit?force=true")).toBeLessThan(
+      calls.indexOf("DELETE /workers/scripts/cut?force=true"),
+    );
+    // Cloudflare keeps a Workflow when its Worker goes; deleted by name after.
+    expect(calls.indexOf("DELETE /workers/scripts/cut?force=true")).toBeLessThan(
+      calls.indexOf("DELETE /workflows/cut-site-audit"),
+    );
+    expect(calls.filter((c) => c === "DELETE /workflows/cut-site-audit")).toHaveLength(1);
+    expect(fake.world.workflows).toEqual(new Set());
+    expect(r.state("i1:workflow:SITE_AUDIT")).toBe("deleted");
+    expect(r.state("i1:worker:cut-audit")).toBe("deleted");
+  });
+
+  it("counts a Workflow recorded before an upload that never created it as gone", async () => {
+    // An install that stopped between recording the audit Worker and its
+    // Workflow and the upload that would have created both.
+    await seedInstall("failed");
+    await env.DB.prepare(
+      `INSERT INTO resources (id, install_id, kind, binding, name, cf_id, created_at)
+       VALUES ('i1:worker:cut-audit', 'i1', 'worker', NULL, 'cut-audit', NULL, 1),
+              ('i1:workflow:SITE_AUDIT', 'i1', 'workflow', 'SITE_AUDIT', 'cut-site-audit', NULL, 1)`,
+    ).run();
+    const fake = fakeWorld({ scripts: new Set(["appflare", "cut"]) });
+    const r = await uninstall({ installId: "i1", deleteResources: [] }, fake);
+    expect(r.error).toBeNull();
+    expect(r.job?.status).toBe("succeeded");
+    expect(fake.world.calls).toContain("DELETE /workflows/cut-site-audit");
+    expect(r.state("i1:workflow:SITE_AUDIT")).toBe("deleted");
+    expect(r.logs.map((l) => l.message)).toContain('Workflow "cut-site-audit" was already gone.');
+  });
+
   it("counts another Worker that is already gone as deleted", async () => {
     await seedInstall();
     await env.DB.prepare(
