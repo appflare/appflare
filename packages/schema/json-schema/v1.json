@@ -2705,6 +2705,30 @@
             "type": "string",
             "description": "A sentence or two shown under the field: what the value is for, or where to find it."
           },
+          "link": {
+            "type": "object",
+            "properties": {
+              "label": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 40,
+                "pattern": "^\\S(?:[^\\r\\n]*\\S)?$",
+                "description": "What the link says, in a few plain words (at most 40 characters), for example `Get a key` or `Create a bot`. The forms add the mark of a link that opens in a new tab."
+              },
+              "url": {
+                "type": "string",
+                "maxLength": 500,
+                "pattern": "^https:\\/\\/[^\\s\\x00-\\x1f\\x7f/?#@\\\\]+(?:[/?#][^\\s\\x00-\\x1f\\x7f\\\\]*)?$",
+                "description": "Where the link goes, as an https:// URL without a user name or password, at most 500 characters, for example `https://openrouter.ai/settings/keys`."
+              }
+            },
+            "required": [
+              "label",
+              "url"
+            ],
+            "additionalProperties": false,
+            "description": "A link shown beside the field in the install and settings forms, opened in a new tab: where to get the value, such as the page that creates an API key. Help text is shown as plain text, so put the link here rather than in `help`."
+          },
           "generate": {
             "type": "string",
             "enum": [
@@ -2933,6 +2957,30 @@
           "help": {
             "type": "string",
             "description": "A sentence or two shown under the field: what the setting changes, or which values work."
+          },
+          "link": {
+            "type": "object",
+            "properties": {
+              "label": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 40,
+                "pattern": "^\\S(?:[^\\r\\n]*\\S)?$",
+                "description": "What the link says, in a few plain words (at most 40 characters), for example `Get a key` or `Create a bot`. The forms add the mark of a link that opens in a new tab."
+              },
+              "url": {
+                "type": "string",
+                "maxLength": 500,
+                "pattern": "^https:\\/\\/[^\\s\\x00-\\x1f\\x7f/?#@\\\\]+(?:[/?#][^\\s\\x00-\\x1f\\x7f\\\\]*)?$",
+                "description": "Where the link goes, as an https:// URL without a user name or password, at most 500 characters, for example `https://openrouter.ai/settings/keys`."
+              }
+            },
+            "required": [
+              "label",
+              "url"
+            ],
+            "additionalProperties": false,
+            "description": "A link shown beside the field in the install and settings forms, opened in a new tab: where to get the value, such as the page that creates an API key. Help text is shown as plain text, so put the link here rather than in `help`."
           },
           "default": {
             "type": "string",
@@ -3904,7 +3952,7 @@
       "type": "integer",
       "minimum": 1,
       "maximum": 1000000,
-      "description": "Which edit of this entry's form and copy the catalog publishes for the build its `source` already released, starting at 1 (the default when omitted). Raise it by one to publish a change to `name`, `summary`, `homepage`, `license`, `categories`, `maintainers`, `secrets`, `vars`, `postInstall`, `bump` or `access`, or to add `\"access\"` to `requires`, without moving `source`: the released artifact stays as it is, and managers show the new form without an update. `tagline`, `licenseNote` and `authors` need no revision: the catalog shows them from the current manifest. Anything else needs a new build, so move `source` instead."
+      "description": "Which edit of this entry's form and copy the catalog publishes for the build its `source` already released, starting at 1 (the default when omitted). Raise it by one to publish a change to `name`, `summary`, `homepage`, `license`, `categories`, `maintainers`, `secrets`, `vars`, `postInstall`, `bump`, `access` or `openPath`, or to add `\"access\"` to `requires`, without moving `source`: the released artifact stays as it is, and managers show the new form without an update. `tagline`, `licenseNote` and `authors` need no revision: the catalog shows them from the current manifest. Anything else needs a new build, so move `source` instead."
     },
     "access": {
       "type": "object",
@@ -3932,6 +3980,12 @@
       },
       "additionalProperties": false,
       "description": "How the app goes with Cloudflare Access, which Appflare can put in front of any installed app so that only the manager's users reach it (and Appflare's own health checks, with a service token of the app's own). Without this block protection is offered at install, switched off. An app that verifies Access's sign-in itself reads the `{{accessTeamDomain}}`, `{{accessTeamName}}`, `{{accessAud}}` and `{{accessCertsUrl}}` placeholders from a var. Not for the self-deploying tier."
+    },
+    "openPath": {
+      "type": "string",
+      "pattern": "^(?:/[A-Za-z0-9._~@:+=,-]+)+/?$",
+      "maxLength": 128,
+      "description": "Where the manager's Open buttons take people in the app, as a path on its address, for an app whose interface is not at its root, for example `/dashboard`. It starts with `/`, has no query or fragment, no empty, `.` or `..` segments, and holds letters, digits and `- . _ ~ @ : + = ,` only, at most 128 characters; it may end in `/`. Omitted means the root. Health checks, `{{appUrl}}` and the addresses the manager lists stay the root, so a `postInstall` note links to the path itself (`{{appUrl}}/dashboard`). A manager from before this field opens the root."
     }
   },
   "required": [

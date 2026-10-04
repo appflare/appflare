@@ -1,5 +1,6 @@
 import { env } from "cloudflare:workers";
 import {
+  appOpenUrl,
   appTokenPermissions,
   artifactManifestSchema,
   combinedWorkerFacts,
@@ -295,11 +296,14 @@ export async function readInstallDetail(installId: string): Promise<InstallDetai
   let tokenPermissions: TokenPermission[] = [];
   let entryWorkers: EntryWorkerPlaceholders | undefined;
   let otherWorkers: OtherWorkerView[] = [];
+  // Where its Open button goes within the app (the entry's `openPath`).
+  let openPath: string | undefined;
   const installerCatalog =
     row.build_kind === "self-deploying" ? recordedCatalog(row.manifest_json) : null;
   if (installerCatalog !== null) {
     // A self-deploying install records its catalog manifest, not an artifact's.
     name = installerCatalog.name;
+    openPath = installerCatalog.openPath;
     postInstall = installerCatalog.postInstall.map((p) =>
       renderPostInstall(p.content, placeholders),
     );
@@ -320,6 +324,7 @@ export async function readInstallDetail(installId: string): Promise<InstallDetai
       }
       const manifest = manifestWithRevision(parsed.data, recorded);
       name = manifest.catalog.name;
+      openPath = manifest.catalog.openPath;
       // An app of several Workers: `{{appUrl:<name>}}` names one of them.
       entryWorkers = entryPlaceholderValues(manifest.catalog, row.worker_name, sub, primaryUrl);
       otherWorkers = otherWorkerViews(manifest, row.worker_name, sub);
@@ -370,7 +375,10 @@ export async function readInstallDetail(installId: string): Promise<InstallDetai
     latestVersion: listed?.version ?? null,
     updateAvailable:
       row.status === "installed" && isUpdateAvailable(row.catalog_version, listed?.version),
-    address: row.status === "installed" ? appAddress(addressInput(row, addressDomains, sub)) : null,
+    address:
+      row.status === "installed"
+        ? appOpenUrl(appAddress(addressInput(row, addressDomains, sub)), openPath)
+        : null,
     workersDevEnabled: row.workers_dev_enabled,
     workersDevNote: workersDevNoteOf(row, addressDomains),
     workersDevChoice: row.workers_dev_choice,

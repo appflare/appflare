@@ -1,6 +1,7 @@
 import {
   type ArtifactManifest,
   boundToWorker,
+  type CatalogFieldLink,
   type CatalogVar,
   type CatalogVarOption,
   catalogVarOptions,
@@ -35,6 +36,8 @@ export interface InstallVarField {
   name: string;
   label: string;
   help?: string;
+  /** Where to learn which value to give it (the catalog's `link`), shown beside the field. */
+  link?: CatalogFieldLink;
   required: boolean;
   kind: VarKind;
   /**
@@ -159,6 +162,7 @@ export function installVarFields(
       name: v.name,
       label: v.label,
       ...(v.help === undefined ? {} : { help: v.help }),
+      ...(v.link === undefined ? {} : { link: v.link }),
       required: !v.optional,
       kind,
       // A derived var shows what the manager computed, never the wrangler config's own value.

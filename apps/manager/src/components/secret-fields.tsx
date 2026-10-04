@@ -14,13 +14,14 @@ import { ArrowsClockwiseIcon } from "@phosphor-icons/react";
 import type { ReactNode } from "react";
 import { generateTemporaryPassword } from "../auth/temporary-password";
 import { GENERATED_SECRET_LENGTH } from "../installs/install-input";
-import { FieldHelp, FieldLabel } from "./field-label";
+import { FieldLabel, fieldDescription } from "./field-label";
 
 /**
  * One field per catalog secret, shared by the install form and the update
  * form. Each is labelled with the catalog's label; the secret's name shows on
  * hover or with the form's "Show technical names" (./field-label.tsx), and
- * long help folds behind "More". Generated secrets (`generate`) are
+ * long help folds behind "More", and the catalog's `link` (where to get the
+ * value) follows it. Generated secrets (`generate`) are
  * prefilled once with a fresh value the
  * admin can copy now (it is shown only here) or regenerate; a multi-line one
  * (`multiline`) is a text area that keeps its line breaks; the others are
@@ -162,9 +163,9 @@ export function SecretFields({
           <Label showOptional>
             <FieldLabel label={secret.label} name={secret.name} />
           </Label>
-          {secret.help !== undefined && (
+          {(secret.help !== undefined || secret.link !== undefined) && (
             <Text variant="secondary" size="sm">
-              <FieldHelp text={secret.help} />
+              {fieldDescription({ help: secret.help, link: secret.link })}
             </Text>
           )}
         </div>
@@ -292,7 +293,7 @@ function SecretField({
   value: string;
   onChange(value: string): void;
   after: string;
-  /** Show the catalog's help under the field (off when the switch above already shows it). */
+  /** Show the catalog's help and link under the field (off when the switch above already shows them). */
   withHelp?: boolean;
   /** A sentence after the help, such as which secrets are derived from this one. */
   note?: string | undefined;
@@ -301,6 +302,7 @@ function SecretField({
 }) {
   const label = <FieldLabel label={secret.label} name={secret.name} />;
   const help = withHelp ? secret.help : undefined;
+  const link = withHelp ? secret.link : undefined;
   const generatedNote =
     !secret.generate || (held && value.length === 0)
       ? undefined
@@ -308,7 +310,7 @@ function SecretField({
         ? "Generated for you; the install's page shows it once more."
         : `Generated for you. Copy it now if you need it: it cannot be shown again after ${after}.`;
   const notes = [note, generatedNote].filter((t) => t !== undefined).join(" ") || undefined;
-  const description = help === undefined ? notes : <FieldHelp text={help} after={notes} />;
+  const description = fieldDescription({ help, note: notes, link });
   if (secret.generate) {
     return (
       <div className="grid gap-2">

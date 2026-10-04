@@ -1,7 +1,7 @@
 import { Input, InputArea, Radio, Select } from "@cloudflare/kumo";
 import { useState } from "react";
 import { type InstallVarField, MAX_CARD_OPTIONS, varValueProblem } from "../installs/install-vars";
-import { FieldHelp, FieldLabel } from "./field-label";
+import { FieldHelp, FieldLabel, fieldDescription } from "./field-label";
 import {
   describeChip,
   hasChips,
@@ -29,7 +29,8 @@ export interface PlaceholderChips {
  * or value holds install placeholders shows them as chips
  * (./placeholder-input.tsx); the value keeps the placeholders. The label is
  * the catalog's; the variable name shows on hover and with the form's "Show
- * technical names". Shared with the Settings section of the app page.
+ * technical names". The catalog's `link` follows the help. Shared with the
+ * Settings section of the app page.
  */
 export function VarField({
   field,
@@ -57,8 +58,7 @@ export function VarField({
   }
   const label = <FieldLabel label={field.label} name={field.name} />;
   const note = field.seedOnly === true ? SEED_ONLY_VAR_NOTE : undefined;
-  const description =
-    field.help === undefined ? note : <FieldHelp text={field.help} after={note} />;
+  const description = fieldDescription({ help: field.help, note, link: field.link });
   const problem = varValueProblem(field, value) ?? undefined;
   if (field.options !== null && field.options.length <= MAX_CARD_OPTIONS) {
     return (
