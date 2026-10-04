@@ -9,5 +9,5 @@ site has no accounts, and the address of your own Appflare stays in your browser
 never recorded or sent.
 
 Links from an Appflare to this site say so in their address (`utm_source=appflare-manager`,
-with the name of the link), so the analytics count how many visits come from Appflare and
-from which help links. They never say which Appflare sent you.
+with the name of the link and the Appflare version), so the analytics count how many visits
+come from Appflare and from which help links. They never say which Appflare sent you.
