@@ -2,6 +2,7 @@ import { SITE_URL } from "@appflare/schema/links";
 import { Banner, cn, LayerCard, Link, Meter, Text } from "@cloudflare/kumo";
 import { WarningCircleIcon } from "@phosphor-icons/react";
 import type { ReactNode } from "react";
+import { managerSiteLink } from "../site-links";
 import { Logo } from "./logo";
 import { MessageText } from "./message-text";
 
@@ -102,7 +103,7 @@ export function AuthLayout({
         <Text variant="secondary" size="sm">
           {/* `text-kumo-subtle` wins over the plain variant's colour at rest; its hover colour stays. */}
           <Link
-            href={DOCS_URL}
+            href={managerSiteLink(DOCS_URL, "footer")}
             target="_blank"
             rel="noopener noreferrer"
             variant="plain"

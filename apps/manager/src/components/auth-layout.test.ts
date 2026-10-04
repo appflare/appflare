@@ -1,6 +1,7 @@
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
+import { managerSiteLink } from "../site-links";
 import { AuthError, AuthLayout, DOCS_URL, OrDivider, setupStepLabel } from "./auth-layout";
 import { PasswordInput } from "./password-input";
 
@@ -43,7 +44,10 @@ describe("AuthLayout", () => {
 
   it("links the version in the footer to the docs", () => {
     const html = layout();
-    expect(html).toMatch(new RegExp(`<footer[^>]*>.*href="${DOCS_URL}".*1\\.4\\.0.*</footer>`));
+    const href = managerSiteLink(DOCS_URL, "footer")
+      .replaceAll("&", "&amp;")
+      .replaceAll("?", "\\?");
+    expect(html).toMatch(new RegExp(`<footer[^>]*>.*href="${href}".*1\\.4\\.0.*</footer>`));
     expect(layout({ version: null })).toContain("Appflare documentation");
   });
 });

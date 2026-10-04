@@ -1,5 +1,6 @@
 import { SITE_URL } from "@appflare/schema/links";
 import { DOCS_URL } from "./components/auth-layout";
+import { managerSiteLink } from "./site-links";
 
 /**
  * The pages (and sections) of the public docs that the manager links to
@@ -47,11 +48,14 @@ export const DOCS_TOPICS = {
 
 export type DocsTopic = keyof typeof DOCS_TOPICS;
 
-/** The absolute URL of a topic on the docs site, with the site's trailing slash. */
+/**
+ * The absolute URL of a topic on the docs site, with the site's trailing
+ * slash, tagged with the topic as the manager's link (see `site-links.ts`).
+ */
 export function docsUrl(topic: DocsTopic): string {
   const [path = "", anchor] = DOCS_TOPICS[topic].split("#");
   const page = path === "" ? DOCS_URL : `${SITE_URL}/${path}/`;
-  return anchor === undefined ? page : `${page}#${anchor}`;
+  return managerSiteLink(anchor === undefined ? page : `${page}#${anchor}`, topic);
 }
 
 /**

@@ -7,6 +7,7 @@
  */
 
 import { SITE_URL } from "@appflare/schema/links";
+import { managerSiteLink } from "../site-links";
 
 /** The appflare.dev page that remembers a manager. */
 export const APPFLARE_DEV_MY_URL = `${SITE_URL}/my/`;
@@ -21,5 +22,5 @@ export function appflareDevLink(managerUrl: string | null | undefined): string |
     return null;
   }
   if (url.protocol !== "https:" && url.protocol !== "http:") return null;
-  return `${APPFLARE_DEV_MY_URL}#manager=${encodeURIComponent(url.origin)}`;
+  return `${managerSiteLink(APPFLARE_DEV_MY_URL, "appflareDev")}#manager=${encodeURIComponent(url.origin)}`;
 }

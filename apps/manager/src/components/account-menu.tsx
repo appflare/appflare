@@ -18,6 +18,7 @@ import { useRouter } from "@tanstack/react-router";
 import { useState } from "react";
 import { authClient } from "../auth/client";
 import { MANAGER_UPDATES_HREF } from "../installs/pending-updates";
+import { managerSiteLink } from "../site-links";
 import { feedbackIssueUrl, REPOSITORY_URL } from "../whats-new/project-links";
 import { unreadLabel } from "../whats-new/release-notes";
 import { useWhatsNew } from "../whats-new/use-whats-new";
@@ -179,7 +180,11 @@ export function AccountMenu({
               </Badge>
             )}
           </DropdownMenu.Item>
-          <DropdownMenu.LinkItem href={DOCS_URL} icon={BookOpenTextIcon} {...EXTERNAL}>
+          <DropdownMenu.LinkItem
+            href={managerSiteLink(DOCS_URL, "accountMenu")}
+            icon={BookOpenTextIcon}
+            {...EXTERNAL}
+          >
             Documentation
           </DropdownMenu.LinkItem>
           <DropdownMenu.LinkItem href={feedbackIssueUrl(version)} icon={LifebuoyIcon} {...EXTERNAL}>

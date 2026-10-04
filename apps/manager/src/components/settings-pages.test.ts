@@ -170,7 +170,7 @@ describe("AccountSettingsView", () => {
       }),
     );
     expect(html).toContain(
-      'href="https://appflare.dev/my/#manager=https%3A%2F%2Fappflare.acme.workers.dev"',
+      'href="https://appflare.dev/my/?utm_source=appflare-manager&amp;utm_medium=app&amp;utm_content=appflareDev#manager=https%3A%2F%2Fappflare.acme.workers.dev"',
     );
     expect(html).toMatch(/rel="noreferrer"/);
     expect(text(html)).toContain(
