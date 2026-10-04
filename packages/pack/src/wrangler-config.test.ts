@@ -131,6 +131,45 @@ describe("collectBindings", () => {
     expect(binding && "script_name" in binding).toBe(false);
   });
 
+  it("names another Worker of the entry in a Workflow binding by its name within the entry", () => {
+    const config = {
+      name: "open-seo",
+      workflows: [
+        {
+          binding: "AUDIT",
+          name: "site-audit",
+          class_name: "Audit",
+          script_name: "open-seo-audit",
+        },
+        { binding: "RANK", name: "rank", class_name: "Rank", script_name: "open-seo" },
+        { binding: "ELSEWHERE", name: "x", class_name: "X", script_name: "someone-else" },
+      ],
+    } as unknown as ResolvedWranglerConfig;
+    const entryWorkers = new Map([
+      ["open-seo", "app"],
+      ["open-seo-audit", "audit"],
+    ]);
+    expect(collectBindings(config, undefined, { entryWorkers })).toEqual([
+      {
+        type: "workflow",
+        name: "AUDIT",
+        workflow_name: "site-audit",
+        class_name: "Audit",
+        script_name: "{{workerName:audit}}",
+      },
+      // Its own name: the Worker defines the Workflow.
+      { type: "workflow", name: "RANK", workflow_name: "rank", class_name: "Rank" },
+      // Outside the entry: recorded as written, and refused by the manager.
+      {
+        type: "workflow",
+        name: "ELSEWHERE",
+        workflow_name: "x",
+        class_name: "X",
+        script_name: "someone-else",
+      },
+    ]);
+  });
+
   it("refuses a Vectorize binding the catalog manifest does not declare, naming the field", () => {
     const config = {
       vectorize: [{ binding: "VECTORIZE", index_name: "second-brain-vectors" }],

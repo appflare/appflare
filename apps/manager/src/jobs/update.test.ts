@@ -2113,6 +2113,114 @@ describe("update job, an app of several Workers", () => {
     expect(JSON.stringify(r.logs)).not.toContain(SECRET);
   });
 
+  describe("a Workflow the primary Worker runs and the jobs Worker defines", () => {
+    const siteAudit = {
+      type: "workflow",
+      name: "SITE_AUDIT",
+      workflow_name: "site-audit",
+      class_name: "SiteAudit",
+    };
+    const withAudit = (options: ArtifactFixtureOptions): ArtifactFixtureOptions => ({
+      ...options,
+      bindings: [...(options.bindings ?? []), { ...siteAudit, script_name: "{{workerName:jobs}}" }],
+      otherWorkers: (options.otherWorkers ?? []).map((w) => ({
+        ...w,
+        bindings: [...(w.bindings ?? []), siteAudit],
+      })),
+    });
+    const workflowsOf = (metadata: Record<string, unknown> | undefined) =>
+      ((metadata?.bindings ?? []) as Array<Record<string, unknown>>).filter(
+        (b) => b.type === "workflow",
+      );
+
+    /** The update of `updateBoth`, both versions with the Workflow when `installed`. */
+    async function updateWithAudit(installed: boolean, workflowRow: boolean) {
+      const old = await buildArtifactFixture(
+        installed ? withAudit(app("1.0.0", ["*/5 * * * *"])) : app("1.0.0", ["*/5 * * * *"]),
+      );
+      const jobs = fakeAccount(null, {
+        worker: "cut-jobs",
+        deployments: [{ id: "dep-j", versions: [{ version_id: JOBS_OLD, percentage: 100 }] }],
+      });
+      const r = await update(
+        withAudit(app("1.1.0", ["*/5 * * * *"])),
+        {},
+        {
+          manifestJson: JSON.stringify(old.manifest),
+          resources: [
+            ...RESOURCES,
+            { kind: "worker", name: "cut-jobs", cfId: "cut-jobs" },
+            { kind: "subdomain", name: "cut-jobs.appflare-dev.workers.dev" },
+            ...(workflowRow
+              ? [{ kind: "workflow" as const, binding: "SITE_AUDIT", name: "cut-site-audit" }]
+              : []),
+          ],
+        },
+        { secrets: { JOBS_KEY: SECRET } },
+        "self",
+        undefined,
+        (fake) => async (input, init) => {
+          const target =
+            input.includes("/workers/scripts/cut-jobs") || input.includes("-cut-jobs.")
+              ? jobs
+              : fake;
+          return target.fetch(input, init);
+        },
+      );
+      return { ...r, jobs };
+    }
+
+    it("uploads the defining Worker's version first and points the other binding at it", async () => {
+      const r = await updateWithAudit(true, true);
+      expect(r.error).toBeNull();
+      expect(r.job?.status).toBe("succeeded");
+      // Recorded: no name check, and the recorded name is kept.
+      expect(r.step.names).not.toContain("check Workflow cut-site-audit");
+      expect(workflowsOf(r.jobs.state.versions[0]?.metadata)).toEqual([
+        {
+          type: "workflow",
+          name: "SITE_AUDIT",
+          workflow_name: "cut-site-audit",
+          class_name: "SiteAudit",
+        },
+      ]);
+      expect(workflowsOf(r.fake.state.versions[0]?.metadata)).toEqual([
+        {
+          type: "workflow",
+          name: "SITE_AUDIT",
+          workflow_name: "cut-site-audit",
+          class_name: "SiteAudit",
+          script_name: "cut-jobs",
+        },
+      ]);
+      const order = r.step.names;
+      expect(order.indexOf('upload Worker version (Worker "cut-jobs")')).toBeLessThan(
+        order.indexOf("upload Worker version"),
+      );
+      expect(order.indexOf('promote version (Worker "cut-jobs")')).toBeLessThan(
+        order.indexOf("promote version"),
+      );
+      expect(r.resources.filter((row) => row.kind === "workflow")).toEqual([
+        {
+          kind: "workflow",
+          binding: "SITE_AUDIT",
+          name: "cut-site-audit",
+          cf_id: null,
+          deleted_at: null,
+        },
+      ]);
+    });
+
+    it("checks and records a Workflow this version brings, once", async () => {
+      const r = await updateWithAudit(false, false);
+      expect(r.error).toBeNull();
+      expect(r.step.names).toContain("check Workflow cut-site-audit");
+      expect(r.resources.filter((row) => row.kind === "workflow").map((row) => row.name)).toEqual([
+        "cut-site-audit",
+      ]);
+    });
+  });
+
   it("deploys another Worker whole at promotion when its Durable Object exports change", async () => {
     const room = { type: "durable-object", storage: "sqlite" };
     const r = await updateBoth(

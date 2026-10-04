@@ -3,6 +3,7 @@ import {
   closeSync,
   cpSync,
   existsSync,
+  mkdirSync,
   mkdtempSync,
   openSync,
   readFileSync,
@@ -12,7 +13,12 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { type ArtifactManifest, appWorkers, artifactD1Files } from "@appflare/schema";
+import {
+  type ArtifactManifest,
+  appWorkers,
+  appWorkersInDeployOrder,
+  artifactD1Files,
+} from "@appflare/schema";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { type PackResult, pack } from "./pack.ts";
 import { verify } from "./verify.ts";
@@ -185,14 +191,62 @@ describe("pack refuses what an app of several Workers cannot install", () => {
     await packFails(dir, /bind the D1 database DB with different migrations/);
   }, 120_000);
 
-  it("a Workflow bound from another Worker of the entry", async () => {
+  it("a Workflow bound from another Worker of the entry that does not define it", async () => {
     const dir = editedFixture("web/wrangler.jsonc", (t) =>
       t.replace(
         '"durable_objects"',
         '"workflows": [{ "binding": "FLOW", "name": "flow", "class_name": "Flow", "script_name": "duo-jobs" }],\n  "durable_objects"',
       ),
     );
-    await packFails(dir, /Appflare installs each Workflow with the Worker that defines it/);
+    await packFails(
+      dir,
+      /runs the Workflow "flow" of the Worker "jobs", which defines no Workflow/,
+    );
+  }, 120_000);
+});
+
+describe("pack an app of several Workers with a Workflow one runs and the other defines", () => {
+  it("names the defining Worker in the other's binding and deploys it first", async () => {
+    const dir = editedFixture("web/wrangler.jsonc", (t) =>
+      t.replace(
+        '"durable_objects"',
+        '"workflows": [{ "binding": "AUDIT", "name": "site-audit", "class_name": "SiteAudit", "script_name": "duo-jobs" }],\n  "durable_objects"',
+      ),
+    );
+    const jobs = path.join(dir, "jobs", "wrangler.jsonc");
+    // The defining Worker may name itself, as wrangler allows.
+    writeFileSync(
+      jobs,
+      readFileSync(jobs, "utf8").replace(
+        '"triggers"',
+        '"workflows": [{ "binding": "SITE_AUDIT", "name": "site-audit", "class_name": "SiteAudit", "script_name": "duo-jobs" }],\n  "triggers"',
+      ),
+    );
+    try {
+      const res = await pack({
+        checkoutDir: dir,
+        manifestPath: path.join(dir, "appflare.jsonc"),
+        outDir: path.join(dir, "out"),
+        install: false,
+      });
+      const byName = new Map(appWorkers(res.manifest).map((w) => [w.name, w.worker.bindings]));
+      expect(byName.get("web")).toContainEqual({
+        type: "workflow",
+        name: "AUDIT",
+        workflow_name: "site-audit",
+        class_name: "SiteAudit",
+        script_name: "{{workerName:jobs}}",
+      });
+      expect(byName.get("jobs")).toContainEqual({
+        type: "workflow",
+        name: "SITE_AUDIT",
+        workflow_name: "site-audit",
+        class_name: "SiteAudit",
+      });
+      expect(appWorkersInDeployOrder(res.manifest).map((w) => w.name)).toEqual(["jobs", "web"]);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   }, 120_000);
 });
 
@@ -229,6 +283,172 @@ describe("pack an app of several Workers with a secret one Worker gets", () => {
       expect(logs.filter((l) => l.startsWith("var SESSION_SECRET"))).toEqual([
         'var SESSION_SECRET is provided as a secret: the catalog manifest declares SESSION_SECRET as a secret, so the wrangler config\'s var of that name of the Worker "web" is left out',
       ]);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }, 120_000);
+});
+
+/**
+ * A checkout shaped like OpenSEO: two wrangler configs in one directory,
+ * built by the Cloudflare Vite plugin (an older one, which writes
+ * `legacy_env`) into `dist/<name>/wrangler.json` with one redirect that
+ * points at the entry Worker's config and lists the other under
+ * `auxiliaryWorkers`. The app Worker runs a Workflow the audit Worker
+ * defines.
+ */
+function viteTwoWorkerCheckout(): string {
+  const dir = mkdtempSync(path.join(tmpdir(), "appflare-pack-vite-duo-"));
+  const files: Record<string, string> = {
+    "src/app.ts":
+      'import { WorkflowEntrypoint } from "cloudflare:workers";\nexport class Rank extends WorkflowEntrypoint { async run() {} }\nexport default { fetch: () => new Response("app") };\n',
+    "src/audit.ts":
+      'import { WorkflowEntrypoint } from "cloudflare:workers";\nexport class SiteAudit extends WorkflowEntrypoint { async run() {} }\nexport class AuditEngine {}\nexport default { fetch: () => new Response("audit") };\n',
+    "drizzle/0001_init.sql": "CREATE TABLE t (id INTEGER);\n",
+    "wrangler.jsonc": JSON.stringify({
+      name: "seo",
+      main: "src/app.ts",
+      compatibility_date: "2025-09-02",
+      workflows: [
+        {
+          name: "site-audit",
+          binding: "SITE_AUDIT",
+          class_name: "SiteAudit",
+          script_name: "seo-audit",
+        },
+        { name: "rank", binding: "RANK", class_name: "Rank" },
+      ],
+      services: [{ binding: "AUDIT_ENGINE", service: "seo-audit" }],
+      d1_databases: [
+        { binding: "DB", database_name: "seo", database_id: "x", migrations_dir: "drizzle" },
+      ],
+    }),
+    "wrangler.audit.jsonc": JSON.stringify({
+      name: "seo-audit",
+      main: "src/audit.ts",
+      compatibility_date: "2025-09-02",
+      workers_dev: false,
+      workflows: [{ name: "site-audit", binding: "SITE_AUDIT", class_name: "SiteAudit" }],
+      d1_databases: [
+        { binding: "DB", database_name: "seo", database_id: "x", migrations_dir: "drizzle" },
+      ],
+    }),
+    // What `vite build` leaves: each config with its main resolved from
+    // dist/<name>/, the config it came from, and legacy_env.
+    "build.mjs": `import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import path from "node:path";
+const generate = (from, out, main) => {
+  const config = JSON.parse(readFileSync(from, "utf8"));
+  const abs = path.resolve(from);
+  mkdirSync(path.dirname(out), { recursive: true });
+  writeFileSync(out, JSON.stringify({ configPath: abs, userConfigPath: abs, topLevelName: config.name, legacy_env: true, ...config, main, ratelimits: [] }));
+};
+generate("wrangler.jsonc", "dist/server/wrangler.json", "../../src/app.ts");
+generate("wrangler.audit.jsonc", "dist/seo_audit/wrangler.json", "../../src/audit.ts");
+mkdirSync(".wrangler/deploy", { recursive: true });
+writeFileSync(".wrangler/deploy/config.json", JSON.stringify({ configPath: "../../dist/server/wrangler.json", auxiliaryWorkers: [{ configPath: "../../dist/seo_audit/wrangler.json" }] }));
+`,
+    "appflare.jsonc": JSON.stringify({
+      slug: "seo",
+      name: "SEO",
+      summary: "Two Workers built by Vite, one running the other's Workflow.",
+      tagline: "An app Worker and an audit Worker",
+      repo: "appflare/appflare",
+      license: "Apache-2.0",
+      categories: ["utilities"],
+      maintainers: ["appflare"],
+      source: { ref: "v0.1.10", sha: "0123456789abcdef0123456789abcdef01234567" },
+      install: {
+        packageManager: "pnpm",
+        wranglerConfig: "wrangler.jsonc",
+        buildCommand: "node build.mjs",
+        workers: [
+          {
+            name: "app",
+            wranglerConfig: "wrangler.jsonc",
+            primary: true,
+            configPatch: {
+              ratelimits: [
+                {
+                  name: "MCP_RATE_LIMIT",
+                  namespace_id: "1001",
+                  simple: { limit: 5000, period: 60 },
+                },
+              ],
+            },
+          },
+          { name: "audit", wranglerConfig: "wrangler.audit.jsonc", workersDev: false },
+        ],
+      },
+      plan: "free",
+      postInstall: [],
+    }),
+  };
+  for (const [name, text] of Object.entries(files)) {
+    mkdirSync(path.dirname(path.join(dir, name)), { recursive: true });
+    writeFileSync(path.join(dir, name), text);
+  }
+  return dir;
+}
+
+describe("pack an app of several Workers built by the Vite plugin", () => {
+  it("packs each Worker from the config the build generated from its own", async () => {
+    const dir = viteTwoWorkerCheckout();
+    const logs: string[] = [];
+    try {
+      const res = await pack({
+        checkoutDir: dir,
+        manifestPath: path.join(dir, "appflare.jsonc"),
+        outDir: path.join(dir, "out"),
+        install: false,
+        logger: (m) => logs.push(m),
+      });
+      const [app, audit] = appWorkers(res.manifest);
+      // The patch applies to the generated config; the audit Worker's
+      // generated config is read without legacy_env.
+      expect(app?.worker.wranglerConfig).toEqual({
+        declared: "wrangler.jsonc",
+        effective: "dist/server/.appflare.wrangler.jsonc",
+      });
+      expect(audit?.worker.wranglerConfig).toEqual({
+        declared: "wrangler.audit.jsonc",
+        effective: "dist/seo_audit/.appflare.wrangler.jsonc",
+      });
+      expect(
+        logs.some((l) =>
+          l.includes(
+            "the build generated dist/seo_audit/wrangler.json from wrangler.audit.jsonc for an auxiliary Worker",
+          ),
+        ),
+      ).toBe(true);
+      expect(audit?.worker.name).toBe("seo-audit");
+      expect(app?.worker.bindings).toContainEqual({
+        type: "workflow",
+        name: "SITE_AUDIT",
+        workflow_name: "site-audit",
+        class_name: "SiteAudit",
+        script_name: "{{workerName:audit}}",
+      });
+      expect(app?.worker.bindings).toContainEqual({
+        type: "service",
+        name: "AUDIT_ENGINE",
+        service: "{{workerName:audit}}",
+      });
+      expect(app?.worker.bindings).toContainEqual({
+        type: "ratelimit",
+        name: "MCP_RATE_LIMIT",
+        namespace_id: "1001",
+        simple: { limit: 5000, period: 60 },
+      });
+      expect(audit?.worker.bindings).toContainEqual({
+        type: "workflow",
+        name: "SITE_AUDIT",
+        workflow_name: "site-audit",
+        class_name: "SiteAudit",
+      });
+      // migrations_dir reads against each Worker's own config.
+      expect(res.manifest.d1.DB?.migrations.map((f) => f.name)).toEqual(["0001_init.sql"]);
+      expect(appWorkersInDeployOrder(res.manifest).map((w) => w.name)).toEqual(["audit", "app"]);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

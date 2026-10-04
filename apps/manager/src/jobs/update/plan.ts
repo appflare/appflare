@@ -35,6 +35,7 @@ import {
   RESOURCE_BINDINGS,
   type ResourceBindingPlan,
   type WorkflowPlan,
+  withWorkflowRefs,
 } from "../install/bindings";
 import type { CreatedResource } from "../install/metadata";
 
@@ -443,6 +444,10 @@ export function diffBindings(
       diff.newWorkflows.push(wf);
     }
   }
+
+  // A binding that runs a Workflow another Worker of the app defines sends
+  // that Workflow's name, recorded or planned.
+  diff.workflowNames = withWorkflowRefs(diff.workflowNames, plan.workflowRefs);
 
   for (const d of plan.durableObjects) {
     const row = (byBinding.get(d.binding) ?? []).find((r) => r.kind === "durable_object");

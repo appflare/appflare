@@ -64,7 +64,7 @@ import {
   sandboxBuildParams,
   sourceManifest,
 } from "./install/artifact-source";
-import { planBindings } from "./install/bindings";
+import { planBindings, withWorkflowRefs } from "./install/bindings";
 import { checkCronLimitPhase, putSchedulesChecked } from "./install/cron-limit";
 import { seedD1Phase, seedOnlyValuesSchema, seedValues } from "./install/d1-seed";
 import { installDomainPhase, servedAddressPhase, unservedWildcardPhase } from "./install/domain";
@@ -78,6 +78,9 @@ import {
   type EntryUploadContext,
   otherWorkerRoutePhase,
   planEntryQueueConsumers,
+  recordWorkflows,
+  releaseWorkflows,
+  workflowsDefinedBy,
 } from "./install/entry-worker-phases";
 import { healthColumns, healthLabel } from "./install/health";
 import { buildScriptMetadata, type CreatedResource, installVars } from "./install/metadata";
@@ -635,7 +638,11 @@ export async function runInstall(ctx: JobContext): Promise<void> {
     // Vars may name the Worker's addresses (`{{workerUrl}}`, `{{appUrl}}`), so the account's
     // workers.dev subdomain is known before the upload.
     const subdomain = await lookupSubdomainPhase(steps);
-    const workflowNames = Object.fromEntries(plan.workflows.map((w) => [w.binding, w.name]));
+    // A binding that runs a Workflow another Worker of the app defines sends that Workflow's name.
+    const workflowNames = withWorkflowRefs(
+      Object.fromEntries(plan.workflows.map((w) => [w.binding, w.name])),
+      plan.workflowRefs,
+    );
     const placeholders = entryPlaceholders(manifest, params.workerName, subdomain);
     // The wildcard domain the form asked for, set up once the Worker serves:
     // `{{wildcardHostname}}` names it from the first upload on, and is
@@ -647,6 +654,7 @@ export async function runInstall(ctx: JobContext): Promise<void> {
       source: { zipUrl: source.zipUrl, host: source.host },
       resources: created,
       workflowNames,
+      workflows: plan.workflows,
       rateLimitIds,
       userVars: params.vars,
       subdomain,
@@ -692,6 +700,10 @@ export async function runInstall(ctx: JobContext): Promise<void> {
     // recorded first, with no id yet (pending): an upload whose response is
     // lost has still created it, and an uninstall deletes a Worker only when
     // this install recorded it (the name was checked free just before).
+    // The Workflows the primary Worker defines are recorded with its name,
+    // before the upload creates them (those of the other Workers were
+    // recorded the same way, before theirs).
+    const primaryWorkflows = workflowsDefinedBy(primaryManifest, plan.workflows);
     await run("record Worker name", async ({ orm }) => {
       await recordResource(orm, {
         kind: "worker",
@@ -700,6 +712,7 @@ export async function runInstall(ctx: JobContext): Promise<void> {
         name: params.workerName,
         cfId: null,
       });
+      await recordWorkflows(orm, params.installId, primaryWorkflows, new Date(now()));
       return {};
     });
     const upload = await run("upload Worker script", async ({ log, orm }) => {
@@ -758,14 +771,14 @@ export async function runInstall(ctx: JobContext): Promise<void> {
                 isNull(resources.cf_id),
               ),
             );
+          await releaseWorkflows(orm, params.installId, primaryWorkflows, new Date(now()));
           log.warn(`Cloudflare refused the upload; no Worker "${params.workerName}" was created.`);
         }
         throw error;
       }
     });
 
-    // The script is live from here on: record it (and the Workflows its upload
-    // created) even if a later step fails.
+    // The script is live from here on: record it even if a later step fails.
     await run("record Worker script", async ({ orm }) => {
       await orm
         .update(installs)
@@ -781,15 +794,6 @@ export async function runInstall(ctx: JobContext): Promise<void> {
         .update(resources)
         .set({ cf_id: upload.scriptId })
         .where(eq(resources.id, resourceId(params.installId, "worker", params.workerName)));
-      for (const wf of plan.workflows) {
-        await recordResource(orm, {
-          kind: "workflow",
-          key: wf.binding,
-          binding: wf.binding,
-          name: wf.name,
-          cfId: null,
-        });
-      }
       return {};
     });
 

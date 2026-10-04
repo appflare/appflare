@@ -11,6 +11,7 @@ import {
   pipelineDeclarationProblems,
   type R2LifecycleRule,
   serviceBindingProblem,
+  upstreamWorkflowName,
   type VectorizeIndexConfig,
   type VectorizeMetadataIndex,
   type WorkerBinding,
@@ -139,6 +140,35 @@ export interface WorkflowPlan {
   className: string;
 }
 
+/**
+ * A `workflow` binding that runs a Workflow another Worker of the app defines
+ * (its `script_name` is `{{workerName:<name>}}`): that Worker's upload creates
+ * the Workflow, which is planned and recorded once, under the binding of the
+ * Worker that defines it; this binding is sent with the same Workflow name.
+ */
+export interface WorkflowRef {
+  binding: string;
+  /** The binding of the Workflow it runs ({@link WorkflowPlan}'s `binding`). */
+  workflow: string;
+}
+
+/**
+ * `names` (Workflow binding to the Workflow name the install uses) with every
+ * binding of `refs` named as the Workflow it runs. A ref whose Workflow has
+ * no name is left out; the upload then refuses the binding.
+ */
+export function withWorkflowRefs(
+  names: Readonly<Record<string, string>>,
+  refs: readonly WorkflowRef[],
+): Record<string, string> {
+  const out: Record<string, string> = { ...names };
+  for (const ref of refs) {
+    const name = Object.hasOwn(names, ref.workflow) ? names[ref.workflow] : undefined;
+    if (name !== undefined) out[ref.binding] = name;
+  }
+  return out;
+}
+
 export interface DurableObjectPlan {
   binding: string;
   className: string;
@@ -148,6 +178,8 @@ export interface BindingPlan {
   resources: ResourceBindingPlan[];
   durableObjects: DurableObjectPlan[];
   workflows: WorkflowPlan[];
+  /** Workflow bindings that run a Workflow of {@link workflows} another Worker defines. */
+  workflowRefs: WorkflowRef[];
   /** Human-readable reasons the artifact cannot be installed; empty when it can. */
   problems: string[];
 }
@@ -222,7 +254,17 @@ export function planBindings(
   databases: readonly HyperdriveDeclaration[] = [],
   streams: CatalogPipelines = {},
 ): BindingPlan {
-  const plan: BindingPlan = { resources: [], durableObjects: [], workflows: [], problems: [] };
+  const plan: BindingPlan = {
+    resources: [],
+    durableObjects: [],
+    workflows: [],
+    workflowRefs: [],
+    problems: [],
+  };
+  /** Each Workflow a binding defines, by its name in the app's config, to that binding. */
+  const definedWorkflows = new Map<string, string>();
+  /** Bindings that run a Workflow another Worker of the app defines. */
+  const workflowRuns: Array<{ binding: string; upstream: string }> = [];
   plan.problems.push(...hyperdriveDeclarationProblems(bindings, databases));
   plan.problems.push(...pipelineDeclarationProblems(bindings, streams));
   const protocols = new Map(databases.map((d) => [d.binding, d.protocol]));
@@ -326,8 +368,14 @@ export function planBindings(
         className: typeof binding.class_name === "string" ? binding.class_name : binding.name,
       });
     } else if (binding.type === "workflow") {
-      const upstream =
-        typeof binding.workflow_name === "string" ? binding.workflow_name : binding.name;
+      const upstream = upstreamWorkflowName(binding);
+      // A Workflow another Worker of the app defines: that Worker's upload
+      // creates it, and the upload points this binding at that Worker.
+      if (entryWorkerRefName(binding.script_name) !== null) {
+        workflowRuns.push({ binding: binding.name, upstream });
+        continue;
+      }
+      definedWorkflows.set(upstream, binding.name);
       if (typeof binding.script_name === "string" && binding.script_name.length > 0) {
         plan.problems.push(
           `Workflow binding ${binding.name} points at another Worker ("${binding.script_name}"); Appflare installs self-contained apps only.`,
@@ -356,6 +404,16 @@ export function planBindings(
       plan.problems.push(
         `Binding ${binding.name} has type "${binding.type}", which Appflare cannot install yet.`,
       );
+    }
+  }
+  for (const run of workflowRuns) {
+    const workflow = definedWorkflows.get(run.upstream);
+    if (workflow === undefined) {
+      plan.problems.push(
+        `Workflow binding ${run.binding} runs the Workflow "${run.upstream}" of another Worker of the app, which defines no Workflow of that name.`,
+      );
+    } else if (workflow !== run.binding) {
+      plan.workflowRefs.push({ binding: run.binding, workflow });
     }
   }
   return plan;

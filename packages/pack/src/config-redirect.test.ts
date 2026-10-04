@@ -16,6 +16,7 @@ import {
   copyTemplateConfig,
   DEPLOY_CONFIG_PATH,
   dryRunInvocation,
+  generatedFrom,
   readConfigArgs,
   resolveWranglerConfig,
 } from "./config-redirect.ts";
@@ -110,6 +111,76 @@ describe("resolveWranglerConfig", () => {
     expect(readConfigArgs(target)).toEqual({
       args: { script: path.join(root, "wrangler.jsonc") },
       options: { useRedirectIfAvailable: true },
+    });
+  });
+
+  describe("a build of several Workers (the Vite plugin's auxiliaryWorkers)", () => {
+    /** Two configs in one directory, each built to dist/<name>/wrangler.json. */
+    function viteBuild(): void {
+      write("wrangler.jsonc", "{}");
+      write("wrangler.audit.jsonc", "{}");
+      write(
+        "dist/server/wrangler.json",
+        JSON.stringify({ userConfigPath: path.join(root, "wrangler.jsonc"), legacy_env: true }),
+      );
+      write(
+        "dist/audit/wrangler.json",
+        JSON.stringify({
+          userConfigPath: path.join(root, "wrangler.audit.jsonc"),
+          legacy_env: true,
+        }),
+      );
+      write(
+        DEPLOY_CONFIG_PATH,
+        JSON.stringify({
+          configPath: "../../dist/server/wrangler.json",
+          auxiliaryWorkers: [{ configPath: "../../dist/audit/wrangler.json" }],
+        }),
+      );
+    }
+
+    it("follows the redirect for the config it was generated from", () => {
+      viteBuild();
+      const target = resolveWranglerConfig(root, "wrangler.jsonc");
+      expect(target.effectivePath).toBe(path.join(root, "dist/server/wrangler.json"));
+      expect(target.deployConfigPath).toBe(path.join(root, DEPLOY_CONFIG_PATH));
+      expect(target.auxiliaryOf).toBeUndefined();
+    });
+
+    it("finds the config generated for an auxiliary Worker, which wrangler reads with --config", () => {
+      viteBuild();
+      const target = resolveWranglerConfig(root, "wrangler.audit.jsonc");
+      expect(target).toEqual({
+        declaredPath: path.join(root, "wrangler.audit.jsonc"),
+        effectivePath: path.join(root, "dist/audit/wrangler.json"),
+        deployConfigPath: null,
+        auxiliaryOf: path.join(root, DEPLOY_CONFIG_PATH),
+      });
+      expect(dryRunInvocation(target, root)).toEqual({
+        cwd: root,
+        configArgs: ["--config", path.join(root, "dist/audit/wrangler.json")],
+      });
+    });
+
+    it("refuses a config the build generated nothing from", () => {
+      viteBuild();
+      write("wrangler.other.jsonc", "{}");
+      expect(() => resolveWranglerConfig(root, "wrangler.other.jsonc")).toThrow(
+        /dist\/server\/wrangler.json, generated from wrangler.jsonc; none of the configs it generated was generated from wrangler.other.jsonc/,
+      );
+    });
+
+    it("tells a generated config from one written by hand", () => {
+      viteBuild();
+      expect(generatedFrom(path.join(root, "dist/audit/wrangler.json"))).toBe(
+        path.join(root, "wrangler.audit.jsonc"),
+      );
+      expect(generatedFrom(path.join(root, "wrangler.jsonc"))).toBeNull();
+      write(
+        "self.json",
+        JSON.stringify({ userConfigPath: path.join(root, "self.json"), name: "x" }),
+      );
+      expect(generatedFrom(path.join(root, "self.json"))).toBeNull();
     });
   });
 

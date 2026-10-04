@@ -56,6 +56,32 @@ describe("entry job budget", () => {
     expect(entryJobCost([primary], "update", CANARY_MAX_ATTEMPTS)).toEqual(JOB_RESERVE);
   });
 
+  it("counts the Workflows a Worker defines, and nothing for one it runs from another", async () => {
+    const workflow = {
+      type: "workflow",
+      name: "SITE_AUDIT",
+      workflow_name: "site-audit",
+      class_name: "SiteAudit",
+    };
+    const fixture = await buildArtifactFixture({
+      bindings: [{ ...workflow, script_name: "{{workerName:audit}}" }],
+      otherWorkers: [{ name: "audit", bindings: [workflow] }],
+    });
+    const plain = await buildArtifactFixture({ otherWorkers: [{ name: "audit" }] });
+    const other = (manifest: typeof fixture.manifest) => {
+      const w = entryWorkers(manifest, "cut").find((e) => !e.primary);
+      if (w === undefined) throw new Error("no other Worker");
+      return w;
+    };
+    const install = otherWorkerCost(other(fixture.manifest), "install", 0);
+    const without = otherWorkerCost(other(plain.manifest), "install", 0);
+    // The name check: a step, its call and its D1 writes; the record: one D1 write.
+    expect(install.steps - without.steps).toBe(1);
+    expect(install.subrequests - without.subrequests).toBe(2 + 2);
+    const update = otherWorkerCost(other(fixture.manifest), "update", 0);
+    expect(update.steps - otherWorkerCost(other(plain.manifest), "update", 0).steps).toBe(1);
+  });
+
   it(`fits ${MAX_ENTRY_WORKERS} Workers in one job on Workers Paid, with assets, crons and consumers`, async () => {
     const workers = await appOf(MAX_ENTRY_WORKERS, 40);
     for (const kind of ["install", "update"] as const) {

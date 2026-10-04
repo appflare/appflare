@@ -271,7 +271,17 @@ export function buildScriptMetadata(input: ScriptMetadataInput): ScriptMetadata 
     } else if (binding.type === "workflow") {
       const name = workflowNames[binding.name];
       if (name === undefined) throw new Error(`workflow binding ${binding.name} has no name`);
-      bindings.push({ ...binding, workflow_name: name });
+      // A Workflow another Worker of the app defines runs there: the binding
+      // names that Worker's installed name, and the upload creates nothing.
+      bindings.push(
+        entryWorkerRefName(binding.script_name) === null
+          ? { ...binding, workflow_name: name }
+          : {
+              ...binding,
+              workflow_name: name,
+              script_name: entryWorkerName(entryWorkers, binding.script_name, binding.name),
+            },
+      );
     } else if (binding.type === "ratelimit") {
       // Never the artifact's id: counters are shared by every Worker binding it.
       const namespaceId = rateLimitIds[binding.name];

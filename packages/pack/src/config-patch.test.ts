@@ -375,21 +375,80 @@ describe("applyConfigPatches", () => {
     );
   });
 
-  it("refuses to patch a config the build redirected wrangler away from", () => {
-    const dir = project({
-      "wrangler.jsonc": JSON.stringify({ name: "vite", main: "src/index.js" }),
-      "dist/vite/wrangler.json": JSON.stringify({ name: "vite", main: "index.js" }),
-      ".wrangler/deploy/config.json": JSON.stringify({
-        configPath: "../../dist/vite/wrangler.json",
-      }),
+  describe("a config the build generated", () => {
+    /** A Vite build's output: the generated config records the config it came from. */
+    const viteBuild = () => {
+      const dir = project({
+        "wrangler.jsonc": JSON.stringify({ name: "vite", main: "src/index.js" }),
+        ".wrangler/deploy/config.json": JSON.stringify({
+          configPath: "../../dist/vite/wrangler.json",
+          auxiliaryWorkers: [],
+        }),
+      });
+      mkdirSync(path.join(dir, "dist/vite"), { recursive: true });
+      writeFileSync(
+        path.join(dir, "dist/vite/wrangler.json"),
+        JSON.stringify({
+          userConfigPath: path.join(dir, "wrangler.jsonc"),
+          legacy_env: true,
+          name: "vite",
+          main: "index.js",
+          vars: { X: "1", Y: "2" },
+          ratelimits: [],
+        }),
+      );
+      return dir;
+    };
+    const rateLimit = {
+      name: "MCP_RATE_LIMIT",
+      namespace_id: "1001",
+      simple: { limit: 50, period: 60 },
+    } as const;
+
+    it("is patched itself, after the build, and read without legacy_env", () => {
+      const dir = viteBuild();
+      const specs = workerSpecs(
+        catalog("vite", {
+          wranglerConfig: "wrangler.jsonc",
+          configPatch: { vars: { X: null }, ratelimits: [rateLimit] },
+        }).install,
+      );
+      const logs: string[] = [];
+      const target = applyConfigPatches({
+        checkoutDir: dir,
+        specs,
+        logger: (m) => logs.push(m),
+      }).get("wrangler.jsonc");
+      expect(target).toEqual({
+        // Relative paths of the app's own config still read against it.
+        declaredPath: path.join(dir, "wrangler.jsonc"),
+        effectivePath: path.join(dir, "dist/vite", PATCHED_WRANGLER_CONFIG),
+        deployConfigPath: null,
+      });
+      const patched = readPatched(dir, "dist/vite");
+      expect(patched.vars).toEqual({ Y: "2" });
+      expect(patched.ratelimits).toEqual([rateLimit]);
+      expect(patched).not.toHaveProperty("legacy_env");
+      expect(logs.some((l) => l.includes("without legacy_env"))).toBe(true);
+      // Wrangler reads the copy as a hand-written config.
+      const config = unstable_readConfig({ config: target?.effectivePath }) as {
+        ratelimits: unknown[];
+      };
+      expect(config.ratelimits).toEqual([rateLimit]);
     });
-    const specs = workerSpecs(
-      catalog("vite", { wranglerConfig: "wrangler.jsonc", configPatch: { vars: { X: null } } })
-        .install,
-    );
-    expect(() => applyConfigPatches({ checkoutDir: dir, specs })).toThrow(
-      "install.configPatch cannot be applied: the build redirects wrangler from wrangler.jsonc to dist/vite/wrangler.json",
-    );
+
+    it("refuses a patch to a path or the build the build already resolved", () => {
+      const dir = viteBuild();
+      const specs = workerSpecs(
+        catalog("vite", {
+          wranglerConfig: "wrangler.jsonc",
+          configPatch: { main: "other.js", assets: { directory: "public" } },
+        }).install,
+      );
+      expect(() => applyConfigPatches({ checkoutDir: dir, specs })).toThrow(
+        "install.configPatch cannot change main, assets.directory of dist/vite/wrangler.json: the build generated that config from wrangler.jsonc",
+      );
+    });
   });
 
   it("refuses to write the patched config through a link", () => {

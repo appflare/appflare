@@ -372,6 +372,58 @@ describe("an artifact of several Workers", () => {
     );
   });
 
+  describe("a Workflow run from another Worker of the entry", () => {
+    const defined = {
+      type: "workflow",
+      name: "SITE_AUDIT",
+      workflow_name: "site-audit",
+      class_name: "SiteAudit",
+    };
+    const run = (extra: Record<string, unknown> = {}) => ({
+      ...defined,
+      script_name: "{{workerName:content}}",
+      ...extra,
+    });
+    const withRun = (runner: Record<string, unknown>, definer: unknown[] = [defined]) =>
+      artifact({
+        worker: worker("glance", [runner]),
+        d1: {},
+        workers: [{ name: "content", worker: worker("glance-content", definer), assets: noAssets }],
+      });
+
+    it("accepts a binding of the same name, and deploys the defining Worker first", () => {
+      const manifest = parsed(withRun(run()));
+      expect(appWorkersInDeployOrder(manifest).map((w) => w.name)).toEqual(["content", "app"]);
+    });
+
+    it("accepts a binding under another name to the same Workflow", () => {
+      expect(artifactManifestSchema.safeParse(withRun(run({ name: "AUDIT" }))).success).toBe(true);
+    });
+
+    it("refuses a binding to a Workflow the other Worker does not define", () => {
+      const result = artifactManifestSchema.safeParse(withRun(run({ workflow_name: "other" })));
+      expect(JSON.stringify(result.error?.issues)).toContain(
+        'runs the Workflow \\"other\\" of the Worker \\"content\\", which defines no Workflow of that name',
+      );
+    });
+
+    it("refuses a binding that names another class than the defining Worker", () => {
+      const result = artifactManifestSchema.safeParse(withRun(run({ class_name: "Other" })));
+      expect(JSON.stringify(result.error?.issues)).toContain(
+        'runs the Workflow \\"site-audit\\" with SiteAudit',
+      );
+    });
+
+    it("refuses two Workers that define one Workflow under different bindings", () => {
+      const result = artifactManifestSchema.safeParse(
+        withRun({ ...defined, name: "AUDIT" }, [defined]),
+      );
+      expect(JSON.stringify(result.error?.issues)).toContain(
+        'both define the Workflow \\"site-audit\\"',
+      );
+    });
+  });
+
   it("refuses Durable Object bindings of one name with different classes", () => {
     const bad = artifact({
       worker: worker("glance", [
