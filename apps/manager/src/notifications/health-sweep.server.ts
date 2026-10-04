@@ -1,5 +1,6 @@
 import type { FetchLike } from "@appflare/cf-api";
 import { checkInstallHealthCore, HealthCheckError } from "../installs/health.server";
+import type { InstallProbeHeaders } from "../jobs/install/health";
 
 /**
  * The scheduled health check behind "Health check failing": the same single
@@ -18,6 +19,8 @@ export const HEALTH_RECHECK_MS = 5_000;
 
 export interface HealthSweepDeps {
   fetch?: FetchLike;
+  /** The service token's headers for URLs the account controls (see `checkInstallHealthCore`). */
+  probeHeaders?: InstallProbeHeaders;
   now?: () => number;
   sleep?: (ms: number) => Promise<void>;
 }
@@ -48,7 +51,12 @@ export async function checkInstallsHealth(
 ): Promise<HealthSweepReport> {
   const fetchFn: FetchLike = deps.fetch ?? ((input, init) => fetch(input, init));
   const sleep = deps.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
-  const check = { db, fetch: fetchFn, ...(deps.now === undefined ? {} : { now: deps.now }) };
+  const check = {
+    db,
+    fetch: fetchFn,
+    ...(deps.now === undefined ? {} : { now: deps.now }),
+    ...(deps.probeHeaders === undefined ? {} : { probeHeaders: deps.probeHeaders }),
+  };
   const report: HealthSweepReport = { checked: 0, unhealthy: 0, unhealthyIds: [] };
   await Promise.all(
     installIds.slice(0, HEALTH_CHECKS_PER_CALL).map(async (installId) => {

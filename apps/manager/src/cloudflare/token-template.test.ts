@@ -74,12 +74,13 @@ describe("token template URLs", () => {
     ]);
   });
 
-  it("includes the Access groups, marked as used only by the Access setting", () => {
+  it("includes the Access groups, marked as used only by Cloudflare Access", () => {
     const { required, optional } = splitPermissionGroups();
     const access = optional.filter((g) => g.onlyFor === ACCESS_FEATURE);
     expect(access.map(({ key, type }) => ({ key, type }))).toEqual([
       { key: "access", type: "edit" },
       { key: "access_acct", type: "read" },
+      { key: "access_service_token", type: "edit" },
     ]);
     expect(required.some((g) => g.key.startsWith("access"))).toBe(false);
     expect(groupsOf(accountTokenTemplateUrl())).toContainEqual({ key: "access", type: "edit" });
@@ -87,9 +88,14 @@ describe("token template URLs", () => {
       key: "access_acct",
       type: "read",
     });
+    expect(groupsOf(accountTokenTemplateUrl())).toContainEqual({
+      key: "access_service_token",
+      type: "edit",
+    });
     expect(access.map(permissionName)).toEqual([
       "Access: Apps and Policies: Edit",
       "Access: Organizations, Identity Providers, and Groups: Read",
+      "Access: Service Tokens: Edit",
     ]);
   });
 
@@ -136,6 +142,7 @@ describe("token template URLs", () => {
         names: [
           "Access: Apps and Policies: Edit",
           "Access: Organizations, Identity Providers, and Groups: Read",
+          "Access: Service Tokens: Edit",
         ],
       },
       {

@@ -72,7 +72,9 @@ release:
 - `authors`, `tagline` and `licenseNote`, which `index.json` reads from the current
   manifest.
 - A change to the app's form or copy (its `secrets`, `vars`, `postInstall`, name,
-  summary, and similar) made together with a higher `revision`. CI builds nothing:
+  summary, and similar), or to how it goes with Cloudflare Access (its `access`
+  block, and adding `"access"` to `requires`), made together with a higher
+  `revision`. CI builds nothing:
   the release stays as it is. The signing job signs the revised `appflare.jsonc`
   with the catalog's release key (the same key and key id as the release's
   `manifest.sig`), and the catalog publishes it next to `index.json`, which lists
@@ -80,12 +82,13 @@ release:
   and start no job; they show the new form on the install page and on the **Settings** tab
   of apps already installed from that release.
 
-A revision may change only form fields and copy, but those still reach the app:
-var defaults become the Worker's vars, and generated secrets its secrets. That is
-why the revised file is signed. A manager uses it only when its sha256 matches the
-index, its signature verifies with the keys built into the manager under the
-release's key id, and, compared with the signed `manifest.json`, it is for the same
-app and changes only the form and copy. The Worker, the resources an install
+A revision may change only form fields, copy and Cloudflare Access protection, but
+those still reach the app: var defaults become the Worker's vars, generated secrets
+its secrets, and `access` decides who reaches it. That is why the revised file is
+signed. A manager uses it only when its sha256 matches the index, its signature
+verifies with the keys built into the manager under the release's key id, and,
+compared with the signed `manifest.json`, it is for the same app and changes only
+those fields (`requires` may only gain `"access"`). The Worker, the resources an install
 creates, and the permissions it asks for always come from the signed
 `manifest.json`. While a release lists a revision, installs and updates to it need
 that file: if it cannot be downloaded or does not verify, they fail instead of

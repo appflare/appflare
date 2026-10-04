@@ -6,12 +6,17 @@ import {
 } from "@appflare/schema";
 import { and, eq, inArray, isNull, type SQL } from "drizzle-orm";
 import { z } from "zod";
+import { writeAcceptedBypass } from "../access/accepted-paths.server";
+import { readAccessPlaceholderValues } from "../access/placeholder-values.server";
+import { storedBypassPaths, storedCatalogAccess } from "../access/stored-access.server";
 import { effectiveAutoUpdate, settingOn } from "../auto-update/auto-update";
+import { type StoredRelease, storedEffectiveManifest } from "../catalog/revisions.server";
 import { appPlace } from "../components/app-links";
 import { createDb, type Database } from "../db/client";
 import { installs, jobs, resources, snapshots } from "../db/schema";
 import { readSettings, SETTING } from "../db/settings";
 import { emailRoutingChangeWarning, emailRoutingOfManifest } from "../installs/email-routing";
+import { varsNeedRefresh } from "../installs/install-vars";
 import { ADDRESS_KINDS, HYPERDRIVE_KINDS, QUEUE_CONSUMER_KIND } from "../installs/resource-kinds";
 import {
   rollbackFinishMessage,
@@ -19,13 +24,19 @@ import {
   snapshotHasSameCode,
 } from "../installs/rollback-copy";
 import { appBaseUrl, domainHostnames } from "../installs/workers-dev";
-import { mergedWorkerVersions, parseWorkerVersions, storedOtherWorkers } from "./entry-workers";
+import {
+  entryWorkers,
+  mergedWorkerVersions,
+  parseWorkerVersions,
+  storedOtherWorkers,
+} from "./entry-workers";
+import { accessValuesRefreshPhase, publicPathsBackPhase, syncAccessPhase } from "./install/access";
 import {
   deployOtherWorkerVersionPhase,
   otherWorkerRoutePhase,
   setOtherWorkerCronsPhase,
 } from "./install/entry-worker-phases";
-import { healthCheckOfManifest, healthLabel } from "./install/health";
+import { healthCheckOfManifest, healthColumns, healthLabel } from "./install/health";
 import {
   checkLiveHealthPhase,
   lookupSubdomainPhase,
@@ -43,10 +54,12 @@ import {
   reconcileHyperdriveRecords,
   versionHyperdriveBindings,
 } from "./reconfigure/hyperdrive";
+import { parseStoredVars } from "./reconfigure/plan";
 import type { JobContext } from "./run-job";
 import { StepLog } from "./step-log";
 import { createJobSteps, errorMessage, JobError } from "./steps";
 import {
+  accessUpdateRefusal,
   declaredLifecycleOf,
   hyperdriveRollbackRefusal,
   rollbackLifecycleWarnings,
@@ -183,6 +196,72 @@ export async function turnOffAutoUpdate(orm: Database, installId: string): Promi
   return true;
 }
 
+/** What a rollback does about Cloudflare Access, read when it starts. */
+interface RollbackAccessPlan {
+  /** Appflare protects the app now. */
+  protected: boolean;
+  /** The serving version's public paths that the snapshot's version keeps. */
+  sharedPaths: string[];
+  /** The snapshot's version drops some of the serving version's public paths. */
+  dropsPaths: boolean;
+  /**
+   * The snapshot's version's settings use the Access placeholders and were
+   * deployed with another protection than the app has now (or one not
+   * recorded), so they are deployed again with the current values.
+   */
+  refreshValues: boolean;
+}
+
+/** An install's or a snapshot's record of its release, as the stored-release helpers read it. */
+function storedRelease(row: {
+  manifest_json: string | null;
+  artifact_digest: string | null;
+}): StoredRelease {
+  return { manifestJson: row.manifest_json, artifactDigest: row.artifact_digest };
+}
+
+async function rollbackAccessPlan(
+  orm: Database,
+  installId: string,
+  install: {
+    manifest_json: string | null;
+    artifact_digest: string | null;
+    config_json: string | null;
+    worker_name: string;
+  },
+  snapshot: {
+    manifest_json: string | null;
+    artifact_digest: string | null;
+    config_json: string | null;
+    access_aud: string | null;
+  },
+): Promise<RollbackAccessPlan> {
+  const current = await readAccessPlaceholderValues(orm, installId);
+  // Each version's entry as the newest revision recorded for its release says.
+  const before = await storedBypassPaths(orm, storedRelease(install));
+  const after =
+    snapshot.manifest_json === null
+      ? before
+      : await storedBypassPaths(orm, storedRelease(snapshot));
+  const sharedPaths = before.filter((p) => after.includes(p));
+  const manifest = await storedEffectiveManifest(
+    orm,
+    storedRelease(snapshot.manifest_json === null ? install : snapshot),
+  );
+  const vars = parseStoredVars(snapshot.config_json ?? install.config_json);
+  const usesAccess =
+    manifest !== null &&
+    entryWorkers(manifest, install.worker_name).some((w) =>
+      varsNeedRefresh(w.manifest, vars, ["access"]),
+    );
+  return {
+    protected: current !== null,
+    sharedPaths,
+    dropsPaths: sharedPaths.length < before.length,
+    refreshValues: usesAccess && snapshot.access_aud !== (current?.aud ?? ""),
+  };
+}
+
 export async function runRollback(ctx: JobContext): Promise<void> {
   const parsed = rollbackJobParams.safeParse(ctx.params);
   if (!parsed.success) throw new NonRetryableError("invalid rollback job payload");
@@ -191,6 +270,9 @@ export async function runRollback(ctx: JobContext): Promise<void> {
   const steps = createJobSteps(ctx, params.jobId);
   const { run, now } = steps;
   let deployed = false;
+  // Public paths the snapshot's version drops were taken off Access: a
+  // failure before its deployment puts them back.
+  let narrowed = false;
   // The app's other Workers whose return to the snapshot's version started,
   // and those taken off workers.dev for it: a failure before the primary
   // Worker's deployment puts them back, so the app runs one version again.
@@ -218,6 +300,15 @@ export async function runRollback(ctx: JobContext): Promise<void> {
       .where(eq(snapshots.id, params.snapshotId))
       .limit(1);
     if (snapshot === undefined) return;
+    // A rollback is an admin's action that carries the version's public
+    // paths: a protected app's are accepted (nothing for one not protected).
+    if (snapshot.manifest_json !== null) {
+      await writeAcceptedBypass(
+        orm,
+        params.installId,
+        await storedBypassPaths(orm, storedRelease(snapshot)),
+      );
+    }
     await orm
       .update(installs)
       .set(
@@ -421,6 +512,19 @@ export async function runRollback(ctx: JobContext): Promise<void> {
         workersDev: install.workers_dev_enabled,
         servedDomain: install.served_domain,
         domains: domainHostnames(recordedRows),
+        // Cloudflare Access (absent in a step output recorded before it was read).
+        access: await (async () => {
+          const plan = await rollbackAccessPlan(orm, params.installId, install, snapshot);
+          // Checked when the rollback starts too: a version that must run
+          // behind Cloudflare Access never serves an unprotected app.
+          const refusal = accessUpdateRefusal({
+            catalog: await storedCatalogAccess(orm, storedRelease(snapshot)),
+            isProtected: plan.protected,
+            action: "roll back",
+          });
+          if (refusal !== null) throw new JobError(refusal);
+          return plan;
+        })(),
       };
     });
     steps.setAccountId(started.accountId);
@@ -449,6 +553,16 @@ export async function runRollback(ctx: JobContext): Promise<void> {
         );
         return {};
       });
+    }
+
+    // A protected app's public paths the snapshot's version does not have
+    // stop being public before any of its Workers serves it, or the rollback
+    // fails here with nothing moved.
+    const access = started.access;
+    if (access?.protected === true && access.dropsPaths) {
+      // A failure here is recorded for the cron by the phase itself.
+      await syncAccessPhase(steps, params.installId, { bypassPaths: access.sharedPaths });
+      narrowed = true;
     }
 
     // The app's other Workers first, each back on the version the snapshot
@@ -561,6 +675,9 @@ export async function runRollback(ctx: JobContext): Promise<void> {
       return {};
     });
 
+    // The public paths of the snapshot's version, now that its manifest is recorded.
+    if (access?.protected === true) await syncAccessPhase(steps, params.installId);
+
     // Null for a job started before consumers were tracked, or a snapshot
     // without a manifest: nothing is known to sync.
     if (started.snapshotConsumers != null) {
@@ -628,6 +745,7 @@ export async function runRollback(ctx: JobContext): Promise<void> {
       step,
       url,
       started.healthMode ?? DEFAULT_HEALTH_MODE,
+      { installId: params.installId },
     );
 
     await run("finish", async ({ log, orm }) => {
@@ -637,8 +755,7 @@ export async function runRollback(ctx: JobContext): Promise<void> {
           .update(installs)
           .set({
             status: "installed",
-            health_status: health.status,
-            health_checked_at: new Date(health.checkedAt),
+            ...healthColumns(health, new Date(health.checkedAt)),
             updated_at: at,
           })
           .where(and(eq(installs.id, params.installId), eq(installs.status, "updating"))),
@@ -659,6 +776,11 @@ export async function runRollback(ctx: JobContext): Promise<void> {
       );
       return {};
     });
+    // The snapshot's version was deployed with another protection than the
+    // app has now: its settings get the current Access values again.
+    if (access?.refreshValues === true) {
+      await accessValuesRefreshPhase(steps, env, params.installId);
+    }
   } catch (error) {
     const reason = `${steps.current}: ${errorMessage(error)}`;
     const failedAt = steps.current;
@@ -711,6 +833,9 @@ export async function runRollback(ctx: JobContext): Promise<void> {
         }
       }
     }
+    // The current version serves without the public paths taken off for
+    // the snapshot's: the cron makes them public again.
+    if (!wasDeployed && narrowed) await publicPathsBackPhase(steps, params.installId);
     const strandedNames = Object.keys(stranded);
     await step.do("mark rollback failed", async () => {
       const orm = createDb(env.DB);

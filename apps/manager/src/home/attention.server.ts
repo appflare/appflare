@@ -9,7 +9,7 @@ import type { AppLookup } from "../catalog/merged.server";
 import { isUpdateAvailable } from "../catalog/versions";
 import type { InstallRecord } from "../installs/install-rows.server";
 import { isDeleteRetainedJob } from "../installs/removed-apps.server";
-import { isRestoreJob } from "../jobs/reconcile.server";
+import { isAccessChangeJob, isRestoreJob } from "../jobs/reconcile.server";
 import type { FailedJob } from "./attention";
 
 /** What "Needs attention" reads from D1 besides the installs themselves. Server only. */
@@ -59,6 +59,7 @@ export async function readFailedJobs(db: D1Database): Promise<FailedJob[]> {
     installId: row.install_id,
     kind: row.kind,
     restore: isRestoreJob(row),
+    accessChange: isAccessChangeJob(row),
     deleteRetained: isDeleteRetainedJob(row),
     version: versionOf(row.input_json),
     finishedAt: row.finished_at === null ? null : new Date(row.finished_at).toISOString(),

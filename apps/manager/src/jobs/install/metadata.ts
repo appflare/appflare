@@ -4,6 +4,7 @@ import type {
   WorkerModule,
 } from "@appflare/cf-api";
 import {
+  type AccessPlaceholderValues,
   type ArtifactManifest,
   type EntryWorkerPlaceholders,
   entryWorkerRefName,
@@ -46,7 +47,9 @@ export interface CreatedResource {
  * while workers.dev is off, `appBaseUrl`; the workers.dev URL when absent),
  * `{{accountId}}` from the account the job works in, and
  * `{{wildcardHostname}}` from the install's wildcard domain (empty without
- * one). The job logs the warnings: a stored value the app can no longer read
+ * one), and `{{accessTeamDomain}}`, `{{accessTeamName}}`, `{{accessAud}}` and
+ * `{{accessCertsUrl}}` from its Cloudflare Access protection (empty without).
+ * The job logs the warnings: a stored value the app can no longer read
  * falls back to the default instead of failing the job.
  */
 export function installVars(
@@ -64,6 +67,12 @@ export function installVars(
      */
     wildcardHostname?: string | null;
     /**
+     * The install's Cloudflare Access protection, for the Access
+     * placeholders (`readAccessPlaceholderValues`); null or absent when
+     * Appflare does not protect it (filled in empty).
+     */
+    access?: AccessPlaceholderValues | null;
+    /**
      * For an app of several Workers: what the per-Worker placeholders
      * (`{{appUrl:<name>}}`, `{{workerName:<name>}}`) are filled in with
      * (`entryPlaceholders`).
@@ -78,6 +87,7 @@ export function installVars(
     appUrl: worker.appUrl ?? workerUrl,
     accountId: worker.accountId,
     wildcardHostname: worker.wildcardHostname ?? null,
+    access: worker.access ?? null,
   };
   const resolved = resolveVars(manifest, userVars, placeholders);
   const entry = worker.entryWorkers;

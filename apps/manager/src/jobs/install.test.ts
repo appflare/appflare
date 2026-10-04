@@ -10,6 +10,7 @@ import { migrations } from "../db/migrations/index";
 import { SETTING, writeSettings } from "../db/settings";
 import type { StartInstallInput } from "../installs/install-input";
 import { startInstallCore } from "../installs/start-install.server";
+import { accessChallenge } from "../test/access-sign-in";
 import {
   type ArtifactFixture,
   type ArtifactFixtureOptions,
@@ -18,6 +19,7 @@ import {
   REVISED_URL,
   ZIP_URL,
 } from "../test/artifact-fixture";
+import { fakeAccessAccount } from "../test/fake-access-account";
 import { fakeSelf } from "../test/fake-self";
 import { fakeStep } from "../test/fake-step";
 import { redirectingArtifactHost, STORAGE_URL } from "../test/redirecting-host";
@@ -128,6 +130,10 @@ interface FakeState {
   consumers: Record<string, Array<Record<string, unknown> & { consumer_id: string }>>;
   /** The app's other Workers (`cut-<name>`), each with what its calls set. */
   others: Record<string, OtherScript>;
+  /** The account's Access objects: `/access/*` calls go to this fake. */
+  access?: ReturnType<typeof fakeAccessAccount>;
+  /** Answers the Worker's own URL instead of `health`, from the request's headers. */
+  healthAnswer?: (url: string, headers: Headers) => Response;
 }
 
 /** What the fake records for an app's Worker other than `cut`. */
@@ -278,6 +284,14 @@ function fakeWorld(fixture: ArtifactFixture, over: Partial<FakeState> = {}) {
         { status: 403 },
       );
     }
+    if (path.startsWith("/access/") && state.access !== undefined) {
+      const text = request.body === null ? undefined : await request.text();
+      return state.access.fetch(request.url, {
+        method: request.method,
+        headers: request.headers,
+        ...(text === undefined || text === "" ? {} : { body: text }),
+      });
+    }
     if (path.startsWith("/hyperdrive/") && state.hyperdriveTokenRefused === true) {
       return Response.json(
         { success: false, errors: [{ code: 10000, message: "Authentication error" }] },
@@ -306,7 +320,7 @@ function fakeWorld(fixture: ArtifactFixture, over: Partial<FakeState> = {}) {
           const form = await request.formData();
           w.metadata = JSON.parse(String(form.get("metadata")));
           state.scripts.push(name);
-          return ok({ id: name, deployment_id: VERSION_HEX });
+          return ok({ id: name, deployment_id: VERSION_HEX, tag: `tag-${name}` });
         }
         case "secrets": {
           const body = (await request.json()) as { name: string; text: string };
@@ -412,6 +426,7 @@ function fakeWorld(fixture: ArtifactFixture, over: Partial<FakeState> = {}) {
         return ok(
           state.scripts.map((id) => ({
             id,
+            tag: `tag-${id}`,
             ...(state.handlers[id] === undefined ? {} : { handlers: state.handlers[id] }),
           })),
         );
@@ -453,7 +468,7 @@ function fakeWorld(fixture: ArtifactFixture, over: Partial<FakeState> = {}) {
         state.metadata = JSON.parse(String(form.get("metadata")));
         state.modules = [...form.keys()].filter((k) => k !== "metadata");
         state.scripts.push("cut");
-        return ok({ id: "cut", deployment_id: VERSION_HEX });
+        return ok({ id: "cut", deployment_id: VERSION_HEX, tag: "tag-cut" });
       }
       case "PUT /workers/scripts/cut/secrets": {
         const body = (await request.json()) as { name: string; text: string };
@@ -595,6 +610,7 @@ function fakeWorld(fixture: ArtifactFixture, over: Partial<FakeState> = {}) {
     if (input.startsWith(`${WORKER_ORIGIN}/`)) {
       state.healthUrls.push(input);
       state.onHealthProbe?.();
+      if (state.healthAnswer !== undefined) return state.healthAnswer(input, request.headers);
       const next = state.health.length > 1 ? state.health.shift() : state.health[0];
       return new Response(next?.body ?? "", { status: next?.status ?? 500 });
     }
@@ -603,7 +619,9 @@ function fakeWorld(fixture: ArtifactFixture, over: Partial<FakeState> = {}) {
   return { state, fetch };
 }
 
-const jobEnv = (): JobEnv => ({ DB: env.DB, CF_API_TOKEN: TOKEN });
+/** Seals a protected app's service token secret. */
+const AUTH_SECRET = "auth-secret-0123456789abcdef0123456789";
+const jobEnv = (): JobEnv => ({ DB: env.DB, CF_API_TOKEN: TOKEN, BETTER_AUTH_SECRET: AUTH_SECRET });
 
 async function start(fixture: ArtifactFixture, over: Partial<StartInstallInput> = {}) {
   let params: InstallJobParams | null = null;
@@ -1694,7 +1712,9 @@ describe("install job", () => {
       { requirementsConfirmed: true },
     );
     expect(r.job?.status).toBe("failed");
-    expect(r.job?.error).toMatch(/it changes requires, which only a new build can change/);
+    expect(r.job?.error).toMatch(
+      /it adds "r2" to requires; a revision may add only "access", and anything else needs a new build/,
+    );
   });
 
   it("renames Workflows per install and refuses a name that is taken", async () => {
@@ -2838,6 +2858,62 @@ describe("install job, an app of several Workers", () => {
     expect(r.job?.error).toContain("a Worker named cut-jobs already exists");
     expect(r.fake.state.kv).toEqual([]);
   });
+
+  it("with Cloudflare Access, turns on no Worker's route until Access covers every Worker", async () => {
+    const access = protectedWorld();
+    const r = await install(
+      twoWorkers(),
+      access.world,
+      { ...secrets, access: true },
+      {},
+      undefined,
+      "self",
+      addUser,
+    );
+    expect(r.error).toBeNull();
+    expect(r.job?.status).toBe("succeeded");
+    const at = (name: string) => r.step.names.indexOf(name);
+    const cover = at("cover the app's Workers with Cloudflare Access");
+    expect(at("protect with Cloudflare Access")).toBeLessThan(
+      at('upload Worker script (Worker "cut-jobs")'),
+    );
+    expect(cover).toBeGreaterThan(at("record Worker script"));
+    expect(cover).toBeLessThan(at('enable workers.dev route (Worker "cut-jobs")'));
+    expect(cover).toBeLessThan(at("enable workers.dev route"));
+    const [app] = [...access.cf.apps.values()];
+    expect(app?.destinations).toEqual([
+      { type: "worker", worker_id: "tag-cut-jobs" },
+      { type: "worker", worker_id: "tag-cut" },
+    ]);
+    expect(r.fake.state.others["cut-jobs"]?.subdomain).toEqual({
+      enabled: true,
+      previews_enabled: true,
+    });
+  });
+
+  it("with Cloudflare Access, takes every uploaded Worker off workers.dev when the install fails before Access covers it", async () => {
+    const access = protectedWorld();
+    const r = await install(
+      twoWorkers(),
+      { ...access.world, uploadStatus: 400 },
+      { ...secrets, access: true },
+      {},
+      undefined,
+      "self",
+      addUser,
+    );
+    expect(r.job?.status).toBe("failed");
+    expect(r.job?.error).toContain("upload Worker script");
+    expect(r.step.names).toContain("keep Worker cut-jobs unreachable");
+    expect(r.step.names).toContain("keep Worker cut unreachable");
+    expect(r.step.names).not.toContain("cover the app's Workers with Cloudflare Access");
+    expect(r.fake.state.others["cut-jobs"]?.subdomain).toEqual({
+      enabled: false,
+      previews_enabled: false,
+    });
+    const failed = r.logs.find((l) => l.message.startsWith("Install failed at"));
+    expect(failed?.message).toContain('"upload Worker script"');
+  });
 });
 
 describe("install job, an app of many Workers", () => {
@@ -2950,5 +3026,242 @@ describe("install job, an app of many Workers", () => {
     const r = await install({}, { scripts: ["appflare", ...existing] });
     expect(r.error).toBeNull();
     expect(r.job?.status).toBe("succeeded");
+  });
+});
+
+/** A user for "Appflare users" (the Access policy needs at least one). */
+async function addUser(): Promise<void> {
+  await env.DB.prepare(
+    "INSERT INTO user (id, name, email, email_verified, created_at, updated_at, role) VALUES ('u1', 'Owner', 'owner@example.com', 1, 1, 1, 'admin')",
+  ).run();
+}
+
+/**
+ * The account's Access objects, and the app's workers.dev address as Access
+ * answers it once it covers the Worker: its sign-in page, or the app for a
+ * request with the app's own service token.
+ */
+function protectedWorld() {
+  const cf = fakeAccessAccount();
+  /** Every probe of the Worker's address: whether it carried the token. */
+  const probes: boolean[] = [];
+  const covered = () =>
+    [...cf.apps.values()].some((a) =>
+      (
+        a.destinations as Array<{ type: string; worker_id?: string; uri?: string }> | undefined
+      )?.some((d) => d.worker_id === "tag-cut" || d.uri === "cut.appflare-dev.workers.dev"),
+    );
+  const world: Partial<FakeState> = {
+    access: cf,
+    healthAnswer: (_url, headers) => {
+      const token = headers.get("CF-Access-Client-Secret");
+      probes.push(token !== null);
+      if (!covered()) return new Response("<html>cut, unprotected</html>", { status: 200 });
+      const known = [...cf.tokens.values()].some((t) => t.client_secret === token);
+      return known
+        ? new Response("<html>cut</html>", { status: 200 })
+        : accessChallenge("cut.appflare-dev.workers.dev");
+    },
+  };
+  return { cf, world, probes };
+}
+
+describe("install job, an app protected with Cloudflare Access", () => {
+  it("protects the app before its upload, covers the Worker by its tag before its route, and checks it through Access", async () => {
+    const access = protectedWorld();
+    const r = await install(
+      { bindings: [{ type: "kv_namespace", name: "CUT_KV" }] },
+      access.world,
+      { access: true },
+      {},
+      undefined,
+      "self",
+      addUser,
+    );
+    expect(r.error).toBeNull();
+    expect(r.job?.status).toBe("succeeded");
+    const at = (name: string) => r.step.names.indexOf(name);
+    // Before anything of the app exists in the account.
+    expect(at("protect with Cloudflare Access")).toBeGreaterThan(at("check Worker name"));
+    expect(at("protect with Cloudflare Access")).toBeLessThan(at("create KV namespace cut-cut-kv"));
+    expect(at("protect with Cloudflare Access")).toBeLessThan(at("upload Worker script"));
+    // After the upload, before the route.
+    expect(at("cover the app's Workers with Cloudflare Access")).toBeGreaterThan(
+      at("record Worker script"),
+    );
+    expect(at("cover the app's Workers with Cloudflare Access")).toBeLessThan(
+      at("enable workers.dev route"),
+    );
+    // One application, now covering the Worker by its tag; the same audience tag throughout.
+    expect(access.cf.apps.size).toBe(1);
+    const [app] = [...access.cf.apps.values()];
+    expect(app?.destinations).toEqual([{ type: "worker", worker_id: "tag-cut" }]);
+    const row = await env.DB.prepare(
+      "SELECT access_app_id, access_aud, access_team_domain FROM install_access",
+    ).first<{ access_app_id: string; access_aud: string; access_team_domain: string }>();
+    expect(row).toEqual({
+      access_app_id: app?.id,
+      access_aud: app?.aud,
+      access_team_domain: "appflare-test.cloudflareaccess.com",
+    });
+    expect(
+      r.resources.filter((x) => String(x.kind).startsWith("access_")).map((x) => x.kind),
+    ).toEqual(["access_service_token", "access_app"]);
+    // Verified through Access: the sign-in first, then the app with its own token.
+    expect(r.installRow?.health_status).toBe("verified");
+    expect(access.probes).toEqual([false, true]);
+    // Two unit calls, each one subrequest of the job.
+    expect(r.self.calls.filter((c) => c.unit === "protectInstall").length).toBe(2);
+    expect(r.self.calls.filter((c) => c.unit === "protectInstall").every((c) => c.ok)).toBe(true);
+  });
+
+  it("fails closed when the switch to the app's Workers fails: no route, previews off", async () => {
+    const access = protectedWorld();
+    access.cf.forbidden.add(`PUT /accounts/${ACC}/access/apps/*`);
+    const r = await install({}, access.world, { access: true }, {}, undefined, "self", addUser);
+    expect(r.job?.status).toBe("failed");
+    expect(r.job?.error).toContain("cover the app's Workers with Cloudflare Access");
+    expect(r.job?.error).toContain("cannot manage Access applications");
+    expect(r.installRow?.status).toBe("failed");
+    expect(r.step.names).toContain("keep Worker cut unreachable");
+    expect(r.step.names).not.toContain("enable workers.dev route");
+    expect(r.step.names).not.toContain("set cron triggers");
+    expect(r.fake.state.subdomainEnabled).toEqual({ enabled: false, previews_enabled: false });
+    // The application from before the upload still guards the workers.dev address.
+    expect([...access.cf.apps.values()][0]?.destinations).toEqual([
+      { type: "public", uri: "cut.appflare-dev.workers.dev" },
+    ]);
+    expect(access.probes).toEqual([]);
+  });
+
+  it("creates nothing of the app when another Access application covers its address", async () => {
+    const access = protectedWorld();
+    access.cf.apps.set("other", {
+      id: "other",
+      aud: "aud-other",
+      name: "Everything on workers.dev",
+      destinations: [{ type: "public", uri: "*.appflare-dev.workers.dev" }],
+      policies: [],
+    });
+    const r = await install(
+      { bindings: [{ type: "kv_namespace", name: "CUT_KV" }] },
+      access.world,
+      { access: true },
+      {},
+      undefined,
+      "self",
+      addUser,
+    );
+    expect(r.job?.status).toBe("failed");
+    expect(r.job?.error).toContain("protect with Cloudflare Access");
+    expect(r.job?.error).toContain('"Everything on workers.dev" already covers');
+    expect(r.fake.state.kv).toEqual([]);
+    expect(r.step.names).not.toContain("upload Worker script");
+    expect(access.cf.tokens.size + access.cf.policies.size).toBe(0);
+    expect(access.cf.apps.size).toBe(1);
+  });
+
+  it("uploads the Worker with the Access values from the first upload on, and makes its public paths public", async () => {
+    const access = protectedWorld();
+    const r = await install(
+      {
+        bindings: [{ type: "plain_text", name: "POLICY_AUD", text: "{{accessAud}}" }],
+        catalog: {
+          vars: [
+            { name: "HOME_PAGE", label: "Home page", optional: true },
+            { name: "TEAM", label: "Team", default: "{{accessTeamDomain}}" },
+            { name: "CERTS", label: "Keys", default: "{{accessCertsUrl}}" },
+          ],
+          access: { mode: "required", bypass: ["/s/*"] },
+          requires: ["access"],
+        },
+      },
+      access.world,
+      // An entry that requires protection is protected without asking.
+      { requirementsConfirmed: true },
+      {},
+      undefined,
+      "self",
+      addUser,
+    );
+    expect(r.error).toBeNull();
+    expect(r.job?.status).toBe("succeeded");
+    const main = [...access.cf.apps.values()].find((a) => a.name === "Appflare: Cut (cut)");
+    const bindings = (r.fake.state.metadata?.bindings ?? []) as Array<{
+      type: string;
+      name: string;
+      text?: string;
+    }>;
+    const text = (name: string) => bindings.find((b) => b.name === name)?.text;
+    expect(main?.aud).toMatch(/^aud-/);
+    expect(text("POLICY_AUD")).toBe(main?.aud);
+    expect(text("TEAM")).toBe("appflare-test.cloudflareaccess.com");
+    expect(text("CERTS")).toBe("https://appflare-test.cloudflareaccess.com/cdn-cgi/access/certs");
+    // The public paths, once the install (and its manifest) is recorded.
+    const at = (name: string) => r.step.names.indexOf(name);
+    expect(at("update Cloudflare Access destinations")).toBeGreaterThan(at("finish"));
+    const bypass = [...access.cf.apps.values()].find((a) =>
+      a.name?.toString().endsWith("public paths"),
+    );
+    expect(bypass?.destinations).toEqual([
+      { type: "public", uri: "cut.appflare-dev.workers.dev/s/*" },
+    ]);
+    // Installing it protected accepted the entry's public paths.
+    const accepted = await env.DB.prepare(
+      "SELECT accepted_bypass_json AS json FROM install_access",
+    ).first<{ json: string }>();
+    expect(JSON.parse(accepted?.json ?? "null")).toEqual(["/s/*"]);
+  });
+
+  it("refuses to start an app whose entry requires protection without it", async () => {
+    const fixture = await buildArtifactFixture({
+      catalog: { access: { mode: "required" }, requires: ["access"] },
+    });
+    await expect(start(fixture, { access: false, requirementsConfirmed: true })).rejects.toThrow(
+      "must be protected with Cloudflare Access",
+    );
+  });
+
+  it("refuses an install job without protection for an app whose entry requires it", async () => {
+    const access = protectedWorld();
+    const r = await install(
+      { catalog: { access: { mode: "required" }, requires: ["access"] } },
+      access.world,
+      { requirementsConfirmed: true },
+      { access: false },
+      undefined,
+      "self",
+      addUser,
+    );
+    expect(r.job?.status).toBe("failed");
+    expect(r.job?.error).toContain("must be protected with Cloudflare Access");
+    expect(r.step.names).not.toContain("upload Worker script");
+  });
+
+  it("covers an external domain the form asked for before anything of the app exists", async () => {
+    const access = protectedWorld();
+    // No gateway here, so the domain step only reports it could not add the
+    // domain; the application covered it from the start, then lists exactly
+    // the domains the install has.
+    const seen: unknown[] = [];
+    const r = await install(
+      {},
+      access.world,
+      { access: true },
+      { domain: { kind: "external", hostname: "go.customer.net", validation: "http" } },
+      undefined,
+      "self",
+      addUser,
+    );
+    for (const c of access.cf.calls) {
+      if (c.key.endsWith("/access/apps") && c.key.startsWith("POST")) seen.push(c.body);
+    }
+    expect(r.job?.status).toBe("succeeded");
+    expect((seen[0] as { destinations: unknown[] }).destinations).toEqual([
+      { type: "public", uri: "cut.appflare-dev.workers.dev" },
+      { type: "public", uri: "go.customer.net" },
+    ]);
+    const [app] = [...access.cf.apps.values()];
+    expect(app?.destinations).toEqual([{ type: "worker", worker_id: "tag-cut" }]);
   });
 });

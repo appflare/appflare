@@ -2,14 +2,21 @@ import { reset } from "cloudflare:test";
 import { env } from "cloudflare:workers";
 import type { FetchLike } from "@appflare/cf-api";
 import { beforeEach, describe, expect, it } from "vitest";
+import { readAcceptedBypass } from "../access/accepted-paths.server";
+import { protectInstall, resyncInstallAccessIfFailed } from "../access/protect.server";
+import { createDb } from "../db/client";
 import { createMigrator } from "../db/migrate";
 import { migrations } from "../db/migrations/index";
 import { listSnapshotsCore, startRollbackCore } from "../installs/versions.server";
 import { buildArtifactFixture } from "../test/artifact-fixture";
+import { fakeAccessAccount } from "../test/fake-access-account";
 import { type FakeAccount, fakeAccount, NEW_VERSION, TOKEN } from "../test/fake-account";
 import { fakeStep } from "../test/fake-step";
+import { recordProtectedInstall } from "../test/protected-install";
+import { recordFixtureRevision } from "../test/recorded-revision";
 import { INSTALL_ID, OLD_MANIFEST, OLD_VERSION, seedInstall } from "../test/seed-install";
 import { type RollbackJobParams, runRollback } from "./rollback";
+import type { JobEnv } from "./run-job";
 
 /**
  * End-to-end test of the rollback job against the fake Cloudflare API and
@@ -52,6 +59,10 @@ async function rollback(
   world: Partial<FakeAccount> = {},
   /** Wraps the fake's fetch (an app of several Workers routes each to its own fake). */
   wrapFetch?: (fake: ReturnType<typeof fakeAccount>) => FetchLike,
+  /** More of the job's environment (the job Workflow binding). */
+  extraEnv: Partial<JobEnv> = {},
+  /** Runs once the rollback is started, before its job runs. */
+  beforeRun?: () => Promise<void>,
 ) {
   const fake = fakeAccount(null, {
     deployments: [
@@ -74,13 +85,14 @@ async function rollback(
     { installId: INSTALL_ID, snapshotId: "upd1" },
   );
   if (params === null) throw new Error("no Workflow params");
+  await beforeRun?.();
   const step = fakeStep();
   let error: unknown = null;
   try {
     await runRollback({
       params,
       step,
-      env: { DB: env.DB, KV: env.KV, CF_API_TOKEN: TOKEN },
+      env: { DB: env.DB, KV: env.KV, CF_API_TOKEN: TOKEN, ...extraEnv },
       deps: { fetch: wrapFetch?.(fake) ?? fake.fetch },
     });
   } catch (e) {
@@ -721,5 +733,291 @@ describe("rollback job, an app of several Workers", () => {
     expect(names.indexOf('enable workers.dev route (Worker "cut-jobs")')).toBeGreaterThan(
       names.indexOf('deploy snapshot version (Worker "cut-jobs")'),
     );
+  });
+});
+
+describe("rollback job, an app protected with Cloudflare Access", () => {
+  const AUTH = "auth-secret-0123456789abcdef0123456789";
+  const JOBS_OLD = "11111111-2222-4333-8444-555555555555";
+  const JOBS_NEW = "11111111-2222-4333-8444-666666666666";
+
+  /**
+   * The install at 1.1.0 (public paths `/s/*` and `/old/*`), protected, and a
+   * snapshot of 1.0.0 (public path `/s/*`, a var filled in with
+   * `{{accessAud}}`) deployed before the app was protected.
+   */
+  async function protectedWorld(
+    snapshotAud: string | null,
+    /** Both versions' entries say it in a revision recorded for their release, not when built. */
+    revised = false,
+    extra: {
+      /** A second Worker, `cut-jobs`, in both versions, answered by this account. */
+      jobs?: ReturnType<typeof fakeAccount>;
+      /** The snapshot's version's cron triggers (the current one has none). */
+      snapshotCrons?: string[];
+    } = {},
+  ) {
+    const { jobs } = extra;
+    const others =
+      jobs === undefined
+        ? {}
+        : {
+            otherWorkers: [{ name: "jobs", bindings: [{ type: "kv_namespace", name: "CUT_KV" }] }],
+          };
+    const currentEntry = { access: { bypass: ["/s/*", "/old/*"] } };
+    const beforeEntry = {
+      vars: [{ name: "POLICY_AUD", label: "Audience", default: "{{accessAud}}", optional: true }],
+      requires: ["access" as const],
+      access: { bypass: ["/s/*"] },
+    };
+    const current = await buildArtifactFixture({
+      version: "1.1.0",
+      ...(revised ? { revision: currentEntry } : { catalog: currentEntry }),
+      ...others,
+    });
+    const before = await buildArtifactFixture({
+      version: "1.0.0",
+      ...(revised ? { revision: beforeEntry } : { catalog: beforeEntry }),
+      ...others,
+      ...(extra.snapshotCrons === undefined ? {} : { crons: extra.snapshotCrons }),
+    });
+    const manifestText = (f: typeof current) => new TextDecoder().decode(f.manifestBytes);
+    await env.DB.prepare(
+      "UPDATE installs SET manifest_json = ?2, artifact_digest = ?3 WHERE id = ?1",
+    )
+      .bind(INSTALL_ID, manifestText(current), current.digest)
+      .run();
+    await env.DB.prepare(
+      "UPDATE snapshots SET manifest_json = ?2, artifact_digest = ?4, access_aud = ?3, config_json = '{}' WHERE id = 'upd1'",
+    )
+      .bind(INSTALL_ID, manifestText(before), snapshotAud, before.digest)
+      .run();
+    if (jobs !== undefined) {
+      await env.DB.prepare("UPDATE snapshots SET worker_versions_json = ?1 WHERE id = 'upd1'")
+        .bind(JSON.stringify({ "cut-jobs": JOBS_OLD }))
+        .run();
+    }
+    if (revised) {
+      await recordFixtureRevision(current);
+      await recordFixtureRevision(before);
+    }
+    await env.DB.prepare(
+      `INSERT INTO resources (id, install_id, kind, binding, name, cf_id, created_at)
+       VALUES ('i1:worker:cut', ?1, 'worker', NULL, 'cut', 'cut', 1)`,
+    )
+      .bind(INSTALL_ID)
+      .run();
+    await env.DB.prepare(
+      "INSERT INTO user (id, name, email, role) VALUES ('u1', 'Owner', 'owner@example.com', 'admin')",
+    ).run();
+    const access = fakeAccessAccount();
+    access.scripts.push({ id: "cut", tag: "tag-cut" });
+    await protectInstall(
+      { db: env.DB, client: access.client, authSecret: AUTH },
+      { installId: INSTALL_ID },
+    );
+    const route =
+      (fake: ReturnType<typeof fakeAccount>): FetchLike =>
+      async (input, init) => {
+        const path = new URL(String(input)).pathname;
+        if (path.includes("/access/") || path.endsWith("/workers/scripts")) {
+          return access.fetch(String(input), init);
+        }
+        if (jobs !== undefined && path.includes("/workers/scripts/cut-jobs")) {
+          return jobs.fetch(String(input), init);
+        }
+        return fake.fetch(String(input), init);
+      };
+    return { access, route };
+  }
+
+  const syncFailedAt = async () =>
+    (
+      await env.DB.prepare("SELECT access_sync_failed_at FROM install_access WHERE install_id = ?1")
+        .bind(INSTALL_ID)
+        .first<{ access_sync_failed_at: number | null }>()
+    )?.access_sync_failed_at ?? null;
+
+  const bypassUris = (access: ReturnType<typeof fakeAccessAccount>) =>
+    [...access.apps.values()]
+      .filter((a) => String(a.name).endsWith("public paths"))
+      .flatMap((a) => (a.destinations as Array<{ uri: string }>).map((d) => d.uri));
+
+  it("takes dropped public paths off before the old version serves, and refreshes its Access values", async () => {
+    const w = await protectedWorld("");
+    expect(bypassUris(w.access)).toEqual([
+      "cut.appflare-dev.workers.dev/s/*",
+      "cut.appflare-dev.workers.dev/old/*",
+    ]);
+    const created: Array<{ id: string; params: unknown }> = [];
+    const r = await rollback({}, w.route, {
+      JOBS: {
+        create: async (o: { id: string; params: unknown }) => {
+          created.push(o);
+          return { id: o.id };
+        },
+      },
+    });
+    expect(r.error).toBeNull();
+    const at = (name: string) => r.step.names.indexOf(name);
+    expect(at("take dropped public paths off Cloudflare Access")).toBeLessThan(
+      at("deploy snapshot version"),
+    );
+    expect(at("update Cloudflare Access destinations")).toBeGreaterThan(at("record rollback"));
+    expect(at("settings for the current Cloudflare Access protection")).toBeGreaterThan(
+      at("finish"),
+    );
+    expect(bypassUris(w.access)).toEqual(["cut.appflare-dev.workers.dev/s/*"]);
+    // The old version was deployed unprotected: its settings get the current audience tag.
+    expect(created).toHaveLength(1);
+    expect(created[0]?.params).toMatchObject({ kind: "reconfigure", refreshVars: ["access"] });
+  });
+
+  it("fails before any Worker moves when the public paths the old version drops cannot be taken off", async () => {
+    const jobs = fakeAccount(null, {
+      worker: "cut-jobs",
+      deployments: [
+        { id: "dep-j2", versions: [{ version_id: JOBS_NEW, percentage: 100 }] },
+        { id: "dep-j1", versions: [{ version_id: JOBS_OLD, percentage: 100 }] },
+      ],
+    });
+    const w = await protectedWorld("", false, { jobs });
+    w.access.forbidden.add("PUT /accounts/*");
+    const r = await rollback({}, w.route);
+    expect(r.job).toMatchObject({ status: "failed" });
+    expect(String((r.job as { error: string }).error)).toMatch(
+      /^take dropped public paths off Cloudflare Access:/,
+    );
+    // Neither the other Worker nor the primary one was deployed.
+    expect(r.step.names.filter((n) => n.includes('(Worker "cut-jobs")'))).toEqual([]);
+    expect(jobs.state.deployments.map((d) => d.id)).toEqual(["dep-j2", "dep-j1"]);
+    expect(r.step.names).not.toContain("deploy snapshot version");
+    expect(r.fake.state.deployments[0]?.versions).toEqual([
+      { version_id: NEW_VERSION, percentage: 100 },
+    ]);
+    expect(r.install?.status).toBe("installed");
+    // The current version keeps its public paths; the cron brings Access in step again.
+    expect(bypassUris(w.access)).toEqual([
+      "cut.appflare-dev.workers.dev/s/*",
+      "cut.appflare-dev.workers.dev/old/*",
+    ]);
+    expect(await syncFailedAt()).not.toBeNull();
+    const logs = await env.DB.prepare("SELECT message FROM job_logs WHERE job_id = 'rb1'").all<{
+      message: string;
+    }>();
+    expect(logs.results.map((l) => l.message)).toContain(
+      'Rollback failed at "take dropped public paths off Cloudflare Access". Nothing was deployed; the current version keeps serving all traffic.',
+    );
+    // Nothing was taken off, so there is nothing to put back.
+    expect(r.step.names).not.toContain("public paths back for the serving version");
+  });
+
+  it("marks the public paths it took off for the cron when it fails later, before the old version serves", async () => {
+    const w = await protectedWorld("");
+    const r = await rollback(
+      { failOnce: new Map([["POST /workers/scripts/cut/deployments", 400]]) },
+      w.route,
+    );
+    expect(r.job).toMatchObject({ status: "failed" });
+    expect(String((r.job as { error: string }).error)).toMatch(/^deploy snapshot version:/);
+    expect(r.install?.status).toBe("installed");
+    expect(r.step.names).toContain("public paths back for the serving version");
+    expect(bypassUris(w.access)).toEqual(["cut.appflare-dev.workers.dev/s/*"]);
+    expect(await syncFailedAt()).not.toBeNull();
+    // The cron makes the current version's public paths public again.
+    expect(
+      await resyncInstallAccessIfFailed({ db: env.DB, client: async () => w.access.client }),
+    ).toEqual([{ installId: INSTALL_ID, outcome: "unchanged" }]);
+    expect(bypassUris(w.access)).toEqual([
+      "cut.appflare-dev.workers.dev/s/*",
+      "cut.appflare-dev.workers.dev/old/*",
+    ]);
+    expect(await syncFailedAt()).toBeNull();
+  });
+
+  it("leaves the public paths it took off when it fails after the old version serves", async () => {
+    const w = await protectedWorld("", false, { snapshotCrons: ["*/5 * * * *"] });
+    const r = await rollback(
+      { failOnce: new Map([["PUT /workers/scripts/cut/schedules", 400]]) },
+      w.route,
+    );
+    expect(r.job).toMatchObject({ status: "failed" });
+    expect(String((r.job as { error: string }).error)).toMatch(/^set cron triggers:/);
+    expect(r.fake.state.deployments[0]?.versions).toEqual([
+      { version_id: OLD_VERSION, percentage: 100 },
+    ]);
+    expect(r.step.names).not.toContain("public paths back for the serving version");
+    expect(await syncFailedAt()).toBeNull();
+    expect(bypassUris(w.access)).toEqual(["cut.appflare-dev.workers.dev/s/*"]);
+  });
+
+  it("reads both versions' public paths and settings from the revisions recorded for their releases", async () => {
+    const w = await protectedWorld("", true);
+    expect(bypassUris(w.access)).toEqual([
+      "cut.appflare-dev.workers.dev/s/*",
+      "cut.appflare-dev.workers.dev/old/*",
+    ]);
+    const created: Array<{ id: string; params: unknown }> = [];
+    const r = await rollback({}, w.route, {
+      JOBS: {
+        create: async (o: { id: string; params: unknown }) => {
+          created.push(o);
+          return { id: o.id };
+        },
+      },
+    });
+    expect(r.error).toBeNull();
+    expect(r.step.names.indexOf("take dropped public paths off Cloudflare Access")).toBeLessThan(
+      r.step.names.indexOf("deploy snapshot version"),
+    );
+    expect(bypassUris(w.access)).toEqual(["cut.appflare-dev.workers.dev/s/*"]);
+    // The rollback accepted the snapshot's version's public paths.
+    expect(await readAcceptedBypass(createDb(env.DB), INSTALL_ID)).toEqual(["/s/*"]);
+    // The revision's var reads the Access values: deployed again with the current ones.
+    expect(created[0]?.params).toMatchObject({ kind: "reconfigure", refreshVars: ["access"] });
+  });
+
+  it("leaves the settings alone when the old version was deployed with the protection the app has", async () => {
+    const w = await protectedWorld(null);
+    const aud = (
+      await env.DB.prepare("SELECT access_aud FROM install_access").first<{ access_aud: string }>()
+    )?.access_aud;
+    await env.DB.prepare("UPDATE snapshots SET access_aud = ?1 WHERE id = 'upd1'").bind(aud).run();
+    const created: unknown[] = [];
+    const r = await rollback({}, w.route, {
+      JOBS: {
+        create: async (o: { id: string }) => {
+          created.push(o);
+          return { id: o.id };
+        },
+      },
+    });
+    expect(r.error).toBeNull();
+    expect(r.step.names).not.toContain("settings for the current Cloudflare Access protection");
+    expect(created).toEqual([]);
+  });
+});
+
+describe("rollback job, a version that must run behind Cloudflare Access", () => {
+  it("refuses before anything changes when the app lost its protection after the rollback started", async () => {
+    await env.DB.prepare("UPDATE snapshots SET manifest_json = ?1 WHERE id = 'upd1'")
+      .bind(JSON.stringify({ version: "1.0.0", catalog: { access: { mode: "required" } } }))
+      .run();
+    await recordProtectedInstall({
+      installId: INSTALL_ID,
+      authSecret: "a".repeat(32),
+      secret: "s",
+    });
+    const r = await rollback({}, undefined, {}, async () => {
+      await env.DB.prepare("DELETE FROM install_access").run();
+    });
+    expect(r.job).toMatchObject({ status: "failed" });
+    expect(String((r.job as { error: string }).error)).toContain(
+      "This version must run behind Cloudflare Access. Turn protection on for the app first, then roll back.",
+    );
+    expect(r.step.names).not.toContain("deploy snapshot version");
+    expect(r.fake.state.deployments[0]?.versions).toEqual([
+      { version_id: NEW_VERSION, percentage: 100 },
+    ]);
   });
 });

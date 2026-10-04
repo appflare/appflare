@@ -1,12 +1,17 @@
 import { NonRetryableError } from "cloudflare:workflows";
 import type { ScriptMetadata, VersionMetadata } from "@appflare/cf-api";
 import {
+  type AccessPlaceholderValues,
   type ArtifactManifest,
+  accessBypassPaths,
   hyperdriveDeclarations,
   workerUploadProblem,
 } from "@appflare/schema";
 import { and, eq, isNull } from "drizzle-orm";
 import { z } from "zod";
+import { writeAcceptedBypass } from "../access/accepted-paths.server";
+import { readAccessPlaceholderValues } from "../access/placeholder-values.server";
+import { storedBypassPaths } from "../access/stored-access.server";
 import { parseStoredCapabilities, resolveAccountPlan } from "../capabilities/capabilities";
 import { CatalogTrustError, catalogTrust } from "../catalog/catalogs.server";
 import { cronTriggerCount } from "../catalog/cron-triggers";
@@ -31,6 +36,7 @@ import {
   workerCountProblem,
   workerLabel,
 } from "./entry-workers";
+import { publicPathsBackPhase, syncAccessPhase } from "./install/access";
 import {
   type ArtifactOrigin,
   artifactOriginOf,
@@ -50,7 +56,7 @@ import {
   promoteOtherWorkerPhase,
   setOtherWorkerCronsPhase,
 } from "./install/entry-worker-phases";
-import { healthLabel } from "./install/health";
+import { healthColumns, healthLabel } from "./install/health";
 import { buildScriptMetadata, installVars } from "./install/metadata";
 import {
   applyD1BaselinePhase,
@@ -86,6 +92,7 @@ import { StepLog } from "./step-log";
 import { createJobSteps, errorMessage, JobError, type StepTools } from "./steps";
 import { settleUnit } from "./units/result";
 import {
+  accessUpdateRefusal,
   appliedDurableObjectTag,
   canarySkipReason,
   declaredLifecycleOf,
@@ -260,6 +267,14 @@ export async function runUpdate(ctx: JobContext): Promise<void> {
   let servingRecord: Partial<typeof installs.$inferInsert> | null = null;
   /** D1 databases that got new migration files (named when a failure leaves them ahead of the code). */
   const migrated: string[] = [];
+  /** Public paths the new version drops were taken off Access: a failure before promotion puts them back. */
+  let narrowed = false;
+  /**
+   * The full deploy started: from then on the new version may serve even
+   * though the step failed (Cloudflare deployed it and did not say which
+   * version), so its public paths are not put back.
+   */
+  let scriptDeployStarted = false;
   /** An app of several Workers: its other Workers already moved to the new version. */
   const promotedOthers: string[] = [];
   /** The other Workers whose promotion started, and the version each serves once promoted. */
@@ -422,6 +437,21 @@ export async function runUpdate(ctx: JobContext): Promise<void> {
         domains: domainHostnames(rows) as string[] | undefined,
         // What `{{wildcardHostname}}` becomes (absent in a step output recorded before it existed).
         wildcardHostname: wildcardHostnameOf(rows) as string | null | undefined,
+        // What the Access placeholders become; null when the app is not protected
+        // (absent in a step output recorded before they existed).
+        access: (await readAccessPlaceholderValues(orm, params.installId)) as
+          | AccessPlaceholderValues
+          | null
+          | undefined,
+        // The public paths of the serving version, as the newest revision
+        // recorded for its release lists them (absent in a step output
+        // recorded before them).
+        bypassPathsBefore: [
+          ...(await storedBypassPaths(orm, {
+            manifestJson: install.manifest_json,
+            artifactDigest: install.artifact_digest,
+          })),
+        ] as string[] | undefined,
         origin,
         resources: recorded,
       };
@@ -458,6 +488,11 @@ export async function runUpdate(ctx: JobContext): Promise<void> {
     // A step output recorded before other Workers existed has none.
     const previousOthers = started.previousOthers ?? [];
     const previousOf = (name: string) => previousOthers.find((p) => p.scriptName === name);
+    // An update never changes which Workers an install has: a Worker new in
+    // this version is refused below, and one it drops is left in place until
+    // the uninstall. So a protected install's Cloudflare Access application
+    // (one `worker` destination per Worker, by its script tag, which the API
+    // documents as the script's immutable id) needs nothing here.
     const addedOthers = others.filter((w) => previousOf(w.scriptName) === undefined);
     const droppedOthers = previousOthers.filter(
       (p) => !others.some((w) => w.scriptName === p.scriptName),
@@ -508,6 +543,13 @@ export async function runUpdate(ctx: JobContext): Promise<void> {
 
     await run("plan update", async ({ log }) => {
       const problems = [...diff.problems, ...queuePlan.problems, ...queueDiff.problems];
+      // Checked when the update starts too; a version that must run behind
+      // Cloudflare Access never serves an install Appflare does not protect.
+      const accessRefusal = accessUpdateRefusal({
+        catalog: manifest.catalog,
+        isProtected: started.access != null,
+      });
+      if (accessRefusal !== null) problems.push(accessRefusal);
       // A prebuilt version's preview question was asked when the update
       // started; a sandbox build answers it only now.
       if (
@@ -636,6 +678,8 @@ export async function runUpdate(ctx: JobContext): Promise<void> {
 
     // 2. Snapshot, before anything changes.
     const snapshot = await takeSnapshotPhase(steps, {
+      // What the serving version's Access values were filled in with, before this job.
+      accessAud: started.access === undefined ? null : (started.access?.aud ?? ""),
       installId: params.installId,
       jobId: params.jobId,
       workerName,
@@ -697,6 +741,7 @@ export async function runUpdate(ctx: JobContext): Promise<void> {
       accountId: steps.accountId(),
       appUrl: appBase,
       wildcardHostname: started.wildcardHostname ?? null,
+      access: started.access ?? null,
       ...(placeholders === undefined ? {} : { entryWorkers: placeholders }),
     });
 
@@ -837,6 +882,7 @@ export async function runUpdate(ctx: JobContext): Promise<void> {
       accountId: steps.accountId(),
       appUrl: appBase,
       wildcardHostname: started.wildcardHostname ?? null,
+      access: started.access ?? null,
       placeholders,
       entryNames,
     };
@@ -872,6 +918,23 @@ export async function runUpdate(ctx: JobContext): Promise<void> {
       }
     }
     /** The other Workers to their new versions, one by one, before the primary one. */
+    /**
+     * A protected app's public paths the new version drops stop being
+     * public before it serves (or the update fails here, unpromoted); the
+     * ones it adds follow once it is recorded.
+     */
+    async function narrowPublicPaths(): Promise<void> {
+      if (started.access == null) return;
+      const before = started.bypassPathsBefore ?? [];
+      const after = accessBypassPaths(manifest.catalog);
+      if (before.every((p) => after.includes(p))) return;
+      // A failure here is recorded for the cron by the phase itself.
+      await syncAccessPhase(steps, params.installId, {
+        bypassPaths: before.filter((p) => after.includes(p)),
+      });
+      narrowed = true;
+    }
+
     async function promoteOthers(): Promise<void> {
       for (const update of otherUpdates) {
         attemptedOthers.push(update.worker.scriptName);
@@ -946,10 +1009,14 @@ export async function runUpdate(ctx: JobContext): Promise<void> {
           maxAttempts: CANARY_MAX_ATTEMPTS,
           expectVersion: params.version,
           mode: healthMode,
+          installId: params.installId,
         });
       }
 
-      // 7. D1 migrations: only files not applied yet, before promotion.
+      // 7. D1 migrations: only files not applied yet, before promotion. The
+      // public paths first, so a failure there leaves the databases as the
+      // serving code knows them.
+      await narrowPublicPaths();
       await migrateDatabases();
       await promoteOthers();
 
@@ -967,12 +1034,15 @@ export async function runUpdate(ctx: JobContext): Promise<void> {
       servingRecord = servingState(uploaded.versionId);
     } else {
       // 5-8 for Durable Object migrations: D1 first, then one full deploy.
+      // The public paths before D1, as above.
+      await narrowPublicPaths();
       await migrateDatabases();
       await promoteOthers();
       await run("skip canary", async ({ log }) => {
         log.warn(`${fullDeploy !== null ? FULL_DEPLOY_REASON : EXPORTS_DEPLOY_REASON}.`);
         return {};
       });
+      scriptDeployStarted = true;
       const deployed = await run("deploy Worker script", async ({ log }) => {
         for (const warning of vars.warnings) log.warn(warning);
         const metadata = uploadMetadata();
@@ -1003,6 +1073,9 @@ export async function runUpdate(ctx: JobContext): Promise<void> {
         .update(installs)
         .set({ ...record, updated_at: new Date(now()) })
         .where(eq(installs.id, params.installId));
+      // An update is an admin's action that carries the version's public
+      // paths: a protected app's are accepted (nothing for one not protected).
+      await writeAcceptedBypass(orm, params.installId, accessBypassPaths(manifest.catalog));
       return {};
     });
 
@@ -1072,7 +1145,9 @@ export async function runUpdate(ctx: JobContext): Promise<void> {
 
     // 9. Live health check, recorded rather than fatal: the version already serves.
     const url = `${appBase}${healthPath}`;
-    const health = await checkLiveHealthPhase(steps, step, url, healthMode);
+    const health = await checkLiveHealthPhase(steps, step, url, healthMode, {
+      installId: params.installId,
+    });
 
     // 10. Post-deploy migrations, once no request reaches the previous code
     // and everything else about the new version (queue consumers, cron
@@ -1099,8 +1174,7 @@ export async function runUpdate(ctx: JobContext): Promise<void> {
           .update(installs)
           .set({
             status: "installed",
-            health_status: health.status,
-            health_checked_at: new Date(health.checkedAt),
+            ...healthColumns(health, new Date(health.checkedAt)),
             updated_at: at,
           })
           .where(and(eq(installs.id, params.installId), eq(installs.status, "updating"))),
@@ -1121,6 +1195,9 @@ export async function runUpdate(ctx: JobContext): Promise<void> {
       );
       return {};
     });
+    // A protected app's public paths follow the new version's catalog entry
+    // (`access.bypass`), recorded with it. Never throws.
+    if (started.access != null) await syncAccessPhase(steps, params.installId);
   } catch (error) {
     const reason = `${steps.current}: ${errorMessage(error)}`;
     const failedAt = steps.current;
@@ -1224,6 +1301,12 @@ export async function runUpdate(ctx: JobContext): Promise<void> {
           routesBack.push(name);
         }
       }
+    }
+    // The previous version serves without the public paths taken off for
+    // this one: the cron makes them public again. Not after a full deploy
+    // that started, which may have made the new version serve.
+    if (!wasPromoted && narrowed && !scriptDeployStarted) {
+      await publicPathsBackPhase(steps, params.installId);
     }
     const othersRecordJson = othersRecord === null ? null : JSON.stringify(othersRecord);
     await step.do("mark update failed", async () => {

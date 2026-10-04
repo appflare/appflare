@@ -1,9 +1,11 @@
 import type { WorkerDeployment } from "@appflare/cf-api";
 import {
   type ArtifactManifest,
+  type CatalogAccess,
   type CatalogPipeline,
   type CatalogPipelines,
   type CatalogSecret,
+  catalogAccessSchema,
   catalogPipelinesSchema,
   catalogR2BucketSchema,
   type DoMigration,
@@ -64,6 +66,42 @@ export function updateRefusal(input: {
     return `${targetVersion} is older than the installed version ${installedVersion}`;
   }
   return null;
+}
+
+/**
+ * Why an update to a version whose catalog entry requires Cloudflare Access
+ * (`access.mode: "required"`) cannot run on an install Appflare does not
+ * protect: that version must never serve without it. Protection is turned
+ * on first, as a change of its own; null when nothing stands in the way.
+ */
+export function accessUpdateRefusal(input: {
+  catalog: { access?: { mode?: string | undefined } | undefined };
+  isProtected: boolean;
+  /** What the admin asked for: an update (default) or a rollback to the version. */
+  action?: "update" | "roll back";
+}): string | null {
+  if (input.isProtected || input.catalog.access?.mode !== "required") return null;
+  return `This version must run behind Cloudflare Access. Turn protection on for the app first, then ${input.action ?? "update"}.`;
+}
+
+/**
+ * The `access` block of a stored artifact manifest's catalog entry, read on
+ * its own (a snapshot's manifest may predate other fields); empty when it
+ * has none or cannot be read. The signed copy only: what applies to an
+ * install or a snapshot is `storedCatalogAccess`, which reads a recorded
+ * revision of the release first.
+ */
+export function accessOfManifestJson(manifestJson: string | null): {
+  access?: CatalogAccess;
+} {
+  if (manifestJson === null) return {};
+  try {
+    const access = (JSON.parse(manifestJson) as { catalog?: { access?: unknown } }).catalog?.access;
+    const parsed = catalogAccessSchema.safeParse(access);
+    return parsed.success ? { access: parsed.data } : {};
+  } catch {
+    return {};
+  }
 }
 
 /** A live `resources` row of the install, as the update job reads it. */
@@ -528,6 +566,14 @@ export function updateSecretsUndoneMessage(jobId: string): string {
 export const NO_PREVIEW_REASON =
   "Workers that implement a Durable Object have no version preview URL, so the new version cannot be checked before it serves traffic; the health check after the update still runs";
 
+/**
+ * Why a canary did not check the new version although the preview URL
+ * answered: Cloudflare Access answered it in the Worker's place (logged; the
+ * job goes on, as it does without a preview).
+ */
+export const ACCESS_PREVIEW_REASON =
+  "Cloudflare Access answered the preview URL with its sign-in page, so the new version was not checked before it serves traffic";
+
 export const FULL_DEPLOY_REASON =
   "This version changes Durable Object classes (migrations), which Cloudflare applies only when the whole Worker is deployed at once. The update deploys it directly, without a preview check, and the change to the classes cannot be undone";
 
@@ -740,6 +786,12 @@ export interface InstallState {
 }
 
 export interface SnapshotInput {
+  /**
+   * The audience tag of the Access protection the serving version was
+   * deployed with: `""` when the install was not protected, null when not
+   * known.
+   */
+  accessAud?: string | null;
   id: string;
   installId: string;
   jobId: string;
@@ -828,6 +880,7 @@ export function snapshotRow(input: SnapshotInput): typeof snapshots.$inferInsert
         ? null
         : JSON.stringify(input.otherVersions),
     hyperdrive_json: JSON.stringify(input.hyperdrive ?? {}),
+    access_aud: input.accessAud ?? null,
   };
 }
 

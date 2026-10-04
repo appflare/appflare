@@ -15,6 +15,15 @@ import { z } from "zod";
  * is sent as true. Turning `enabled` off without it turns previews off too.
  */
 
+/**
+ * What a domain check says when Cloudflare Access answered on the domain: it
+ * counts as live (Access guards the app there, and workers.dev may go off),
+ * but Access answers before the request reaches the app, so the app itself
+ * was not checked.
+ */
+export const ACCESS_DOMAIN_NOTE =
+  "Live behind Cloudflare Access. Access answered with its sign-in page, so Appflare can't check the app itself through this domain.";
+
 /** The body of the subdomain call for an app's Worker. */
 export function workersDevSubdomain(enabled: boolean): {
   enabled: boolean;

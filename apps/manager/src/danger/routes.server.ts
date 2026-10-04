@@ -44,6 +44,8 @@ export interface DangerEnv {
   SELF?: unknown;
   CF_API_TOKEN?: string;
   CF_API_BASE_URL?: string;
+  /** For the units run in place (no `SELF`), which read D1 (Access). */
+  BETTER_AUTH_SECRET?: string;
 }
 
 export interface DangerDeps {
@@ -178,7 +180,13 @@ export async function handleRemoveAppflare(
   const write = (html: string) => writer.write(encoder.encode(html));
   const sleep = deps.sleep ?? ((ms: number) => new Promise((r) => setTimeout(r, ms)));
   const units = jobUnits(
-    { SELF: selfUnits(env), CF_API_TOKEN: env.CF_API_TOKEN, CF_API_BASE_URL: env.CF_API_BASE_URL },
+    {
+      SELF: selfUnits(env),
+      CF_API_TOKEN: env.CF_API_TOKEN,
+      CF_API_BASE_URL: env.CF_API_BASE_URL,
+      DB: env.DB,
+      BETTER_AUTH_SECRET: env.BETTER_AUTH_SECRET,
+    },
     deps.fetch === undefined ? {} : { fetch: deps.fetch },
   );
 
@@ -224,6 +232,7 @@ export async function handleRemoveAppflare(
             containersLeft:
               targets.sandbox.worker === "sandbox" && targets.sandbox.containerApps === null,
             accessOn: targets.accessAppIds.length > 0,
+            protectedApps: (targets.appAccessInstalls ?? []).length,
             accessLeft: outcome.kind === "complete" ? outcome.accessLeft : [],
           }),
         );

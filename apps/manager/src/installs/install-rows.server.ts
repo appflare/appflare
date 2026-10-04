@@ -9,6 +9,7 @@ import { isUpdateAvailable } from "../catalog/versions";
 import { createDb, type Database } from "../db/client";
 import { type HealthStatus, type InstallOrigin, installs } from "../db/schema";
 import { readSettings, SETTING } from "../db/settings";
+import { healthBehindAccess } from "../jobs/install/health";
 import { type AddressDomain, type AppAddressInput, appAddress } from "./app-address";
 import { readAddressDomains } from "./app-address.server";
 import { distinctLabels } from "./display-name";
@@ -55,6 +56,11 @@ export interface InstallRow {
   uninstalledAt: string | null;
   /** The last health check of the Worker's URL; null until one ran. */
   healthStatus: HealthStatus | null;
+  /**
+   * Cloudflare Access answered that check in the app's place (`unverified`),
+   * so it says nothing about the app either way.
+   */
+  healthAccess: boolean;
   /** ISO 8601; when that check ran. */
   healthCheckedAt: string | null;
 }
@@ -83,6 +89,7 @@ export function addressInput(
 export function healthOf(row: typeof installs.$inferSelect) {
   return {
     healthStatus: row.health_status,
+    healthAccess: healthBehindAccess(row.health_status, row.health_access),
     healthCheckedAt: row.health_checked_at?.toISOString() ?? null,
   };
 }

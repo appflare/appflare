@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { accessPlaceholderValues } from "../../access/placeholder-values.server";
 import { buildArtifactFixture } from "../../test/artifact-fixture";
 import {
   buildScriptMetadata,
@@ -14,6 +15,36 @@ describe("installVars", () => {
     subdomain: "acme",
     accountId: "0123456789abcdef0123456789abcdef",
   };
+
+  it("fills in the Access values of a protected install, and empty ones otherwise", async () => {
+    const f = await buildArtifactFixture({
+      bindings: [{ type: "plain_text", name: "POLICY_AUD", text: "{{accessAud}}" }],
+      catalog: {
+        vars: [
+          { name: "TEAM_DOMAIN", label: "Team", default: "https://{{accessTeamDomain}}" },
+          { name: "CERTS", label: "Keys", default: "{{accessCertsUrl}}" },
+        ],
+        requires: ["access"],
+      },
+    });
+    const access = accessPlaceholderValues({
+      teamDomain: "acme.cloudflareaccess.com",
+      aud: "aud-123",
+    });
+    expect(installVars(f.manifest, {}, { ...worker, access }).vars).toEqual([
+      { type: "plain_text", name: "POLICY_AUD", text: "aud-123" },
+      { type: "plain_text", name: "TEAM_DOMAIN", text: "https://acme.cloudflareaccess.com" },
+      {
+        type: "plain_text",
+        name: "CERTS",
+        text: "https://acme.cloudflareaccess.com/cdn-cgi/access/certs",
+      },
+    ]);
+    // Not protected: empty, so an app that checks them refuses everyone.
+    expect(
+      installVars(f.manifest, {}, worker).vars.map((v) => v.type === "plain_text" && v.text),
+    ).toEqual(["", "https://", ""]);
+  });
 
   it("fills in {{accountId}} in the wrangler config's vars, catalog defaults and entered values", async () => {
     const f = await buildArtifactFixture({

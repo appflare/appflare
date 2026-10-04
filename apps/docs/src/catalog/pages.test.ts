@@ -1,4 +1,5 @@
 import { readFileSync } from "node:fs";
+import { SERVICE_NAMES } from "@appflare/schema/catalog-display";
 import { describe, expect, it } from "vitest";
 import { llmsIndex } from "../lib/llms.ts";
 import { SITE_URL } from "../lib/shared.ts";
@@ -26,6 +27,7 @@ function app(overrides: Partial<SiteApp> & { slug: string }): SiteApp {
     tier: "artifact",
     requires: [],
     services: [],
+    accessIfProtected: false,
     lastVerified: null,
     addedAt: "2026-01-01T00:00:00Z",
     authors: [],
@@ -220,6 +222,16 @@ describe("an app page", () => {
       { key: "something-new", name: "Something new", words: null },
     ]);
     expect(needs.note).toBeNull();
+  });
+
+  it("says Cloudflare Access is needed only if protected when the entry does not require it", () => {
+    const access = { slug: "x", requires: ["access"], services: ["access"] };
+    expect(accountNeeds(app({ ...access, accessIfProtected: true })).items).toEqual([
+      { key: "access", name: SERVICE_NAMES.access, words: "Only if you protect it" },
+    ]);
+    expect(accountNeeds(app(access)).items).toEqual([
+      { key: "access", name: SERVICE_NAMES.access, words: "This app needs it" },
+    ]);
   });
 
   it("lists a requirement that is not a service by its own name", () => {

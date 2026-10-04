@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { ACCESS_MESSAGES, INSTALL_ACCESS_MESSAGES } from "../access/messages";
 import {
   type CapabilitiesView,
   capabilitiesView,
@@ -186,11 +187,55 @@ describe("primitiveStatus", () => {
     expect(AVAILABILITY_LABELS.provided).toBe("Provided by you");
   });
 
-  it("leaves Access unknown: nothing probes it", () => {
+  it("follows the Zero Trust probe for Access", () => {
+    const access = (zeroTrust: unknown) =>
+      primitiveStatus(
+        "access",
+        capabilitiesView(null, stored({ zeroTrust } as Parameters<typeof stored>[0])),
+        plain,
+      );
+    expect(access({ state: "exists", teamDomain: "acme.cloudflareaccess.com" })).toMatchObject({
+      availability: "available",
+      reason: expect.stringContaining("acme.cloudflareaccess.com"),
+    });
+    expect(access({ state: "none" })).toMatchObject({
+      availability: "unavailable",
+      reason: expect.stringContaining("no Zero Trust organization"),
+    });
     expect(primitiveStatus("access", capabilitiesView(null, stored()), plain)).toMatchObject({
       availability: "unknown",
-      reason: expect.stringMatching(/does not check/),
+      reason: expect.stringMatching(/could not check/),
     });
+  });
+
+  it("marks Access unavailable when the token lacks a permission a protected install needs", () => {
+    const access = (overrides: Partial<StoredCapabilities>) =>
+      primitiveStatus("access", capabilitiesView(null, stored(overrides)), plain);
+    expect(access({ zeroTrust: unknownProbe })).toEqual({
+      id: "access",
+      availability: "unavailable",
+      reason: ACCESS_MESSAGES.organizationPermission,
+    });
+    expect(
+      access({
+        zeroTrust: { state: "exists", teamDomain: "acme.cloudflareaccess.com" },
+        accessServiceTokens: unknownProbe,
+      }),
+    ).toEqual({
+      id: "access",
+      availability: "unavailable",
+      reason: INSTALL_ACCESS_MESSAGES.tokensPermission,
+    });
+    // A check that failed for another reason is still not known.
+    expect(
+      access({ zeroTrust: { state: "unknown", reason: "error", detail: "500" } }),
+    ).toMatchObject({ availability: "unknown" });
+    expect(
+      access({
+        zeroTrust: { state: "exists", teamDomain: "acme.cloudflareaccess.com" },
+        accessServiceTokens: { state: "readable" },
+      }).availability,
+    ).toBe("available");
   });
 
   it("treats an admin's Free as unknown and a detected Free as not available", () => {

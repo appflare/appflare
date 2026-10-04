@@ -8,17 +8,21 @@ import {
   withRevisedCatalog,
 } from "@appflare/schema";
 import { beforeEach, describe, expect, it } from "vitest";
+import { readAcceptedBypass } from "../access/accepted-paths.server";
+import { protectInstall, resyncInstallAccessIfFailed } from "../access/protect.server";
 import { readCatalogRevision } from "../catalog/revisions.server";
 import { createDb } from "../db/client";
 import { createMigrator } from "../db/migrate";
 import { migrations } from "../db/migrations/index";
 import { listSnapshotsCore, startRollbackCore, startUpdateCore } from "../installs/versions.server";
+import { accessLoginUrl } from "../test/access-sign-in";
 import {
   type ArtifactFixtureOptions,
   baseCatalog,
   buildArtifactFixture,
   ZIP_URL,
 } from "../test/artifact-fixture";
+import { fakeAccessAccount } from "../test/fake-access-account";
 import {
   DEFAULT_MULTIPART_RULE,
   type FakeAccount,
@@ -29,6 +33,7 @@ import {
 } from "../test/fake-account";
 import { fakeSelf } from "../test/fake-self";
 import { fakeStep } from "../test/fake-step";
+import { recordFixtureRevision, setInstallRelease } from "../test/recorded-revision";
 import {
   cacheIndex,
   INSTALL_ID,
@@ -748,7 +753,11 @@ describe("update job", () => {
     // Previews stay on for the canary; the workers.dev URL stays off.
     expect(r.fake.state.subdomainCalls).toEqual([{ enabled: false, previews_enabled: true }]);
     expect(r.fake.state.domainProbes).toEqual(["links.example.com"]);
-    expect(r.install).toMatchObject({ health_status: "verified", workers_dev_enabled: 0 });
+    expect(r.install).toMatchObject({
+      health_status: "verified",
+      health_access: 0,
+      workers_dev_enabled: 0,
+    });
     expect(r.logs.at(-1)?.message).toContain("at https://links.example.com/ (health: verified");
   });
 
@@ -869,6 +878,55 @@ describe("update job", () => {
     expect(right.error).toBeNull();
     expect(right.logs.at(-1)?.message).toContain(
       "at https://cut.appflare-dev.workers.dev/api/health",
+    );
+  });
+
+  it("goes on when Cloudflare Access answers the preview, and records the app as not verified", async () => {
+    const healthPath = {
+      ...NEW_APP,
+      catalog: {
+        install: {
+          tier: "artifact" as const,
+          packageManager: "pnpm" as const,
+          wranglerConfig: "wrangler.jsonc",
+          workerName: "cut",
+          // Access's answer counts under neither mode.
+          health: { path: "/api/health", mode: "any-response" as const },
+        },
+      },
+    };
+    const preview = "0a1b2c3d-cut.appflare-dev.workers.dev";
+    const live = "cut.appflare-dev.workers.dev";
+    const r = await update(healthPath, {
+      previews: [{ status: 302, body: "", location: accessLoginUrl(preview, "/api/health") }],
+      health: [{ status: 302, body: "", location: accessLoginUrl(live, "/api/health") }],
+    });
+    expect(r.error).toBeNull();
+    expect(r.job).toMatchObject({ status: "succeeded", worker_version_id: NEW_VERSION });
+    // One probe each: Access keeps answering, so neither check waits for it.
+    expect(r.step.names.filter((n) => /^(canary|health) check/.test(n))).toEqual([
+      "canary check 1",
+      "health check 1",
+    ]);
+    expect(r.step.sleeps.filter((n) => /^(canary|health) wait/.test(n))).toEqual([]);
+    expect(r.fake.state.deployments[0]?.versions).toEqual([
+      { version_id: NEW_VERSION, percentage: 100 },
+    ]);
+    expect(r.logs).toContainEqual(
+      expect.objectContaining({
+        level: "warn",
+        message: `GET https://${preview}/api/health: Cloudflare Access answered the preview URL with its sign-in page, so the new version was not checked before it serves traffic.`,
+      }),
+    );
+    expect(r.logs).toContainEqual(
+      expect.objectContaining({
+        level: "warn",
+        message: `GET https://${live}/api/health: Cloudflare Access asked for a sign-in, so Appflare could not reach the app to check it. Everything was created; open the app and sign in to check it.`,
+      }),
+    );
+    expect(r.install).toMatchObject({ health_status: "unverified", health_access: 1 });
+    expect(r.logs.at(-1)?.message).toBe(
+      `Updated cut from 1.0.0 to 1.1.0 at https://${live}/api/health (health: not verified yet (Cloudflare Access asked for a sign-in)).`,
     );
   });
 
@@ -2427,5 +2485,330 @@ describe("update job, an app of many Workers", () => {
     }
     expect(JSON.parse(String(r.install?.worker_versions_json))).toEqual(r.oldVersions);
     expect(r.install?.current_version_id).toBe(OLD_VERSION);
+  });
+});
+
+describe("update job, an app protected with Cloudflare Access", () => {
+  it("takes public paths the new version drops off before it serves, and adds its own after", async () => {
+    const access = fakeAccessAccount();
+    access.scripts.push({ id: "cut", tag: "tag-cut" });
+    const uris = () =>
+      [...access.apps.values()]
+        .filter((a) => String(a.name).endsWith("public paths"))
+        .flatMap((a) => (a.destinations as Array<{ uri: string }>).map((d) => d.uri));
+    const seen: string[][] = [];
+    const r = await update(
+      { ...NEW_APP, catalog: { ...NEW_APP.catalog, access: { bypass: ["/s/*", "/new/*"] } } },
+      {},
+      {
+        manifestJson: JSON.stringify({
+          version: "1.0.0",
+          worker: { migrations: [] },
+          catalog: { name: "Cut", access: { bypass: ["/s/*", "/old/*"] } },
+        }),
+      },
+      {},
+      "self",
+      async () => {
+        await env.DB.prepare(
+          "INSERT INTO user (id, name, email, role) VALUES ('u1', 'Owner', 'owner@example.com', 'admin')",
+        ).run();
+        await protectInstall(
+          { db: env.DB, client: access.client, authSecret: "a".repeat(32) },
+          { installId: INSTALL_ID },
+        );
+      },
+      (fake) => async (input, init) => {
+        const path = new URL(String(input)).pathname;
+        if (path.includes("/access/") || path.endsWith("/workers/scripts")) {
+          const response = await access.fetch(String(input), init);
+          if (init?.method === "PUT") seen.push(uris());
+          return response;
+        }
+        return fake.fetch(String(input), init);
+      },
+    );
+    expect(r.error).toBeNull();
+    expect(r.job?.status).toBe("succeeded");
+    const at = (name: string) => r.step.names.indexOf(name);
+    expect(at("take dropped public paths off Cloudflare Access")).toBeLessThan(
+      at("promote version"),
+    );
+    expect(at("update Cloudflare Access destinations")).toBeGreaterThan(at("finish"));
+    expect(uris()).toEqual([
+      "cut.appflare-dev.workers.dev/s/*",
+      "cut.appflare-dev.workers.dev/new/*",
+    ]);
+    // Before the new version served, only the path both versions share was public.
+    expect(seen).toContainEqual(["cut.appflare-dev.workers.dev/s/*"]);
+  });
+
+  it("reads both versions' public paths from the revisions recorded for their releases", async () => {
+    // Neither release lists public paths; revisions of both do.
+    const installed = await buildArtifactFixture({
+      version: "1.0.0",
+      bindings: [
+        { type: "kv_namespace", name: "CUT_KV" },
+        { type: "d1", name: "DB" },
+      ],
+      revision: { access: { bypass: ["/s/*", "/old/*"] } },
+    });
+    const access = fakeAccessAccount();
+    access.scripts.push({ id: "cut", tag: "tag-cut" });
+    const uris = () =>
+      [...access.apps.values()]
+        .filter((a) => String(a.name).endsWith("public paths"))
+        .flatMap((a) => (a.destinations as Array<{ uri: string }>).map((d) => d.uri));
+    const seen: string[][] = [];
+    const r = await update(
+      { ...NEW_APP, revision: { access: { bypass: ["/s/*", "/new/*"] } } },
+      {},
+      { manifestJson: new TextDecoder().decode(installed.manifestBytes) },
+      {},
+      "self",
+      async () => {
+        await setInstallRelease(INSTALL_ID, installed);
+        await recordFixtureRevision(installed);
+        await env.DB.prepare(
+          "INSERT INTO user (id, name, email, role) VALUES ('u1', 'Owner', 'owner@example.com', 'admin')",
+        ).run();
+        await protectInstall(
+          { db: env.DB, client: access.client, authSecret: "a".repeat(32) },
+          { installId: INSTALL_ID },
+        );
+        expect(uris()).toEqual([
+          "cut.appflare-dev.workers.dev/s/*",
+          "cut.appflare-dev.workers.dev/old/*",
+        ]);
+      },
+      (fake) => async (input, init) => {
+        const path = new URL(String(input)).pathname;
+        if (path.includes("/access/") || path.endsWith("/workers/scripts")) {
+          const response = await access.fetch(String(input), init);
+          if (init?.method === "PUT") seen.push(uris());
+          return response;
+        }
+        return fake.fetch(String(input), init);
+      },
+    );
+    expect(r.error).toBeNull();
+    expect(r.job?.status).toBe("succeeded");
+    expect(r.step.names.indexOf("take dropped public paths off Cloudflare Access")).toBeLessThan(
+      r.step.names.indexOf("promote version"),
+    );
+    expect(seen).toContainEqual(["cut.appflare-dev.workers.dev/s/*"]);
+    expect(uris()).toEqual([
+      "cut.appflare-dev.workers.dev/s/*",
+      "cut.appflare-dev.workers.dev/new/*",
+    ]);
+    // The update accepted the new version's public paths.
+    expect(await readAcceptedBypass(createDb(env.DB), INSTALL_ID)).toEqual(["/s/*", "/new/*"]);
+  });
+
+  /**
+   * An update of the install (public paths `/s/*` and `/old/*`), protected,
+   * to a version with `bypass`. `refuseAccess`: Cloudflare refuses every
+   * change to an Access application. `fullDeploy`: the new version carries a
+   * Durable Object migration, so it is deployed in one script upload.
+   * `deployWithoutId`: that upload deploys it, but Cloudflare names no version.
+   */
+  async function protectedUpdate(
+    bypass: string[],
+    opts: {
+      refuseAccess?: boolean;
+      fullDeploy?: boolean;
+      deployWithoutId?: boolean;
+      world?: Partial<FakeAccount>;
+    } = {},
+  ) {
+    const access = fakeAccessAccount();
+    access.scripts.push({ id: "cut", tag: "tag-cut" });
+    const uris = () =>
+      [...access.apps.values()]
+        .filter((a) => String(a.name).endsWith("public paths"))
+        .flatMap((a) => (a.destinations as Array<{ uri: string }>).map((d) => d.uri));
+    const room = { tag: "v1", new_sqlite_classes: ["Room"] };
+    let scriptDeployed = false;
+    const r = await update(
+      {
+        ...NEW_APP,
+        catalog: { ...NEW_APP.catalog, access: { bypass } },
+        ...(opts.fullDeploy === true
+          ? {
+              bindings: [
+                { type: "kv_namespace", name: "CUT_KV" },
+                { type: "d1", name: "DB" },
+                { type: "durable_object_namespace", name: "ROOMS", class_name: "Room" },
+              ],
+              migrations: [room, { tag: "v2", renamed_classes: [{ from: "Room", to: "Chat" }] }],
+            }
+          : {}),
+      },
+      opts.world ?? {},
+      {
+        manifestJson: JSON.stringify({
+          version: "1.0.0",
+          worker: { migrations: opts.fullDeploy === true ? [room] : [] },
+          catalog: { name: "Cut", access: { bypass: ["/s/*", "/old/*"] } },
+        }),
+      },
+      {},
+      "self",
+      async () => {
+        await env.DB.prepare(
+          "INSERT INTO user (id, name, email, role) VALUES ('u1', 'Owner', 'owner@example.com', 'admin')",
+        ).run();
+        await protectInstall(
+          { db: env.DB, client: access.client, authSecret: "a".repeat(32) },
+          { installId: INSTALL_ID },
+        );
+        if (opts.refuseAccess === true) access.forbidden.add("PUT /accounts/*");
+      },
+      (fake) => async (input, init) => {
+        const path = new URL(String(input)).pathname;
+        if (path.includes("/access/") || path.endsWith("/workers/scripts")) {
+          return access.fetch(String(input), init);
+        }
+        if (opts.deployWithoutId === true && init?.method === "PUT" && path.endsWith("/cut")) {
+          const body = (await (await fake.fetch(String(input), init)).json()) as {
+            result: Record<string, unknown>;
+          };
+          delete body.result.deployment_id;
+          scriptDeployed = true;
+          return Response.json(body);
+        }
+        // Nor does the list of deployments, once it deployed.
+        if (scriptDeployed && path.endsWith("/cut/deployments")) {
+          return Response.json({
+            success: true,
+            errors: [],
+            messages: [],
+            result: { deployments: [] },
+          });
+        }
+        return fake.fetch(String(input), init);
+      },
+    );
+    const syncFailedAt = async () =>
+      (
+        await env.DB.prepare(
+          "SELECT access_sync_failed_at FROM install_access WHERE install_id = ?1",
+        )
+          .bind(INSTALL_ID)
+          .first<{ access_sync_failed_at: number | null }>()
+      )?.access_sync_failed_at ?? null;
+    return {
+      ...r,
+      access,
+      uris,
+      syncFailedAt: await syncFailedAt(),
+      readSyncFailedAt: syncFailedAt,
+    };
+  }
+
+  it("fails before the databases or promotion when the public paths the new version drops cannot be taken off", async () => {
+    const r = await protectedUpdate(["/s/*", "/new/*"], { refuseAccess: true });
+    expect(r.job?.status).toBe("failed");
+    expect(r.job?.error).toMatch(/^take dropped public paths off Cloudflare Access:/);
+    expect(r.step.names).not.toContain("D1 DB: apply migrations");
+    expect(r.step.names).not.toContain("promote version");
+    expect(r.install?.current_version_id).toBe(OLD_VERSION);
+    expect(r.install?.status).toBe("installed");
+    // The serving version keeps its public paths; the cron brings Access in step again.
+    expect(r.uris()).toEqual([
+      "cut.appflare-dev.workers.dev/s/*",
+      "cut.appflare-dev.workers.dev/old/*",
+    ]);
+    expect(r.syncFailedAt).not.toBeNull();
+    const messages = r.logs.map((l) => l.message);
+    expect(messages).toContainEqual(
+      expect.stringContaining(
+        "The job stops before this version serves, and the app's current public paths stay as they are.",
+      ),
+    );
+    expect(messages).toContainEqual(
+      expect.stringContaining(
+        'Update failed at "take dropped public paths off Cloudflare Access". Version',
+      ),
+    );
+    // Nothing was taken off, so there is nothing to put back.
+    expect(r.step.names).not.toContain("public paths back for the serving version");
+  });
+
+  it("fails the same way before a full deploy of the new version", async () => {
+    const r = await protectedUpdate(["/s/*", "/new/*"], { refuseAccess: true, fullDeploy: true });
+    expect(r.job?.status).toBe("failed");
+    expect(r.job?.error).toMatch(/^take dropped public paths off Cloudflare Access:/);
+    expect(r.step.names).toContain("take dropped public paths off Cloudflare Access");
+    expect(r.step.names).not.toContain("D1 DB: apply migrations");
+    expect(r.step.names).not.toContain("deploy Worker script");
+    expect(r.install?.current_version_id).toBe(OLD_VERSION);
+    expect(r.install?.status).toBe("installed");
+    expect(r.logs.map((l) => l.message)).toContainEqual(
+      expect.stringContaining(
+        'Update failed at "take dropped public paths off Cloudflare Access". Nothing was deployed',
+      ),
+    );
+  });
+
+  it("marks the public paths it took off for the cron when it fails later, before promotion", async () => {
+    const r = await protectedUpdate(["/s/*", "/new/*"], {
+      world: { failOnce: new Map([["POST /workers/scripts/cut/deployments", 400]]) },
+    });
+    expect(r.job?.status).toBe("failed");
+    expect(r.job?.error).toMatch(/^promote version:/);
+    expect(r.install?.current_version_id).toBe(OLD_VERSION);
+    expect(r.install?.status).toBe("installed");
+    expect(r.step.names).toContain("public paths back for the serving version");
+    expect(r.uris()).toEqual(["cut.appflare-dev.workers.dev/s/*"]);
+    expect(r.syncFailedAt).not.toBeNull();
+    // The cron makes the serving version's public paths public again.
+    expect(
+      await resyncInstallAccessIfFailed({ db: env.DB, client: async () => r.access.client }),
+    ).toEqual([{ installId: INSTALL_ID, outcome: "unchanged" }]);
+    expect(r.uris()).toEqual([
+      "cut.appflare-dev.workers.dev/s/*",
+      "cut.appflare-dev.workers.dev/old/*",
+    ]);
+    expect(await r.readSyncFailedAt()).toBeNull();
+  });
+
+  it("leaves the public paths it took off when it fails after promotion", async () => {
+    const r = await protectedUpdate(["/s/*", "/new/*"], {
+      world: { failOnce: new Map([["PUT /workers/scripts/cut/schedules", 400]]) },
+    });
+    expect(r.job?.error).toMatch(/^set cron triggers:/);
+    expect(r.install?.current_version_id).toBe(NEW_VERSION);
+    expect(r.step.names).not.toContain("public paths back for the serving version");
+    expect(r.syncFailedAt).toBeNull();
+    expect(r.uris()).toEqual(["cut.appflare-dev.workers.dev/s/*"]);
+  });
+
+  it("leaves the public paths it took off when a full deploy may have made the new version serve", async () => {
+    const r = await protectedUpdate(["/s/*", "/new/*"], {
+      fullDeploy: true,
+      deployWithoutId: true,
+    });
+    expect(r.job?.error).toMatch(
+      /^deploy Worker script: Cloudflare did not report the id of the deployed version/,
+    );
+    // Deployed all the same: the new version serves, without the paths it drops.
+    expect(r.fake.state.deployments[0]?.versions).toEqual([
+      { version_id: NEW_VERSION, percentage: 100 },
+    ]);
+    expect(r.step.names).not.toContain("public paths back for the serving version");
+    expect(r.syncFailedAt).toBeNull();
+    expect(r.uris()).toEqual(["cut.appflare-dev.workers.dev/s/*"]);
+  });
+
+  it("still succeeds when only bringing Access in step after the update fails", async () => {
+    // Nothing dropped: no step before promotion, and the one after never fails the job.
+    const r = await protectedUpdate(["/s/*", "/old/*", "/new/*"], { refuseAccess: true });
+    expect(r.error).toBeNull();
+    expect(r.job?.status).toBe("succeeded");
+    expect(r.step.names).not.toContain("take dropped public paths off Cloudflare Access");
+    expect(r.step.names).toContain("Cloudflare Access destinations not updated");
+    expect(r.install?.current_version_id).toBe(NEW_VERSION);
+    expect(r.syncFailedAt).not.toBeNull();
   });
 });

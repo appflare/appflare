@@ -8,7 +8,11 @@ import type { DeployCopyCleanup } from "../deploy-button/deploy-copy";
  * app rows take their status dot from it. Rows are ordered by severity:
  *
  * 1. a job of an app that failed, with no job of that app finishing after it;
- * 2. an app that did not answer its last health check;
+ * 2. an app that did not answer its last health check (not when Cloudflare
+ *    Access answered in its place: that says nothing about the app);
+ * 2b. an app whose catalog entry now requires Cloudflare Access protection
+ *    while Appflare does not protect it (a catalog revision said so; Appflare
+ *    never protects an app on its own, and holds its updates meanwhile);
  * 3. an app with an update (one that needs the admin's input says why);
  * 4. something in the account that apps need and that is not ready yet
  *    (admins only; each can be put away with "Not needed", in this browser);
@@ -22,6 +26,7 @@ import type { DeployCopyCleanup } from "../deploy-button/deploy-copy";
 export type AttentionKind =
   | "failed-job"
   | "not-responding"
+  | "access-required"
   | "update"
   | "account"
   | "deploy-copy"
@@ -31,6 +36,7 @@ export type AttentionKind =
 export const SEVERITY_ORDER: readonly AttentionKind[] = [
   "failed-job",
   "not-responding",
+  "access-required",
   "update",
   "account",
   "deploy-copy",
@@ -52,8 +58,18 @@ export interface AttentionApp {
    */
   updateNeeds: string | null;
   healthStatus: HealthStatus | null;
+  /**
+   * Cloudflare Access answered the last check in the app's place: it says
+   * nothing about the app, so the app is not listed as not responding.
+   */
+  healthAccess: boolean;
   /** ISO 8601 */
   healthCheckedAt: string | null;
+  /**
+   * Its catalog entry requires Cloudflare Access protection and Appflare does
+   * not protect it; absent when not known.
+   */
+  accessRequired?: boolean;
 }
 
 /** An app's latest finished job, when it failed. */
@@ -65,6 +81,8 @@ export interface FailedJob {
   restore: boolean;
   /** A deletion of the data an uninstall kept (recorded as an `uninstall` job). */
   deleteRetained: boolean;
+  /** A settings change that turns Cloudflare Access protection on or off. */
+  accessChange?: boolean;
   /** The version an update or install was moving to, when the job recorded one. */
   version: string | null;
   /** ISO 8601 */
@@ -139,6 +157,7 @@ export type AttentionItem =
       health: Exclude<HealthStatus, "verified">;
       checkedAt: string | null;
     } & AppItem)
+  | ({ kind: "access-required"; key: string } & AppItem)
   | ({
       kind: "update";
       key: string;
@@ -182,6 +201,7 @@ export function attentionItems(input: AttentionInput): AttentionItem[] {
     .flatMap((app) => {
       const health = app.healthStatus;
       if (app.status !== "installed" || health === null || health === "verified") return [];
+      if (app.healthAccess) return [];
       return [
         {
           kind: "not-responding" as const,
@@ -193,6 +213,21 @@ export function attentionItems(input: AttentionInput): AttentionItem[] {
         },
       ];
     })
+    .sort(byLabel);
+
+  const accessRequired: AttentionItem[] = input.apps
+    .flatMap((app) =>
+      app.status === "installed" && app.accessRequired === true
+        ? [
+            {
+              kind: "access-required" as const,
+              key: `access:${app.id}`,
+              installId: app.id,
+              label: app.label,
+            },
+          ]
+        : [],
+    )
     .sort(byLabel);
 
   const updates: AttentionItem[] = input.apps
@@ -227,7 +262,7 @@ export function attentionItems(input: AttentionInput): AttentionItem[] {
     notices.push({ kind: "downgrade", key: "downgrade", downgrade: input.downgrade });
   }
 
-  return [...failed, ...notResponding, ...updates, ...account, ...notices];
+  return [...failed, ...notResponding, ...accessRequired, ...updates, ...account, ...notices];
 }
 
 /** What an app's row in the sidebar shows beside its name, most severe first. */

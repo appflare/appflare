@@ -1,4 +1,5 @@
 import {
+  type AccessServiceTokensCapability,
   type AccountCapabilities,
   type AccountSetupCapabilities,
   type AnalyticsEngineCapability,
@@ -66,6 +67,10 @@ export const storedCapabilitiesSchema = z.object({
   analyticsEngine: z
     .union([z.object({ state: z.enum(["enabled", "not-enabled"]) }), unknownSchema])
     .optional(),
+  // Absent in rows written before the Access service token probe existed.
+  accessServiceTokens: z
+    .union([z.object({ state: z.literal("readable") }), unknownSchema])
+    .optional(),
 });
 export type StoredCapabilities = AccountCapabilities &
   Partial<DomainCapabilities> &
@@ -124,6 +129,8 @@ export interface CapabilitiesView {
   zeroTrust: ZeroTrustCapability | null;
   /** Null until the Analytics Engine probe has run once. */
   analyticsEngine: AnalyticsEngineCapability | null;
+  /** Whether the token can read Access service tokens (Read, not Edit); null until probed once. */
+  accessServiceTokens: AccessServiceTokensCapability | null;
   /** The plan in force and where it comes from. */
   plan: ResolvedAccountPlan;
   /** The plan an admin set in Settings, used when none is detected. */
@@ -147,6 +154,7 @@ export function capabilitiesView(
     workersDev: stored?.workersDev ?? null,
     zeroTrust: stored?.zeroTrust ?? null,
     analyticsEngine: stored?.analyticsEngine ?? null,
+    accessServiceTokens: stored?.accessServiceTokens ?? null,
     plan: resolveAccountPlan(manual, stored),
     manualPlan: manual === "free" || manual === "paid" ? manual : null,
     accountId: accountId || null,

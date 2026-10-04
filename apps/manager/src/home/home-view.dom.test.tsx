@@ -52,6 +52,7 @@ function app(over: Partial<HomeApp> & { id: string; name: string }): HomeApp {
     updatedAt: "2026-09-24T12:00:00.000Z",
     uninstalledAt: null,
     healthStatus: "verified",
+    healthAccess: false,
     healthCheckedAt: null,
     updateNeeds: null,
     ...over,
@@ -259,6 +260,16 @@ describe("Home", () => {
       (a) => a.textContent === "Browse the catalog",
     );
     expect(browse?.getAttribute("href")).toBe("/catalog");
+  });
+
+  it("asks to turn on Cloudflare Access for an app whose entry now requires it", () => {
+    const share = app({ id: "s", name: "Share", accessRequired: true });
+    render([share]);
+    expect(section()?.textContent).toContain("Share must run behind Cloudflare Access");
+    expect(buttons(section())).toEqual(["Turn on"]);
+    expect(section()?.querySelector("a[href='/apps/s#access']")?.textContent).toBe("Turn on");
+    render([share], { isAdmin: false });
+    expect(buttons(section())).toEqual(["Manage"]);
   });
 
   it("gives members the list without the admin actions", () => {

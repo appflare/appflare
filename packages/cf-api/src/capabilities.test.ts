@@ -3,6 +3,7 @@ import {
   CONTAINERS_PROBE_NAME,
   createCapabilityClient,
   detectedWorkersPlan,
+  probeAccessServiceTokens,
   probeAccountCapabilities,
   probeAccountSetup,
   probeAnalyticsEngine,
@@ -449,7 +450,7 @@ describe("probeZeroTrust", () => {
 });
 
 describe("probeAccountSetup", () => {
-  it("runs the three probes and never names the token or the account", async () => {
+  it("runs the four probes and never names the token or the account", async () => {
     const { fake, client } = make((req) =>
       req.path.endsWith("/workers/subdomain") ? { result: { subdomain: "acme" } } : AUTH_ERROR,
     );
@@ -466,10 +467,45 @@ describe("probeAccountSetup", () => {
         reason: "no-permission",
         detail: "HTTP 403, Cloudflare code 10000",
       },
+      accessServiceTokens: {
+        state: "unknown",
+        reason: "no-permission",
+        detail: "HTTP 403, Cloudflare code 10000",
+      },
     });
-    expect(fake.calls).toHaveLength(3);
+    expect(fake.calls).toHaveLength(4);
     expect(JSON.stringify(result)).not.toContain(TOKEN);
     expect(JSON.stringify(result)).not.toContain(ACCOUNT);
+  });
+});
+
+describe("probeAccessServiceTokens", () => {
+  it("lists the service tokens and says readable (not more) on an answer", async () => {
+    const { fake, client } = make(() => ({
+      result: [{ id: "t1", name: "x", client_id: "c.access" }],
+      result_info: { page: 1, total_pages: 1 },
+    }));
+    expect(await probeAccessServiceTokens(client)).toEqual({ state: "readable" });
+    const call = fake.last();
+    expect(`${call.method} ${call.url.split("?")[0]}`).toBe(`GET ${A}/access/service_tokens`);
+  });
+
+  it("says no permission on a refusal, and could not tell on anything else", async () => {
+    for (const status of [401, 403]) {
+      const refused = make(() => ({
+        status,
+        errors: [{ code: 10000, message: "Authentication error" }],
+      }));
+      expect(await probeAccessServiceTokens(refused.client)).toMatchObject({
+        state: "unknown",
+        reason: "no-permission",
+      });
+    }
+    const down = make(() => ({ status: 500, errors: [{ code: 1, message: "boom" }] }));
+    expect(await probeAccessServiceTokens(down.client)).toMatchObject({
+      state: "unknown",
+      reason: "error",
+    });
   });
 });
 

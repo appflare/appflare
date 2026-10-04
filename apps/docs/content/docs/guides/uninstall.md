@@ -41,6 +41,12 @@ add it; add it by hand). Without it the bucket is still deleted, but Cloudflare 
 the catalog's records of its tables; the uninstall log warns, and a later install
 that creates a bucket of the same name clears them with the app's own token.
 
+For an [app protected with Cloudflare Access](/guides/protect-apps/), the
+application that keeps its public paths open goes first, before any address is
+released. Its own Access application and service token go once the Worker and its
+addresses are gone, so the app is never reachable without Access while the uninstall
+runs.
+
 For an [app of several Workers](/guides/install-apps/#apps-of-several-workers), the
 uninstall deletes every Worker of the app this way, each with its queue consumers
 detached first, before it deletes any resource.

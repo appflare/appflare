@@ -59,6 +59,11 @@ Access policy, and a user who stops being an admin, or is deleted, is removed fr
 If that update fails, Appflare says so; use **Re-sync admins** under **Cloudflare
 Access**.
 
+[Apps protected with Cloudflare Access](/guides/protect-apps/) let in every user,
+members included, through one Access policy, "Appflare users". Adding or deleting a
+user updates it. If that update fails, Appflare says so and tries again within 30
+minutes.
+
 ## Transfer ownership
 
 Ownership can go only to an admin. Make the person an admin first if they are a member.

@@ -2,6 +2,9 @@ import { NonRetryableError } from "cloudflare:workflows";
 import { CloudflareApiError } from "@appflare/cf-api";
 import {
   type ArtifactManifest,
+  accessBypassPaths,
+  accessNeededOnlyIfProtected,
+  accessOfferOf,
   catalogWorkerName,
   connectionStringProblems,
   hyperdriveDeclarations,
@@ -13,13 +16,19 @@ import {
 } from "@appflare/schema";
 import { and, eq, inArray, isNull, ne, or } from "drizzle-orm";
 import { z } from "zod";
+import { accessPlaceholderValues } from "../access/placeholder-values.server";
 import { parseStoredCapabilities, resolveAccountPlan } from "../capabilities/capabilities";
 import { CatalogTrustError, catalogTrust } from "../catalog/catalogs.server";
 import { cronTriggerCount } from "../catalog/cron-triggers";
-import { requirementLabel, requirementSentence } from "../catalog/requirements";
+import {
+  requirementLabel,
+  requirementSentence,
+  requirementsToConfirm,
+} from "../catalog/requirements";
 import { createDb, type Database } from "../db/client";
 import { installs, jobs, resources } from "../db/schema";
 import { readSettings, SETTING } from "../db/settings";
+import { accessRequiredRefusal } from "../installs/access-offer";
 import { installDomainInput, workerNameSchema } from "../installs/install-input";
 import { varsUseWorkerUrl } from "../installs/install-vars";
 import { workersDevUrl } from "../installs/post-install";
@@ -42,6 +51,12 @@ import {
   workerCountProblem,
 } from "./entry-workers";
 import {
+  coverWorkersPhase,
+  keepWorkersUnreachablePhase,
+  protectBeforeUploadPhase,
+  syncAccessPhase,
+} from "./install/access";
+import {
   type ArtifactOrigin,
   prebuiltBuildParams,
   resolveArtifactPhase,
@@ -61,9 +76,10 @@ import {
 import {
   deployOtherWorkerPhase,
   type EntryUploadContext,
+  otherWorkerRoutePhase,
   planEntryQueueConsumers,
 } from "./install/entry-worker-phases";
-import { healthLabel } from "./install/health";
+import { healthColumns, healthLabel } from "./install/health";
 import { buildScriptMetadata, type CreatedResource, installVars } from "./install/metadata";
 import {
   applyD1BaselinePhase,
@@ -177,6 +193,12 @@ export const installJobParams = z.object({
    * install needs them and they were off at the start; the job waits for it.
    */
   sandboxEnableJob: sandboxEnableJobField,
+  /**
+   * Protect the app with Cloudflare Access from its first request on (see
+   * ./install/access.ts). Optional because a job started by an earlier
+   * manager version does not carry it.
+   */
+  access: z.boolean().optional(),
 });
 export type InstallJobParams = z.infer<typeof installJobParams>;
 
@@ -190,6 +212,12 @@ export async function runInstall(ctx: JobContext): Promise<void> {
   if (!parsed.success) throw new NonRetryableError("invalid install job payload");
   const params = parsed.data;
   if (params.selfDeploying !== undefined) {
+    // Starting such an install refuses Access protection; never deploy one unprotected.
+    if (params.access === true) {
+      throw new NonRetryableError(
+        "an app deployed by its own installer cannot be protected with Cloudflare Access yet",
+      );
+    }
     // The app's own installer deploys it; there is no artifact to install.
     await runSelfDeployingInstall(ctx, { ...params, selfDeploying: params.selfDeploying });
     return;
@@ -218,6 +246,12 @@ export async function runInstall(ctx: JobContext): Promise<void> {
           : null;
   if (origin === null) throw new NonRetryableError("invalid install job payload: no artifact");
 
+  /**
+   * With Cloudflare Access: the app's Workers from their first upload until
+   * Access covers them by their tags. A failure in between takes them off
+   * workers.dev with their previews before the job fails.
+   */
+  let uncovered: string[] = [];
   try {
     await run("start", async ({ log, orm }) => {
       await orm
@@ -293,18 +327,21 @@ export async function runInstall(ctx: JobContext): Promise<void> {
         );
       }
       const { requires } = manifest.catalog;
+      // Cloudflare Access, when the entry needs it only while the app is
+      // protected, is no requirement to confirm: protection is checked itself.
+      const toConfirm = requirementsToConfirm(manifest.catalog);
       if (requires.length > 0) {
-        if (params.requirementsConfirmed === false) {
+        if (toConfirm.length > 0 && params.requirementsConfirmed === false) {
           throw new InstallError(
-            `this app needs ${requires.map(requirementLabel).join(", ")}; confirm the account meets these requirements to install it`,
+            `this app needs ${toConfirm.map(requirementLabel).join(", ")}; confirm the account meets these requirements to install it`,
           );
         }
         for (const requirement of requires) {
           log.info(
-            `Requires ${requirementLabel(requirement)}: ${requirementSentence(requirement, { tier: manifest.catalog.install.tier, provisionsEmailRouting: manifest.catalog.install.emailRouting !== undefined }) ?? "see the app's catalog page."}`,
+            `Requires ${requirementLabel(requirement)}: ${requirementSentence(requirement, { tier: manifest.catalog.install.tier, provisionsEmailRouting: manifest.catalog.install.emailRouting !== undefined, accessIfProtected: accessNeededOnlyIfProtected(manifest.catalog) }) ?? "see the app's catalog page."}`,
           );
         }
-        if (params.requirementsConfirmed === true) {
+        if (toConfirm.length > 0 && params.requirementsConfirmed === true) {
           log.info("The admin confirmed this account meets these requirements.");
         }
       }
@@ -316,6 +353,10 @@ export async function runInstall(ctx: JobContext): Promise<void> {
         ...connectionStringProblems(databases, params.hyperdrive ?? {}),
         // Each Pipelines sink needs the token the admin entered for it.
         ...pipelineTokenProblems(streams, params.secrets),
+        // An app that must be protected is never installed without it.
+        ...(params.access !== true && accessOfferOf(manifest.catalog) === "required"
+          ? [accessRequiredRefusal(manifest.catalog.name)]
+          : []),
       ];
       if (problems.length > 0) throw new InstallError(problems.join(" "));
       // The upload reads and sends every module in one invocation; refuse
@@ -532,6 +573,28 @@ export async function runInstall(ctx: JobContext): Promise<void> {
             workerName: params.workerName,
           });
 
+    // Cloudflare Access, when the admin asked for it: the application comes
+    // before anything of the app exists, covering each Worker's future
+    // workers.dev hostname, so the app is never reachable without it.
+    // Nothing of the app is created when this is refused. An external
+    // domain the form asked for is covered here too (a `public`
+    // destination), before its custom hostname is made.
+    const protect = params.access === true;
+    const accessExternalHosts = params.domain?.kind === "external" ? [params.domain.hostname] : [];
+    // Its audience tag and team domain exist from here on, so the first
+    // upload already carries them (`{{accessAud}}` and the others).
+    const accessValues = protect
+      ? accessPlaceholderValues(
+          await protectBeforeUploadPhase(steps, {
+            installId: params.installId,
+            appName: manifest.catalog.name,
+            workers: workers.map((w) => w.scriptName),
+            pendingExternalHosts: accessExternalHosts,
+            acceptPaths: accessBypassPaths(manifest.catalog),
+          }),
+        )
+      : null;
+
     // 3. Resources: check the name is free, create, then record.
     const created: CreatedResource[] = [];
     for (const res of toCreate) {
@@ -589,12 +652,15 @@ export async function runInstall(ctx: JobContext): Promise<void> {
       subdomain,
       accountId: steps.accountId(),
       wildcardHostname,
+      access: accessValues,
       placeholders,
       entryNames,
     };
     /** Deploys the app's other Workers, each with its secrets, crons, consumers and route. */
     /** The version each other Worker serves once deployed, recorded on the install. */
     const otherVersions: Record<string, string> = {};
+    /** Each other Worker's script tag, for Cloudflare Access; null when its upload did not say. */
+    const otherTags: Record<string, string | null> = {};
     async function deployOthers(list: readonly EntryWorker[]): Promise<void> {
       for (const w of list) {
         const deployed = await deployOtherWorkerPhase(steps, entryContext, w, {
@@ -602,11 +668,15 @@ export async function runInstall(ctx: JobContext): Promise<void> {
           consumers: queuePlan.consumers.get(w.scriptName) ?? [],
           attachConsumers: (s, name, plans) =>
             attachQueueConsumersPhase(s, params.installId, name, plans, created),
+          // With Access, routes wait until Access covers every Worker by its tag.
+          deferRoute: protect,
         });
         if (deployed.versionId !== null) otherVersions[w.scriptName] = deployed.versionId;
+        otherTags[w.scriptName] = deployed.tag;
       }
     }
     // The other Workers the primary one binds to exist before it is uploaded.
+    if (protect) uncovered = workers.map((w) => w.scriptName);
     await deployOthers(others.before);
 
     // 4. Static assets.
@@ -638,6 +708,7 @@ export async function runInstall(ctx: JobContext): Promise<void> {
         subdomain,
         accountId: steps.accountId(),
         wildcardHostname,
+        access: accessValues,
         ...(placeholders === undefined ? {} : { entryWorkers: placeholders }),
       });
       for (const warning of vars.warnings) log.warn(warning);
@@ -668,7 +739,11 @@ export async function runInstall(ctx: JobContext): Promise<void> {
           versionId: result.versionId,
           bindings: (metadata.bindings ?? []).map((b) => `${b.type} ${b.name}`),
         });
-        return { versionId: result.versionId, scriptId: result.scriptId ?? params.workerName };
+        return {
+          versionId: result.versionId,
+          scriptId: result.scriptId ?? params.workerName,
+          tag: result.tag ?? null,
+        };
       } catch (error) {
         // A refused upload (4xx other than 429) created no Worker. Release the
         // pending row so an uninstall never deletes a same-named Worker made
@@ -721,6 +796,30 @@ export async function runInstall(ctx: JobContext): Promise<void> {
     // The other Workers that bind to the primary one, now that it exists.
     await deployOthers(others.after);
 
+    // Every Worker is uploaded: Cloudflare Access covers each by its tag
+    // (previews, custom domains and routes too) before any of them is
+    // turned on anywhere. On failure the Workers are taken off workers.dev
+    // with their previews, and the install fails.
+    if (protect) {
+      await coverWorkersPhase(steps, {
+        installId: params.installId,
+        appName: manifest.catalog.name,
+        workers: workers.map((w) => ({
+          name: w.scriptName,
+          // A step output recorded before tags were read has none: looked up.
+          tag: w.primary ? upload.tag : otherTags[w.scriptName],
+        })),
+        pendingExternalHosts: accessExternalHosts,
+        acceptPaths: accessBypassPaths(manifest.catalog),
+      });
+      uncovered = [];
+      for (const w of [...others.before, ...others.after]) {
+        if (w.workersDev) {
+          await otherWorkerRoutePhase(steps, params.installId, w, subdomain);
+        }
+      }
+    }
+
     // 6. D1 migrations, wrangler-style, once for every Worker of the app,
     // then each database's schema files.
     const d1Databases = d1Targets(manifest, created);
@@ -734,6 +833,7 @@ export async function runInstall(ctx: JobContext): Promise<void> {
           subdomain,
           accountId: steps.accountId(),
           wildcardHostname,
+          access: accessValues,
           ...(placeholders === undefined ? {} : { entryWorkers: placeholders }),
         }).vars,
         secrets: params.secrets,
@@ -746,6 +846,7 @@ export async function runInstall(ctx: JobContext): Promise<void> {
           appUrl: workersDevUrl(params.workerName, subdomain),
           accountId: steps.accountId(),
           wildcardHostname,
+          access: accessValues,
         },
       });
     for (const target of d1Databases) {
@@ -901,8 +1002,7 @@ export async function runInstall(ctx: JobContext): Promise<void> {
             artifact_url: source.zipUrl,
             artifact_digest: source.digest,
             ...source.provenance,
-            health_status: health.status,
-            health_checked_at: new Date(health.checkedAt),
+            ...healthColumns(health, new Date(health.checkedAt)),
             updated_at: at,
           })
           // Only from `installing`: an install whose job was settled from
@@ -918,6 +1018,12 @@ export async function runInstall(ctx: JobContext): Promise<void> {
       );
       return {};
     });
+    // With Access: the application lists exactly the addresses the install
+    // has now (an external domain was covered before it was added), and the
+    // app's public paths (`access.bypass`) are made public on each of them,
+    // which needs the manifest recorded above. Until then those paths ask
+    // for a sign-in like the rest. Never fails the job.
+    if (protect) await syncAccessPhase(steps, params.installId);
     // The settings named the wildcard domain before its step ran; when the
     // step did not set it up, they are deployed again without it. Never throws.
     if (wildcardHostname !== null) {
@@ -933,6 +1039,8 @@ export async function runInstall(ctx: JobContext): Promise<void> {
     }
   } catch (error) {
     const reason = `${steps.current}: ${errorMessage(error)}`;
+    // Fail closed: nothing of an app meant to be behind Access stays reachable.
+    if (uncovered.length > 0) await keepWorkersUnreachablePhase(steps, uncovered);
     await step.do("mark install failed", async () => {
       const orm = createDb(db);
       const at = new Date(now());

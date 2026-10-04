@@ -824,6 +824,34 @@ describe("removeWildcardDomainCore", () => {
     expect((await rows()).every((r) => r.deleted_at === NOW.getTime())).toBe(true);
   });
 
+  it("takes a protected app's public paths off first, and stays when that fails", async () => {
+    const { world, api } = fakeApi();
+    const { resourceId } = await addWildcardDomainCore(deps(api), {
+      installId: INSTALL_ID,
+      zoneId: "z-a",
+      hostname: "tunnels.example.com",
+    });
+    world.calls.length = 0;
+    const changes: unknown[] = [];
+    await expect(
+      removeWildcardDomainCore(
+        {
+          ...deps(api),
+          syncAccess: async (_id, change) => {
+            changes.push(change);
+            return "Another Access change is in progress. Try again in a minute.";
+          },
+        },
+        { installId: INSTALL_ID, resourceId },
+      ),
+    ).rejects.toThrow(
+      "The app's public paths could not be taken off *.tunnels.example.com in Cloudflare Access",
+    );
+    expect(changes).toEqual([{ leavingHosts: ["tunnels.example.com", "*.tunnels.example.com"] }]);
+    expect(world.calls).toEqual([]);
+    expect((await rows()).every((r) => r.deleted_at === null)).toBe(true);
+  });
+
   it("leaves a route an admin made by hand for the Worker", async () => {
     const { world, api } = fakeApi({
       routes: { "z-a": [{ id: "route-admin", pattern: "*.tunnels.example.com/*", script: "cut" }] },

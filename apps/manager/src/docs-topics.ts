@@ -16,6 +16,7 @@ export const DOCS_TOPICS = {
   customDomains: "guides/custom-domains",
   appflareAddressMove: "guides/appflare-address#if-it-takes-long",
   externalDomains: "guides/external-domains#add-a-domain-to-an-app",
+  protectApps: "guides/protect-apps",
   gateway: "guides/external-domains#what-you-need",
   sandboxBuilds: "guides/builds",
   usageData: "telemetry#turning-it-off",

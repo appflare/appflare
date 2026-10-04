@@ -1,0 +1,1 @@
+ALTER TABLE `installs` ADD `health_access` integer;

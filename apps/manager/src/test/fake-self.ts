@@ -71,5 +71,9 @@ export function fakeSelf(
     waitForCustomDomain: (input) => call("waitForCustomDomain", input),
     waitForSandboxContainers: (input) => call("waitForSandboxContainers", input),
     setSandboxBinding: (input) => call("setSandboxBinding", input),
+    protectInstall: (input) => call("protectInstall", input),
+    syncInstallAccess: (input) => call("syncInstallAccess", input),
+    unprotectInstall: (input) => call("unprotectInstall", input),
+    releaseAppAccess: (input) => call("releaseAppAccess", input),
   };
 }

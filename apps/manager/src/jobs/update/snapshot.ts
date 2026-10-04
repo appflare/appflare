@@ -27,6 +27,11 @@ export async function takeSnapshotPhase(
     targetVersion: string;
     /** An app of several Workers: its other Workers, whose serving versions the snapshot keeps too. */
     otherWorkers?: readonly EntryWorker[];
+    /**
+     * The audience tag of the Access protection the serving version was
+     * deployed with (`""` unprotected); null or absent when not known.
+     */
+    accessAud?: string | null;
   },
 ): Promise<{ versionId: string; databases: number; otherVersions: Record<string, string> }> {
   const { run, now } = steps;
@@ -80,6 +85,7 @@ export async function takeSnapshotPhase(
           otherVersions,
           // What the serving version binds, so a rollback can tell it is still there.
           hyperdrive: boundHyperdriveIds(input.resources),
+          accessAud: input.accessAud ?? null,
         }),
       )
       .onConflictDoNothing();

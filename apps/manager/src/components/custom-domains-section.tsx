@@ -17,6 +17,7 @@ import {
   WILDCARD_EXPLAINER,
 } from "../installs/wildcard-domain-input";
 import { addWildcardDomain, removeWildcardDomain } from "../installs/wildcard-domains.functions";
+import { ACCESS_DOMAIN_NOTE } from "../installs/workers-dev";
 import { AppflareLoader } from "./appflare-loader";
 import { BusyButton, BusyMark, busyActionProps } from "./busy-button";
 import { ConfirmDialog } from "./confirm-dialog";
@@ -119,8 +120,8 @@ const AUTO_CHECKS = 18;
  * stays the check of its main address. A domain that has not reached the
  * app yet (just added, its certificate on the way) is checked on its own
  * every {@link AUTO_CHECK_MS} while the page is open; once the app answers,
- * the server records the domain as live and may turn workers.dev off, and
- * the page reloads to show it.
+ * or Cloudflare Access answers on the domain, the server records the domain
+ * as live and may turn workers.dev off, and the page reloads to show it.
  */
 function DomainCheck({
   installId,
@@ -157,7 +158,7 @@ function DomainCheck({
       // The domain just went live (and workers.dev may be off): show the new address.
       if (
         next !== null &&
-        next.status === "verified" &&
+        (next.status === "verified" || next.access === true) &&
         (!domain.live || next.workersDevTurnedOff)
       ) {
         await router.invalidate();
@@ -195,9 +196,11 @@ function DomainCheck({
     <span className="flex flex-wrap items-center gap-2">
       {result !== null && (
         <>
-          <HealthBadge status={result.status} />
+          <HealthBadge status={result.status} access={result.access === true} />
           <Text as="span" variant="secondary" size="sm">
-            {result.detail} at {formatTime(result.checkedAt)}
+            {result.access === true
+              ? `${ACCESS_DOMAIN_NOTE} Checked at ${formatTime(result.checkedAt)}.`
+              : `${result.detail} at ${formatTime(result.checkedAt)}`}
           </Text>
         </>
       )}

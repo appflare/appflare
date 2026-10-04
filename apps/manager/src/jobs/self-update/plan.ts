@@ -17,6 +17,7 @@ import {
   HEALTH_MAX_ATTEMPTS,
   type HealthProbe,
   type HealthVerdict,
+  isAccessChallenge,
   isEdge1042,
 } from "../install/health";
 import { JOB_UNITS_ENTRYPOINT, SELF_BINDING } from "../units/units";
@@ -379,6 +380,8 @@ export function selfUpdateBindings(input: {
  * 404 while the route propagates) and on a 5xx for a short grace period (the
  * first request of the new version migrates the database). Healthy only when
  * the body is Appflare's health report naming the new version with `db: "ok"`.
+ * Cloudflare Access's sign-in redirect fails it at once, saying so: Appflare
+ * does not switch itself to a version it could not check.
  */
 export function classifyManagerCanary(
   probe: HealthProbe,
@@ -388,6 +391,13 @@ export function classifyManagerCanary(
   maxAttempts: number = HEALTH_MAX_ATTEMPTS,
 ): HealthVerdict {
   const last = attempt >= maxAttempts;
+  if (isAccessChallenge(probe)) {
+    return {
+      verdict: "unhealthy",
+      reason:
+        "Cloudflare Access answered the preview with its sign-in page instead of Appflare. In Zero Trust, let Appflare's preview URLs answer /api/health without a sign-in (a Bypass policy for that path), then try again",
+    };
+  }
   if (probe.kind === "error" || isEdge1042(probe) || probe.status >= 500) {
     const verdict = classifyHealthProbe(probe, attempt, elapsedMs, maxAttempts);
     return verdict.verdict === "healthy"

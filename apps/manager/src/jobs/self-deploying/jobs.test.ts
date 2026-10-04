@@ -278,6 +278,14 @@ beforeEach(async () => {
 });
 
 describe("starting a self-deploying install", () => {
+  it("refuses Cloudflare Access protection, before anything is recorded", async () => {
+    const s = setup();
+    await expect(startInstall(s, { access: true })).rejects.toThrow(
+      /cannot protect it with Cloudflare Access yet/,
+    );
+    expect((await env.DB.prepare("SELECT id FROM installs").all()).results).toEqual([]);
+  });
+
   it("claims the installer's main Worker and keeps the app token out of D1", async () => {
     const s = setup();
     const r = await startInstall(s);

@@ -1,4 +1,6 @@
 import { env, waitUntil } from "cloudflare:workers";
+import { protectedInstallIds } from "../access/install-access.server";
+import { requiredButUnprotected } from "../access/stored-access.server";
 import type { AuthSession } from "../auth/guards";
 import { hasRole } from "../auth/roles";
 import { type InstallOfApp, installedNeeds } from "../capabilities/capability-rows";
@@ -29,9 +31,14 @@ import type { Downgrade } from "./attention";
 import { readFailedJobs, readUpdateNeeds } from "./attention.server";
 import type { LayoutData } from "./layout-data";
 
-/** What the account's rows read of a stored install. */
-function installOfApp(row: InstallRecord): InstallOfApp {
-  return { appSlug: row.app_slug, catalogId: row.catalog_id, origin: row.origin };
+/** What the account's rows read of a stored install; `protectedIds` are those Appflare protects. */
+function installOfApp(row: InstallRecord, protectedIds: ReadonlySet<string>): InstallOfApp {
+  return {
+    appSlug: row.app_slug,
+    catalogId: row.catalog_id,
+    origin: row.origin,
+    accessProtected: protectedIds.has(row.id),
+  };
 }
 
 /**
@@ -52,6 +59,10 @@ export async function readLayoutData(session: AuthSession): Promise<LayoutData> 
   const recordsRead = listCatalogRecords(db);
   const rowsRead = readInstallRecords(db);
   const readsRead = readEnabledCatalogs(env, { refreshOnMiss: false }, recordsRead);
+  // Admins: the installs Appflare protects, which need Zero Trust whatever their entry says.
+  const protectedRead = isAdmin ? protectedInstallIds(env.DB) : Promise.resolve(new Set<string>());
+  // Installs whose entry now requires protection while they are not protected (one query).
+  const requiredRead = requiredButUnprotected(env.DB);
   const [
     records,
     rows,
@@ -74,7 +85,9 @@ export async function readLayoutData(session: AuthSession): Promise<LayoutData> 
     isAdmin
       ? readCapabilityRowsData(env, db, {
           reads: readsRead,
-          installs: rowsRead.then((r) => r.map(installOfApp)),
+          installs: Promise.all([rowsRead, protectedRead]).then(([r, ids]) =>
+            r.map((row) => installOfApp(row, ids)),
+          ),
         })
       : null,
     readFailedJobs(env.DB),
@@ -93,6 +106,7 @@ export async function readLayoutData(session: AuthSession): Promise<LayoutData> 
   const installs = installRowsOf(rows, listed, records, addresses);
   // Admins: the failed and rolled-back updates (2 queries), only while an update exists.
   const needs = isAdmin ? await readUpdateNeeds(env.DB, rows, listed) : new Map<string, string>();
+  const [protectedIds, accessRequired] = await Promise.all([protectedRead, requiredRead]);
   const manager = managerUpdateView(env.APPFLARE_VERSION, latest);
   const downgraded = schemaDowngrade(migrated.schemaVersion);
   const downgrade: Downgrade | null =
@@ -107,7 +121,11 @@ export async function readLayoutData(session: AuthSession): Promise<LayoutData> 
       activeJobId,
     },
     removedApps,
-    apps: installs.map((row) => ({ ...row, updateNeeds: needs.get(row.id) ?? null })),
+    apps: installs.map((row) => ({
+      ...row,
+      updateNeeds: needs.get(row.id) ?? null,
+      accessRequired: accessRequired.has(row.id),
+    })),
     failedJobs,
     accountRows:
       capabilities === null
@@ -118,7 +136,7 @@ export async function readLayoutData(session: AuthSession): Promise<LayoutData> 
             rows.map((row) => ({
               id: row.id,
               needs: installedNeeds(
-                [installOfApp(row)],
+                [installOfApp(row, protectedIds)],
                 (it) => listed.get(appKey(it.catalogId, it.appSlug))?.app,
               ),
             })),

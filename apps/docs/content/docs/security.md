@@ -197,6 +197,10 @@ What turning it on does:
 Turning it off deletes both applications and stops the checks. The manager's own
 sign-in keeps protecting it either way.
 
+This protects the manager. Installed apps can be protected too, each on its own,
+letting in every Appflare user rather than only admins: see
+[Protect apps with Cloudflare Access](/guides/protect-apps/).
+
 Access protects one hostname. When an admin
 [moves Appflare to a domain](/guides/appflare-address/), changes it, or goes back to
 `workers.dev`, Access moves with the address: both applications then protect the

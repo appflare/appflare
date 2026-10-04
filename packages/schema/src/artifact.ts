@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { ACCESS_REQUIREMENT, usesAccessPlaceholders } from "./access";
 import { assetsOnlyWorkerProblems } from "./assets-only";
 import {
   type CatalogManifest,
@@ -820,6 +821,27 @@ export const artifactManifestSchema = z
     catalog: catalogManifestSchema,
   })
   .superRefine((manifest, ctx) => {
+    // A wrangler config var filled in with an Access placeholder needs the
+    // `"access"` requirement, as a catalog default does (./access.ts).
+    if (!manifest.catalog.requires.includes(ACCESS_REQUIREMENT)) {
+      for (const worker of [manifest.worker, ...(manifest.workers ?? []).map((w) => w.worker)]) {
+        for (const binding of worker.bindings) {
+          const text =
+            binding.type === "plain_text" && typeof binding.text === "string"
+              ? binding.text
+              : binding.type === "json"
+                ? JSON.stringify(binding.json ?? null)
+                : "";
+          if (usesAccessPlaceholders(text)) {
+            ctx.addIssue({
+              code: "custom",
+              path: ["catalog", "requires"],
+              message: `the wrangler config's var ${binding.name} uses an Access placeholder, so the catalog manifest's requires must list "access"`,
+            });
+          }
+        }
+      }
+    }
     for (const message of artifactD1Problems(manifest)) {
       ctx.addIssue({ code: "custom", path: ["d1"], message });
     }

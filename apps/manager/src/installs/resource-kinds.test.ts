@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { RESOURCE_KIND_LABELS, resourceKindLabel } from "../components/format";
 import { RESOURCE_KINDS } from "../db/schema";
 import {
+  ACCESS_KINDS,
   ADDRESS_KINDS,
   CUSTOM_DOMAIN_KIND,
   CUSTOM_HOSTNAME_KIND,
@@ -44,6 +45,7 @@ describe("resource kinds", () => {
         (HYPERDRIVE_KINDS as readonly string[]).includes(kind),
         (PIPELINE_KINDS as readonly string[]).includes(kind),
         kind === R2_CATALOG_KIND,
+        (ACCESS_KINDS as readonly string[]).includes(kind),
       ].filter(Boolean);
       expect(treatments, kind).toHaveLength(1);
     }
@@ -91,6 +93,17 @@ describe("resource kinds", () => {
     // The pipeline reads the stream and writes the sink, so it goes first.
     expect(PIPELINE_KINDS).toEqual(["pipeline", "pipeline_sink", PIPELINE_STREAM_KIND]);
     expect(resourceKindLabel(R2_CATALOG_KIND)).toBe("R2 Data Catalog");
+  });
+
+  it("records an app's Access application and token as their own kinds, never data to keep", () => {
+    for (const kind of ACCESS_KINDS) {
+      expect(RESOURCE_KINDS).toContain(kind);
+      expect(isDataResourceKind(kind)).toBe(false);
+    }
+    expect(ACCESS_KINDS.map(resourceKindLabel)).toEqual([
+      "Access application",
+      "Access service token",
+    ]);
   });
 
   it("records email routes as their own kind, never data to keep", () => {

@@ -14,6 +14,10 @@ vi.mock("./use-account-id", () => ({ useAccountId: () => "0123456789abcdef012345
 vi.mock("../installs/installs.functions", () => ({ startInstall: vi.fn() }));
 vi.mock("../installs/source-builds.functions", () => ({ installSourceBuild: vi.fn() }));
 vi.mock("../installs/worker-names.functions", () => ({ listTakenWorkerNames: vi.fn() }));
+vi.mock("../installs/access-change.functions", () => ({
+  checkAppAccess: vi.fn(),
+  startAccessChange: vi.fn(),
+}));
 // The address and email pickers load their choices from the account; only
 // where the address choice sits matters here, so it is a marker.
 vi.mock("./install-domain-fields", () => ({

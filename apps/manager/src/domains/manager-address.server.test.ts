@@ -3,6 +3,7 @@ import { env } from "cloudflare:workers";
 import { ulid } from "ulidx";
 import { beforeEach, describe, expect, it } from "vitest";
 import { SETTING } from "../db/settings";
+import { accessLoginUrl } from "../test/access-sign-in";
 import {
   accessOn,
   addPasskey,
@@ -23,6 +24,7 @@ import {
   changeManagerAddress,
   completeAddressMove,
   listAddressOptions,
+  managerVerdict,
   moveManagerAddress,
   readManagerAddress,
   readPasskeyHosts,
@@ -599,6 +601,31 @@ describe("listAddressOptions", () => {
       { id: "z-b", name: "beta.dev", suggestedHostname: "appflare.beta.dev" },
       { id: "z-a", name: "example.com", suggestedHostname: "appflare.example.com" },
     ]);
+  });
+});
+
+describe("managerVerdict", () => {
+  const version = "0.2.0";
+  it("accepts only this manager's health report, and says what answered instead", () => {
+    const answer = (status: number, body: string) => ({
+      kind: "response" as const,
+      status,
+      bodyStart: body,
+      body,
+    });
+    expect(managerVerdict(answer(200, '{"version":"0.2.0","db":"ok"}'), version)).toBeNull();
+    expect(managerVerdict(answer(200, '{"version":"0.1.0"}'), version)).toBe(
+      "Appflare 0.1.0, not 0.2.0",
+    );
+    expect(managerVerdict(answer(526, "error code: 526"), version)).toBe(
+      "HTTP 526, error code 526",
+    );
+    expect(
+      managerVerdict(
+        { ...answer(302, ""), location: accessLoginUrl("apps.example.com", "/api/health") },
+        version,
+      ),
+    ).toBe("Cloudflare Access asked for a sign-in");
   });
 });
 

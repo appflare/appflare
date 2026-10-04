@@ -4,7 +4,7 @@ import { installs, type JobStarter, jobs } from "../db/schema";
 import { namedInstall, readInstallLabels } from "../installs/install-names.server";
 import { isDeleteRetainedJob } from "../installs/removed-apps.server";
 import { JOB_LIST_LIMIT } from "./job-list";
-import { isRestoreJob } from "./reconcile.server";
+import { isAccessChangeJob, isRestoreJob } from "./reconcile.server";
 
 /** One row of `/jobs`: a job, newest first, with the install it belongs to. */
 export interface JobListRow {
@@ -14,6 +14,8 @@ export interface JobListRow {
   restore: boolean;
   /** A deletion of the data an uninstall kept (recorded as an `uninstall` job). */
   deleteRetained: boolean;
+  /** A settings change that turns Cloudflare Access protection on or off. */
+  accessChange?: boolean;
   status: string;
   startedBy: JobStarter;
   /** ISO 8601 */
@@ -72,6 +74,7 @@ export async function listRecentJobs(
     id: row.id,
     kind: row.kind,
     restore: isRestoreJob({ kind: row.kind, input_json: row.inputJson }),
+    accessChange: isAccessChangeJob({ kind: row.kind, input_json: row.inputJson }),
     deleteRetained: isDeleteRetainedJob({ kind: row.kind, input_json: row.inputJson }),
     status: row.status,
     startedBy: row.startedBy,

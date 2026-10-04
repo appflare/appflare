@@ -64,6 +64,8 @@ export const RESOURCE_KIND_LABELS: Record<string, string> = {
   dns_record: "DNS record",
   worker_route: "Workers route",
   email_route: "Email route",
+  access_service_token: "Access service token",
+  access_app: "Access application",
 };
 
 export function resourceKindLabel(kind: string): string {
@@ -94,8 +96,11 @@ export function jobKindLabel(job: {
   kind: string;
   restore?: boolean;
   deleteRetained?: boolean;
+  /** A settings change that turns Cloudflare Access protection on or off. */
+  accessChange?: boolean;
 }): string {
   if (job.restore === true) return "Database restore";
+  if (job.accessChange === true) return "Cloudflare Access change";
   if (job.deleteRetained === true) return "Delete retained data";
   return JOB_KIND_LABELS[job.kind] ?? job.kind;
 }

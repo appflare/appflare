@@ -110,6 +110,11 @@ export const startInstallInput = z.object({
     .optional(),
   /** A custom or external domain the install job adds once the Worker serves. */
   domain: installDomainInput.optional(),
+  /**
+   * Protect the app with Cloudflare Access from its first request on: only
+   * Appflare's users get in. Refused for an app deployed by its own installer.
+   */
+  access: z.boolean().optional(),
 });
 export type StartInstallInput = z.infer<typeof startInstallInput>;
 

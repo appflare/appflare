@@ -8,6 +8,7 @@ import { removalInProgress } from "../danger/removal-flag";
 import { createDb } from "../db/client";
 import { installs, type JobStarter } from "../db/schema";
 import {
+  AccessRequiredUpdateError,
   type StartUpdateResult,
   startUpdateCore,
   type UpdateNeeds,
@@ -386,6 +387,13 @@ export async function runScheduledUpdates(
       }
     } catch (error) {
       if (!(error instanceof VersionActionError)) throw error;
+      // Protection must be turned on first: an admin's step, as a value or a confirmation is.
+      if (error instanceof AccessRequiredUpdateError) {
+        await orm
+          .update(installs)
+          .set({ auto_update_waiting: decision.version })
+          .where(eq(installs.id, decision.installId));
+      }
       outcome.apps.push({
         installId: decision.installId,
         slug,

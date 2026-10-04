@@ -2,6 +2,7 @@ import {
   AccessCertsError,
   type AccessIdentityProvider,
   type AccessPolicyArgs,
+  accessAppCoverage,
   CloudflareApiError,
   type CloudflareClient,
   type FetchLike,
@@ -9,11 +10,6 @@ import {
   isAccessTeamDomain,
 } from "@appflare/cf-api";
 import { hasRole } from "../auth/roles";
-import {
-  ACCESS_FEATURE,
-  permissionName,
-  splitPermissionGroups,
-} from "../cloudflare/token-template";
 import { createDb } from "../db/client";
 import { user } from "../db/schema";
 import { releaseSettingsLock, tryAcquireSettingsLock } from "../db/settings-lock";
@@ -23,6 +19,7 @@ import {
   readAccessConfig,
   writeAccessConfig,
 } from "./config";
+import { ACCESS_MESSAGES } from "./messages";
 import { accessAppName } from "./recovery";
 
 /**
@@ -84,32 +81,7 @@ export class AccessToggleError extends Error {
   override name = "AccessToggleError";
 }
 
-const [APPS_GROUP, ORG_GROUP] = splitPermissionGroups().optional.filter(
-  (g) => g.onlyFor === ACCESS_FEATURE,
-);
-const APPS_PERMISSION = APPS_GROUP ? permissionName(APPS_GROUP) : "Access: Apps and Policies: Edit";
-const ORG_PERMISSION = ORG_GROUP
-  ? permissionName(ORG_GROUP)
-  : "Access: Organizations, Identity Providers, and Groups: Read";
-
-export const ACCESS_MESSAGES = {
-  appsPermission: `The Cloudflare token cannot manage Access applications. Add the ${APPS_PERMISSION} permission to the token, then rotate it under Cloudflare token.`,
-  organizationPermission: `The Cloudflare token cannot read the account's Zero Trust organization. Add the ${ORG_PERMISSION} permission to the token, then rotate it under Cloudflare token.`,
-  noOrganization:
-    "This Cloudflare account has no Zero Trust organization yet. Create one in the Cloudflare dashboard (Zero Trust; the Free plan covers up to 50 users), then try again.",
-  appExists: (name: string) =>
-    `An Access application for this hostname already exists ("${name}"). Delete it in the Zero Trust dashboard, or keep using it and leave this setting off.`,
-  unsupportedHost: (hostname: string) =>
-    `Cloudflare Access cannot protect "${hostname}". Open the manager at its workers.dev address or custom domain and try again.`,
-  alreadyOn: "Cloudflare Access protection is already on.",
-  busy: "Another Access change is in progress. Try again in a minute.",
-  keysUnreachable:
-    "The Access application was created, but the team's signing keys could not be fetched, so protection was not turned on and the application was removed. Try again in a minute.",
-  policyMissing:
-    "The Access policy for the manager no longer exists. Turn protection off and on again to recreate it.",
-  appMissing:
-    "The Cloudflare Access application for the manager no longer exists. Turn protection off and on again to recreate it.",
-} as const;
+export { ACCESS_MESSAGES };
 
 const LOCK_KEY = "access_lock";
 const LOCK_TTL_MS = 60_000;
@@ -191,7 +163,15 @@ export function loginMethodName(idp: AccessIdentityProvider): string {
   if (idp.type === "cloudflare" && idp.config?.restrict_to_account_members === true) {
     return `${base} (members of this Cloudflare account only)`;
   }
-  return idp.name && idp.name !== base ? `${base}: ${idp.name}` : base;
+  // The provider's own name only when it adds something: "One-time PIN" says
+  // nothing more than the type, "GitHub (work)" names the type itself.
+  const name = idp.name?.trim();
+  if (!name) return base;
+  const b = base.toLowerCase();
+  const n = name.toLowerCase();
+  if (b.includes(n)) return base;
+  if (n.includes(b)) return name;
+  return `${base}: ${name}`;
 }
 
 /**
@@ -229,7 +209,9 @@ export async function checkAccessPrerequisites(deps: AccessToggleDeps): Promise<
     );
   }
 
-  const existing = apps.find((app) => (app.domain ?? "").toLowerCase() === hostname);
+  // An application may protect the hostname through `domain` or through one
+  // of several destinations (then `domain` is null), so read them all.
+  const existing = apps.find((app) => accessAppCoverage(app).uris.includes(hostname));
   if (existing !== undefined) {
     return problem("app-exists", ACCESS_MESSAGES.appExists(existing.name ?? existing.id));
   }
@@ -417,12 +399,14 @@ export async function checkAccessMove(
   }
   const ours = new Set([config.appId, config.healthAppId]);
   const target = hostname.toLowerCase();
-  const taken = apps.find(
-    (app) =>
-      !ours.has(app.id) &&
-      ((app.domain ?? "").toLowerCase() === target ||
-        (app.domain ?? "").toLowerCase() === `${target}/api/health`),
-  );
+  const takenUris = [target, `${target}/api/health`];
+  const taken = apps.find((app) => {
+    if (ours.has(app.id)) return false;
+    // Paths compared in lower case, as before: a false conflict is cheaper
+    // than a missed one.
+    const uris = accessAppCoverage(app).uris.map((uri) => uri.toLowerCase());
+    return takenUris.some((uri) => uris.includes(uri));
+  });
   if (taken !== undefined) {
     throw new AccessToggleError(ACCESS_MESSAGES.appExists(taken.name ?? taken.id));
   }

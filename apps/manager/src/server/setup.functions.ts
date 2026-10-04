@@ -14,6 +14,7 @@ import { logCfRequest } from "../cloudflare/client.server";
 import { createDb } from "../db/client";
 import { selfUnits } from "../jobs/units/client";
 import { recordSetupFinished } from "../telemetry/state.server";
+import { syncAppAccessAfterUserChange } from "./access.server";
 import { authSecretBound, currentAuth } from "./auth.server";
 import { cfTokenInput, ownerInput } from "./schemas";
 import {
@@ -174,6 +175,9 @@ export const createOwner = createServerFn({ method: "POST" })
       throw new Error(authErrorMessage(error, "Could not create the owner account."));
     }
     deleteCookie(SETUP_CLAIM_COOKIE, { path: "/" });
+    // Like every other new user. Nothing can be protected before the owner
+    // exists, so this reads one settings row and is "off"; it never throws.
+    await syncAppAccessAfterUserChange();
     await recordSetupForUsageData();
     return { ok: true as const };
   });

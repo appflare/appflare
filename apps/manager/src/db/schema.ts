@@ -27,8 +27,9 @@ export const INSTALL_STATUSES = [
 
 /**
  * The last health check of an install's Worker URL: `verified` (it answered,
- * anything but a 5xx), `unverified` (no answer, or the edge's route-not-live
- * page), `unhealthy` (it answered with a 5xx).
+ * anything but a 5xx), `unverified` (no answer, the edge's route-not-live
+ * page, or Cloudflare Access's sign-in redirect), `unhealthy` (it answered
+ * with a 5xx).
  */
 export const HEALTH_STATUSES = ["verified", "unverified", "unhealthy"] as const;
 export type HealthStatus = (typeof HEALTH_STATUSES)[number];
@@ -59,6 +60,8 @@ export const RESOURCE_KINDS = [
   "dns_record",
   "worker_route",
   "email_route",
+  "access_service_token",
+  "access_app",
 ] as const;
 
 /**
@@ -196,6 +199,14 @@ export const installs = sqliteTable("installs", {
   source_ref: text("source_ref"),
   /** The last health check's result; null until one ran. Never fails a job. */
   health_status: text("health_status", { enum: HEALTH_STATUSES }),
+  /**
+   * Whether Cloudflare Access answered the last health check in the app's
+   * place (recorded with `health_status` `unverified`), so the check never
+   * reached the app. False when a check reached it; null until a check wrote
+   * it. Read it only together with `unverified`: a manager from before this
+   * column rewrites `health_status` and leaves it as it was.
+   */
+  health_access: integer("health_access", { mode: "boolean" }),
   /** When the last health check probed the Worker. */
   health_checked_at: timestamp("health_checked_at"),
   /** Whether the cron may update this install on its own (see `AUTO_UPDATE_CHOICES`). */
@@ -417,6 +428,13 @@ export const snapshots = sqliteTable(
      */
     worker_versions_json: text("worker_versions_json"),
     /**
+     * The audience tag of the Cloudflare Access protection the snapshot's
+     * version was deployed with (what `{{accessAud}}` became), `""` when the
+     * install was not protected; null for snapshots taken before it was
+     * recorded. A rollback compares it with the protection the app has now.
+     */
+    access_aud: text("access_aud"),
+    /**
      * The Hyperdrive configurations the snapshot's version binds, as
      * `{ [binding]: configuration id }` (`{}` when none); null for snapshots
      * taken before it was recorded. A rollback needs every one of them live.
@@ -561,4 +579,75 @@ export const passkey_host = sqliteTable("passkey_host", {
     .references(() => passkey.id, { onDelete: "cascade" }),
   hostname: text("hostname").notNull(),
   recorded_at: timestamp("recorded_at").notNull(),
+});
+
+/**
+ * Cloudflare Access protection of one install (access/install-access.server.ts):
+ * the service token only the manager's health checks of this install sign
+ * in with, and, once the install is protected, its Access application and
+ * the `non_identity` policy on it that names the token, with its audience
+ * tag, the team domain and the destinations last written to it. One token per
+ * install, so a token only ever opens the app it was made for: an app that
+ * is not behind Access receives the token's headers as they were sent.
+ * `token_secret` is the client secret sealed with a key derived from
+ * `BETTER_AUTH_SECRET` and bound to the install and token ids; it is never
+ * stored in plain text. The token is also a `resources` row
+ * (`access_service_token`), and so is the application (`access_app`), so
+ * everything made for the install stays findable from it.
+ */
+export const install_access = sqliteTable("install_access", {
+  install_id: text("install_id")
+    .primaryKey()
+    .references(() => installs.id),
+  /** The Access application protecting the install; null until it exists. Set means protected. */
+  access_app_id: text("access_app_id"),
+  /** The application's own `non_identity` policy naming the token; null until it exists. */
+  probes_policy_id: text("probes_policy_id"),
+  token_id: text("token_id").notNull(),
+  token_client_id: text("token_client_id").notNull(),
+  token_secret: text("token_secret").notNull(),
+  /** When Cloudflare said the token expires; null when it did not say. */
+  token_expires_at: timestamp("token_expires_at"),
+  /** The application's audience tag (the `aud` of its JWTs); null until it exists. */
+  access_aud: text("access_aud"),
+  /** The Zero Trust team domain (`<team>.cloudflareaccess.com`) its JWTs come from. */
+  access_team_domain: text("access_team_domain"),
+  /**
+   * What the application covers, as last written: `{ destinations, workerTags }`
+   * (access/protect.server.ts), so a change of the install's addresses is
+   * written only when it changes something.
+   */
+  access_destinations_json: text("access_destinations_json"),
+  /**
+   * When bringing the install's Access applications in step with its
+   * addresses or public paths last failed outside a job, or when a catalog
+   * revision of its release changed its public paths; null when the last
+   * sync succeeded. The cron tries again while it is set.
+   */
+  access_sync_failed_at: timestamp("access_sync_failed_at"),
+  /**
+   * The "Appflare users" policy the application references, as last
+   * protected. When "Appflare users" is made again (it was deleted in the
+   * dashboard), the setting names the new one and this the old one, so the
+   * app must be protected again to let people in. Null while not protected.
+   */
+  users_policy_id: text("users_policy_id"),
+  /**
+   * When the cron found the install's Access application, or the one that
+   * keeps its public paths open, gone from the account (deleted in the
+   * dashboard): the addresses no longer ask for a sign-in until the app is
+   * protected again. Null while both exist.
+   */
+  access_app_missing_at: timestamp("access_app_missing_at"),
+  /**
+   * JSON array: the public paths an admin accepted for the app, set by every
+   * action of theirs that carries the entry's paths (installing or
+   * protecting it, protecting it again, an update, a rollback, "Make public").
+   * Only paths both the entry lists and this holds are made public, so a
+   * catalog revision can take a path off on its own but never add one
+   * (access/bypass.server.ts). Null reads as none.
+   */
+  accepted_bypass_json: text("accepted_bypass_json"),
+  created_at: timestamp("created_at").notNull(),
+  updated_at: timestamp("updated_at").notNull(),
 });

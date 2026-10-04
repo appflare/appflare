@@ -30,6 +30,15 @@ import { createJobUnits, type JobUnitsApi } from "./units";
  *   - for an install that asked for a domain: the attach and the wait for
  *     it (1 each as unit calls), and turning workers.dev off once the app
  *     answers through it (1);
+ *   - for an install protected with Cloudflare Access: the application
+ *     before the first upload and its switch to the app's Workers after the
+ *     last (1 each as unit calls; about 7 requests each in the unit's own
+ *     invocation); and the first probe of a health check that gets Access's
+ *     sign-in is sent once more with the app's service token (2 for that
+ *     attempt), while later attempts of the same check, once the token was
+ *     let through, send it straight away (1 each). The token is looked up
+ *     once per check, from D1, plus the account's zone list for a custom
+ *     domain;
  *   - for a build or installer run in the sandbox Worker (paid tiers): the
  *     wait for the sandbox Worker to settle, 1 per attempt of the unit
  *     `settleSandbox` (at most 2), which reads the deployment and asks the
@@ -97,6 +106,9 @@ export interface UnitsEnv {
   CF_API_TOKEN?: string;
   CF_API_BASE_URL?: string;
   GITHUB_TOKEN?: string;
+  /** The manager's D1 and auth secret, for units run in place that read them (Access). */
+  DB?: D1Database;
+  BETTER_AUTH_SECRET?: string;
 }
 
 export function jobUnits(

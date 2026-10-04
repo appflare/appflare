@@ -142,8 +142,8 @@ domain for these apps.
 
 Appflare turns the app's `workers.dev` URL off by itself the first time a custom
 domain, a wildcard domain or an [external domain](/guides/external-domains/) answers
-as the app: in the install's domain step, or when **Check now** next to the domain
-gets an answer from the app. The app's **Domains and email** tab then shows
+as the app, or Cloudflare Access answers on it (see below): in the install's domain
+step, or when **Check now** next to the domain gets such an answer. The app's **Domains and email** tab then shows
 "workers.dev turned off because a domain is live".
 
 It stays on, and the tab says why, when:
@@ -161,6 +161,14 @@ off, Appflare sends one request to each of the app's domains and turns the
 `workers.dev` URL off only when one of them answers as the app. Updates keep the
 setting, and their checks still work because Cloudflare keeps the Worker's preview
 URLs.
+
+A domain protected by a Cloudflare Access application counts as live when Access
+answers on it with its sign-in page: Cloudflare serves the name, and the name leads
+only to this app. Appflare then turns the `workers.dev` URL off as for any live
+domain, so the app is not left reachable there without Access, and **Check now**
+says the domain is live behind Cloudflare Access. Appflare can't check the app itself
+through it; see
+[Apps behind Cloudflare Access](/guides/health/#apps-behind-cloudflare-access).
 
 While it is off, health checks, **Open app** and the `{{appUrl}}` value an app's
 settings may use all point at the domain that answered (or, once that domain is

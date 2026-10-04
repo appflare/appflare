@@ -1,7 +1,9 @@
 import { NonRetryableError } from "cloudflare:workflows";
 import type { VersionMetadata } from "@appflare/cf-api";
 import {
+  type AccessPlaceholderValues,
   type ArtifactManifest,
+  accessOfferOf,
   artifactManifestSchema,
   connectionStringProblems,
   hyperdriveDeclarations,
@@ -10,11 +12,16 @@ import {
 } from "@appflare/schema";
 import { and, eq, inArray, isNotNull, isNull, sql } from "drizzle-orm";
 import { z } from "zod";
+import {
+  accessPlaceholderValues,
+  readAccessPlaceholderValues,
+} from "../access/placeholder-values.server";
 import { effectiveManifest } from "../catalog/revisions.server";
 import { appPlace } from "../components/app-links";
 import { createDb, type Database } from "../db/client";
 import { installs, jobs, resources } from "../db/schema";
 import { readSettings, SETTING } from "../db/settings";
+import { accessRequiredOffRefusal } from "../installs/access-offer";
 import { VARS_REFRESH_REASONS, varsNeedRefresh } from "../installs/install-vars";
 import { EMAIL_ROUTE_KIND, HYPERDRIVE_KIND } from "../installs/resource-kinds";
 import { wildcardHostnameOf } from "../installs/wildcard-domain-input";
@@ -29,6 +36,7 @@ import {
   mergedWorkerVersions,
   workerLabel,
 } from "./entry-workers";
+import { protectInstalledPhase, unprotectPhase } from "./install/access";
 import { sha256Hex } from "./install/artifact";
 import {
   checkEmailRoutingPhase,
@@ -45,7 +53,7 @@ import {
   reconfigureOtherWorkerPhase,
   secretChangesFor,
 } from "./install/entry-worker-phases";
-import { healthLabel } from "./install/health";
+import { healthColumns, healthLabel } from "./install/health";
 import { buildScriptMetadata, installVars } from "./install/metadata";
 import {
   checkLiveHealthPhase,
@@ -127,6 +135,14 @@ import { takeSnapshotPhase } from "./update/snapshot";
  * change superseded are deleted once the new version serves, since this
  * change's snapshot is then the latest (./reconfigure/hyperdrive.ts).
  *
+ * Turning Cloudflare Access protection on or off (`access`) runs here too,
+ * since the app's settings may be filled in with it (`{{accessAud}}` and
+ * the other two): on, the app is protected before step 2, so the version
+ * deployed carries the new values; off, the protection is removed after
+ * step 6, once the serving version carries them empty. Steps 2 to 6 then
+ * run only when a setting uses them (`refreshVars: ["access"]`), and the
+ * live health check always follows.
+ *
  * Steps 2 to 6 run only when settings, secrets or connections change: Email Routing rules
  * name the Worker, not a version, so moving email alone deploys nothing. A
  * move whose removal of the old routes failed is finished by asking for the
@@ -180,6 +196,16 @@ export const reconfigureJobParams = z.object({
    * unchanged.
    */
   refreshVars: z.array(z.enum(VARS_REFRESH_REASONS)).min(1).optional(),
+  /**
+   * Turn Cloudflare Access protection of the app on or off. On: the app is
+   * protected first, then (with `refreshVars: ["access"]`, when its settings
+   * use the Access placeholders) deployed again with the new values. Off:
+   * deployed again first with the values empty (an app that checks them
+   * then refuses everyone rather than trusting anything), then its
+   * protection is removed. Refused for an app whose catalog entry requires
+   * protection. Optional; a job started by an earlier version has none.
+   */
+  access: z.enum(["on", "off"]).optional(),
   /**
    * A self-deploying tier app: its own installer runs again with the new
    * settings (see ./self-deploying/reconfigure.ts); none of the steps below apply.
@@ -268,6 +294,27 @@ function secretsNote(undo: "undone" | "not-needed" | "left" | "failed" | null): 
   }
 }
 
+/**
+ * What a failed change of Cloudflare Access protection left, or null when
+ * there is nothing to add: protection made but the settings not deployed
+ * with its values (an app that checks them refuses everyone until they
+ * are), or the settings deployed without the values but the protection not
+ * removed (the same, until it is turned off again).
+ */
+export function accessFailureNote(
+  access: "on" | "off" | undefined,
+  reached: "protected" | "unprotected" | null,
+  deployed: boolean,
+): string | null {
+  if (access === "on" && reached === "protected" && !deployed) {
+    return "The app is protected with Cloudflare Access now, but its settings were not deployed again with the Access values; an app that checks them turns everyone away until they are. Turn protection on again to finish.";
+  }
+  if (access === "off" && reached === null && deployed) {
+    return "The app's settings no longer carry its Access values, but its protection was not removed, so an app that checks them turns everyone away. Turn protection off again to finish.";
+  }
+  return null;
+}
+
 export async function runReconfigure(ctx: JobContext): Promise<void> {
   const parsed = reconfigureJobParams.safeParse(ctx.params);
   if (!parsed.success) throw new NonRetryableError("invalid reconfigure job payload");
@@ -296,6 +343,8 @@ export async function runReconfigure(ctx: JobContext): Promise<void> {
     null;
   /** The removal of the old zone's email routes began (a failure leaves a move to finish). */
   let emailMoveStarted = false;
+  /** How far a change of Cloudflare Access protection got, for the failure report. */
+  let accessChanged: "protected" | "unprotected" | null = null;
   /**
    * An app of several Workers: its other Workers that got a new version with
    * secret changes, for a failure before their promotion to put them back.
@@ -390,6 +439,15 @@ export async function runReconfigure(ctx: JobContext): Promise<void> {
         domains: domainHostnames(rows) as string[] | undefined,
         // What `{{wildcardHostname}}` becomes (absent in a step output recorded before it existed).
         wildcardHostname: wildcardHostnameOf(rows) as string | null | undefined,
+        // What the Access placeholders become; null when the app is not protected
+        // (absent in a step output recorded before they existed).
+        access: (await readAccessPlaceholderValues(orm, params.installId)) as
+          | AccessPlaceholderValues
+          | null
+          | undefined,
+        // Whether the catalog entry requires protection (`access.mode`), as
+        // the newest revision recorded for the release says.
+        accessRequired: effective !== null && accessOfferOf(effective.catalog) === "required",
         resources: rows
           .filter((r) => r.kind !== EMAIL_ROUTE_KIND)
           .map(
@@ -571,7 +629,15 @@ export async function runReconfigure(ctx: JobContext): Promise<void> {
         );
         if (tooBig !== null) problems.push(tooBig);
       }
-      if (!redeploy && newZoneId === null && oldRoutes.length === 0) {
+      if (params.access === "off" && started.accessRequired === true) {
+        problems.push(accessRequiredOffRefusal(manifest.catalog.name));
+      }
+      if (
+        !redeploy &&
+        newZoneId === null &&
+        oldRoutes.length === 0 &&
+        params.access === undefined
+      ) {
         problems.push(
           "Nothing changes: the settings, secrets, database connections and email zone are as they are.",
         );
@@ -581,6 +647,15 @@ export async function runReconfigure(ctx: JobContext): Promise<void> {
       if (refreshed.includes("wildcardHostname")) {
         log.info(
           `Settings that use {{wildcardHostname}} are filled in again: ${started.wildcardHostname ? started.wildcardHostname : "empty, since the app has no wildcard domain now"}.`,
+        );
+      }
+      if (params.access === "on") {
+        log.info(
+          "Turning Cloudflare Access protection on: the app is protected first, then its settings that use the Access values are deployed again with them.",
+        );
+      } else if (params.access === "off") {
+        log.info(
+          "Turning Cloudflare Access protection off: settings that use the Access values are deployed again with them empty first, then the protection is removed.",
         );
       }
       if (refreshed.includes("appUrl")) {
@@ -613,6 +688,8 @@ export async function runReconfigure(ctx: JobContext): Promise<void> {
             ? `The build of ${started.version} the sandbox Worker stored is deployed again; nothing is built.`
             : `The signed release of ${started.version} is deployed again.`,
         );
+      } else if (params.access !== undefined) {
+        log.info("No setting uses the Access values; the Worker is not deployed again.");
       } else {
         log.info("Only Email Routing changes; the Worker is not deployed again.");
       }
@@ -641,9 +718,21 @@ export async function runReconfigure(ctx: JobContext): Promise<void> {
     });
     const url = `${appBase}${healthPath}`;
 
+    // Protection on comes first, so the version deployed below carries the
+    // audience tag and team domain it now has. Protection off comes last.
+    let accessNow = started.access ?? null;
+    if (params.access === "on") {
+      accessNow = accessPlaceholderValues(await protectInstalledPhase(steps, params.installId));
+      accessChanged = "protected";
+    } else if (params.access === "off") {
+      accessNow = null;
+    }
+
     if (redeploy) {
       // Snapshot, before anything changes (the settings before the change included).
       const snapshot = await takeSnapshotPhase(steps, {
+        // What the serving version's Access values were filled in with, before this job.
+        accessAud: started.access === undefined ? null : (started.access?.aud ?? ""),
         installId: params.installId,
         jobId: params.jobId,
         workerName,
@@ -704,6 +793,7 @@ export async function runReconfigure(ctx: JobContext): Promise<void> {
         accountId: steps.accountId(),
         appUrl: appBase,
         wildcardHostname: started.wildcardHostname ?? null,
+        access: accessNow,
         ...(placeholders === undefined ? {} : { entryWorkers: placeholders }),
       });
 
@@ -720,6 +810,7 @@ export async function runReconfigure(ctx: JobContext): Promise<void> {
         accountId: steps.accountId(),
         appUrl: appBase,
         wildcardHostname: started.wildcardHostname ?? null,
+        access: accessNow,
         placeholders,
         entryNames,
       };
@@ -833,6 +924,7 @@ export async function runReconfigure(ctx: JobContext): Promise<void> {
           maxAttempts: CANARY_MAX_ATTEMPTS,
           expectVersion: started.version,
           mode: healthMode,
+          installId: params.installId,
         });
       }
 
@@ -896,6 +988,12 @@ export async function runReconfigure(ctx: JobContext): Promise<void> {
       }
     }
 
+    // Protection off, once no version the app serves carries its values.
+    if (params.access === "off") {
+      await unprotectPhase(steps, params.installId);
+      accessChanged = "unprotected";
+    }
+
     // Email Routing: the new zone's routes first, so mail is never unrouted,
     // then the other zones' are removed as an uninstall removes them. If a
     // removal fails, the new zone is recorded as newest, so the app page
@@ -929,9 +1027,13 @@ export async function runReconfigure(ctx: JobContext): Promise<void> {
     // Recorded rather than fatal, as an update's: the new version serves. The
     // app's URL was serving before this job, so a plain 404 is the app's own
     // answer (a setting such as a 404 home page), not a route going live.
-    const health = redeploy
-      ? await checkLiveHealthPhase(steps, step, url, healthMode, { routeWasLive: true })
-      : null;
+    const health =
+      redeploy || params.access !== undefined
+        ? await checkLiveHealthPhase(steps, step, url, healthMode, {
+            routeWasLive: true,
+            installId: params.installId,
+          })
+        : null;
 
     await run("finish", async ({ log, orm }) => {
       const at = new Date(now());
@@ -940,12 +1042,7 @@ export async function runReconfigure(ctx: JobContext): Promise<void> {
           .update(installs)
           .set({
             status: "installed",
-            ...(health === null
-              ? {}
-              : {
-                  health_status: health.status,
-                  health_checked_at: new Date(health.checkedAt),
-                }),
+            ...(health === null ? {} : healthColumns(health, new Date(health.checkedAt))),
             updated_at: at,
           })
           .where(and(eq(installs.id, params.installId), eq(installs.status, "updating"))),
@@ -957,7 +1054,9 @@ export async function runReconfigure(ctx: JobContext): Promise<void> {
       log.info(
         health === null
           ? `Changed where ${started.slug} receives email.`
-          : `Changed the settings of ${started.slug} at ${url} (health: ${healthLabel(health)}).`,
+          : params.access !== undefined
+            ? `Turned Cloudflare Access protection of ${started.slug} ${params.access} at ${url} (health: ${healthLabel(health)}).`
+            : `Changed the settings of ${started.slug} at ${url} (health: ${healthLabel(health)}).`,
       );
       return {};
     });
@@ -1096,6 +1195,8 @@ export async function runReconfigure(ctx: JobContext): Promise<void> {
           `Settings change failed at "${failedAt}". Nothing was deployed; the app keeps its previous settings and secrets.`,
         );
       }
+      const accessNote = accessFailureNote(params.access, accessChanged, serving !== null);
+      if (accessNote !== null) log.warn(accessNote);
       if (unusedConfigs === "left") {
         log.warn(
           `The Hyperdrive configurations made for this change (${replacements.map((r) => r.next.name).join(", ")}) could not all be deleted; they are recorded, and uninstalling the app deletes them.`,

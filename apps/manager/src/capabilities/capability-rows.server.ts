@@ -1,8 +1,8 @@
-import { ne } from "drizzle-orm";
+import { eq, ne } from "drizzle-orm";
 import { type CatalogIndexRead, listedApps, readEnabledCatalogs } from "../catalog/merged.server";
 import { appKey } from "../catalog/sources";
 import type { Database } from "../db/client";
-import { installs } from "../db/schema";
+import { install_access, installs } from "../db/schema";
 import { sandboxBinding } from "../sandbox/binding";
 import type { SandboxJobState } from "../sandbox/readiness";
 import { readSandboxJobState } from "../sandbox/readiness.server";
@@ -60,9 +60,19 @@ export async function readCapabilityRowsData(
           appSlug: installs.app_slug,
           catalogId: installs.catalog_id,
           origin: installs.origin,
+          accessAppId: install_access.access_app_id,
         })
         .from(installs)
-        .where(ne(installs.status, "uninstalled")),
+        .leftJoin(install_access, eq(install_access.install_id, installs.id))
+        .where(ne(installs.status, "uninstalled"))
+        .then((rows) =>
+          rows.map(
+            ({ accessAppId, ...row }): InstallOfApp => ({
+              ...row,
+              accessProtected: accessAppId !== null,
+            }),
+          ),
+        ),
   ]);
   // What the enabled catalogs' apps need, from their cached indexes.
   const cached = reads.filter((r) => r.ok);

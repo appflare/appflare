@@ -6,6 +6,11 @@ import {
 } from "@appflare/cf-api";
 import { and, eq, inArray, isNull, ne } from "drizzle-orm";
 import { ulid } from "ulidx";
+import {
+  type AccessAddressSync,
+  accessAddressSync,
+  publicPathsRefusal,
+} from "../access/address-sync.server";
 import { createDb, type Database } from "../db/client";
 import { installs, resources } from "../db/schema";
 import { CustomDomainError, isPermissionError, readZone } from "./custom-domains.server";
@@ -628,6 +633,16 @@ export interface WildcardDomainDeps {
    * (`startVarsRefreshCore`). Without it nothing is deployed.
    */
   refreshVars?: RefreshVars;
+  /**
+   * Brings a protected app's Access applications (its public paths) in step
+   * once its wildcard domain changed; by default through `api`.
+   */
+  syncAccess?: AccessAddressSync;
+}
+
+/** The sync of a protected app's Access applications after its domains changed. */
+function accessSyncOf(deps: WildcardDomainDeps): AccessAddressSync {
+  return deps.syncAccess ?? accessAddressSync(deps.db, async () => deps.api, deps.now);
 }
 
 async function readInstall(db: D1Database, installId: string) {
@@ -769,6 +784,8 @@ export async function addWildcardDomainCore(
         : `The app started uninstalling while ${hostname} was being added, and Appflare could not remove its records and routes again. Delete the routes and DNS records for ${hostname} and ${wildcardPattern(hostname)} in the Cloudflare dashboard.`,
     );
   }
+  // A protected app's public paths, on the base and every name under it.
+  await accessSyncOf(deps)(install.id);
   return {
     resourceId,
     hostname,
@@ -809,6 +826,15 @@ export async function removeWildcardDomainCore(
   if (domain === undefined) {
     throw new WildcardDomainError("That is not a wildcard domain of this app.");
   }
+  // A protected app's public paths come off the base and every name under
+  // it before they are released.
+  const syncAccess = accessSyncOf(deps);
+  const accessProblem = await syncAccess(request.installId, {
+    leavingHosts: [domain.name, `*.${domain.name}`],
+  });
+  if (accessProblem !== null) {
+    throw new WildcardDomainError(publicPathsRefusal(wildcardPattern(domain.name), accessProblem));
+  }
   const removal = await asWildcardDomainError(() =>
     beforeDomainRemoval(
       { db: deps.db, api: async () => deps.api },
@@ -831,6 +857,8 @@ export async function removeWildcardDomainCore(
     .update(resources)
     .set({ deleted_at: at })
     .where(inArray(resources.id, [domain.id, ...parts.map((p) => p.id)]));
+  // And onto workers.dev when the removal turned it back on.
+  await syncAccess(request.installId);
   return {
     hostname: domain.name,
     ...(await refreshSettings(deps.refreshVars, request.installId, [

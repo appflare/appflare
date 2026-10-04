@@ -84,6 +84,11 @@ export interface WorkerScript {
   handlers?: string[];
   /** The last Durable Object migration tag applied to the Worker, when it has one. */
   migration_tag?: string;
+  /**
+   * The script's tag, as the upload answered it ({@link ScriptUploadResult.tag}):
+   * what an Access `worker` destination names the Worker by.
+   */
+  tag?: string;
 }
 
 export interface ScriptUploadResult {
@@ -92,6 +97,11 @@ export interface ScriptUploadResult {
   startup_time_ms?: number;
   /** The new version id (wrangler reads it as the "Current Version ID"); may lack hyphens. */
   deployment_id?: string | null;
+  /**
+   * The script's tag: what an Access `worker` destination names the Worker
+   * by (`worker_id`).
+   */
+  tag?: string;
   [key: string]: unknown;
 }
 
@@ -298,47 +308,149 @@ export interface AccessIdentityProvider {
 
 /**
  * One rule of an Access policy's `include`/`exclude`/`require` list. Only the
- * rule kinds Appflare writes are typed; others pass through when read back.
+ * rule kinds Appflare writes are typed; others pass through when read back
+ * (and may be written through the last, untyped member).
  */
 export type AccessRule =
+  /** One email address (matched case-insensitively by Access). */
   | { email: { email: string } }
+  /** Anyone at all; used with `bypass`, or with `allow` behind a login. */
   | { everyone: Record<string, never> }
+  /** One service token, by its `id` (not its `client_id`); for `non_identity` policies. */
+  | { service_token: { token_id: string } }
+  /** Any service token of the account; for `non_identity` policies. */
+  | { any_valid_service_token: Record<string, never> }
   | Record<string, unknown>;
 
-/** Body of `POST /access/apps` for a self-hosted application. */
-export interface CreateAccessAppArgs {
-  type: "self_hosted";
-  name: string;
-  /** Hostname, optionally with a path (`host/api/health`), that Access protects. */
-  domain: string;
-  /** How long a sign-in lasts, e.g. `24h`. */
-  session_duration?: string;
-  app_launcher_visible?: boolean;
+/**
+ * What an Access application's policy decides for a matching request.
+ * `non_identity` lets requests through without a sign-in when they match a
+ * rule that is not a person (a service token), so it only makes sense with
+ * `service_token` or `any_valid_service_token` rules.
+ */
+export type AccessDecision = "allow" | "deny" | "bypass" | "non_identity";
+
+/**
+ * A hostname Access protects, optionally with a path. `uri` is `host` or
+ * `host/path`; a path ending in `/*` covers everything under it
+ * (`host/open/*` covers `/open/x` but not `/opener`) and only on that host.
+ * A hostname no Worker serves yet is accepted and protected from its first
+ * request.
+ */
+export interface AccessPublicDestination {
+  type: "public";
+  uri: string;
+}
+
+/**
+ * Every address of one Worker: its workers.dev URL, every version preview URL
+ * (including ones created later) and its Workers custom domains. `worker_id`
+ * is the script's `tag` from the upload answer ({@link ScriptUploadResult.tag}),
+ * not its name.
+ */
+export interface AccessWorkerDestination {
+  type: "worker";
+  worker_id: string;
+}
+
+/** A destination Appflare writes: a hostname (and path) or a Worker. */
+export type AccessDestination = AccessPublicDestination | AccessWorkerDestination;
+
+/**
+ * Any other kind of destination an application read back may carry
+ * (`private` networks, …), kept verbatim. Check `type` and the field
+ * before reading one, or use `accessAppCoverage`.
+ */
+export interface AccessOtherDestination {
+  type: string;
   [key: string]: unknown;
 }
 
+/**
+ * A reusable (account-level) policy attached to an application by id.
+ * `precedence` orders the application's policies, 1 first.
+ */
+export interface AccessPolicyReference {
+  id: string;
+  precedence?: number;
+}
+
+/**
+ * One entry of an application's `policies` when creating or updating it:
+ * a reusable policy by id, or a policy written inline, which then belongs to
+ * that application alone.
+ */
+export type AccessAppPolicyArgs = AccessPolicyReference | AccessPolicyArgs;
+
+interface AccessAppArgsBase {
+  type: "self_hosted";
+  name: string;
+  /** How long a sign-in lasts, e.g. `24h`. */
+  session_duration?: string;
+  app_launcher_visible?: boolean;
+  /**
+   * The application's policies, in any order (`precedence` decides). Left out
+   * of a `PUT`, the application keeps the policies it has.
+   */
+  policies?: AccessAppPolicyArgs[];
+  [key: string]: unknown;
+}
+
+/**
+ * Body of `POST /access/apps` (and `PUT /access/apps/{id}`) for a
+ * self-hosted application: either one `domain`, or `destinations` covering
+ * several hostnames, paths and Workers at once. An application created from
+ * `destinations` answers `domain: null`.
+ */
+export type CreateAccessAppArgs = AccessAppArgsBase &
+  (
+    | {
+        /** Hostname, optionally with a path (`host/api/health`), that Access protects. */
+        domain: string;
+        destinations?: AccessDestination[];
+      }
+    | { domain?: string; destinations: AccessDestination[] }
+  );
+
 export interface AccessApp {
   id: string;
-  /** The application audience tag: the `aud` claim of its JWTs. */
+  /**
+   * The application audience tag: the `aud` claim of its JWTs. Kept when the
+   * application is replaced with `PUT` (destinations changed included).
+   */
   aud: string;
   name?: string;
-  domain?: string;
+  /** The single protected `host[/path]`; `null` for an application created from `destinations`. */
+  domain?: string | null;
+  /** Every `host[/path]` it protects, the older way Cloudflare lists them. */
+  self_hosted_domains?: string[];
+  /** Every destination it protects, as written (plus kinds Appflare does not write). */
+  destinations?: Array<AccessDestination | AccessOtherDestination>;
   type?: string;
   session_duration?: string;
   /** The application's policies, as `GET` and `PUT /access/apps/{id}` answer them. */
   policies?: Array<{ id: string; name?: string; decision?: string; precedence?: number }>;
 }
 
-/** Body of `POST`/`PUT /access/apps/{id}/policies[/{policy_id}]`. */
-export interface AccessPolicyArgs {
+/**
+ * Body of `POST`/`PUT /access/policies[/{id}]`: a reusable policy, which any
+ * number of applications reference by id.
+ */
+export interface AccessReusablePolicyArgs {
   name: string;
-  decision: "allow" | "deny" | "bypass" | "non_identity";
+  decision: AccessDecision;
   /** A request matches when it matches at least one rule. */
   include: AccessRule[];
   exclude?: AccessRule[];
+  /** A request must also match every one of these. */
   require?: AccessRule[];
-  precedence?: number;
+  session_duration?: string;
   [key: string]: unknown;
+}
+
+/** Body of `POST`/`PUT /access/apps/{id}/policies[/{policy_id}]`, or an inline app policy. */
+export interface AccessPolicyArgs extends AccessReusablePolicyArgs {
+  precedence?: number;
 }
 
 export interface AccessPolicy {
@@ -347,6 +459,73 @@ export interface AccessPolicy {
   decision?: string;
   include?: AccessRule[];
   precedence?: number;
+}
+
+/** A reusable policy as `/access/policies` answers it (fields read). */
+export interface AccessReusablePolicy extends AccessPolicy {
+  exclude?: AccessRule[];
+  require?: AccessRule[];
+  /** Always true for a policy from `/access/policies`. */
+  reusable?: boolean;
+  /** How many applications reference it (in list and `PUT` answers). */
+  app_count?: number;
+  session_duration?: string;
+  created_at?: string;
+  updated_at?: string;
+}
+
+/**
+ * An Access service token (`/access/service_tokens`). A request carrying
+ * `CF-Access-Client-Id: <client_id>` and `CF-Access-Client-Secret: <secret>`
+ * passes a `non_identity` policy that names the token, and the Worker behind
+ * it still receives a `Cf-Access-Jwt-Assertion`.
+ */
+export interface AccessServiceToken {
+  id: string;
+  name: string;
+  client_id: string;
+  /** How long it stays valid from creation or refresh, e.g. `8760h`. */
+  duration?: string;
+  expires_at?: string;
+  created_at?: string;
+  updated_at?: string;
+  last_seen_at?: string;
+}
+
+/**
+ * A service token as created or rotated: the only answers that carry
+ * `client_secret`. Store it at once; it cannot be read again.
+ */
+export interface AccessServiceTokenWithSecret extends AccessServiceToken {
+  client_secret: string;
+}
+
+/** Body of `POST /access/service_tokens`. */
+export interface CreateAccessServiceTokenArgs {
+  name: string;
+  /** Validity, e.g. `8760h` (Cloudflare's default) or `forever`. */
+  duration?: string;
+  [key: string]: unknown;
+}
+
+/**
+ * What an Access application protects, from {@link AccessApp.domain},
+ * {@link AccessApp.self_hosted_domains} and its `public` destinations.
+ */
+export interface AccessAppCoverage {
+  /**
+   * Every `host` or `host/path`, host lower-cased, paths as written,
+   * deduplicated, in the order Cloudflare lists them.
+   */
+  uris: string[];
+  /** The hostnames of `uris`, deduplicated. */
+  hostnames: string[];
+  /**
+   * The script tags of its `worker` destinations. Each covers that Worker's
+   * workers.dev URL, its preview URLs and its custom domains, which the
+   * application itself does not list.
+   */
+  workerIds: string[];
 }
 
 /** One RSA signing key of an Access team, as a JWK. */

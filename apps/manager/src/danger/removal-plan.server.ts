@@ -5,12 +5,13 @@ import {
   SANDBOX_CONTAINERS,
   SANDBOX_WORKER_NAME,
 } from "@appflare/schema";
-import { and, asc, count, eq, inArray, isNull, ne } from "drizzle-orm";
+import { and, asc, count, eq, inArray, isNotNull, isNull, ne } from "drizzle-orm";
 import { readAccessConfig } from "../access/config";
+import { listInstallAccess } from "../access/install-access.server";
 import { appPlace } from "../components/app-links";
 import { settingsPlace } from "../components/settings-links";
 import { createDb } from "../db/client";
-import { installs, jobs, resources } from "../db/schema";
+import { install_access, installs, jobs, resources } from "../db/schema";
 import { readSettings, SETTING } from "../db/settings";
 import { readManagerDomain } from "../domains/manager-address.server";
 import { type GatewayState, readGateway } from "../gateway/gateway.server";
@@ -33,6 +34,13 @@ import { DangerError } from "./errors";
  * manager. Six read calls at most: the account, the manager's bindings, the
  * sandbox Worker's bindings, its two container applications by name, and one
  * page of the bucket list.
+ *
+ * Apps Appflare protects with Cloudflare Access keep their Access
+ * applications and the "Appflare users" policy: deleting them would open the
+ * apps to anyone. Only each app's own service token, which Appflare's health
+ * checks used, is taken out of its application and deleted
+ * (`releaseAppAccessForRemoval`); who gets in is then managed in the Zero
+ * Trust dashboard.
  */
 
 export interface ManagerTargets {
@@ -81,6 +89,13 @@ export interface RemovalTargets {
   sandbox: SandboxTargets;
   /** Cloudflare Access applications in front of the manager; empty when protection is off. */
   accessAppIds: string[];
+  /**
+   * Installs with an Access service token of their own (protected apps, and
+   * any whose protection stopped half way): each token is taken out of its
+   * app's Access application and deleted, the application stays. Absent in
+   * a plan read before apps could be protected.
+   */
+  appAccessInstalls?: string[];
 }
 
 type Binding = Record<string, unknown>;
@@ -206,6 +221,7 @@ export async function findRemovalTargets(
         : [access.healthAppId, access.appId].filter(
             (id): id is string => typeof id === "string" && id.length > 0,
           ),
+    appAccessInstalls: (await listInstallAccess(db)).map((r) => r.installId),
   };
 }
 
@@ -252,6 +268,13 @@ export function activeJobsMessage(active: readonly ActiveJob[]): string {
 export interface RemovalStays {
   apps: Array<{ label: string; workerName: string }>;
   customDomains: number;
+  /**
+   * Apps protected with Cloudflare Access: their Access applications stay,
+   * so they keep asking for a sign-in.
+   */
+  protectedApps: Array<{ label: string; workerName: string }>;
+  /** The "Appflare users" Access policy exists, and stays with the applications that use it. */
+  usersPolicy: boolean;
 }
 
 export async function readRemovalStays(db: D1Database): Promise<RemovalStays> {
@@ -280,12 +303,24 @@ export async function readRemovalStays(db: D1Database): Promise<RemovalStays> {
         ne(installs.status, "uninstalled"),
       ),
     );
+  const guarded = new Set(
+    (
+      await orm
+        .select({ id: install_access.install_id })
+        .from(install_access)
+        .where(isNotNull(install_access.access_app_id))
+    ).map((r) => r.id),
+  );
+  const settings = await readSettings(orm, [SETTING.appAccessUsersPolicyId]);
+  const named = (r: (typeof rows)[number]) => ({
+    label: labels.get(r.id) ?? r.worker_name,
+    workerName: r.worker_name,
+  });
   return {
-    apps: rows.map((r) => ({
-      label: labels.get(r.id) ?? r.worker_name,
-      workerName: r.worker_name,
-    })),
+    apps: rows.map(named),
     customDomains: domains?.n ?? 0,
+    protectedApps: rows.filter((r) => guarded.has(r.id)).map(named),
+    usersPolicy: Boolean(settings.app_access_users_policy_id),
   };
 }
 

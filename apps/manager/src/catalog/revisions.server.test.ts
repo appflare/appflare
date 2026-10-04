@@ -9,6 +9,9 @@ import { migrations } from "../db/migrations/index";
 import { sha256Hex } from "../jobs/install/artifact";
 import { type ArtifactFixture, buildArtifactFixture, REVISED_URL } from "../test/artifact-fixture";
 import { fakeKv } from "../test/fake-kv";
+import { recordProtectedInstall } from "../test/protected-install";
+import { recordFixtureRevision, setInstallRelease } from "../test/recorded-revision";
+import { INSTALL_ID, seedInstall } from "../test/seed-install";
 import {
   catalogManifestCacheKey,
   getAppManifest,
@@ -20,8 +23,12 @@ import {
   effectiveManifest,
   readCatalogRevision,
   recordCatalogRevision,
+  storedEffectiveManifest,
+  storedRevisedCatalog,
   verifyRevisedCatalog,
 } from "./revisions.server";
+
+const AUTH = "auth-secret-0123456789abcdef0123456789";
 
 const homePage = {
   name: "HOME_PAGE",
@@ -181,6 +188,91 @@ describe("catalog_revisions", () => {
     // A row that does not fit this manifest (another app's) is never applied.
     const other = { ...f.manifest, app: "other", catalog: { ...f.manifest.catalog, slug: "x" } };
     expect(await effectiveManifest(orm(), other, f.digest)).toBe(other);
+  });
+});
+
+describe("a stored release's revision", () => {
+  it("applies to an install's or a snapshot's record only when it fits the stored manifest", async () => {
+    const f = await buildArtifactFixture({
+      revision: { requires: ["access"], access: { mode: "recommended", bypass: ["/s/*"] } },
+    });
+    const stored = {
+      manifestJson: new TextDecoder().decode(f.manifestBytes),
+      artifactDigest: f.digest,
+    };
+    expect(await storedRevisedCatalog(orm(), stored)).toBeNull();
+    expect((await storedEffectiveManifest(orm(), stored))?.catalog.access).toBeUndefined();
+    await recordFixtureRevision(f);
+    expect((await storedRevisedCatalog(orm(), stored))?.access).toEqual({
+      mode: "recommended",
+      bypass: ["/s/*"],
+    });
+    const effective = await storedEffectiveManifest(orm(), stored);
+    expect(effective?.catalog.requires).toEqual(["access"]);
+    expect(effective?.worker).toEqual(f.manifest.worker);
+    // No digest, an unreadable manifest, or another release's manifest: none applies.
+    expect(await storedRevisedCatalog(orm(), { ...stored, artifactDigest: null })).toBeNull();
+    expect(await storedRevisedCatalog(orm(), { ...stored, manifestJson: "{}" })).toBeNull();
+    const other = await buildArtifactFixture({ catalog: { summary: "Another build." } });
+    expect(
+      await storedRevisedCatalog(orm(), {
+        manifestJson: JSON.stringify({ ...other.manifest, keyId: "other-key" }),
+        artifactDigest: f.digest,
+      }),
+    ).toBeNull();
+  });
+
+  it("marks the release's protected installs for the Access resync when a revision changes their public paths", async () => {
+    const f = await buildArtifactFixture({ revision: { access: { bypass: ["/s/*"] } } });
+    await seedInstall();
+    await setInstallRelease(INSTALL_ID, f);
+    await recordProtectedInstall({ installId: INSTALL_ID, authSecret: AUTH, secret: "s" });
+    const due = async () =>
+      (
+        await env.DB.prepare("SELECT access_sync_failed_at AS at FROM install_access").first<{
+          at: number | null;
+        }>()
+      )?.at ?? null;
+    await recordFixtureRevision(f, new Date(5_000));
+    expect(await due()).toBe(5_000);
+    // A later revision with the same public paths leaves the mark alone.
+    await env.DB.prepare("UPDATE install_access SET access_sync_failed_at = NULL").run();
+    const same = { ...f.revised?.catalog, revision: 3 } as CatalogManifest;
+    const text = JSON.stringify(same);
+    const file = {
+      url: REVISED_URL,
+      sha256: await sha256Hex(enc.encode(text)),
+      keyId: "test-key",
+      signature: await f.signBytes(enc.encode(text)),
+    };
+    await recordCatalogRevision(
+      orm(),
+      f.digest,
+      { catalog: same, text, file },
+      new Date(6_000),
+      f.manifest.catalog,
+    );
+    expect(await due()).toBeNull();
+    // An install of another release is not marked.
+    const dropped = { ...same, revision: 4, access: undefined } as CatalogManifest;
+    const droppedText = JSON.stringify(dropped);
+    await env.DB.prepare("UPDATE installs SET artifact_digest = ?1").bind("e".repeat(64)).run();
+    await recordCatalogRevision(
+      orm(),
+      f.digest,
+      {
+        catalog: dropped,
+        text: droppedText,
+        file: {
+          ...file,
+          sha256: await sha256Hex(enc.encode(droppedText)),
+          signature: await f.signBytes(enc.encode(droppedText)),
+        },
+      },
+      new Date(7_000),
+      f.manifest.catalog,
+    );
+    expect(await due()).toBeNull();
   });
 });
 

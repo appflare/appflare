@@ -1,4 +1,9 @@
 import { z } from "zod";
+import {
+  ACCESS_PLACEHOLDER_SOURCE,
+  accessRequirementProblems,
+  catalogAccessSchema,
+} from "./access.ts";
 // With its extension: the JSON Schema export runs this file directly under
 // Node's type stripping, which resolves relative imports literally.
 import { buildEnvSchema } from "./build-env.ts";
@@ -356,6 +361,7 @@ export const requirementSchema = z.enum([
   "browser-rendering",
   "containers",
   "analytics-engine",
+  "access",
 ]);
 export type Requirement = z.infer<typeof requirementSchema>;
 
@@ -906,6 +912,12 @@ export const catalogVarSchema = z
           "`{{workerName}}` is the installed Worker's name and `{{accountId}}` the id of the " +
           "Cloudflare account. `{{wildcardHostname}}` becomes the hostname of the app's wildcard " +
           "domain (for an entry with `install.wildcardHostname`), empty until one is assigned. " +
+          "For an app Appflare protects with Cloudflare Access, `{{accessTeamDomain}}` becomes " +
+          "the team domain (`<team>.cloudflareaccess.com`), `{{accessTeamName}}` the team name " +
+          "alone (`<team>`), `{{accessAud}}` the audience tag of the app's Access application and " +
+          "`{{accessCertsUrl}}` the URL of the keys that sign Access's JWTs; all four are empty " +
+          "while the app is not protected, and filled in again when protection is turned on or " +
+          "off. " +
           "An entry of several Workers names one with `{{appUrl:<name>}}` and the like. When " +
           "the app's wrangler config gives this var a value that is not a string (an array, " +
           "object, number, or boolean), the var reaches the Worker as JSON and `default` must be " +
@@ -1209,14 +1221,16 @@ export type CatalogSource = z.infer<typeof catalogSourceSchema>;
  *   as verified (a redirect or a 4xx still shows the Worker answered); a
  *   server error (5xx) counts as unhealthy.
  * - `any-response`: any answer the Worker itself gives counts as verified,
- *   server errors included, because an app behind Cloudflare Access or its
- *   own sign-in answers every unauthenticated request with a redirect, 401,
- *   403, or an error of its own.
+ *   server errors included, because an app that checks Cloudflare Access or
+ *   its own sign-in answers every unauthenticated request with a redirect,
+ *   401, 403, or an error of its own.
  *
  * Neither reads the body beyond the version check, and under both,
  * connection failures and Cloudflare's own error pages (`error code: 1042`
  * while the route goes live, or a Worker that crashed) are retried or
- * reported, since they are not the Worker's answer.
+ * reported, since they are not the Worker's answer. Nor is the redirect to
+ * Cloudflare Access's sign-in page that Access sends before a request
+ * reaches the Worker: it never counts as serving.
  */
 export const HEALTH_MODES = ["no-server-errors", "any-response"] as const;
 
@@ -1229,9 +1243,12 @@ export const healthModeSchema = z
     'Which answers of the Worker count as serving. `"no-server-errors"` (the default): any ' +
       "answer but a server error (5xx), so a redirect or a 404 passes and a 500 fails. " +
       '`"any-response"`: any answer the Worker itself gives, server errors included; use it ' +
-      "for an app whose health path sits behind Cloudflare Access or the app's own sign-in. " +
+      "for an app whose health path asks for a sign-in, its own or one it checks from " +
+      "Cloudflare Access. " +
       "Either way, connection failures and Cloudflare's own error pages (such as " +
-      "`error code: 1042` while the route goes live) are retried and never count as serving.",
+      "`error code: 1042` while the route goes live) are retried and never count as serving, " +
+      "and neither does the redirect to Cloudflare Access's sign-in page, which Access sends " +
+      "before the request reaches the Worker.",
   );
 export type HealthMode = z.infer<typeof healthModeSchema>;
 
@@ -2038,8 +2055,9 @@ export const catalogRevisionSchema = z
     "Which edit of this entry's form and copy the catalog publishes for the build its `source` " +
       "already released, starting at 1 (the default when omitted). Raise it by one to publish a " +
       "change to `name`, `summary`, `homepage`, `license`, `categories`, `maintainers`, " +
-      "`secrets`, `vars`, `postInstall` or `bump` without moving `source`: the released artifact " +
-      "stays as it is, and managers show the new form without an update. `tagline`, " +
+      '`secrets`, `vars`, `postInstall`, `bump` or `access`, or to add `"access"` to ' +
+      "`requires`, without moving `source`: the released artifact stays as it is, and managers " +
+      "show the new form without an update. `tagline`, " +
       "`licenseNote` and `authors` need no revision: the catalog shows them from the current " +
       "manifest. Anything else needs a new build, so move `source` instead.",
   );
@@ -2126,7 +2144,13 @@ export const catalogManifestSchema = z
     requires: z
       .array(requirementSchema)
       .default([])
-      .describe("Account capabilities the app needs beyond the free Workers baseline."),
+      .describe(
+        'Account capabilities the app needs beyond the free Workers baseline. `"access"`: ' +
+          "the app goes with Cloudflare Access. The account needs a Zero Trust organization " +
+          'only while the app is protected (always, with `access.mode: "required"`), and the ' +
+          "value keeps the entry away from managers too old to protect apps. Required with " +
+          '`access.mode: "required"` and whenever a var\'s default uses an Access placeholder.',
+      ),
     secrets: z.array(catalogSecretSchema).default([]),
     vars: z.array(catalogVarSchema).default([]),
     postInstall: z
@@ -2148,6 +2172,11 @@ export const catalogManifestSchema = z
     bump: catalogBumpSchema.default({ autoMerge: false }),
     /** Which edit of the entry's form and copy this is, for one build. */
     revision: catalogRevisionSchema.default(FIRST_CATALOG_REVISION),
+    /**
+     * How the app goes with Cloudflare Access (./access.ts). A manager from
+     * before this field strips it, like any key it does not know.
+     */
+    access: catalogAccessSchema.optional(),
   })
   .superRefine((manifest, ctx) => {
     for (const problem of seedManifestProblems(manifest)) {
@@ -2240,6 +2269,9 @@ export const catalogManifestSchema = z
     for (const problem of cloudflareTokenProblems(manifest)) {
       ctx.addIssue({ code: "custom", path: problem.path, message: problem.message });
     }
+    for (const problem of accessRequirementProblems(manifest)) {
+      ctx.addIssue({ code: "custom", path: problem.path, message: problem.message });
+    }
   })
   .superRefine((manifest, ctx) => {
     for (const problem of pipelineManifestProblems(manifest)) {
@@ -2248,6 +2280,22 @@ export const catalogManifestSchema = z
   })
   .superRefine((manifest, ctx) => {
     if (manifest.install.tier !== "self-deploying") return;
+    if (manifest.requires.includes("access")) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["requires"],
+        message:
+          'requires "access" is not allowed for the self-deploying tier: Appflare cannot protect an app whose own installer decides its Workers and addresses',
+      });
+    }
+    if (manifest.access !== undefined) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["access"],
+        message:
+          "access is not allowed for the self-deploying tier: the app's own installer decides its Workers and addresses, so Appflare cannot protect it with Cloudflare Access",
+      });
+    }
     if (manifest.resources?.hyperdrive !== undefined) {
       ctx.addIssue({
         code: "custom",
@@ -2329,13 +2377,64 @@ export const catalogManifestSchema = z
     });
   })
   // The refinements do not reach the JSON Schema; `allOf` states the
-  // self-deploying ones there (no optional, derived or seed-only secrets, no
+  // self-deploying ones there (no `access` block, no optional, derived or seed-only secrets, no
   // derived or seed-only vars, no Hyperdrive declarations, no D1 layout, no
   // Pipelines), and that Pipelines needs `plan: "paid"`. Whether a
   // `derive.from` names another secret, or a sink's `tokenSecret` names a
   // secret the install form asks for, cannot be said in JSON Schema.
   .meta({
     allOf: [
+      {
+        anyOf: [
+          {
+            properties: { install: { properties: { tier: { not: { const: "self-deploying" } } } } },
+          },
+          {
+            not: {
+              anyOf: [
+                { required: ["access"] },
+                {
+                  required: ["requires"],
+                  properties: { requires: { contains: { const: "access" } } },
+                },
+              ],
+            },
+          },
+        ],
+      },
+      // `access.mode: "required"` needs `"access"` in `requires`.
+      {
+        anyOf: [
+          {
+            not: {
+              required: ["access"],
+              properties: {
+                access: { required: ["mode"], properties: { mode: { const: "required" } } },
+              },
+            },
+          },
+          { required: ["requires"], properties: { requires: { contains: { const: "access" } } } },
+        ],
+      },
+      // So does a var whose default uses an Access placeholder.
+      {
+        anyOf: [
+          {
+            not: {
+              required: ["vars"],
+              properties: {
+                vars: {
+                  contains: {
+                    required: ["default"],
+                    properties: { default: { type: "string", pattern: ACCESS_PLACEHOLDER_SOURCE } },
+                  },
+                },
+              },
+            },
+          },
+          { required: ["requires"], properties: { requires: { contains: { const: "access" } } } },
+        ],
+      },
       {
         anyOf: [
           {

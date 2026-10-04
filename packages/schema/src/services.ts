@@ -67,6 +67,7 @@ const REQUIREMENT_SERVICES: Readonly<Record<string, ServiceId>> = {
   "browser-rendering": "browser-rendering",
   containers: "containers",
   "analytics-engine": "analytics-engine",
+  access: "access",
 };
 
 /** The service a catalog `requires` value is, or null for one this version does not know. */

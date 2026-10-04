@@ -1,3 +1,4 @@
+import { ACCESS_REQUIREMENT } from "./access";
 import { type ArtifactManifest, catalogVarProblems } from "./artifact";
 import type { CatalogManifest } from "./catalog";
 
@@ -22,27 +23,36 @@ import type { CatalogManifest } from "./catalog";
  *   every catalog field outside {@link REVISABLE_CATALOG_FIELDS}: always the
  *   signed artifact manifest;
  * - the install and settings forms and the copy (`secrets`, `vars`,
- *   `postInstall`, `name`, ...): the revised catalog manifest when the index
- *   lists one for that build, else the catalog manifest inside the artifact.
+ *   `postInstall`, `name`, ...), and how the app goes with Cloudflare Access
+ *   (`access`, and `"access"` in `requires`): the revised catalog manifest
+ *   when the index lists one for that build, else the catalog manifest
+ *   inside the artifact.
  *
- * A revision may change only the form fields and copy, but those reach the
- * Worker: var defaults become its vars, and generated secrets its secrets.
- * That is why the revised file is signed like the release, and a manager
- * accepts it only when the signature verifies with the release's key id,
- * everything outside {@link REVISABLE_CATALOG_FIELDS} equals the signed copy,
- * and its revision is above the signed one ({@link revisedArtifactProblem}).
- * An index can never change what gets built, provisioned, or asked of the
- * account. While a release lists a revision, installing it needs the revised
+ * A revision may change only the form fields, the copy and the Access
+ * protection, but those reach the app: var defaults become its vars,
+ * generated secrets its secrets, and `access` decides who reaches it and what
+ * stays public. That is why the revised file is signed like the release, and
+ * a manager accepts it only when the signature verifies with the release's
+ * key id, everything outside {@link REVISABLE_CATALOG_FIELDS} equals the
+ * signed copy (`requires` may only gain `"access"`), and its revision is
+ * above the signed one ({@link revisedArtifactProblem}). An index can never
+ * change what gets built or provisioned for the Worker, nor what the account
+ * must offer it; the one thing it may ask more of is Cloudflare Access
+ * protection, which the manager checks the account for before it protects an
+ * app. While a release lists a revision, installing it needs the revised
  * file: when it cannot be fetched or does not verify, installs and updates to
  * that release fail rather than fall back to the older form.
  */
 
 /**
  * The top-level catalog manifest fields a revision may change: how the entry
- * is presented and what its install and settings forms ask for. Everything
- * else (`slug`, `repo`, `source`, `install`, `plan`, `requires`,
- * `tokenPermissions`, `resources`) describes the build or what an install
- * provisions, and changes only with a new build.
+ * is presented, what its install and settings forms ask for, and how the app
+ * goes with Cloudflare Access (`access`: the protection the manager puts in
+ * front of the Worker, never the Worker itself). Everything else (`slug`,
+ * `repo`, `source`, `install`, `plan`, `requires`, `tokenPermissions`,
+ * `resources`) describes the build or what an install provisions, and
+ * changes only with a new build, with one exception: a revision may add
+ * `"access"` to `requires` ({@link requirementsRevisionProblem}).
  */
 export const REVISABLE_CATALOG_FIELDS: readonly string[] = [
   "$schema",
@@ -60,7 +70,35 @@ export const REVISABLE_CATALOG_FIELDS: readonly string[] = [
   "postInstall",
   "bump",
   "revision",
+  "access",
 ];
+
+/**
+ * What a revision may do to `requires`, or why it may not: add `"access"`
+ * and nothing else. Adding it only narrows which managers list the entry
+ * (one that does not know the requirement leaves the entry out), and a
+ * manager that knows it asks for nothing more unless the app is protected,
+ * which the revision's `access` block and the admin decide. Any other value
+ * describes what the account must offer the build, and removing one (`"access"`
+ * included: the signed Worker may read the Access placeholders) could let a
+ * manager install the build where it does not work.
+ */
+export function requirementsRevisionProblem(
+  released: readonly string[],
+  revised: readonly string[],
+): string | null {
+  const before = new Set(released);
+  const after = new Set(revised);
+  const removed = [...before].filter((r) => !after.has(r));
+  if (removed.length > 0) {
+    return `it removes ${removed.map((r) => `"${r}"`).join(", ")} from requires, which only a new build can change`;
+  }
+  const added = [...after].filter((r) => !before.has(r) && r !== ACCESS_REQUIREMENT);
+  if (added.length > 0) {
+    return `it adds ${added.map((r) => `"${r}"`).join(", ")} to requires; a revision may add only "${ACCESS_REQUIREMENT}", and anything else needs a new build`;
+  }
+  return null;
+}
 
 function sortKeys(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(sortKeys);
@@ -92,7 +130,11 @@ export function catalogFieldChanges(a: CatalogManifest, b: CatalogManifest): str
 /**
  * Why `revised` cannot stand in for `released`, the catalog manifest a
  * release was built with, or null when it can: its revision must be above the
- * released one, and it may change only {@link REVISABLE_CATALOG_FIELDS}.
+ * released one, and it may change only {@link REVISABLE_CATALOG_FIELDS}, and
+ * `requires` only as {@link requirementsRevisionProblem} allows. Both are
+ * parsed catalog manifests, so the schema's own rules (an Access placeholder
+ * or `access.mode: "required"` needs `"access"` in `requires`) already hold
+ * for `revised`.
  */
 export function catalogRevisionProblem(
   released: CatalogManifest,
@@ -103,13 +145,16 @@ export function catalogRevisionProblem(
   if (to <= from) {
     return `its revision ${to} is not above revision ${from}, which the release was built with`;
   }
-  const fixed = catalogFieldChanges(released, revised).filter(
-    (field) => !REVISABLE_CATALOG_FIELDS.includes(field),
+  const changed = catalogFieldChanges(released, revised);
+  const fixed = changed.filter(
+    (field) => field !== "requires" && !REVISABLE_CATALOG_FIELDS.includes(field),
   );
   if (fixed.length > 0) {
     return `it changes ${fixed.join(", ")}, which only a new build can change`;
   }
-  return null;
+  return changed.includes("requires")
+    ? requirementsRevisionProblem(released.requires, revised.requires)
+    : null;
 }
 
 /**

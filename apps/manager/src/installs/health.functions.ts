@@ -1,5 +1,6 @@
 import { env } from "cloudflare:workers";
 import { createServerFn } from "@tanstack/react-start";
+import { probeHeadersFromEnv } from "../access/probe-credentials.server";
 import { requireRole } from "../server/auth.server";
 import { checkInstallHealthCore, HealthCheckError, type HealthCheckResult } from "./health.server";
 import { installIdInput } from "./versions-input";
@@ -14,7 +15,11 @@ export const checkInstallHealth = createServerFn({ method: "POST" })
     await requireRole("admin");
     try {
       return await checkInstallHealthCore(
-        { db: env.DB, fetch: (input, init) => fetch(input, init) },
+        {
+          db: env.DB,
+          fetch: (input, init) => fetch(input, init),
+          probeHeaders: probeHeadersFromEnv(env),
+        },
         data,
       );
     } catch (error) {

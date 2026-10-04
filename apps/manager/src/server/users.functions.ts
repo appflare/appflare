@@ -4,7 +4,14 @@ import { getRequest } from "@tanstack/react-start/server";
 import type { Role } from "../auth/roles";
 import { generateTemporaryPassword } from "../auth/temporary-password";
 import { createDb } from "../db/client";
-import { syncAccessAfterAdminChange } from "./access.server";
+import {
+  type AppAccessPolicyOutcome,
+  syncAccessAfterAdminChange,
+  syncAppAccessAfterUserChange,
+} from "./access.server";
+
+export type { AppAccessPolicyOutcome } from "./access.server";
+
 import { currentAuth, requireRole, sessionFor } from "./auth.server";
 import { addUserInput, changeUserRoleInput, userIdInput } from "./schemas";
 import {
@@ -27,7 +34,12 @@ export interface UserRow {
   createdAt: string;
 }
 
-/** Whether the Cloudflare Access allow policy followed a change to the admins. */
+/**
+ * Whether a Cloudflare Access allow policy followed a change to the users:
+ * `accessPolicy` is Appflare's own (admins only), `appAccessPolicy` the
+ * "Appflare users" policy apps protected with Cloudflare Access share
+ * (every user). "off" when that protection does not exist.
+ */
 export type AccessPolicyOutcome = "off" | "updated" | "failed";
 
 function toRow(u: ManagedUser): UserRow {
@@ -72,7 +84,9 @@ export const addUser = createServerFn({ method: "POST" })
     // allow policy, or Access keeps them out before they reach the sign-in page.
     const accessPolicy: AccessPolicyOutcome =
       created.role === "admin" ? await syncAccessAfterAdminChange(session.user.email) : "off";
-    return { user: created, temporaryPassword, accessPolicy };
+    // Every user, members too, may open apps protected with Cloudflare Access.
+    const appAccessPolicy: AppAccessPolicyOutcome = await syncAppAccessAfterUserChange();
+    return { user: created, temporaryPassword, accessPolicy, appAccessPolicy };
   });
 
 /**
@@ -83,30 +97,47 @@ export const addUser = createServerFn({ method: "POST" })
  */
 export const changeUserRole = createServerFn({ method: "POST" })
   .validator(changeUserRoleInput)
-  .handler(async ({ data }): Promise<{ accessPolicy: AccessPolicyOutcome }> => {
-    const session = await requireRole("admin");
-    const change = await changeRole(createDb(env.DB), session.user.id, data);
-    const accessPolicy: AccessPolicyOutcome =
-      change.before !== change.after ? await syncAccessAfterAdminChange(session.user.email) : "off";
-    return { accessPolicy };
-  });
+  .handler(
+    async ({
+      data,
+    }): Promise<{ accessPolicy: AccessPolicyOutcome; appAccessPolicy: AppAccessPolicyOutcome }> => {
+      const session = await requireRole("admin");
+      const change = await changeRole(createDb(env.DB), session.user.id, data);
+      const changed = change.before !== change.after;
+      const accessPolicy: AccessPolicyOutcome = changed
+        ? await syncAccessAfterAdminChange(session.user.email)
+        : "off";
+      // A role does not decide who may open protected apps; synced anyway, like every user change.
+      const appAccessPolicy: AppAccessPolicyOutcome = changed
+        ? await syncAppAccessAfterUserChange()
+        : "off";
+      return { accessPolicy, appAccessPolicy };
+    },
+  );
 
 /**
  * Owner only: deletes another user, their sessions and passkeys included, so
  * they can change nothing from then on and their pages stop loading within a
  * minute (the session cookie's copy). With Cloudflare Access on, a deleted
- * admin leaves the allow policy.
+ * admin leaves the allow policy, and every deleted user leaves the policy of
+ * protected apps.
  */
 export const deleteUser = createServerFn({ method: "POST" })
   .validator(userIdInput)
-  .handler(async ({ data }): Promise<{ accessPolicy: AccessPolicyOutcome }> => {
-    const session = await requireRole("admin");
-    const deleted = await deleteManagedUser(createDb(env.DB), session.user.id, data);
-    const accessPolicy: AccessPolicyOutcome = deleted.wasAdmin
-      ? await syncAccessAfterAdminChange(session.user.email)
-      : "off";
-    return { accessPolicy };
-  });
+  .handler(
+    async ({
+      data,
+    }): Promise<{ accessPolicy: AccessPolicyOutcome; appAccessPolicy: AppAccessPolicyOutcome }> => {
+      const session = await requireRole("admin");
+      const deleted = await deleteManagedUser(createDb(env.DB), session.user.id, data);
+      const accessPolicy: AccessPolicyOutcome = deleted.wasAdmin
+        ? await syncAccessAfterAdminChange(session.user.email)
+        : "off";
+      // Every deleted user leaves the policy of apps protected with Cloudflare Access.
+      const appAccessPolicy: AppAccessPolicyOutcome = await syncAppAccessAfterUserChange();
+      return { accessPolicy, appAccessPolicy };
+    },
+  );
 
 /**
  * Owner only: hands ownership to another admin; the caller stays an admin.

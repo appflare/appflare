@@ -6,7 +6,9 @@ import type { VarsRefreshReason } from "./install-vars";
  * `{{wildcardHostname}}`, or the address behind `{{appUrl}}` (a domain took
  * over from workers.dev, or workers.dev from a domain). The domain and
  * workers.dev actions start it once their own change is recorded, so the
- * settings job reads the new state.
+ * settings job reads the new state. Turning Cloudflare Access protection on
+ * or off (`access`) runs the same job, with the protection change inside it
+ * (installs/access-change.server.ts).
  */
 
 /**
@@ -34,6 +36,7 @@ export const NO_VARS_REFRESH: VarsRefresh = { settingsJobId: null, settingsNote:
 const VALUE_WORDS: Readonly<Record<VarsRefreshReason, string>> = {
   wildcardHostname: "{{wildcardHostname}}",
   appUrl: "the app's address ({{appUrl}})",
+  access: "the app's Cloudflare Access values ({{accessAud}} and the others)",
 };
 
 /**

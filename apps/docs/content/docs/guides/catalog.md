@@ -97,6 +97,12 @@ checks that R2 is enabled before it creates anything, except for a
 creates its resources. Analytics Engine is checked too: while the account check
 finds it off, the install is refused. Turn on Analytics Engine once in the
 dashboard, then choose **Check again** in **Settings > Your account > What this account can run**.
+Cloudflare Access is checked as well: an app that will be protected, because its
+entry requires it or you ticked **Protect with Cloudflare Access**, installs only once
+the account has a Zero Trust organization and Appflare's token has the Access
+permissions. An app whose entry lists Cloudflare Access without requiring it installs
+unprotected on any account.
+See [Protect apps with Cloudflare Access](/guides/protect-apps/).
 
 | Requirement | What it means |
 | --- | --- |
@@ -106,6 +112,7 @@ dashboard, then choose **Check again** in **Settings > Your account > What this 
 | Workers AI | The app runs models on Workers AI. Use beyond the daily free allocation needs Workers Paid. |
 | Browser Rendering | The app drives a headless browser. The free plan allows limited browser time a day. |
 | Analytics Engine | The app writes events to Workers Analytics Engine. It is off on an account until you open its page in the dashboard once, and Cloudflare refuses to deploy the app until then. |
+| Cloudflare Access | The app runs behind Cloudflare Access, or reads its sign-in. The account needs a Zero Trust organization, and Appflare's Cloudflare token the Access permissions. The install checks both before it creates anything and refuses with what is missing. When the app's entry does not require protection, this applies only if you protect the app: the app page says **Needed only if you protect this app**, there is nothing to confirm, and the app installs unprotected on any account. |
 | Containers | The app runs Containers, which need Workers Paid. For a [sandbox tier](/guides/builds/) app, the app is built in a container in your account instead; for a self-deploying app, its installer runs in one. Both need Workers Paid. |
 
 ### Apps that need their own token
