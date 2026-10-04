@@ -16,6 +16,7 @@ import {
 } from "@appflare/schema";
 import { and, eq, inArray, isNull, ne, or, sql } from "drizzle-orm";
 import { ulid } from "ulidx";
+import { type AccessPreflightProblem, accessInstallRefusal } from "../access/preflight.server";
 import { readAccountPlan, writeAccountPlan } from "../account/plan.server";
 import { parseStoredCapabilities } from "../capabilities/capabilities";
 import { analyticsEngineRefusal } from "../catalog/requirement-checks";
@@ -134,10 +135,11 @@ export interface StartInstallDeps {
   sandboxAutoEnable?: SandboxAutoEnableDeps;
   /**
    * For an install protected with Cloudflare Access: why the account or the
-   * token cannot protect it (`accessCapabilityProblem`), null when they can.
-   * Without it the install job's first Access step refuses instead.
+   * token cannot protect it, or that Cloudflare could not be asked
+   * (`accessCapabilityProblem`); null when they can. Without it the install
+   * job's first Access step refuses instead.
    */
-  accessPreflight?: () => Promise<string | null>;
+  accessPreflight?: () => Promise<AccessPreflightProblem | null>;
   now?: () => Date;
   newId?: () => string;
 }
@@ -406,9 +408,7 @@ export async function startInstallCore(
   if (installer === null && resolved.access === true && deps.accessPreflight !== undefined) {
     const problem = await deps.accessPreflight();
     if (problem !== null) {
-      throw new StartInstallError(
-        `${manifest.catalog.name} needs Cloudflare Access, which this account cannot provide yet: ${problem}`,
-      );
+      throw new StartInstallError(accessInstallRefusal(manifest.catalog.name, problem));
     }
   }
   if (installer !== null && resolved.domain !== undefined) {

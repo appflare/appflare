@@ -25,5 +25,6 @@ export function appLine(
   if (signal === "not-responding") return "Not responding";
   if (signal === "failed") return "Last change did not finish";
   if (signal === "update") return "Update available";
+  if (signal === "reinstall") return "New version takes a reinstall";
   return `Running · ${app.version} · updated ${sinceDay(app.updatedAt, now)}`;
 }

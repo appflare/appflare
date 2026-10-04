@@ -220,6 +220,19 @@ describe("protectInstall", () => {
     expect(cf.apps.size).toBe(1);
   });
 
+  it("refuses a token without the service token permission before making anything", async () => {
+    const { cf, deps } = setup();
+    // A token made for a version that did not ask for "Access: Service Tokens".
+    cf.forbidden.add("GET /accounts/acc0000000000000000000000000000a/access/service_tokens");
+    await expect(protectInstall(deps, { installId: INSTALL_ID })).rejects.toThrow(
+      /cannot manage Access service tokens/,
+    );
+    expect(writes(cf)).toEqual([]);
+    expect(cf.policies.size).toBe(0);
+    const settings = await readSettings(createDb(env.DB), [SETTING.appAccessUsersPolicyId]);
+    expect(settings.app_access_users_policy_id).toBeUndefined();
+  });
+
   it("refuses an address another application covers, before making anything", async () => {
     const { cf, deps } = setup();
     for (const [name, destinations] of [

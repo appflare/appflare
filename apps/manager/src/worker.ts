@@ -10,7 +10,10 @@ import { versionCreatedAt } from "./auth/recovery.server";
 import { cleanUpRecoverySecret } from "./auth/recovery-cleanup.server";
 import { ensureAuthStorage } from "./auth/storage.server";
 import { runScheduledUpdates, scheduledUpdatesLog } from "./auto-update/cron.server";
-import { refreshCapabilitiesDaily } from "./capabilities/capabilities.server";
+import {
+  refreshCapabilitiesAfterVersionChange,
+  refreshCapabilitiesIfStale,
+} from "./capabilities/capabilities.server";
 import { ManagerReleasesError, refreshManagerReleases } from "./catalog/manager-releases.server";
 import { refreshEnabledCatalogs } from "./catalog/refresh.server";
 import { getCfClient } from "./cloudflare/client.server";
@@ -36,6 +39,40 @@ export { JobUnits } from "./jobs/units/entrypoint";
 
 /** Set once this isolate has looked for a self-update to complete. */
 let selfUpdatesFinalized = false;
+
+/** Set once this isolate has looked at whose account checks are stored. */
+let capabilitiesLooked = false;
+
+/**
+ * The first request of each isolate, after the response: when the stored
+ * account checks were run by an older version (Appflare was updated) or
+ * lack a probe this one runs, they run again now rather than with the
+ * next day's cron, so the catalog and the install form read the running
+ * version's answers within moments of an update. Starting protection with
+ * Cloudflare Access never relies on them: it asks Cloudflare itself
+ * (access/preflight.server.ts). One settings read per isolate otherwise; a
+ * failure is logged and the cron tries again.
+ */
+function lookAtCapabilities(env: Env, ctx: ExecutionContext): void {
+  if (capabilitiesLooked) return;
+  capabilitiesLooked = true;
+  ctx.waitUntil(
+    refreshCapabilitiesAfterVersionChange(env, createDb(env.DB), {
+      version: env.APPFLARE_VERSION,
+    }).then(
+      (result) => {
+        if (result === "checked") {
+          console.log(`account capabilities checked by version ${env.APPFLARE_VERSION}`);
+        }
+      },
+      (error: unknown) => {
+        console.error("account capability check after a version change failed", {
+          error: error instanceof Error ? error.message : String(error),
+        });
+      },
+    ),
+  );
+}
 
 /**
  * A version that a self-update just promoted completes that job on its first
@@ -100,8 +137,10 @@ async function authStorage(ctx: ExecutionContext): Promise<void> {
 export default {
   async fetch(request, env, ctx) {
     await authStorage(ctx);
+    const failed = await migrated(env, request);
+    if (failed !== null) return failed;
+    lookAtCapabilities(env, ctx);
     return (
-      (await migrated(env, request)) ??
       // Appflare's address: page requests at workers.dev go to its custom domain.
       (await addressRedirect.check(request, env.DB)) ??
       // Cloudflare Access protection, when on: checked before any routing.
@@ -114,8 +153,9 @@ export default {
   /**
    * Cron: refresh every enabled catalog's index into KV, then check the manager's own
    * release feed. Update-available (for apps and for Appflare) is computed
-   * at read time from those caches. Once a day it also re-reads the
-   * account's capabilities (capabilities/). Then the anonymous usage-data report
+   * at read time from those caches. Once a day, and whenever an older
+   * version ran them, it also re-reads the account's capabilities
+   * (capabilities/). Then the anonymous usage-data report
    * (telemetry/report.server.ts), which starts with the first run after setup
    * and sends nothing once an admin turns it off. It starts update jobs only for what automatic updates
    * allow (auto-update/), and only updates that need nothing from an admin. Last, it deletes a
@@ -146,9 +186,12 @@ export default {
       if (!(error instanceof ManagerReleasesError)) throw error;
       console.error("release feed check failed", { error: error.message });
     }
-    // Account capabilities (R2, Containers, Workers plan): once a UTC day, one read call each.
+    // Account capabilities (R2, Containers, Workers plan, ...): once a UTC day,
+    // and again when an older version stored them; one read call each.
     try {
-      const capabilities = await refreshCapabilitiesDaily(env, createDb(env.DB));
+      const capabilities = await refreshCapabilitiesIfStale(env, createDb(env.DB), {
+        version: env.APPFLARE_VERSION,
+      });
       if (capabilities === "checked") console.log("account capabilities checked");
     } catch (error) {
       console.error("account capability check failed", {

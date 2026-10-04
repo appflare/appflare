@@ -59,6 +59,7 @@ import {
   withDerivedSecrets,
 } from "./derived-secrets";
 import { snapshotHasSameCode } from "./rollback-copy";
+import { reinstallRefusal, tierChanged } from "./tier-change";
 
 /**
  * Starting updates and rollbacks, restoring a database to a snapshot's
@@ -294,6 +295,10 @@ export async function startUpdateCore(
   if (notNewer !== null) {
     throw new VersionActionError(`There is no newer version to update to: ${notNewer}.`);
   }
+  // Every offer of such an update already says so (tier-change.ts); this guards a start anyway.
+  if (tierChanged(install.build_kind, app.tier)) {
+    throw new VersionActionError(reinstallRefusal(app.name, install.build_kind));
+  }
   const installer = app.tier === "self-deploying" ? (app.build ?? null) : null;
   if (installer !== null || install.build_kind === "self-deploying") {
     return startSelfDeployingUpdate(deps, request, install, app, installer);
@@ -454,9 +459,7 @@ async function startSelfDeployingUpdate(
   installer: IndexBuild | null,
 ): Promise<StartUpdateResult> {
   if (installer === null || install.build_kind !== "self-deploying") {
-    throw new VersionActionError(
-      `${app.name} changed how it is installed (${install.build_kind === "self-deploying" ? "it no longer ships its own installer" : "it now ships its own installer"}). Uninstall it and install it again.`,
-    );
+    throw new VersionActionError(reinstallRefusal(app.name, install.build_kind));
   }
   if (deps.sandboxConnected !== true) {
     throw new VersionActionError(

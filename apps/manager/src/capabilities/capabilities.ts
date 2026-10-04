@@ -16,6 +16,7 @@ import {
 } from "@appflare/cf-api/capabilities";
 import { z } from "zod";
 import { type AccountPlan, parseAccountPlan } from "../account/plan";
+import { isUpdateAvailable } from "../catalog/versions";
 
 /**
  * Account capabilities as the manager keeps them: what the probes in
@@ -37,6 +38,11 @@ const unknownSchema = z.object({
 export const storedCapabilitiesSchema = z.object({
   /** ISO 8601 time of the probes. */
   checkedAt: z.string(),
+  /**
+   * The Appflare version that ran the probes. Absent in rows written before
+   * it was recorded; a row of an older version is checked again (`capabilitiesStaleness`).
+   */
+  version: z.string().optional(),
   r2: z.union([z.object({ state: z.enum(["enabled", "not-enabled"]) }), unknownSchema]),
   containers: z.union([
     z.object({ state: z.enum(["available", "needs-workers-paid"]) }),
@@ -74,7 +80,59 @@ export const storedCapabilitiesSchema = z.object({
 });
 export type StoredCapabilities = AccountCapabilities &
   Partial<DomainCapabilities> &
-  Partial<AccountSetupCapabilities> & { checkedAt: string };
+  Partial<AccountSetupCapabilities> & { checkedAt: string; version?: string };
+
+/**
+ * Every probe this version runs, so a row that lacks one is known to come
+ * from an older version. The record type makes adding a probe without
+ * listing it here a type error.
+ */
+const PROBES: Record<Exclude<keyof StoredCapabilities, "checkedAt" | "version">, true> = {
+  r2: true,
+  containers: true,
+  workersPlan: true,
+  zone: true,
+  emailRouting: true,
+  workersDev: true,
+  zeroTrust: true,
+  analyticsEngine: true,
+  accessServiceTokens: true,
+};
+
+/**
+ * Why the stored probes should run again, or null while they hold: never
+ * run; run by an older Appflare version, or one that did not record its
+ * own (Appflare was updated since, and the new version may probe more or
+ * read an answer differently); missing a probe this version runs; or run
+ * on an earlier UTC day. A newer version's answer holds until the next day:
+ * while a self-update checks its new version, both versions serve, and
+ * neither should probe again because the other just did. Without `version`
+ * the version is not compared.
+ */
+export type CapabilitiesStaleness =
+  | "never-checked"
+  | "older-version"
+  | "missing-probe"
+  | "earlier-day";
+
+export function capabilitiesStaleness(
+  stored: StoredCapabilities | null,
+  current: { now: Date; version?: string },
+): CapabilitiesStaleness | null {
+  if (stored === null) return "never-checked";
+  if (
+    current.version !== undefined &&
+    (stored.version === undefined || isUpdateAvailable(stored.version, current.version))
+  ) {
+    return "older-version";
+  }
+  const probes = Object.keys(PROBES) as (keyof typeof PROBES)[];
+  if (probes.some((probe) => stored[probe] === undefined)) return "missing-probe";
+  if (stored.checkedAt.slice(0, 10) !== current.now.toISOString().slice(0, 10)) {
+    return "earlier-day";
+  }
+  return null;
+}
 
 /** The stored row, or null when it is absent or unreadable (then nothing counts as detected). */
 export function parseStoredCapabilities(

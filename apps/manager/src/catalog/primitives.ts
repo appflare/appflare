@@ -119,7 +119,9 @@ const PROVIDED: Partial<Record<PrimitiveId, string>> = {
 /**
  * Cloudflare Access: the account's Zero Trust organization, as the probe
  * found it. A token permission a protected install needs and the probes
- * found missing makes it unavailable, as the install form refuses it.
+ * found missing makes it unavailable, as the install form refuses it; one
+ * no probe has answered for yet (a check stored by an older version, or one
+ * that failed) leaves it unknown, never available.
  */
 function accessStatus(view: CapabilitiesView | null): PrimitiveStatus {
   const id = "access";
@@ -135,6 +137,13 @@ function accessStatus(view: CapabilitiesView | null): PrimitiveStatus {
   const problem = storedAccessProblem(view);
   if (problem !== null) return { id, availability: "unavailable", reason: problem.message };
   if (probe?.state === "exists") {
+    if (view?.accessServiceTokens?.state !== "readable") {
+      return {
+        id,
+        availability: "unknown",
+        reason: `Detected: Zero Trust is set up, team domain ${probe.teamDomain}. Appflare could not check yet whether the token can manage Access service tokens.`,
+      };
+    }
     return {
       id,
       availability: "available",

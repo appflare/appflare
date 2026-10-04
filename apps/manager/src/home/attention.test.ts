@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { NEEDS_ADMIN_COPY } from "../auto-update/auto-update";
 import {
   type AccountAttentionRow,
   type AttentionApp,
@@ -207,6 +208,28 @@ describe("attentionItems", () => {
     ]);
     // "Update all" starts only the ones that need nothing.
     expect(updateAllTargets(items).map((i) => i.installId)).toEqual(["a"]);
+  });
+
+  it("lists a new version that takes a reinstall, never as one Update starts", () => {
+    const items = attentionItems(
+      input({
+        apps: [
+          app({ id: "a", label: "Links", latestVersion: "1.1.0", updateAvailable: true }),
+          app({ id: "seo", label: "OpenSEO", latestVersion: "0.1.10", reinstallNeeded: true }),
+        ],
+      }),
+    );
+    const seo = items.find((i) => i.kind === "update" && i.installId === "seo");
+    expect(seo).toMatchObject({ kind: "update", reinstall: true, latestVersion: "0.1.10" });
+    if (seo === undefined) throw new Error("no row");
+    expect(attentionCopy(seo)).toEqual({
+      title: "OpenSEO 0.1.10 takes a reinstall",
+      description: `You have 1.0.0. ${NEEDS_ADMIN_COPY["reinstall-needed"]}`,
+    });
+    // No "Update all" for it, and its own dot and line on Home.
+    expect(updateAllTargets(items).map((i) => i.installId)).toEqual(["a"]);
+    expect(appSignals(items).get("seo")).toBe("reinstall");
+    expect(appSignals(items).get("a")).toBe("update");
   });
 
   it("lists account rows for admins only, without the ones put away with Not needed", () => {

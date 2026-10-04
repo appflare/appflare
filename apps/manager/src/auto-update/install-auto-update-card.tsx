@@ -91,10 +91,16 @@ export function InstallAutoUpdateCard({
           />
         </Radio.Group>
         {/* The choices describe themselves; only an app the cron never updates needs a word more. */}
-        {needsApproval && (
+        {install.reinstallNeeded && install.latestVersion !== null ? (
           <Text variant="secondary" size="sm">
-            {AUTO_UPDATE_COPY.needsApproval}
+            {AUTO_UPDATE_COPY.reinstallNeeded(install.latestVersion)}
           </Text>
+        ) : (
+          needsApproval && (
+            <Text variant="secondary" size="sm">
+              {AUTO_UPDATE_COPY.needsApproval}
+            </Text>
+          )
         )}
         {on &&
           !needsApproval &&

@@ -665,6 +665,7 @@ function Details({ install, isAdmin }: { install: InstallDetail; isAdmin: boolea
         <span className="flex flex-wrap items-center gap-2">
           <OriginBadge origin={install.origin} />
           {install.updateAvailable && <Badge variant="info">Update available</Badge>}
+          {install.reinstallNeeded && <Badge variant="warning">Reinstall to update</Badge>}
           <StatusBadge status={install.status} of="install" />
         </span>
       }
@@ -695,12 +696,13 @@ function Details({ install, isAdmin }: { install: InstallDetail; isAdmin: boolea
           </DescriptionItem>
           <DescriptionItem label="Version">
             <span className={mono}>{install.version}</span>
-            {install.updateAvailable && install.latestVersion !== null && (
-              <Text as="span" variant="secondary">
-                {" "}
-                (catalog has <span className={mono}>{install.latestVersion}</span>)
-              </Text>
-            )}
+            {(install.updateAvailable || install.reinstallNeeded) &&
+              install.latestVersion !== null && (
+                <Text as="span" variant="secondary">
+                  {" "}
+                  (catalog has <span className={mono}>{install.latestVersion}</span>)
+                </Text>
+              )}
           </DescriptionItem>
           <DescriptionItem label="Worker">
             <span className={mono}>{install.workerName}</span>

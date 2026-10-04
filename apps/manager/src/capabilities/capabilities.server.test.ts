@@ -9,8 +9,9 @@ import { readSettings, SETTING, writeSettings } from "../db/settings";
 import { type FakeRoute, FORBIDDEN, fakeCloudflare } from "../test/fake-cloudflare";
 import {
   readCapabilitiesView,
-  refreshCapabilitiesDaily,
+  refreshCapabilitiesAfterVersionChange,
   refreshCapabilitiesForNewToken,
+  refreshCapabilitiesIfStale,
 } from "./capabilities.server";
 
 const TOKEN = "cfat_TEST-token-value-DO-NOT-LEAK";
@@ -154,7 +155,7 @@ describe("a failed check", () => {
   it("keeps the last answer of a probe that failed outright, with the new check time", async () => {
     const db = createDb(env.DB);
     const cf = await configured();
-    await refreshCapabilitiesDaily(cf, db, {
+    await refreshCapabilitiesIfStale(cf, db, {
       now: MORNING,
       fetch: fakeCloudflare(PAID_ACCOUNT).fetch,
     });
@@ -166,7 +167,7 @@ describe("a failed check", () => {
       [`GET ${A}/workers/subdomain`]: "network-error",
       [`GET ${A}/access/organizations`]: FORBIDDEN,
     });
-    await refreshCapabilitiesDaily(cf, db, { now: NEXT_DAY, fetch: down.fetch });
+    await refreshCapabilitiesIfStale(cf, db, { now: NEXT_DAY, fetch: down.fetch });
     const view = await readCapabilitiesView(db);
     expect(view.checkedAt).toBe(NEXT_DAY.toISOString());
     expect(view.workersDev).toEqual({ state: "registered", subdomain: "paid-team" });
@@ -198,7 +199,7 @@ describe("the Workers plan in force", () => {
     expect(await readAccountPlan(db)).toBe("paid");
 
     // A token without Billing: Read or Containers cannot tell: the admin's plan stays.
-    await refreshCapabilitiesDaily(cf, db, {
+    await refreshCapabilitiesIfStale(cf, db, {
       now: MORNING,
       fetch: fakeCloudflare(WITHOUT_OPTIONAL_GROUPS).fetch,
     });
@@ -206,7 +207,7 @@ describe("the Workers plan in force", () => {
     expect((await readCapabilitiesView(db)).plan).toEqual({ plan: "paid", source: "set-by-you" });
 
     // Detected free wins over the admin's paid.
-    await refreshCapabilitiesDaily(cf, db, {
+    await refreshCapabilitiesIfStale(cf, db, {
       now: NEXT_DAY,
       fetch: fakeCloudflare(FREE_ACCOUNT).fetch,
     });
@@ -215,21 +216,21 @@ describe("the Workers plan in force", () => {
   });
 });
 
-describe("the daily check", () => {
+describe("the cron's check", () => {
   it("runs once per UTC day", async () => {
     const db = createDb(env.DB);
     const cf = await configured();
     const api = fakeCloudflare(PAID_ACCOUNT);
-    expect(await refreshCapabilitiesDaily(cf, db, { now: MORNING, fetch: api.fetch })).toBe(
+    expect(await refreshCapabilitiesIfStale(cf, db, { now: MORNING, fetch: api.fetch })).toBe(
       "checked",
     );
-    expect(await refreshCapabilitiesDaily(cf, db, { now: EVENING, fetch: api.fetch })).toBe(
+    expect(await refreshCapabilitiesIfStale(cf, db, { now: EVENING, fetch: api.fetch })).toBe(
       "fresh",
     );
     // Three account probes, the zone list, workers.dev, Zero Trust,
     // Analytics Engine and service tokens; no zone, so no Email Routing read.
     expect(api.calls).toHaveLength(8);
-    expect(await refreshCapabilitiesDaily(cf, db, { now: NEXT_DAY, fetch: api.fetch })).toBe(
+    expect(await refreshCapabilitiesIfStale(cf, db, { now: NEXT_DAY, fetch: api.fetch })).toBe(
       "checked",
     );
     expect(api.calls).toHaveLength(16);
@@ -242,8 +243,88 @@ describe("the daily check", () => {
   it("does nothing before setup has stored a token", async () => {
     const api = fakeCloudflare(PAID_ACCOUNT);
     expect(
-      await refreshCapabilitiesDaily({ DB: env.DB }, createDb(env.DB), { fetch: api.fetch }),
+      await refreshCapabilitiesIfStale({ DB: env.DB }, createDb(env.DB), { fetch: api.fetch }),
     ).toBe("no-token");
     expect(api.calls).toHaveLength(0);
+  });
+});
+
+describe("after an update of Appflare", () => {
+  /** What a manager from before the service token probe stored: no such probe, no version. */
+  const OLDER_ROW = {
+    checkedAt: MORNING.toISOString(),
+    r2: { state: "enabled" },
+    containers: { state: "available" },
+    workersPlan: { state: "paid" },
+    zone: { state: "none" },
+    emailRouting: { state: "no-zone" },
+    workersDev: { state: "registered", subdomain: "paid-team" },
+    zeroTrust: { state: "exists", teamDomain: "paid-team.cloudflareaccess.com" },
+    analyticsEngine: { state: "enabled" },
+  };
+
+  it("checks again on the same day when the stored answer lacks a probe this version runs", async () => {
+    const db = createDb(env.DB);
+    const cf = await configured();
+    await writeSettings(db, { [SETTING.accountCapabilities]: JSON.stringify(OLDER_ROW) });
+    const api = fakeCloudflare({
+      ...PAID_ACCOUNT,
+      // The token predates the permission.
+      [`GET ${A}/access/service_tokens`]: FORBIDDEN,
+    });
+    expect(
+      await refreshCapabilitiesAfterVersionChange(cf, db, {
+        now: EVENING,
+        version: "0.2.1",
+        fetch: api.fetch,
+      }),
+    ).toBe("checked");
+    const view = await readCapabilitiesView(db);
+    expect(view.checkedAt).toBe(EVENING.toISOString());
+    expect(view.accessServiceTokens).toMatchObject({ state: "unknown", reason: "no-permission" });
+    const row = await readSettings(db, [SETTING.accountCapabilities]);
+    expect(JSON.parse(row.account_capabilities ?? "{}")).toMatchObject({ version: "0.2.1" });
+  });
+
+  it("checks again when an older version stored the answer, and once only", async () => {
+    const db = createDb(env.DB);
+    const cf = await configured();
+    const api = fakeCloudflare(PAID_ACCOUNT);
+    await refreshCapabilitiesIfStale(cf, db, { now: MORNING, version: "0.2.0", fetch: api.fetch });
+    expect(api.calls).toHaveLength(8);
+    // Same version, same day: nothing to do, from a request or from the cron.
+    const same = { now: EVENING, version: "0.2.0", fetch: api.fetch };
+    expect(await refreshCapabilitiesAfterVersionChange(cf, db, same)).toBe("fresh");
+    expect(await refreshCapabilitiesIfStale(cf, db, same)).toBe("fresh");
+    // The first request of the new version.
+    const newer = { now: EVENING, version: "0.2.1", fetch: api.fetch };
+    expect(await refreshCapabilitiesAfterVersionChange(cf, db, newer)).toBe("checked");
+    expect(await refreshCapabilitiesAfterVersionChange(cf, db, newer)).toBe("fresh");
+    expect(await refreshCapabilitiesIfStale(cf, db, newer)).toBe("fresh");
+    expect(api.calls).toHaveLength(16);
+  });
+
+  it("leaves a newer version's answer to the next day", async () => {
+    const db = createDb(env.DB);
+    const cf = await configured();
+    const api = fakeCloudflare(PAID_ACCOUNT);
+    // The new version answered its own preview check during a self-update.
+    await refreshCapabilitiesIfStale(cf, db, { now: MORNING, version: "0.2.1", fetch: api.fetch });
+    const older = { now: EVENING, version: "0.2.0", fetch: api.fetch };
+    expect(await refreshCapabilitiesAfterVersionChange(cf, db, older)).toBe("fresh");
+    expect(await refreshCapabilitiesIfStale(cf, db, older)).toBe("fresh");
+    expect(api.calls).toHaveLength(8);
+  });
+
+  it("leaves never-run and earlier-day answers to setup and the cron", async () => {
+    const db = createDb(env.DB);
+    const cf = await configured();
+    const api = fakeCloudflare(PAID_ACCOUNT);
+    const first = { now: MORNING, version: "0.2.1", fetch: api.fetch };
+    expect(await refreshCapabilitiesAfterVersionChange(cf, db, first)).toBe("fresh");
+    await refreshCapabilitiesIfStale(cf, db, first);
+    const tomorrow = { now: NEXT_DAY, version: "0.2.1", fetch: api.fetch };
+    expect(await refreshCapabilitiesAfterVersionChange(cf, db, tomorrow)).toBe("fresh");
+    expect(await refreshCapabilitiesIfStale(cf, db, tomorrow)).toBe("checked");
   });
 });

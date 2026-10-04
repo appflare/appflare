@@ -5,7 +5,6 @@ import { catalogIndexUrl } from "../catalog/index.server";
 import { mediaSrc } from "../catalog/media";
 import type { AppLookup, ListedApp } from "../catalog/merged.server";
 import { type CatalogSource, installAppKey, OFFICIAL_CATALOG_ID } from "../catalog/sources";
-import { isUpdateAvailable } from "../catalog/versions";
 import { createDb, type Database } from "../db/client";
 import { type HealthStatus, type InstallOrigin, installs } from "../db/schema";
 import { readSettings, SETTING } from "../db/settings";
@@ -14,6 +13,7 @@ import { type AddressDomain, type AppAddressInput, appAddress } from "./app-addr
 import { readAddressDomains } from "./app-address.server";
 import { distinctLabels } from "./display-name";
 import { recordedName } from "./install-names.server";
+import { updateOffer } from "./tier-change";
 
 /**
  * The installs as lists show them (Home, the sidebar's apps), and the row
@@ -47,7 +47,14 @@ export interface InstallRow {
   status: string;
   version: string;
   latestVersion: string | null;
+  /** The catalog lists a newer version that Update can start. */
   updateAvailable: boolean;
+  /**
+   * The catalog lists a newer version, but its entry changed how it is
+   * installed, so it is uninstalled and installed again instead
+   * (tier-change.ts); never with `updateAvailable`.
+   */
+  reinstallNeeded: boolean;
   /** Where "Open" takes the app (`appAddress`); null until installed, or with no address. */
   address: string | null;
   /** ISO 8601 */
@@ -182,8 +189,7 @@ export function installRowsOf(
       status: row.status,
       version: row.catalog_version,
       latestVersion: listed?.version ?? null,
-      updateAvailable:
-        row.status === "installed" && isUpdateAvailable(row.catalog_version, listed?.version),
+      ...updateOffer(row, listed),
       address: row.status === "installed" ? addressOf(row) : null,
       updatedAt: row.updated_at.toISOString(),
       uninstalledAt: row.uninstalled_at?.toISOString() ?? null,

@@ -32,7 +32,14 @@ const outcome = z.enum(["succeeded", "failed"]);
 const version = z.string().nullable();
 
 export const notificationFactsSchema = z.discriminatedUnion("type", [
-  z.object({ type: z.literal("update_available"), app: appRef, from: z.string(), to: z.string() }),
+  z.object({
+    type: z.literal("update_available"),
+    app: appRef,
+    from: z.string(),
+    to: z.string(),
+    /** The entry changed how the app is installed: the new version takes a reinstall. */
+    reinstall: z.literal(true).optional(),
+  }),
   z.object({
     type: z.literal("update_applied"),
     app: appRef,
@@ -120,9 +127,17 @@ export function renderMessage(facts: NotificationFacts, managerUrl: string | nul
   switch (facts.type) {
     case "update_available":
       return {
-        title: `Update available: ${facts.app.instance}`,
+        title:
+          facts.reinstall === true
+            ? `New version takes a reinstall: ${facts.app.instance}`
+            : `Update available: ${facts.app.instance}`,
         lines: [
           `${facts.app.app} ${facts.to} is available. ${facts.app.instance} runs ${facts.from}.`,
+          ...(facts.reinstall === true
+            ? [
+                `${facts.app.app} changed how it is installed, so ${facts.app.instance} cannot be updated in place: uninstall it and install it again to get ${facts.to}.`,
+              ]
+            : []),
         ],
         url: managerLink(managerUrl, appLink(facts.app.installId)),
       };

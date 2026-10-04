@@ -27,7 +27,7 @@ export const checkCapabilitiesAgain = createServerFn({ method: "POST" }).handler
     invalidateScriptsCache();
     const db = createDb(env.DB);
     try {
-      await refreshCapabilitiesWithStoredToken(env, db);
+      await refreshCapabilitiesWithStoredToken(env, db, { version: env.APPFLARE_VERSION });
     } catch (error) {
       if (error instanceof CfTokenNotConfiguredError) throw new Error(error.message);
       throw error;

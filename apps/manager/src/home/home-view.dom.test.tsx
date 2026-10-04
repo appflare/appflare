@@ -48,6 +48,7 @@ function app(over: Partial<HomeApp> & { id: string; name: string }): HomeApp {
     version: "1.0.0",
     latestVersion: "1.0.0",
     updateAvailable: false,
+    reinstallNeeded: false,
     address: `https://${worker}.acme.workers.dev`,
     updatedAt: "2026-09-24T12:00:00.000Z",
     uninstalledAt: null,

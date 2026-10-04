@@ -2,8 +2,10 @@ import { Banner, Checkbox, LayerDialog, LinkButton, Text } from "@cloudflare/kum
 import { ArrowCircleUpIcon, ArrowRightIcon, InfoIcon, WarningIcon } from "@phosphor-icons/react";
 import { type FormEvent, type ReactNode, useId, useState } from "react";
 import type { InstallDetail } from "../installs/installs.functions";
+import { reinstallSentence } from "../installs/tier-change";
 import { startUpdate } from "../installs/versions.functions";
 import type { UpdateNeeds } from "../installs/versions.server";
+import { appLink } from "./app-links";
 import { BusyButton, BusyMark, busyActionProps } from "./busy-button";
 import { CronTriggersField } from "./cron-triggers-field";
 import { useJobStarted } from "./job-started";
@@ -18,8 +20,10 @@ import {
 
 /**
  * The update state of `/apps/$installId`: an update or rollback running
- * (with a link to its log), or "Update available to <version>" with an Update
- * button for admins. The button starts the update job and opens its log; when
+ * (with a link to its log), "Update available to <version>" with an Update
+ * button for admins, or, when the catalog entry changed how the app is
+ * installed, that the new version takes a reinstall, with no Update button
+ * (tier-change.ts). The button starts the update job and opens its log; when
  * the new version introduces secrets, cannot be checked on a preview before
  * it serves traffic, or adds cron triggers, a dialog asks for the secrets and
  * the confirmations first (for cron triggers, unless Settings records the
@@ -58,6 +62,23 @@ export function UpdateBanner({ install, isAdmin }: { install: InstallDetail; isA
               icon={<ArrowRightIcon />}
             >
               View log
+            </LinkButton>
+          ) : undefined
+        }
+      />
+    );
+  }
+  if (install.reinstallNeeded && install.latestVersion !== null) {
+    return (
+      <Banner
+        variant="alert"
+        icon={<WarningIcon weight="fill" />}
+        title={`${install.latestVersion} takes a reinstall`}
+        description={`Installed: ${install.version}. ${reinstallSentence(install.build.kind)}`}
+        action={
+          isAdmin ? (
+            <LinkButton href={appLink(install.id, "danger-zone")} variant="secondary">
+              Go to Uninstall
             </LinkButton>
           ) : undefined
         }

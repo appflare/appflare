@@ -30,14 +30,35 @@ describe("pendingUpdates", () => {
         row({ id: "g", appSlug: "gone" }),
       ],
       new Map([
-        ["cut", "1.1.0"],
-        ["brain", "2.0.0"],
+        ["cut", { version: "1.1.0" }],
+        ["brain", { version: "2.0.0" }],
       ]),
       upToDate,
     );
     expect(pending.apps).toEqual([
       { installId: "a", version: "1.0.0", latestVersion: "1.1.0" },
       { installId: "b", version: "1.0.0", latestVersion: "1.1.0" },
+    ]);
+  });
+
+  it("marks an update that takes a reinstall, when the entry changed how it is installed", () => {
+    const pending = pendingUpdates(
+      [
+        row({ id: "seo", appSlug: "open-seo", buildKind: "self-deploying" }),
+        row({ id: "cut", buildKind: "artifact" }),
+        row({ id: "built", buildKind: "sandbox" }),
+      ],
+      new Map([
+        ["open-seo", { version: "1.1.0", tier: "artifact" }],
+        ["cut", { version: "1.1.0", tier: "artifact" }],
+      ]),
+      upToDate,
+    );
+    expect(pending.apps).toEqual([
+      { installId: "seo", version: "1.0.0", latestVersion: "1.1.0", reinstall: true },
+      { installId: "cut", version: "1.0.0", latestVersion: "1.1.0" },
+      // A sandbox build of a release is updated in place.
+      { installId: "built", version: "1.0.0", latestVersion: "1.1.0" },
     ]);
   });
 

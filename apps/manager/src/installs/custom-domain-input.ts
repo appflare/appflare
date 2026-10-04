@@ -98,3 +98,14 @@ export function checkSubdomainInZone(input: string, zoneName: string): HostnameC
   }
   return checkHostnameInZone(`${typed}.${zone}`, zone);
 }
+
+/**
+ * A domain row's words while Cloudflare is still attaching a new domain
+ * (the check's `settingUp`): its record, route and certificate are on the
+ * way, so the app's answer is not known yet.
+ */
+export const DOMAIN_SETTING_UP = {
+  label: "Being set up",
+  note: (detail: string) =>
+    `Cloudflare is still attaching this domain and issuing its certificate, which takes a few minutes (last answer: ${detail}). Appflare checks again on its own.`,
+} as const;

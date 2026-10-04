@@ -71,6 +71,7 @@ const apps = selected.map((slug, index) => {
       slug === "emdash" ? "0.0.0-20260920.a0d31e2" : slug === "statusbeam" ? "0.1.0" : app.version,
     latestVersion: app.version,
     updateAvailable: slug === "emdash" || slug === "statusbeam",
+    reinstallNeeded: false,
     updateNeeds:
       slug === "statusbeam"
         ? "It needs something from you first, such as a new setting or a confirmation."

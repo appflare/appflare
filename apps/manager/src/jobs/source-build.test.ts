@@ -3,6 +3,7 @@ import { env } from "cloudflare:workers";
 import { createClient } from "@appflare/cf-api";
 import { type CatalogManifest, catalogManifestSchema, type SandboxInfo } from "@appflare/schema";
 import { beforeEach, describe, expect, it } from "vitest";
+import { INSTALL_ACCESS_MESSAGES } from "../access/messages";
 import { planAppUpdates } from "../auto-update/auto-update";
 import { readCandidateRows, updateCandidates } from "../auto-update/cron.server";
 import { OFFICIAL_TRUST } from "../catalog/catalogs.server";
@@ -621,6 +622,49 @@ describe("installing a reviewed build", () => {
       .bind(r.built.jobId)
       .first<{ status: string }>();
     expect(row?.status).toBe("used");
+  });
+
+  it("checks live that the account can protect it before an install with Cloudflare Access", async () => {
+    const fixture = await repositoryBuild(COMMIT, VERSION);
+    const built = await build({ fixture });
+    const created: string[] = [];
+    const deps = {
+      db: env.DB,
+      createJob: async (id: string) => {
+        created.push(id);
+        return { id };
+      },
+      accessPreflight: async () => ({
+        message: INSTALL_ACCESS_MESSAGES.tokensPermission,
+        unchecked: false,
+      }),
+    };
+    const form = {
+      buildId: built.jobId,
+      workerName: "cut",
+      secrets: { ADMIN_PASSWORD: "pw" },
+      vars: {},
+      paidConfirmed: true,
+      requirementsConfirmed: true,
+    };
+    await expect(installSourceBuildCore(deps, { ...form, access: true })).rejects.toThrow(
+      `needs Cloudflare Access, which this account cannot provide yet: ${INSTALL_ACCESS_MESSAGES.tokensPermission}`,
+    );
+    expect(created).toEqual([]);
+    // Cloudflare could not be asked: that alone is the refusal.
+    const unchecked = INSTALL_ACCESS_MESSAGES.unchecked("HTTP 500");
+    const refused = await installSourceBuildCore(
+      { ...deps, accessPreflight: async () => ({ message: unchecked, unchecked: true }) },
+      { ...form, access: true },
+    ).then(
+      () => null,
+      (error: unknown) => error,
+    );
+    expect((refused as Error | null)?.message).toBe(unchecked);
+    expect(created).toEqual([]);
+    // Unprotected, the check is not asked.
+    await installSourceBuildCore(deps, form);
+    expect(created).toHaveLength(1);
   });
 
   it("installs a build once", async () => {

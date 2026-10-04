@@ -52,6 +52,8 @@ export const ACCESS_MESSAGES = {
 export const INSTALL_ACCESS_MESSAGES = {
   policiesPermission: `The Cloudflare token cannot manage Access applications and policies. Add the ${ACCESS_PERMISSIONS.apps} permission to the token, then rotate it under Cloudflare token.`,
   tokensPermission: `The Cloudflare token cannot manage Access service tokens. Add the ${ACCESS_PERMISSIONS.serviceTokens} permission to the token, then rotate it under Cloudflare token.`,
+  unchecked: (detail: string) =>
+    `Appflare could not ask Cloudflare whether this account and its Cloudflare token can protect apps with Cloudflare Access (${detail}), so nothing was started. Try again in a minute.`,
   noAuthSecret:
     "This Worker has no BETTER_AUTH_SECRET, so Appflare cannot keep a service token's secret safely.",
   noUsers: "There are no Appflare users to allow through Cloudflare Access.",

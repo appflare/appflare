@@ -3,6 +3,7 @@ import { env } from "cloudflare:workers";
 import { generateVapidPrivateKey, vapidPublicKey } from "@appflare/schema";
 import bcrypt from "bcryptjs";
 import { beforeEach, describe, expect, it } from "vitest";
+import { INSTALL_ACCESS_MESSAGES } from "../access/messages";
 import { readAccountPlan, writeAccountPlan } from "../account/plan.server";
 import { createDb } from "../db/client";
 import { createMigrator } from "../db/migrate";
@@ -111,7 +112,10 @@ describe("startInstallCore", () => {
     const checked: string[] = [];
     const refusingPreflight = async () => {
       checked.push("asked");
-      return "This Cloudflare account has no Zero Trust organization yet.";
+      return {
+        message: "This Cloudflare account has no Zero Trust organization yet.",
+        unchecked: false,
+      };
     };
     const refusal =
       "Cut needs Cloudflare Access, which this account cannot provide yet: This Cloudflare account has no Zero Trust organization yet.";
@@ -142,12 +146,31 @@ describe("startInstallCore", () => {
     expect(ticked.created).toEqual([]);
   });
 
+  it("refuses with only that Cloudflare could not be asked, when the check got no answer", async () => {
+    const h = harness(await buildArtifactFixture({ catalog: { requires: ["access"] } }));
+    const unchecked = INSTALL_ACCESS_MESSAGES.unchecked("HTTP 500");
+    const refused = await startInstallCore(
+      { ...h.deps, accessPreflight: async () => ({ message: unchecked, unchecked: true }) },
+      input({ access: true }),
+    ).then(
+      () => null,
+      (error: unknown) => error,
+    );
+    // Not "needs Cloudflare Access, which this account cannot provide": nothing is known to be missing.
+    expect(refused).toBeInstanceOf(StartInstallError);
+    expect((refused as Error).message).toBe(unchecked);
+    expect(h.created).toEqual([]);
+  });
+
   it('installs an entry that lists "access" without requiring it unprotected, on any account, with nothing to confirm', async () => {
     // The requirement holds only while the app is protected: the admin left
     // protection off, so the account's Zero Trust is never asked about.
     const f = await buildArtifactFixture({ catalog: { requires: ["access"] } });
     const h = harness(f);
-    await startInstallCore({ ...h.deps, accessPreflight: async () => "never asked" }, input());
+    await startInstallCore(
+      { ...h.deps, accessPreflight: async () => ({ message: "never asked", unchecked: false }) },
+      input(),
+    );
     expect(h.created).toHaveLength(1);
     expect(h.created[0]?.params).not.toHaveProperty("access");
     // An app that needs nothing of Access is not checked either.
@@ -159,7 +182,7 @@ describe("startInstallCore", () => {
           let n = 10;
           return () => `id${++n}`;
         })(),
-        accessPreflight: async () => "never asked",
+        accessPreflight: async () => ({ message: "never asked", unchecked: false }),
       },
       input({ workerName: "cut-2" }),
     );

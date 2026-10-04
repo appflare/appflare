@@ -15,6 +15,7 @@ import {
   isAccessChallengeFor,
   isEdge1042,
   isEdgeErrorPage,
+  isHostnameNotAttachedYet,
   LIVE_HEALTH_WINDOW_MS,
   liveHealthDelaySeconds,
   lookupOnce,
@@ -171,6 +172,29 @@ describe("live health window", () => {
     expect(settleHealthProbe(edge).status).toBe("unverified");
     expect(settleHealthProbe(down).status).toBe("unverified");
     expect(settleHealthProbe(res(503)).status).toBe("unhealthy");
+  });
+});
+
+describe("isHostnameNotAttachedYet", () => {
+  it("reads Cloudflare answering in a new domain's place as not attached yet", () => {
+    expect(isHostnameNotAttachedYet(res(530, "error code: 1016"))).toBe(true);
+    expect(isHostnameNotAttachedYet(res(530))).toBe(true);
+    expect(isHostnameNotAttachedYet(res(522, "error code: 522"))).toBe(true);
+    expect(isHostnameNotAttachedYet(res(404, "error code: 1042"))).toBe(true);
+    expect(isHostnameNotAttachedYet(res(409, "error code: 1018"))).toBe(true);
+    expect(isHostnameNotAttachedYet(res(404, "error code: 1001"))).toBe(true);
+    expect(isHostnameNotAttachedYet({ kind: "error", message: "TLS handshake failed" })).toBe(true);
+  });
+
+  it("does not read the Worker's own answers, failures included, that way", () => {
+    // A hostname that works but turns requests away.
+    expect(isHostnameNotAttachedYet(res(429, "error code: 1015"))).toBe(false);
+    expect(isHostnameNotAttachedYet(res(429, "error code: 1027"))).toBe(false);
+    expect(isHostnameNotAttachedYet(res(403, "error code: 1020"))).toBe(false);
+    expect(isHostnameNotAttachedYet(res(500, "error code: 1101"))).toBe(false);
+    expect(isHostnameNotAttachedYet(res(503, "error code: 1102"))).toBe(false);
+    expect(isHostnameNotAttachedYet(res(502, "Bad gateway from the app"))).toBe(false);
+    expect(isHostnameNotAttachedYet(res(200, "<html>"))).toBe(false);
   });
 });
 

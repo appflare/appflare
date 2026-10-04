@@ -191,7 +191,12 @@ describe("primitiveStatus", () => {
     const access = (zeroTrust: unknown) =>
       primitiveStatus(
         "access",
-        capabilitiesView(null, stored({ zeroTrust } as Parameters<typeof stored>[0])),
+        capabilitiesView(
+          null,
+          stored({ zeroTrust, accessServiceTokens: { state: "readable" } } as Parameters<
+            typeof stored
+          >[0]),
+        ),
         plain,
       );
     expect(access({ state: "exists", teamDomain: "acme.cloudflareaccess.com" })).toMatchObject({
@@ -230,6 +235,19 @@ describe("primitiveStatus", () => {
     expect(
       access({ zeroTrust: { state: "unknown", reason: "error", detail: "500" } }),
     ).toMatchObject({ availability: "unknown" });
+    // Neither is a service token permission no probe answered for: a check
+    // stored by a version before that probe, or one that failed.
+    const organization = { state: "exists", teamDomain: "acme.cloudflareaccess.com" } as const;
+    expect(access({ zeroTrust: organization })).toMatchObject({
+      availability: "unknown",
+      reason: expect.stringContaining("service tokens"),
+    });
+    expect(
+      access({
+        zeroTrust: organization,
+        accessServiceTokens: { state: "unknown", reason: "error", detail: "500" },
+      }).availability,
+    ).toBe("unknown");
     expect(
       access({
         zeroTrust: { state: "exists", teamDomain: "acme.cloudflareaccess.com" },
