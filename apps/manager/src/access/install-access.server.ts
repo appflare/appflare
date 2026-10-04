@@ -797,6 +797,12 @@ export function accessAppSettings(app: AccessApp): Record<string, unknown> {
   for (const [key, value] of Object.entries(app)) {
     if (READ_ONLY_APP_FIELDS.has(key)) continue;
     if (key === "domain" && (value === null || value === "")) continue;
+    // With destinations, Cloudflare derives `domain` from the first `public`
+    // one and refuses a `domain` that is not among them, so a body that
+    // changes the destinations must not carry the old one.
+    if (key === "domain" && Array.isArray(app.destinations) && app.destinations.length > 0) {
+      continue;
+    }
     settings[key] = value;
   }
   return settings;

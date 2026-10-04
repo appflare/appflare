@@ -11,6 +11,7 @@ import { FAKE_ACC, fakeAccessAccount } from "../test/fake-access-account";
 import { INSTALL_ID, seedInstall } from "../test/seed-install";
 import { writeAccessConfig } from "./config";
 import {
+  accessAppSettings,
   anyProtectedInstall,
   appWithoutProbesPolicy,
   deleteInstallServiceToken,
@@ -674,5 +675,31 @@ describe("repairing the users policy from the cron", () => {
     expect(rotate?.body).toEqual({
       previous_client_secret_expires_at: new Date(NOW.getTime() + ROTATION_GRACE_MS).toISOString(),
     });
+  });
+});
+
+describe("accessAppSettings", () => {
+  it("leaves out the domain Cloudflare derived from the destinations, keeps one set alone", () => {
+    const fromDestinations = accessAppSettings({
+      id: "app-1",
+      aud: "aud-1",
+      name: "Appflare: 2FA (2fa)",
+      domain: "2fa.example.workers.dev",
+      self_hosted_domains: ["2fa.example.workers.dev"],
+      destinations: [{ type: "public", uri: "2fa.example.workers.dev" }],
+      session_duration: "24h",
+    } as Parameters<typeof accessAppSettings>[0]);
+    expect(fromDestinations).toEqual({
+      name: "Appflare: 2FA (2fa)",
+      destinations: [{ type: "public", uri: "2fa.example.workers.dev" }],
+      session_duration: "24h",
+    });
+    const byDomain = accessAppSettings({
+      id: "app-2",
+      aud: "aud-2",
+      name: "Legacy",
+      domain: "legacy.example.com",
+    } as Parameters<typeof accessAppSettings>[0]);
+    expect(byDomain).toEqual({ name: "Legacy", domain: "legacy.example.com" });
   });
 });

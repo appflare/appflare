@@ -75,6 +75,33 @@ export function fakeAccessAccount(opts: { now?: () => Date } = {}) {
       { status },
     );
   const notFound = () => json(404, null, [{ code: 12130, message: "access.api.error.not_found" }]);
+  /**
+   * What Cloudflare answers for an application's `domain` and
+   * `self_hosted_domains` (verified live 2026-10-04): with `destinations`,
+   * the first `public` destination's uri (null with only `worker` ones),
+   * and a `domain` sent with them that is not one of their uris is refused
+   * with 12130 "domain not included in destinations".
+   */
+  const appDomains = (
+    b: Record<string, unknown>,
+  ): { domain: string | null; self_hosted_domains: string[] | null } | "mismatch" => {
+    const sent = typeof b.domain === "string" && b.domain !== "" ? b.domain : null;
+    if (!Array.isArray(b.destinations)) {
+      return { domain: sent, self_hosted_domains: sent === null ? null : [sent] };
+    }
+    const uris = (b.destinations as Array<{ type?: string; uri?: string }>)
+      .filter((d) => d.type === "public" && typeof d.uri === "string")
+      .map((d) => d.uri as string);
+    if (sent !== null && !uris.includes(sent)) return "mismatch";
+    return { domain: uris[0] ?? null, self_hosted_domains: uris.length > 0 ? uris : null };
+  };
+  const domainMismatch = () =>
+    json(400, null, [
+      {
+        code: 12130,
+        message: "access.api.error.invalid_request: domain not included in destinations",
+      },
+    ]);
   const publicToken = ({ client_secret: _secret, ...rest }: FakeToken) => rest;
   const appCount = (id: string) =>
     [...apps.values()].filter((a) => a.policies.some((p) => p.id === id)).length;
@@ -207,7 +234,9 @@ export function fakeAccessAccount(opts: { now?: () => Date } = {}) {
     if (key === `POST ${A}/access/apps`) {
       n += 1;
       const b = body as Record<string, unknown> & { policies?: unknown[] };
-      const app: FakeApp = { ...b, id: `app-${n}`, aud: `aud-${n}`, domain: null, policies: [] };
+      const domains = appDomains(b);
+      if (domains === "mismatch") return domainMismatch();
+      const app: FakeApp = { ...b, ...domains, id: `app-${n}`, aud: `aud-${n}`, policies: [] };
       app.policies = policyLinks(app.id, b.policies ?? []);
       apps.set(app.id, app);
       return json(200, app);
@@ -230,7 +259,9 @@ export function fakeAccessAccount(opts: { now?: () => Date } = {}) {
       if (request.method === "PUT") {
         const b = body as Record<string, unknown> & { policies?: unknown[] };
         const kept = app.policies;
-        const next: FakeApp = { ...b, id, aud: app.aud, domain: null, policies: kept };
+        const domains = appDomains(b);
+        if (domains === "mismatch") return domainMismatch();
+        const next: FakeApp = { ...b, ...domains, id, aud: app.aud, policies: kept };
         if (b.policies !== undefined) {
           next.policies = policyLinks(id, b.policies);
           // App-scoped policies an update leaves out are gone with it.
