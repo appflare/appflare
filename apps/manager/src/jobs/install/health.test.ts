@@ -180,7 +180,6 @@ describe("isHostnameNotAttachedYet", () => {
     expect(isHostnameNotAttachedYet(res(530, "error code: 1016"))).toBe(true);
     expect(isHostnameNotAttachedYet(res(530))).toBe(true);
     expect(isHostnameNotAttachedYet(res(522, "error code: 522"))).toBe(true);
-    expect(isHostnameNotAttachedYet(res(404, "error code: 1042"))).toBe(true);
     expect(isHostnameNotAttachedYet(res(409, "error code: 1018"))).toBe(true);
     expect(isHostnameNotAttachedYet(res(404, "error code: 1001"))).toBe(true);
     expect(isHostnameNotAttachedYet({ kind: "error", message: "TLS handshake failed" })).toBe(true);
@@ -191,6 +190,8 @@ describe("isHostnameNotAttachedYet", () => {
     expect(isHostnameNotAttachedYet(res(429, "error code: 1015"))).toBe(false);
     expect(isHostnameNotAttachedYet(res(429, "error code: 1027"))).toBe(false);
     expect(isHostnameNotAttachedYet(res(403, "error code: 1020"))).toBe(false);
+    // A Worker's refused fetch of another Worker, which a serving app can pass on.
+    expect(isHostnameNotAttachedYet(res(404, "error code: 1042"))).toBe(false);
     expect(isHostnameNotAttachedYet(res(500, "error code: 1101"))).toBe(false);
     expect(isHostnameNotAttachedYet(res(503, "error code: 1102"))).toBe(false);
     expect(isHostnameNotAttachedYet(res(502, "Bad gateway from the app"))).toBe(false);

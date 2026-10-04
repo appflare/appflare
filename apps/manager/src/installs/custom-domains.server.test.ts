@@ -713,8 +713,6 @@ describe("checkCustomDomainCore", () => {
       detail: "404 error code: 1042 (route not live yet)",
       checkedAt: NOW.toISOString(),
       workersDevTurnedOff: false,
-      // Cloudflare's own page on a domain added just now.
-      settingUp: true,
       settingsJobId: null,
       settingsNote: null,
     });

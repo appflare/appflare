@@ -40,8 +40,13 @@ export { JobUnits } from "./jobs/units/entrypoint";
 /** Set once this isolate has looked for a self-update to complete. */
 let selfUpdatesFinalized = false;
 
-/** Set once this isolate has looked at whose account checks are stored. */
-let capabilitiesLooked = false;
+/**
+ * When this isolate may next look at whose account checks are stored:
+ * never again once a look finished, a minute after one failed.
+ */
+let capabilitiesNextLook = 0;
+/** Between a failed look and the next. */
+const CAPABILITIES_RETRY_MS = 60_000;
 
 /**
  * The first request of each isolate, after the response: when the stored
@@ -51,11 +56,12 @@ let capabilitiesLooked = false;
  * version's answers within moments of an update. Starting protection with
  * Cloudflare Access never relies on them: it asks Cloudflare itself
  * (access/preflight.server.ts). One settings read per isolate otherwise; a
- * failure is logged and the cron tries again.
+ * failure is logged, and a request a minute later (or the cron) tries again.
  */
 function lookAtCapabilities(env: Env, ctx: ExecutionContext): void {
-  if (capabilitiesLooked) return;
-  capabilitiesLooked = true;
+  if (Date.now() < capabilitiesNextLook) return;
+  // None while this one runs, and none after it unless it fails.
+  capabilitiesNextLook = Number.POSITIVE_INFINITY;
   ctx.waitUntil(
     refreshCapabilitiesAfterVersionChange(env, createDb(env.DB), {
       version: env.APPFLARE_VERSION,
@@ -66,6 +72,7 @@ function lookAtCapabilities(env: Env, ctx: ExecutionContext): void {
         }
       },
       (error: unknown) => {
+        capabilitiesNextLook = Date.now() + CAPABILITIES_RETRY_MS;
         console.error("account capability check after a version change failed", {
           error: error instanceof Error ? error.message : String(error),
         });

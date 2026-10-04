@@ -183,12 +183,15 @@ function DomainCheck({
     let live = true;
     let timer: ReturnType<typeof setTimeout> | undefined;
     let attempt = 0;
+    /** The last answer said the domain is being set up; a failed check keeps that. */
+    let settingUp = false;
     const tick = async () => {
       attempt++;
       const next = await check();
       if (!live || (await reached(next))) return;
+      if (next !== null) settingUp = next.settingUp === true;
       if (attempt < AUTO_CHECKS) timer = setTimeout(tick, AUTO_CHECK_MS);
-      else if (next?.settingUp === true) timer = setTimeout(tick, SETTING_UP_CHECK_MS);
+      else if (settingUp) timer = setTimeout(tick, SETTING_UP_CHECK_MS);
     };
     void tick();
     return () => {

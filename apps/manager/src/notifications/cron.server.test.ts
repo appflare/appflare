@@ -102,6 +102,32 @@ describe("runNotifications", () => {
     expect(JSON.parse(w.chat.posted[2]?.body ?? "").text).toContain("Cut 1.2.0 is available");
   });
 
+  it("tells about a version that takes a reinstall, even after the same version went out as an update", async () => {
+    await addChannel(
+      {
+        label: "Updates",
+        events: ["update_available"],
+        settings: { kind: "slack", webhookUrl: SLACK_URL },
+      },
+      NOW - 1000,
+    );
+    await cacheCatalog("1.1.0");
+    const w = world(() => 200);
+    // What a manager from before the reinstall notice sent for this version.
+    await runNotifications(cronEnv(), { fetch: w.fetch, now: () => NOW });
+    expect(sentTexts(w.chat.posted)).toEqual(["*Update available: cut*"]);
+    // The install was deployed by its own installer; the catalog's 1.1.0 is a release.
+    await env.DB.prepare("UPDATE installs SET build_kind = 'self-deploying' WHERE id = 'i1'").run();
+    await runNotifications(cronEnv(), { fetch: w.fetch, now: () => NOW + 1_800_000 });
+    expect(sentTexts(w.chat.posted)).toEqual([
+      "*Update available: cut*",
+      "*New version takes a reinstall: cut*",
+    ]);
+    // Once per version, like any update.
+    await runNotifications(cronEnv(), { fetch: w.fetch, now: () => NOW + 3_600_000 });
+    expect(w.chat.posted).toHaveLength(2);
+  });
+
   it("names an install by its display name when it has one", async () => {
     await env.DB.prepare("UPDATE installs SET display_name = 'Team links' WHERE id = 'i1'").run();
     await addChannel(

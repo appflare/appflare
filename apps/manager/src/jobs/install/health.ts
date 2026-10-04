@@ -92,13 +92,15 @@ export function isEdgeErrorPage(probe: HealthProbe): boolean {
  * hostname has no route to anything yet, per Cloudflare's 1xxx error
  * reference: 1001 (DNS resolution error), 1016 (origin DNS error, with HTTP
  * 530), 1018 (could not find host: a recently added hostname whose settings
- * are still reaching the edge), 1042 (a route that is not live yet, seen on
- * workers.dev), and 522 (the connection timed out). Others, such as 1015
- * (rate limited), 1027 (the free plan's daily requests used up) or the
- * Worker's own failures (1101, 1102), are answers about a hostname that
- * works, and are judged as before.
+ * are still reaching the edge), and 522 (the connection timed out). Others
+ * are answers about a hostname that works, and are judged as before: 1015
+ * (rate limited), 1027 (the free plan's daily requests used up), the
+ * Worker's own failures (1101, 1102), and 1042, which Cloudflare defines as
+ * a Worker's fetch of another Worker on its zone being refused, so a domain
+ * that already serves the app can pass it on (the 1042 seen while a
+ * workers.dev route goes live is handled by the workers.dev checks).
  */
-const NOT_ATTACHED_CODES = new Set(["1001", "1016", "1018", "1042", "522"]);
+const NOT_ATTACHED_CODES = new Set(["1001", "1016", "1018", "522"]);
 
 /**
  * What Cloudflare answers on a hostname it has not finished attaching to a

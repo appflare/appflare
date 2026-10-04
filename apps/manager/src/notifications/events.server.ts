@@ -321,7 +321,9 @@ export async function detectConditions(
         if (row === undefined) continue;
         await emit({
           type: "update_available",
-          dedupeKey: `update_available:${row.id}:${update.latestVersion}`,
+          // Apart from a plain update's: a manager from before the reinstall
+          // notice may have sent this version as an update already.
+          dedupeKey: `update_available:${row.id}:${update.latestVersion}${update.reinstall === true ? ":reinstall" : ""}`,
           occurredAt: now,
           facts: {
             type: "update_available",
