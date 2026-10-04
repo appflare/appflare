@@ -24,7 +24,15 @@ const manifest = {
 
 describe("openPath", () => {
   it("accepts a path on the app's address, with or without a final slash", () => {
-    for (const path of ["/dashboard", "/admin/", "/app/home", "/a-b_c.d~e/f@g:h+i=j,k"]) {
+    for (const path of [
+      "/dashboard",
+      "/admin/",
+      "/app/home",
+      "/a-b_c.d~e/f@g:h+i=j,k",
+      "/.well-known/x",
+      "/...",
+      "/a/..b/c.",
+    ]) {
       expect(openPathProblem(path), path).toBeNull();
       expect(new RegExp(OPEN_PATH_PATTERN).test(path), path).toBe(true);
       expect(openPathSchema.safeParse(path).success, path).toBe(true);
@@ -52,8 +60,21 @@ describe("openPath", () => {
       expect(openPathSchema.safeParse(path).success, path).toBe(false);
     }
     // The JSON Schema's pattern refuses what it can say without words.
-    for (const path of ["dashboard", "//evil.example", "/", "/a?b", "/a b", "/a\\b"]) {
+    for (const path of [
+      "dashboard",
+      "//evil.example",
+      "/",
+      "/a?b",
+      "/a b",
+      "/a\\b",
+      "/.",
+      "/./dashboard",
+      "/a/../b",
+      "/a/..",
+      "/a/./",
+    ]) {
       expect(new RegExp(OPEN_PATH_PATTERN).test(path), path).toBe(false);
+      expect(openPathProblem(path), path).not.toBeNull();
     }
   });
 
@@ -71,8 +92,13 @@ describe("openPath", () => {
     const schema = JSON.parse(
       readFileSync(new URL("../json-schema/v1.json", import.meta.url), "utf8"),
     ) as { properties: Record<string, { pattern?: string; maxLength?: number }> };
-    expect(schema.properties.openPath?.pattern).toBe(OPEN_PATH_PATTERN);
-    expect(schema.properties.openPath?.maxLength).toBe(MAX_OPEN_PATH_LENGTH);
+    const published = schema.properties.openPath;
+    expect(published?.pattern).toBe(OPEN_PATH_PATTERN);
+    expect(published?.maxLength).toBe(MAX_OPEN_PATH_LENGTH);
+    // Editors read the published pattern: it refuses the dot segments the schema refuses.
+    const pattern = new RegExp(published?.pattern ?? "");
+    for (const path of ["/./dashboard", "/a/../b"]) expect(pattern.test(path), path).toBe(false);
+    expect(pattern.test("/dashboard")).toBe(true);
   });
 });
 

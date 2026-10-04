@@ -124,6 +124,29 @@ describe("a catalog field's link", () => {
     expect(links()).toHaveLength(1);
   });
 
+  it("shows on a setting Appflare works out itself", () => {
+    const field: InstallVarField = {
+      name: "VAPID_PUBLIC_KEY",
+      label: "Push public key",
+      link: { label: "About push keys", url: "https://example.com/push" },
+      required: true,
+      kind: "text",
+      shownDefault: "",
+      options: null,
+      derivedFrom: "VAPID_PRIVATE_KEY",
+    };
+    render(<VarField field={field} value="" onChange={() => {}} />);
+    expect(container.textContent).toContain("Appflare sets it for you.");
+    expect(links()).toEqual([
+      {
+        text: "About push keys",
+        href: "https://example.com/push",
+        target: "_blank",
+        rel: "noopener noreferrer",
+      },
+    ]);
+  });
+
   it("keeps a field without a link as it was", () => {
     render(<p>{fieldDescription({ help: "Plain help, [not](https://a.example) a link." })}</p>);
     expect(links()).toEqual([]);

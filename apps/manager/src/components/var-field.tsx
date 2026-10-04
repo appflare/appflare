@@ -1,7 +1,7 @@
 import { Input, InputArea, Radio, Select } from "@cloudflare/kumo";
 import { useState } from "react";
 import { type InstallVarField, MAX_CARD_OPTIONS, varValueProblem } from "../installs/install-vars";
-import { FieldHelp, FieldLabel, fieldDescription } from "./field-label";
+import { FieldLabel, fieldDescription } from "./field-label";
 import {
   describeChip,
   hasChips,
@@ -165,7 +165,7 @@ function DerivedVarField({
   value,
   when,
 }: {
-  field: Pick<InstallVarField, "name" | "label" | "help">;
+  field: Pick<InstallVarField, "name" | "label" | "help" | "link">;
   value: string;
   /** When the value is computed, for the empty field's placeholder. */
   when: string;
@@ -179,12 +179,11 @@ function DerivedVarField({
       autoComplete="off"
       spellCheck={false}
       className="font-mono"
-      description={
-        <FieldHelp
-          text={field.help ?? "Appflare sets it for you."}
-          after={field.help === undefined ? undefined : "Appflare sets it for you."}
-        />
-      }
+      description={fieldDescription({
+        help: field.help ?? "Appflare sets it for you.",
+        note: field.help === undefined ? undefined : "Appflare sets it for you.",
+        link: field.link,
+      })}
     />
   );
 }

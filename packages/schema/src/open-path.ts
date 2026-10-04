@@ -9,10 +9,11 @@ const SEGMENT_CHARS = "A-Za-z0-9._~@:+=,-";
 const SEGMENT = new RegExp(`^[${SEGMENT_CHARS}]+$`);
 
 /**
- * `openPath` as the JSON Schema states it: one or more `/segment`, then
- * optionally a final `/`. {@link openPathProblem} says what is wrong in words.
+ * `openPath` as the JSON Schema states it: one or more `/segment`, none of
+ * them `.` or `..`, then optionally a final `/`. {@link openPathProblem} says
+ * what is wrong in words.
  */
-export const OPEN_PATH_PATTERN = `^(?:/[${SEGMENT_CHARS}]+)+/?$`;
+export const OPEN_PATH_PATTERN = `^(?:/(?!\\.\\.?(?:/|$))[${SEGMENT_CHARS}]+)+/?$`;
 
 /**
  * What is wrong with an entry's `openPath`, or null when nothing is. It is a

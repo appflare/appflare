@@ -3983,7 +3983,7 @@
     },
     "openPath": {
       "type": "string",
-      "pattern": "^(?:/[A-Za-z0-9._~@:+=,-]+)+/?$",
+      "pattern": "^(?:/(?!\\.\\.?(?:/|$))[A-Za-z0-9._~@:+=,-]+)+/?$",
       "maxLength": 128,
       "description": "Where the manager's Open buttons take people in the app, as a path on its address, for an app whose interface is not at its root, for example `/dashboard`. It starts with `/`, has no query or fragment, no empty, `.` or `..` segments, and holds letters, digits and `- . _ ~ @ : + = ,` only, at most 128 characters; it may end in `/`. Omitted means the root. Health checks, `{{appUrl}}` and the addresses the manager lists stay the root, so a `postInstall` note links to the path itself (`{{appUrl}}/dashboard`). A manager from before this field opens the root."
     }
