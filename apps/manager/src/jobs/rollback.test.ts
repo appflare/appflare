@@ -3,7 +3,7 @@ import { env } from "cloudflare:workers";
 import type { FetchLike } from "@appflare/cf-api";
 import { beforeEach, describe, expect, it } from "vitest";
 import { readAcceptedBypass } from "../access/accepted-paths.server";
-import { protectInstall } from "../access/protect.server";
+import { protectInstall, resyncInstallAccessIfFailed } from "../access/protect.server";
 import { createDb } from "../db/client";
 import { createMigrator } from "../db/migrate";
 import { migrations } from "../db/migrations/index";
@@ -738,6 +738,8 @@ describe("rollback job, an app of several Workers", () => {
 
 describe("rollback job, an app protected with Cloudflare Access", () => {
   const AUTH = "auth-secret-0123456789abcdef0123456789";
+  const JOBS_OLD = "11111111-2222-4333-8444-555555555555";
+  const JOBS_NEW = "11111111-2222-4333-8444-666666666666";
 
   /**
    * The install at 1.1.0 (public paths `/s/*` and `/old/*`), protected, and a
@@ -748,7 +750,20 @@ describe("rollback job, an app protected with Cloudflare Access", () => {
     snapshotAud: string | null,
     /** Both versions' entries say it in a revision recorded for their release, not when built. */
     revised = false,
+    extra: {
+      /** A second Worker, `cut-jobs`, in both versions, answered by this account. */
+      jobs?: ReturnType<typeof fakeAccount>;
+      /** The snapshot's version's cron triggers (the current one has none). */
+      snapshotCrons?: string[];
+    } = {},
   ) {
+    const { jobs } = extra;
+    const others =
+      jobs === undefined
+        ? {}
+        : {
+            otherWorkers: [{ name: "jobs", bindings: [{ type: "kv_namespace", name: "CUT_KV" }] }],
+          };
     const currentEntry = { access: { bypass: ["/s/*", "/old/*"] } };
     const beforeEntry = {
       vars: [{ name: "POLICY_AUD", label: "Audience", default: "{{accessAud}}", optional: true }],
@@ -758,10 +773,13 @@ describe("rollback job, an app protected with Cloudflare Access", () => {
     const current = await buildArtifactFixture({
       version: "1.1.0",
       ...(revised ? { revision: currentEntry } : { catalog: currentEntry }),
+      ...others,
     });
     const before = await buildArtifactFixture({
       version: "1.0.0",
       ...(revised ? { revision: beforeEntry } : { catalog: beforeEntry }),
+      ...others,
+      ...(extra.snapshotCrons === undefined ? {} : { crons: extra.snapshotCrons }),
     });
     const manifestText = (f: typeof current) => new TextDecoder().decode(f.manifestBytes);
     await env.DB.prepare(
@@ -774,6 +792,11 @@ describe("rollback job, an app protected with Cloudflare Access", () => {
     )
       .bind(INSTALL_ID, manifestText(before), snapshotAud, before.digest)
       .run();
+    if (jobs !== undefined) {
+      await env.DB.prepare("UPDATE snapshots SET worker_versions_json = ?1 WHERE id = 'upd1'")
+        .bind(JSON.stringify({ "cut-jobs": JOBS_OLD }))
+        .run();
+    }
     if (revised) {
       await recordFixtureRevision(current);
       await recordFixtureRevision(before);
@@ -800,10 +823,20 @@ describe("rollback job, an app protected with Cloudflare Access", () => {
         if (path.includes("/access/") || path.endsWith("/workers/scripts")) {
           return access.fetch(String(input), init);
         }
+        if (jobs !== undefined && path.includes("/workers/scripts/cut-jobs")) {
+          return jobs.fetch(String(input), init);
+        }
         return fake.fetch(String(input), init);
       };
     return { access, route };
   }
+
+  const syncFailedAt = async () =>
+    (
+      await env.DB.prepare("SELECT access_sync_failed_at FROM install_access WHERE install_id = ?1")
+        .bind(INSTALL_ID)
+        .first<{ access_sync_failed_at: number | null }>()
+    )?.access_sync_failed_at ?? null;
 
   const bypassUris = (access: ReturnType<typeof fakeAccessAccount>) =>
     [...access.apps.values()]
@@ -838,6 +871,84 @@ describe("rollback job, an app protected with Cloudflare Access", () => {
     // The old version was deployed unprotected: its settings get the current audience tag.
     expect(created).toHaveLength(1);
     expect(created[0]?.params).toMatchObject({ kind: "reconfigure", refreshVars: ["access"] });
+  });
+
+  it("fails before any Worker moves when the public paths the old version drops cannot be taken off", async () => {
+    const jobs = fakeAccount(null, {
+      worker: "cut-jobs",
+      deployments: [
+        { id: "dep-j2", versions: [{ version_id: JOBS_NEW, percentage: 100 }] },
+        { id: "dep-j1", versions: [{ version_id: JOBS_OLD, percentage: 100 }] },
+      ],
+    });
+    const w = await protectedWorld("", false, { jobs });
+    w.access.forbidden.add("PUT /accounts/*");
+    const r = await rollback({}, w.route);
+    expect(r.job).toMatchObject({ status: "failed" });
+    expect(String((r.job as { error: string }).error)).toMatch(
+      /^take dropped public paths off Cloudflare Access:/,
+    );
+    // Neither the other Worker nor the primary one was deployed.
+    expect(r.step.names.filter((n) => n.includes('(Worker "cut-jobs")'))).toEqual([]);
+    expect(jobs.state.deployments.map((d) => d.id)).toEqual(["dep-j2", "dep-j1"]);
+    expect(r.step.names).not.toContain("deploy snapshot version");
+    expect(r.fake.state.deployments[0]?.versions).toEqual([
+      { version_id: NEW_VERSION, percentage: 100 },
+    ]);
+    expect(r.install?.status).toBe("installed");
+    // The current version keeps its public paths; the cron brings Access in step again.
+    expect(bypassUris(w.access)).toEqual([
+      "cut.appflare-dev.workers.dev/s/*",
+      "cut.appflare-dev.workers.dev/old/*",
+    ]);
+    expect(await syncFailedAt()).not.toBeNull();
+    const logs = await env.DB.prepare("SELECT message FROM job_logs WHERE job_id = 'rb1'").all<{
+      message: string;
+    }>();
+    expect(logs.results.map((l) => l.message)).toContain(
+      'Rollback failed at "take dropped public paths off Cloudflare Access". Nothing was deployed; the current version keeps serving all traffic.',
+    );
+    // Nothing was taken off, so there is nothing to put back.
+    expect(r.step.names).not.toContain("public paths back for the serving version");
+  });
+
+  it("marks the public paths it took off for the cron when it fails later, before the old version serves", async () => {
+    const w = await protectedWorld("");
+    const r = await rollback(
+      { failOnce: new Map([["POST /workers/scripts/cut/deployments", 400]]) },
+      w.route,
+    );
+    expect(r.job).toMatchObject({ status: "failed" });
+    expect(String((r.job as { error: string }).error)).toMatch(/^deploy snapshot version:/);
+    expect(r.install?.status).toBe("installed");
+    expect(r.step.names).toContain("public paths back for the serving version");
+    expect(bypassUris(w.access)).toEqual(["cut.appflare-dev.workers.dev/s/*"]);
+    expect(await syncFailedAt()).not.toBeNull();
+    // The cron makes the current version's public paths public again.
+    expect(
+      await resyncInstallAccessIfFailed({ db: env.DB, client: async () => w.access.client }),
+    ).toEqual([{ installId: INSTALL_ID, outcome: "unchanged" }]);
+    expect(bypassUris(w.access)).toEqual([
+      "cut.appflare-dev.workers.dev/s/*",
+      "cut.appflare-dev.workers.dev/old/*",
+    ]);
+    expect(await syncFailedAt()).toBeNull();
+  });
+
+  it("leaves the public paths it took off when it fails after the old version serves", async () => {
+    const w = await protectedWorld("", false, { snapshotCrons: ["*/5 * * * *"] });
+    const r = await rollback(
+      { failOnce: new Map([["PUT /workers/scripts/cut/schedules", 400]]) },
+      w.route,
+    );
+    expect(r.job).toMatchObject({ status: "failed" });
+    expect(String((r.job as { error: string }).error)).toMatch(/^set cron triggers:/);
+    expect(r.fake.state.deployments[0]?.versions).toEqual([
+      { version_id: OLD_VERSION, percentage: 100 },
+    ]);
+    expect(r.step.names).not.toContain("public paths back for the serving version");
+    expect(await syncFailedAt()).toBeNull();
+    expect(bypassUris(w.access)).toEqual(["cut.appflare-dev.workers.dev/s/*"]);
   });
 
   it("reads both versions' public paths and settings from the revisions recorded for their releases", async () => {

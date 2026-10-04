@@ -1,4 +1,5 @@
 import { eq } from "drizzle-orm";
+import { ACCESS_PERMISSIONS } from "../../access/messages";
 import { appPlace } from "../../components/app-links";
 import { install_access } from "../../db/schema";
 import { startVarsRefreshCore } from "../../installs/reconfigure.server";
@@ -196,15 +197,19 @@ export async function keepWorkersUnreachablePhase(
  * paths (`access.bypass`) made public on each address, or taken off. Runs
  * after the install's manifest is recorded, which lists the paths; with
  * `bypassPaths`, before a version that drops some of them serves, keeping
- * only those it shares with the serving one. Never throws: a failure is
- * recorded on the install and the cron tries again, and until then a public
- * path asks for a sign-in like the rest of the app.
+ * only those it shares with the serving one. A failure is recorded on the
+ * install and the cron tries again, and until then a public path asks for
+ * a sign-in like the rest of the app. Without `bypassPaths` it never
+ * throws. With them it throws after recording the failure, at the step
+ * that failed, so the job stops before the version that drops a path serves
+ * while that path may still be public.
  */
 export async function syncAccessPhase(
   steps: JobSteps,
   installId: string,
   opts: { bypassPaths?: readonly string[] } = {},
 ): Promise<void> {
+  const narrowing = opts.bypassPaths !== undefined;
   try {
     await steps.run(
       opts.bypassPaths === undefined
@@ -223,6 +228,7 @@ export async function syncAccessPhase(
       },
     );
   } catch (error) {
+    const failedAt = steps.current;
     await steps
       .run("Cloudflare Access destinations not updated", async ({ log, orm }) => {
         await orm
@@ -230,12 +236,42 @@ export async function syncAccessPhase(
           .set({ access_sync_failed_at: new Date(steps.now()) })
           .where(eq(install_access.install_id, installId));
         log.warn(
-          `Could not bring the app's Cloudflare Access applications in step with its addresses and public paths (${errorMessage(error)}). The app stays protected; Appflare tries again within 30 minutes.`,
+          narrowing
+            ? `Could not take the public paths this version drops off Cloudflare Access (${errorMessage(error)}). The job stops before this version serves, and the app's current public paths stay as they are. Retry the update or rollback once Cloudflare accepts the change; for a permission error, the token needs ${ACCESS_PERMISSIONS.apps}.`
+            : `Could not bring the app's Cloudflare Access applications in step with its addresses and public paths (${errorMessage(error)}). The app stays protected; Appflare tries again within 30 minutes.`,
         );
         return {};
       })
       .catch(() => {});
+    if (narrowing) {
+      steps.current = failedAt;
+      throw error;
+    }
   }
+}
+
+/**
+ * The job took the public paths a new version drops off Access
+ * (`syncAccessPhase` with `bypassPaths`), then failed before that version
+ * served: the install is marked out of step, so the cron makes the serving
+ * version's public paths public again from its recorded manifest. Never
+ * throws, and leaves `steps.current` (the step the job failed at) as it was.
+ */
+export async function publicPathsBackPhase(steps: JobSteps, installId: string): Promise<void> {
+  const failedAt = steps.current;
+  await steps
+    .run("public paths back for the serving version", async ({ log, orm }) => {
+      await orm
+        .update(install_access)
+        .set({ access_sync_failed_at: new Date(steps.now()) })
+        .where(eq(install_access.install_id, installId));
+      log.warn(
+        "The public paths this version drops were taken off Cloudflare Access before the job failed. Within 30 minutes, Appflare makes them public again for the version that still serves.",
+      );
+      return {};
+    })
+    .catch(() => {});
+  steps.current = failedAt;
 }
 
 /**

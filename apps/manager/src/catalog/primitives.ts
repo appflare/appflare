@@ -8,6 +8,7 @@ import {
   type ServiceId,
   type ServiceSources,
 } from "@appflare/schema";
+import { storedAccessProblem } from "../access/app-access";
 import type { CapabilitiesView } from "../capabilities/capabilities";
 
 /**
@@ -115,23 +116,29 @@ const PROVIDED: Partial<Record<PrimitiveId, string>> = {
     "Provided by you: a PostgreSQL or MySQL database outside Cloudflare, whose connection string you enter when you install. Hyperdrive, included on every Workers plan, connects the app to it.",
 };
 
-/** Cloudflare Access: the account's Zero Trust organization, as the probe found it. */
+/**
+ * Cloudflare Access: the account's Zero Trust organization, as the probe
+ * found it. A token permission a protected install needs and the probes
+ * found missing makes it unavailable, as the install form refuses it.
+ */
 function accessStatus(view: CapabilitiesView | null): PrimitiveStatus {
   const id = "access";
   const probe = view?.zeroTrust;
-  if (probe?.state === "exists") {
-    return {
-      id,
-      availability: "available",
-      reason: `Detected: Zero Trust is set up, team domain ${probe.teamDomain}.`,
-    };
-  }
   if (probe?.state === "none") {
     return {
       id,
       availability: "unavailable",
       reason:
         "Detected: this account has no Zero Trust organization yet. Create one in the Cloudflare dashboard (Zero Trust; the Free plan covers up to 50 users).",
+    };
+  }
+  const problem = storedAccessProblem(view);
+  if (problem !== null) return { id, availability: "unavailable", reason: problem.message };
+  if (probe?.state === "exists") {
+    return {
+      id,
+      availability: "available",
+      reason: `Detected: Zero Trust is set up, team domain ${probe.teamDomain}.`,
     };
   }
   return {

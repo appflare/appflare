@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { ACCESS_MESSAGES, INSTALL_ACCESS_MESSAGES } from "../access/messages";
 import {
   type CapabilitiesView,
   capabilitiesView,
@@ -205,6 +206,36 @@ describe("primitiveStatus", () => {
       availability: "unknown",
       reason: expect.stringMatching(/could not check/),
     });
+  });
+
+  it("marks Access unavailable when the token lacks a permission a protected install needs", () => {
+    const access = (overrides: Partial<StoredCapabilities>) =>
+      primitiveStatus("access", capabilitiesView(null, stored(overrides)), plain);
+    expect(access({ zeroTrust: unknownProbe })).toEqual({
+      id: "access",
+      availability: "unavailable",
+      reason: ACCESS_MESSAGES.organizationPermission,
+    });
+    expect(
+      access({
+        zeroTrust: { state: "exists", teamDomain: "acme.cloudflareaccess.com" },
+        accessServiceTokens: unknownProbe,
+      }),
+    ).toEqual({
+      id: "access",
+      availability: "unavailable",
+      reason: INSTALL_ACCESS_MESSAGES.tokensPermission,
+    });
+    // A check that failed for another reason is still not known.
+    expect(
+      access({ zeroTrust: { state: "unknown", reason: "error", detail: "500" } }),
+    ).toMatchObject({ availability: "unknown" });
+    expect(
+      access({
+        zeroTrust: { state: "exists", teamDomain: "acme.cloudflareaccess.com" },
+        accessServiceTokens: { state: "readable" },
+      }).availability,
+    ).toBe("available");
   });
 
   it("treats an admin's Free as unknown and a detected Free as not available", () => {

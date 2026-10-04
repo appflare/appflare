@@ -36,7 +36,7 @@ import {
   workerCountProblem,
   workerLabel,
 } from "./entry-workers";
-import { syncAccessPhase } from "./install/access";
+import { publicPathsBackPhase, syncAccessPhase } from "./install/access";
 import {
   type ArtifactOrigin,
   artifactOriginOf,
@@ -267,6 +267,14 @@ export async function runUpdate(ctx: JobContext): Promise<void> {
   let servingRecord: Partial<typeof installs.$inferInsert> | null = null;
   /** D1 databases that got new migration files (named when a failure leaves them ahead of the code). */
   const migrated: string[] = [];
+  /** Public paths the new version drops were taken off Access: a failure before promotion puts them back. */
+  let narrowed = false;
+  /**
+   * The full deploy started: from then on the new version may serve even
+   * though the step failed (Cloudflare deployed it and did not say which
+   * version), so its public paths are not put back.
+   */
+  let scriptDeployStarted = false;
   /** An app of several Workers: its other Workers already moved to the new version. */
   const promotedOthers: string[] = [];
   /** The other Workers whose promotion started, and the version each serves once promoted. */
@@ -912,16 +920,19 @@ export async function runUpdate(ctx: JobContext): Promise<void> {
     /** The other Workers to their new versions, one by one, before the primary one. */
     /**
      * A protected app's public paths the new version drops stop being
-     * public before it serves; the ones it adds follow once it is recorded.
+     * public before it serves (or the update fails here, unpromoted); the
+     * ones it adds follow once it is recorded.
      */
     async function narrowPublicPaths(): Promise<void> {
       if (started.access == null) return;
       const before = started.bypassPathsBefore ?? [];
       const after = accessBypassPaths(manifest.catalog);
       if (before.every((p) => after.includes(p))) return;
+      // A failure here is recorded for the cron by the phase itself.
       await syncAccessPhase(steps, params.installId, {
         bypassPaths: before.filter((p) => after.includes(p)),
       });
+      narrowed = true;
     }
 
     async function promoteOthers(): Promise<void> {
@@ -1002,9 +1013,11 @@ export async function runUpdate(ctx: JobContext): Promise<void> {
         });
       }
 
-      // 7. D1 migrations: only files not applied yet, before promotion.
-      await migrateDatabases();
+      // 7. D1 migrations: only files not applied yet, before promotion. The
+      // public paths first, so a failure there leaves the databases as the
+      // serving code knows them.
       await narrowPublicPaths();
+      await migrateDatabases();
       await promoteOthers();
 
       // 8. Promote. The API call is a step of its own, so the moment it
@@ -1021,13 +1034,15 @@ export async function runUpdate(ctx: JobContext): Promise<void> {
       servingRecord = servingState(uploaded.versionId);
     } else {
       // 5-8 for Durable Object migrations: D1 first, then one full deploy.
-      await migrateDatabases();
+      // The public paths before D1, as above.
       await narrowPublicPaths();
+      await migrateDatabases();
       await promoteOthers();
       await run("skip canary", async ({ log }) => {
         log.warn(`${fullDeploy !== null ? FULL_DEPLOY_REASON : EXPORTS_DEPLOY_REASON}.`);
         return {};
       });
+      scriptDeployStarted = true;
       const deployed = await run("deploy Worker script", async ({ log }) => {
         for (const warning of vars.warnings) log.warn(warning);
         const metadata = uploadMetadata();
@@ -1286,6 +1301,12 @@ export async function runUpdate(ctx: JobContext): Promise<void> {
           routesBack.push(name);
         }
       }
+    }
+    // The previous version serves without the public paths taken off for
+    // this one: the cron makes them public again. Not after a full deploy
+    // that started, which may have made the new version serve.
+    if (!wasPromoted && narrowed && !scriptDeployStarted) {
+      await publicPathsBackPhase(steps, params.installId);
     }
     const othersRecordJson = othersRecord === null ? null : JSON.stringify(othersRecord);
     await step.do("mark update failed", async () => {

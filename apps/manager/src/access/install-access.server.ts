@@ -248,6 +248,12 @@ function tokenResourceId(installId: string): string {
   return `${installId}:${ACCESS_SERVICE_TOKEN_KIND}:token`;
 }
 
+/** A token's `expires_at` as Cloudflare answered it; missing or unparseable is unknown (null). */
+export function tokenExpiry(expiresAt: string | null | undefined): Date | null {
+  const at = expiresAt ? new Date(expiresAt) : null;
+  return at !== null && !Number.isNaN(at.getTime()) ? at : null;
+}
+
 /** Seals and stores a token Cloudflare just answered with its secret, keeping the protection columns. */
 async function storeToken(
   deps: Pick<InstallAccessDeps, "db" | "authSecret" | "now">,
@@ -260,14 +266,12 @@ async function storeToken(
     { installId, tokenId: token.id },
     token.client_secret,
   );
-  const expiresAt = token.expires_at ? new Date(token.expires_at) : null;
-  const expires = expiresAt !== null && !Number.isNaN(expiresAt.getTime()) ? expiresAt : null;
   const orm = createDb(deps.db);
   const tokenColumns = {
     token_id: token.id,
     token_client_id: token.client_id,
     token_secret: sealed,
-    token_expires_at: expires,
+    token_expires_at: tokenExpiry(token.expires_at),
     updated_at: at,
   };
   await orm.batch([
@@ -749,10 +753,9 @@ export async function renewInstallServiceTokens(deps: {
         const refreshed = await asAccessError(INSTALL_ACCESS_MESSAGES.tokensPermission, () =>
           client.access.refreshServiceToken(current.tokenId),
         );
-        const expiresAt = refreshed.expires_at ? new Date(refreshed.expires_at) : null;
         await createDb(deps.db)
           .update(install_access)
-          .set({ token_expires_at: expiresAt, updated_at: now })
+          .set({ token_expires_at: tokenExpiry(refreshed.expires_at), updated_at: now })
           .where(eq(install_access.install_id, installId));
         return "refreshed";
       });

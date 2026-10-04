@@ -1,12 +1,13 @@
 import { reset } from "cloudflare:test";
 import { env } from "cloudflare:workers";
+import { createClient } from "@appflare/cf-api";
 import { beforeEach, describe, expect, it } from "vitest";
 import { createDb } from "../db/client";
 import { createMigrator } from "../db/migrate";
 import { migrations } from "../db/migrations/index";
 import { user } from "../db/schema";
 import { readSettings, SETTING } from "../db/settings";
-import { fakeAccessAccount } from "../test/fake-access-account";
+import { FAKE_ACC, fakeAccessAccount } from "../test/fake-access-account";
 import { INSTALL_ID, seedInstall } from "../test/seed-install";
 import { writeAccessConfig } from "./config";
 import {
@@ -32,6 +33,7 @@ import {
   serviceTokenName,
   serviceTokenNeedsRefresh,
   syncAppAccessUsers,
+  tokenExpiry,
   USERS_POLICY_NAME,
   UsersPolicyMissingError,
 } from "./install-access.server";
@@ -455,6 +457,36 @@ describe("renewInstallServiceTokens", () => {
       { installId: INSTALL_ID, status: "missing" },
       { installId: I2, status: "rotated" },
     ]);
+  });
+
+  it("records an expiry Cloudflare answers in a form that does not parse as unknown", async () => {
+    const { cf, deps } = setup();
+    await protect(cf, deps, INSTALL_ID);
+    const later = new Date(Date.parse("2027-09-30T12:00:00.000Z") - 29 * DAY);
+    const cfLater = fakeAccessAccount({ now: () => later });
+    for (const [id, t] of cf.tokens) cfLater.tokens.set(id, t);
+    const client = createClient({
+      accountId: FAKE_ACC,
+      token: "cf-token-DO-NOT-LEAK",
+      fetch: async (input, init) => {
+        const response = await cfLater.fetch(input, init);
+        if (!String(input).endsWith("/refresh")) return response;
+        const body = (await response.json()) as { result: Record<string, unknown> };
+        return Response.json({ ...body, result: { ...body.result, expires_at: "next year" } });
+      },
+    });
+    const renewals = await renewInstallServiceTokens({
+      db: env.DB,
+      authSecret: AUTH,
+      now: () => later,
+      client: async () => client,
+    });
+    expect(renewals).toEqual([{ installId: INSTALL_ID, status: "refreshed" }]);
+    expect((await readInstallAccess(env.DB, INSTALL_ID))?.expiresAt).toBeNull();
+    // Null, never an invalid date, whichever answer it is.
+    expect(tokenExpiry("next year")).toBeNull();
+    expect(tokenExpiry(undefined)).toBeNull();
+    expect(tokenExpiry("2027-09-30T12:00:00.000Z")?.toISOString()).toBe("2027-09-30T12:00:00.000Z");
   });
 
   it("re-reads each install under the lock: a token replaced meanwhile is left alone", async () => {

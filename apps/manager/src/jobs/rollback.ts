@@ -30,7 +30,7 @@ import {
   parseWorkerVersions,
   storedOtherWorkers,
 } from "./entry-workers";
-import { accessValuesRefreshPhase, syncAccessPhase } from "./install/access";
+import { accessValuesRefreshPhase, publicPathsBackPhase, syncAccessPhase } from "./install/access";
 import {
   deployOtherWorkerVersionPhase,
   otherWorkerRoutePhase,
@@ -270,6 +270,9 @@ export async function runRollback(ctx: JobContext): Promise<void> {
   const steps = createJobSteps(ctx, params.jobId);
   const { run, now } = steps;
   let deployed = false;
+  // Public paths the snapshot's version drops were taken off Access: a
+  // failure before its deployment puts them back.
+  let narrowed = false;
   // The app's other Workers whose return to the snapshot's version started,
   // and those taken off workers.dev for it: a failure before the primary
   // Worker's deployment puts them back, so the app runs one version again.
@@ -552,6 +555,16 @@ export async function runRollback(ctx: JobContext): Promise<void> {
       });
     }
 
+    // A protected app's public paths the snapshot's version does not have
+    // stop being public before any of its Workers serves it, or the rollback
+    // fails here with nothing moved.
+    const access = started.access;
+    if (access?.protected === true && access.dropsPaths) {
+      // A failure here is recorded for the cron by the phase itself.
+      await syncAccessPhase(steps, params.installId, { bypassPaths: access.sharedPaths });
+      narrowed = true;
+    }
+
     // The app's other Workers first, each back on the version the snapshot
     // kept; the primary Worker last. A snapshot taken before other Workers
     // were recorded has none.
@@ -586,13 +599,6 @@ export async function runRollback(ctx: JobContext): Promise<void> {
         started.toVersion ?? started.versionId,
       );
       deployedOthers.push(other.scriptName);
-    }
-
-    // A protected app's public paths the snapshot's version does not have
-    // stop being public before it serves.
-    const access = started.access;
-    if (access?.protected === true && access.dropsPaths) {
-      await syncAccessPhase(steps, params.installId, { bypassPaths: access.sharedPaths });
     }
 
     // The API call is a step of its own, so the moment it returns the job
@@ -827,6 +833,9 @@ export async function runRollback(ctx: JobContext): Promise<void> {
         }
       }
     }
+    // The current version serves without the public paths taken off for
+    // the snapshot's: the cron makes them public again.
+    if (!wasDeployed && narrowed) await publicPathsBackPhase(steps, params.installId);
     const strandedNames = Object.keys(stranded);
     await step.do("mark rollback failed", async () => {
       const orm = createDb(env.DB);
