@@ -18,9 +18,10 @@ import { createDb } from "./db/client";
 import { ensureMigrated } from "./db/migrate";
 import { addressRedirect, serveRequest } from "./domains/address-redirect";
 import { reconcileManagerAddress } from "./domains/manager-address.server";
+import { workflowRepairLog, workflowRepairNeeded } from "./installs/workflow-repair.server";
 import { finalizeSelfUpdates } from "./jobs/self-update/record";
 import { scheduledExternalDomainCheck, scheduledNotifications } from "./notifications/cron.server";
-import { selfNotificationUnits } from "./notifications/units";
+import { createNotificationUnits, selfNotificationUnits } from "./notifications/units";
 import { reportTelemetry } from "./telemetry/report.server";
 
 /**
@@ -124,7 +125,9 @@ export default {
    * (access/upkeep-run.server.ts), as three SELF units: newer catalog
    * revisions of their releases; service tokens with less than 30 days left
    * and "Appflare users" after a failed update; Access applications whose
-   * sync failed or is due, and a check that they still exist.
+   * sync failed or is due, and a check that they still exist. Then the
+   * repair of installed apps' Workflows that do not exist in Cloudflare
+   * (installs/workflow-repair.server.ts).
    */
   async scheduled(_controller, env) {
     if ((await migrated(env)) !== null) return;
@@ -176,6 +179,25 @@ export default {
       }
     } catch (error) {
       console.error("access: upkeep of protected apps failed", {
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+    // Workflows of installed apps that do not exist in Cloudflare (managers up
+    // to 0.2.0 recorded them without creating them): created while any is
+    // left, then at most once a day, as a SELF unit with its own budget (in
+    // place without the binding); never fails the run.
+    try {
+      if (await workflowRepairNeeded(env.DB)) {
+        const units = selfNotificationUnits(env) ?? createNotificationUnits(env);
+        const result = await units.repairWorkflows({});
+        if (!result.ok) console.error("workflow repair failed", { error: result.error });
+        else {
+          const line = workflowRepairLog(result.value);
+          if (line !== null) console.log(line);
+        }
+      }
+    } catch (error) {
+      console.error("workflow repair failed", {
         error: error instanceof Error ? error.message : String(error),
       });
     }

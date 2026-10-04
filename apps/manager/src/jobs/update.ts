@@ -83,6 +83,7 @@ import {
 import { assignRateLimitsPhase } from "./install/rate-limits";
 import { applyLifecycleRulesPhase, applyMetadataIndexesPhase } from "./install/resource-settings";
 import { RESOURCE_LABEL } from "./install/resources";
+import { putWorkflowsPhase, workflowTargets } from "./install/workflows";
 import { deleteSupersededPhase, supersededConfigs } from "./reconfigure/hyperdrive";
 import { secretSlots, storedVarsJson } from "./reconfigure/plan";
 import { undoSecretChangesPhase } from "./reconfigure/secrets";
@@ -692,11 +693,10 @@ export async function runUpdate(ctx: JobContext): Promise<void> {
     snapshotOthers = others.length === 0 ? null : snapshot.otherVersions;
     previousVersion = started.fromVersion;
 
-    // 3. Resources for new bindings; nothing is deleted. A version upload
-    // creates no Workflow: one new in this version exists only once the
-    // version of the Worker that defines it is deployed (another Worker's
-    // upload may already bind it through its script_name, but runs it only
-    // after that; seen live on Cloudflare).
+    // 3. Resources for new bindings; nothing is deleted. No upload creates
+    // a Workflow: each one the version defines is created, or updated to its
+    // class, once the version serves (below). A new one's name is checked
+    // free here, before anything changes.
     for (const wf of diff.newWorkflows) await checkWorkflowNamePhase(steps, wf);
     const bound = [...diff.existing, ...queueDiff.existing];
     for (const res of [...diff.toCreate, ...queueDiff.toCreate]) {
@@ -798,13 +798,6 @@ export async function runUpdate(ctx: JobContext): Promise<void> {
       await orm.update(jobs).set({ worker_version_id: versionId }).where(eq(jobs.id, params.jobId));
       const at = new Date(now());
       const rows: ResourceRecord[] = [
-        ...diff.newWorkflows.map((wf) => ({
-          kind: "workflow" as const,
-          key: wf.binding,
-          binding: wf.binding,
-          name: wf.name,
-          cfId: null,
-        })),
         ...diff.newDurableObjects.map((d) => ({
           kind: "durable_object" as const,
           key: d.binding,
@@ -1082,6 +1075,20 @@ export async function runUpdate(ctx: JobContext): Promise<void> {
       await writeAcceptedBypass(orm, params.installId, accessBypassPaths(manifest.catalog));
       return {};
     });
+
+    // Every Workflow the version defines, now that its Workers run their
+    // classes: a new one is created, a kept one updated (its class may have
+    // changed, and one an earlier manager never created is created too). A
+    // Workflow the version no longer defines stays, as every resource does
+    // on update, until the uninstall deletes it.
+    const newWorkflows = new Set(diff.newWorkflows.map((wf) => wf.binding));
+    await putWorkflowsPhase(
+      steps,
+      params.installId,
+      workflowTargets(manifest, workerName, diff.workflowNames),
+      (wf) => newWorkflows.has(wf.binding),
+      "serving",
+    );
 
     // Queue consumers belong to the script too: set them once the version
     // serves, each Worker's own; the primary Worker's sync, last, removes

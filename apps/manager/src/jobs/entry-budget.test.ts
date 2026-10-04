@@ -75,11 +75,14 @@ describe("entry job budget", () => {
     };
     const install = otherWorkerCost(other(fixture.manifest), "install", 0);
     const without = otherWorkerCost(other(plain.manifest), "install", 0);
-    // The name check: a step, its call and its D1 writes; the record: one D1 write.
-    expect(install.steps - without.steps).toBe(1);
-    expect(install.subrequests - without.subrequests).toBe(2 + 2);
+    // The name check and the call that creates the Workflow: a step each,
+    // with its call and its D1 writes.
+    expect(install.steps - without.steps).toBe(2);
+    expect(install.subrequests - without.subrequests).toBe(2 * (1 + 2));
     const update = otherWorkerCost(other(fixture.manifest), "update", 0);
-    expect(update.steps - otherWorkerCost(other(plain.manifest), "update", 0).steps).toBe(1);
+    const plainUpdate = otherWorkerCost(other(plain.manifest), "update", 0);
+    expect(update.steps - plainUpdate.steps).toBe(2);
+    expect(update.subrequests - plainUpdate.subrequests).toBe(2 * (1 + 2));
   });
 
   it(`fits ${MAX_ENTRY_WORKERS} Workers in one job on Workers Paid, with assets, crons and consumers`, async () => {

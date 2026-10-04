@@ -282,12 +282,36 @@ export interface VectorizeIndex {
   config?: Record<string, unknown>;
 }
 
-/** `GET /workflows/{name}` (fields the manager reads). */
+/** `GET` and `PUT /workflows/{name}` (fields the manager reads). */
 export interface WorkflowInfo {
   id: string;
   name: string;
   class_name?: string;
   script_name?: string;
+}
+
+/**
+ * A Workflow's retention of finished instances: milliseconds, or a duration
+ * string such as `"3 days"` (wrangler's `default_retention` fields).
+ */
+export interface WorkflowRetention {
+  success_retention?: number | string;
+  error_retention?: number | string;
+}
+
+/**
+ * `PUT /workflows/{name}` body, as wrangler 4.136.2 sends it after a deploy
+ * (`triggersDeploy`): the script and class that run the Workflow, and the
+ * settings the Worker's config gives it, each only when set.
+ */
+export interface WorkflowPutBody {
+  script_name: string;
+  class_name: string;
+  limits?: { steps?: number };
+  concurrency?: { limit?: number };
+  /** Cron triggers that start an instance; Workers Paid only. */
+  schedules?: Array<{ cron: string }>;
+  default_retention?: WorkflowRetention;
 }
 
 /** `GET /access/organizations`: the account's Zero Trust organization (fields read). */

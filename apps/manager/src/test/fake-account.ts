@@ -45,7 +45,17 @@ export interface FakeAccount {
   uploadedAssets: Set<string>;
   schedules: string[] | null;
   subdomainCalls: unknown[];
+  /**
+   * Workflows that exist in the account (those listed up front belong to
+   * another script). As on Cloudflare, no upload creates one: `PUT
+   * /workflows/{name}` creates or updates it (`workflowDefs` keeps what each
+   * last set), and until then `GET` and starting an instance answer 404
+   * (code 10200).
+   */
   workflows: string[];
+  workflowDefs: Record<string, { script_name: string; class_name: string }>;
+  /** Instances started, by Workflow name. */
+  workflowInstances: Record<string, number>;
   calls: string[];
   /** Answers of the canonical URL, in order (the last one repeats). */
   health: Array<UrlAnswer>;
@@ -135,6 +145,8 @@ export function fakeAccount(fixture: ArtifactFixture | null, over: Partial<FakeA
     schedules: null,
     subdomainCalls: [],
     workflows: [],
+    workflowDefs: {},
+    workflowInstances: {},
     calls: [],
     health: [{ status: 200, body: "ok" }],
     previews: [
@@ -169,6 +181,14 @@ export function fakeAccount(fixture: ArtifactFixture | null, over: Partial<FakeA
     Response.json({ success: true, errors: [], messages: [], result, ...extra });
   const fail = (status: number, message: string) =>
     Response.json({ success: false, errors: [{ code: 10000, message }] }, { status });
+  const workflowNotFound = () =>
+    Response.json(
+      {
+        success: false,
+        errors: [{ code: 10200, message: "workflows.api.error.workflow.not_found" }],
+      },
+      { status: 404 },
+    );
   const next = (list: Array<UrlAnswer>) => {
     const answer = list.length > 1 ? list.shift() : list[0];
     return new Response(answer?.body ?? "", {
@@ -444,11 +464,29 @@ export function fakeAccount(fixture: ArtifactFixture | null, over: Partial<FakeA
       }
       return fail(404, "This Worker does not exist on your account.");
     }
-    let m = /^GET \/workflows\/([^/]+)$/.exec(key);
+    let m = /^(GET|PUT) \/workflows\/([^/]+)$/.exec(key);
+    if (m?.[2] !== undefined) {
+      const name = m[2];
+      if (m[1] === "PUT") {
+        const body = (await request.json()) as { script_name: string; class_name: string };
+        if (!state.workflows.includes(name)) state.workflows.push(name);
+        state.workflowDefs[name] = body;
+        return ok({ id: `wf-${name}`, name, ...body });
+      }
+      return state.workflows.includes(name)
+        ? ok({
+            id: `wf-${name}`,
+            name,
+            script_name: state.workflowDefs[name]?.script_name ?? "someone",
+          })
+        : workflowNotFound();
+    }
+    m = /^POST \/workflows\/([^/]+)\/instances$/.exec(key);
     if (m?.[1] !== undefined) {
-      return state.workflows.includes(m[1])
-        ? ok({ id: "wf", name: m[1], script_name: "someone" })
-        : fail(404, "Workflow not found");
+      if (!state.workflows.includes(m[1])) return workflowNotFound();
+      const n = (state.workflowInstances[m[1]] ?? 0) + 1;
+      state.workflowInstances[m[1]] = n;
+      return ok({ id: `instance-${n}`, status: "queued" });
     }
     m = /^GET \/d1\/database\/([^/]+)\/time_travel\/bookmark$/.exec(key);
     if (m?.[1] !== undefined) {

@@ -153,6 +153,11 @@ export const SETTING = {
   managerZoneId: "manager_zone_id",
   managerPreviousHostname: "manager_previous_hostname",
   managerMovedAt: "manager_moved_at",
+  /**
+   * UTC day (`YYYY-MM-DD`) the cron last finished looking for Workflows of
+   * installed apps that do not exist in Cloudflare (installs/workflow-repair.server.ts).
+   */
+  workflowRepairDay: "workflow_repair_day",
 } as const;
 
 export type SettingKey = (typeof SETTING)[keyof typeof SETTING];
