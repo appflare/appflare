@@ -654,8 +654,11 @@ Points that need care:
 - **`maintainers`.** At least one GitHub username: the people who package the app
   for the catalog, shown as **Packaged by** on the app page. See
   [CODEOWNERS](#codeowners).
-- **`bump`.** Optional. `"bump": { "autoMerge": true }` lets version bumps merge
-  themselves once their checks pass. See [Version bumps](/catalog/bumps/#auto-merge).
+- **`bump`.** Optional. Version bumps of an artifact tier app merge themselves once
+  their checks pass, the install check included. `"bump": { "autoMerge": false }`
+  has a maintainer merge each one instead, for an upstream whose releases often
+  break installs or need a migration guide. See
+  [Version bumps](/catalog/bumps/#who-merges-a-bump).
 - **`revision`.** Optional; leave it out for a new app. Raise it to publish a change
   to the form or copy of a version that is already released. See
   [After merge](#after-merge).

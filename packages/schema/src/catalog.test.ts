@@ -278,6 +278,11 @@ describe("catalogManifestSchema", () => {
     for (const bump of [{ autoMerge: "yes" }, { autoMerge: 1 }, { autoMerge: null }, true]) {
       expect(catalogManifestSchema.safeParse({ ...validManifest, bump }).success).toBe(false);
     }
+    // A misspelt opt-out would otherwise be dropped and the bumps merge themselves.
+    expect(
+      strictCatalogManifestSchema.safeParse({ ...validManifest, bump: { automerge: false } })
+        .success,
+    ).toBe(false);
   });
 
   it("takes an optional buildCommand that runs without a shell", () => {

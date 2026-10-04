@@ -3892,12 +3892,12 @@
       "properties": {
         "autoMerge": {
           "default": false,
-          "description": "Let the bump bot's pull request merge itself once the required checks, including the install check, pass. For entries whose maintainers trust upstream's tags to be releasable as they are.",
+          "description": "Whether the bump bot's pull request merges itself once the required checks, including the install check, pass. Left out or `true`, it does for an artifact tier entry that does not set `source.version`; the default of `false` shown here only keeps released manifests as they were and does not opt out. Set `false` to have a maintainer merge each bump, for example when upstream's releases often break installs or need a migration guide. Sandbox and self-deploying entries are never merged by the bot and may not set `true`.",
           "type": "boolean"
         }
       },
       "additionalProperties": false,
-      "description": "How the catalog's bump bot treats this entry when its upstream moves."
+      "description": "How the catalog's bump bot treats this entry when its upstream moves. Left out, an artifact tier entry's bumps merge themselves once their checks pass."
     },
     "revision": {
       "default": 1,

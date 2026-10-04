@@ -5,7 +5,7 @@ description: Signed artifacts, pinned builds, what the manager does with your AP
 
 The manager holds an API token that can change Workers and data across your
 Cloudflare account. Everything below exists to keep that token safe and to make sure
-the code it deploys is the code the catalog reviewed.
+the code it deploys is the code the catalog pinned and built.
 
 ## The API token
 
@@ -46,7 +46,11 @@ build apps never see the key.
 
 The catalog is the trust root for what gets installed. Each app is built from one
 exact upstream commit, recorded in its manifest. A change of commit is a pull
-request that the app's maintainers review.
+request that must pass the same checks as a new app, including an install into a
+CI account. The catalog checks that an upstream release builds, matches its hashes
+and installs; it does not review upstream code. Most bumps merge themselves once
+those checks pass (see [Version bumps](/catalog/bumps/#who-merges-a-bump)), and you
+decide whether and when to update: automatic updates are off by default.
 
 Builds install dependencies with `--ignore-scripts`, so no package install script
 runs. The build itself is `wrangler deploy --dry-run`, with every `CLOUDFLARE_*` and
@@ -67,9 +71,9 @@ Some apps have no prebuilt release. If you enable the optional sandbox Worker
   for a build, and the build checks out only that commit. This also means that
   whoever controls the catalog index chooses the repository and commit your sandbox
   Worker builds, without a signature in between: the index and the catalog manifest
-  are trusted the way the catalog's HTTPS site is. What limits this is the catalog's
-  review of every entry and every change of its pinned commit, and that a build runs
-  with no credentials.
+  are trusted the way the catalog's HTTPS site is. What limits this is that a
+  catalog maintainer merges every sandbox tier entry and every change of its pinned
+  commit by hand, and that a build runs with no credentials.
 - **The build has no credentials.** The container holds no Cloudflare token, no API
   key and no R2 keys. Dependency install scripts do not run. The manager's API token
   never leaves the manager; it talks to the sandbox Worker only over a service
@@ -84,8 +88,8 @@ Some apps have no prebuilt release. If you enable the optional sandbox Worker
   confirm what the build costs on Workers Paid before it starts.
 
 The app's build scripts are still third-party code that runs in your account's
-container with internet access, which is why sandbox tier entries are reviewed by the
-catalog like every other entry.
+container with internet access. Catalog CI does not install sandbox tier entries, so
+their bumps never merge themselves: a catalog maintainer merges each one.
 
 ### App tokens of self-deploying apps
 
@@ -110,8 +114,8 @@ app, never the manager's.
   store and delete the secrets on the sandbox Worker.
 - **What the installer can do** is whatever the token allows, for as long as it runs.
   Create the token with only the permissions the catalog entry lists, and scope it to
-  this account. Like build scripts, the installer is third-party code at a reviewed,
-  pinned commit.
+  this account. Like build scripts, the installer is third-party code at a pinned
+  commit that a catalog maintainer merged.
 - **When it goes away.** Uninstalling deletes the token and the secrets from the
   sandbox Worker once the installer's destroy command has run. Revoke the token in the
   dashboard afterwards. Deleting the sandbox Worker also deletes every token it held.

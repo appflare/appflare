@@ -41,6 +41,10 @@
 // `{{appUrl:<name>}}` in `vars[].default` and `postInstall[].content` of a
 // manifest written before v1, and nowhere else.
 //
+// `"bump": { "autoMerge": false }` is kept. Before v1 it was the default; now
+// bumps of an artifact tier entry merge themselves unless it says `false`, so
+// dropping it would change what the entry asks for.
+//
 // Needs Node 22.18 or later: it reads the schema's own TypeScript sources
 // (the permission groups, the licence rules, the strict schema) through
 // Node's type stripping, so it always agrees with this version of the schema.
@@ -458,7 +462,8 @@ export function migrate(text) {
     }
   }
   if (manifest.revision === 1) doc.strip(["revision"], "defaults to 1");
-  if (sameJson(manifest.bump, { autoMerge: false })) doc.strip(["bump"], "is the default");
+  // `bump: { autoMerge: false }` stays: it was the default before v1, and now it
+  // is the opt-out from bumps that merge themselves, which is what it said then.
 
   // Categories.
   (manifest.categories ?? []).forEach((id, i) => {

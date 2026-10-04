@@ -1959,12 +1959,17 @@ export function catalogHomepage(manifest: Pick<CatalogManifest, "homepage" | "re
 /**
  * How the catalog's bump bot treats an entry when its upstream moves.
  *
- * `autoMerge: true` makes the bot's pull request merge itself (squash) once the
- * required checks, the full install check included, pass. Without it, or with
- * `false`, a maintainer reviews and merges each bump. Set it for entries whose
- * maintainers trust upstream's tags to be releasable as they are. The bot does
- * not auto-merge an entry that sets `source.version`, because a person has to
- * update that version with each bump.
+ * The catalog checks that each upstream release builds, matches its hashes and
+ * installs; it does not review upstream code, and each user decides whether to
+ * update. The bot reads `autoMerge` from the file itself: left out or `true`,
+ * a bump of an artifact tier entry that does not set `source.version` merges
+ * itself (squash) once the required checks, the full install check included,
+ * pass; `false` opts out, and a maintainer merges each bump. Sandbox and
+ * self-deploying entries are never merged by the bot, since CI does not
+ * install them, and may not set `true`.
+ *
+ * The parsed value defaults to `false` only so that released catalog
+ * manifests keep their bytes; it does not mean the entry opts out.
  */
 export const catalogBumpSchema = z
   .object({
@@ -1972,12 +1977,19 @@ export const catalogBumpSchema = z
       .boolean()
       .default(false)
       .describe(
-        "Let the bump bot's pull request merge itself once the required checks, including " +
-          "the install check, pass. For entries whose maintainers trust upstream's tags to be " +
-          "releasable as they are.",
+        "Whether the bump bot's pull request merges itself once the required checks, " +
+          "including the install check, pass. Left out or `true`, it does for an artifact " +
+          "tier entry that does not set `source.version`; the default of `false` shown here " +
+          "only keeps released manifests as they were and does not opt out. Set `false` to " +
+          "have a maintainer merge each bump, for example when upstream's releases often " +
+          "break installs or need a migration guide. Sandbox and self-deploying entries are " +
+          "never merged by the bot and may not set `true`.",
       ),
   })
-  .describe("How the catalog's bump bot treats this entry when its upstream moves.");
+  .describe(
+    "How the catalog's bump bot treats this entry when its upstream moves. Left out, an " +
+      "artifact tier entry's bumps merge themselves once their checks pass.",
+  );
 export type CatalogBump = z.infer<typeof catalogBumpSchema>;
 
 /**
@@ -2169,7 +2181,11 @@ export const catalogManifestSchema = z
      * index's dimensions and metric.
      */
     resources: catalogResourcesSchema.optional(),
-    /** How the catalog's bump bot treats this entry; by default a maintainer merges every bump. */
+    /**
+     * How the catalog's bump bot treats this entry. Left out, an artifact tier
+     * entry's bumps merge themselves once their checks pass; the parsed default
+     * only keeps released manifests' bytes (see {@link catalogBumpSchema}).
+     */
     bump: catalogBumpSchema.default({ autoMerge: false }),
     /** Which edit of the entry's form and copy this is, for one build. */
     revision: catalogRevisionSchema.default(FIRST_CATALOG_REVISION),

@@ -176,9 +176,9 @@ The manager then installs the artifact exactly as it installs a prebuilt one.
 
 ## What you are trusting
 
-- **The pinned commit.** The catalog reviews each sandbox tier entry and pins an exact
-  commit. The sandbox Worker builds only that commit; a moved tag cannot change what is
-  built.
+- **The pinned commit.** Each sandbox tier entry pins an exact commit, and a catalog
+  maintainer merges every change of it by hand. The sandbox Worker builds only that
+  commit; a moved tag cannot change what is built.
 - **No install scripts, no credentials.** Dependency install scripts never run. The
   container holds no Cloudflare token or key of any kind, so the code it runs has
   nothing to act on your account with. The build output reaches R2 through the
