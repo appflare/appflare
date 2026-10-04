@@ -34,7 +34,7 @@ export const manifestFieldNotes: FieldNotes = {
   summary: "One or two sentences shown on the app's catalog page.",
   repo: "The upstream GitHub repository, as `owner/repo`. It must be public.",
   maintainers:
-    "GitHub usernames of the people who package the app for the catalog, shown as \"Packaged by\" on the app's page. They own the app's folder in CODEOWNERS and review changes to it, including version bumps.",
+    "GitHub usernames of the people who package the app for the catalog, shown as \"Packaged by\" on the app's page. They own the app's folder in CODEOWNERS and review changes to it, and merge the version bumps that do not merge themselves (see `bump`).",
   source: "The exact upstream commit the version is built from. The bump bot edits it.",
   install: "How the packer builds the app and what the manager calls it.",
   plan: 'The Workers plan the app needs. Use `"paid"` when it cannot run on the free plan.',

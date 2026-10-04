@@ -110,6 +110,7 @@ describe("codemod-manifest-v1", () => {
         hyperdrive: { DB: { protocol: "postgres", label: "Main database" } },
         d1: { DB2: { migrationsGlob: "prisma/migrations/*/migration.sql" } },
       },
+      bump: { autoMerge: false },
     });
   });
 
