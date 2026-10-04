@@ -94,7 +94,7 @@ async function install(
       db: env.DB,
       loadApp: async () => ({ app: fixture.index, manifest: fixture.manifest }),
       createJob: async (id, p) => {
-        params = p;
+        if (p.kind === "install") params = p;
         return { id };
       },
       newId: () => `id${++n}`,

@@ -9,7 +9,13 @@ import {
   Tabs,
   Text,
 } from "@cloudflare/kumo";
-import { ArrowRightIcon, InfoIcon, PackageIcon, WarningCircleIcon } from "@phosphor-icons/react";
+import {
+  ArrowCounterClockwiseIcon,
+  ArrowRightIcon,
+  InfoIcon,
+  PackageIcon,
+  WarningCircleIcon,
+} from "@phosphor-icons/react";
 import { createFileRoute, useLocation, useNavigate } from "@tanstack/react-router";
 import { useEffect, useRef, useState } from "react";
 import { z } from "zod";
@@ -58,6 +64,7 @@ import { UninstallDialog } from "../../../components/uninstall-dialog";
 import { UpdateBanner } from "../../../components/update-banner";
 import { VersionsSection } from "../../../components/versions-section";
 import { WorkersDevSwitch } from "../../../components/workers-dev-switch";
+import { installAgainHref, offersInstallAgain } from "../../../installs/install-again";
 import {
   getInstallPage,
   type InstallDetail,
@@ -73,7 +80,8 @@ type Tab = AppTab;
 
 /**
  * `/apps/$installId`: the install's display name (else the app's name) and icon,
- * with "Rename" beside it for admins, its update or uninstall state,
+ * with "Rename" beside it for admins, its update or uninstall state (or, for
+ * an install that did not finish, its log and "Install again"),
  * then tabs. Overview: details and health, next steps (the Cloudflare token
  * an app needs for itself is explained where it is entered: the install
  * form, Settings, and a self-deploying app's token card), and, at the bottom for admins, the
@@ -160,6 +168,7 @@ function InstallPage() {
         }
       />
       <UpdateBanner install={install} isAdmin={isAdmin} />
+      <FailedInstallState install={install} isAdmin={isAdmin} />
       <UninstallState install={install} />
       <div ref={tabsRef} className="min-w-0">
         <Tabs
@@ -563,6 +572,51 @@ function ResourceTable({ rows, showBindings }: { rows: ResourceView[]; showBindi
         ))}
       </Table.Body>
     </SectionTable>
+  );
+}
+
+/**
+ * An install that did not finish: its log, and for admins "Install again"
+ * (the app's catalog page with the form filled in from this install; see
+ * installs/install-again.ts). Nothing while a job of it runs.
+ */
+function FailedInstallState({ install, isAdmin }: { install: InstallDetail; isAdmin: boolean }) {
+  if (install.status !== "failed" || install.activeJobId !== null) return null;
+  const failedJob = install.jobs.find((j) => j.kind === "install");
+  const again = isAdmin && offersInstallAgain(install);
+  return (
+    <Banner
+      variant="error"
+      icon={<WarningCircleIcon weight="fill" />}
+      title="The install did not finish"
+      description={
+        again
+          ? "The log shows the step that failed and why. Once that is fixed, Install again removes what this install left in your account and installs the app with the same choices; you enter its secrets again."
+          : "The log shows the step that failed and why. An admin can uninstall it from the danger zone to remove what it left in your account."
+      }
+      action={
+        <div className="flex flex-wrap items-center gap-2">
+          {failedJob !== undefined && (
+            <LinkButton
+              href={`/jobs/${failedJob.id}`}
+              variant="secondary"
+              icon={<ArrowRightIcon />}
+            >
+              View log
+            </LinkButton>
+          )}
+          {again && (
+            <LinkButton
+              href={installAgainHref(install.id, install.slug)}
+              variant="primary"
+              icon={<ArrowCounterClockwiseIcon />}
+            >
+              Install again
+            </LinkButton>
+          )}
+        </div>
+      }
+    />
   );
 }
 

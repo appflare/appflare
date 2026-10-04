@@ -1,6 +1,7 @@
 import type { CapabilityId } from "../capabilities/capability-rows";
 import type { HealthStatus } from "../db/schema";
 import type { DeployCopyCleanup } from "../deploy-button/deploy-copy";
+import { installAgainHref, offersInstallAgain } from "../installs/install-again";
 
 /**
  * What needs someone's attention, in one list: Home's "Needs attention"
@@ -70,6 +71,10 @@ export interface AttentionApp {
    * not protect it; absent when not known.
    */
   accessRequired?: boolean;
+  /** The app key of its catalog page; with `origin`, for "Install again". Absent when not known. */
+  slug?: string;
+  /** Where its code comes from (`INSTALL_ORIGINS`); absent when not known. */
+  origin?: string;
 }
 
 /** An app's latest finished job, when it failed. */
@@ -150,7 +155,13 @@ interface AppItem {
 }
 
 export type AttentionItem =
-  | ({ kind: "failed-job"; key: string; job: FailedJob } & AppItem)
+  | ({
+      kind: "failed-job";
+      key: string;
+      job: FailedJob;
+      /** "Install again" for an install that did not finish (admins); null otherwise. */
+      againHref: string | null;
+    } & AppItem)
   | ({
       kind: "not-responding";
       key: string;
@@ -192,6 +203,14 @@ export function attentionItems(input: AttentionInput): AttentionItem[] {
           installId: app.id,
           label: app.label,
           job,
+          againHref:
+            input.isAdmin &&
+            job.kind === "install" &&
+            app.slug !== undefined &&
+            app.origin !== undefined &&
+            offersInstallAgain({ status: app.status, origin: app.origin })
+              ? installAgainHref(app.id, app.slug)
+              : null,
         },
       ];
     })

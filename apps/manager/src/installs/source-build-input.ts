@@ -37,7 +37,7 @@ export const sourceBuildIdInput = z.object({ buildId: z.string().min(1).max(64) 
 
 /** The install form of a reviewed build: the catalog form's fields, minus what the build decides. */
 export const installSourceBuildInput = startInstallInput
-  .omit({ slug: true, buildConfirmed: true, appToken: true })
+  .omit({ slug: true, buildConfirmed: true, appToken: true, replaces: true })
   .extend({ buildId: z.string().min(1).max(64) });
 export type InstallSourceBuildInput = z.infer<typeof installSourceBuildInput>;
 

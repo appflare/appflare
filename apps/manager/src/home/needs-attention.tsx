@@ -1,6 +1,7 @@
 import { Button, Collapsible, LinkButton, Text, useKumoToastManager } from "@cloudflare/kumo";
 import {
   ArrowCircleUpIcon,
+  ArrowCounterClockwiseIcon,
   ArrowRightIcon,
   ArrowsClockwiseIcon,
   CheckIcon,
@@ -147,9 +148,20 @@ function AttentionRow({
   switch (item.kind) {
     case "failed-job":
       action = (
-        <LinkButton href={`/jobs/${item.job.id}`} variant="secondary" icon={<ArrowRightIcon />}>
-          View log
-        </LinkButton>
+        <>
+          <LinkButton href={`/jobs/${item.job.id}`} variant="secondary" icon={<ArrowRightIcon />}>
+            View log
+          </LinkButton>
+          {item.againHref !== null && (
+            <LinkButton
+              href={item.againHref}
+              variant="secondary"
+              icon={<ArrowCounterClockwiseIcon />}
+            >
+              Install again
+            </LinkButton>
+          )}
+        </>
       );
       break;
     case "not-responding":

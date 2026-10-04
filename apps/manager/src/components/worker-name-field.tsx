@@ -21,7 +21,15 @@ import { tooltipContent } from "./tooltip";
  * from the server once for the form's lifetime (again only after a failed
  * read).
  */
-export function useWorkerNameCheck(name: string, enabled: boolean): WorkerNameCheck | null {
+export function useWorkerNameCheck(
+  name: string,
+  enabled: boolean,
+  /**
+   * "Install again": the failed install the new one replaces. The server
+   * leaves its names out, by install, since its removal frees them first.
+   */
+  replaces: string | null = null,
+): WorkerNameCheck | null {
   const taken = useRef<Promise<TakenWorkerNames | null> | null>(null);
   const [answer, setAnswer] = useState<{ name: string; check: WorkerNameCheck } | null>(null);
   const formatProblem = workerNameFormatProblem(name);
@@ -30,7 +38,9 @@ export function useWorkerNameCheck(name: string, enabled: boolean): WorkerNameCh
     if (!enabled || formatProblem !== null) return;
     let live = true;
     const timer = setTimeout(() => {
-      taken.current ??= listTakenWorkerNames().catch(() => {
+      taken.current ??= listTakenWorkerNames(
+        replaces === null ? undefined : { data: { replaces } },
+      ).catch(() => {
         taken.current = null;
         return null;
       });
@@ -42,7 +52,7 @@ export function useWorkerNameCheck(name: string, enabled: boolean): WorkerNameCh
       live = false;
       clearTimeout(timer);
     };
-  }, [name, enabled, formatProblem]);
+  }, [name, enabled, formatProblem, replaces]);
 
   if (!enabled) return null;
   if (formatProblem !== null) return { state: "invalid", message: formatProblem };

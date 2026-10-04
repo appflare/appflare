@@ -229,7 +229,7 @@ async function startInstall(s: Setup, input: Partial<StartInstallInput> = {}) {
       loadApp: async () => ({ app, manifest: catalogOnlyManifest(s.catalog) }),
       sandboxConnected: true,
       createJob: async (id, p) => {
-        params = p;
+        if (p.kind === "install") params = p;
         return { id };
       },
       listAccountWorkers: async () => ["someone-else"],

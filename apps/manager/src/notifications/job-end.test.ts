@@ -159,6 +159,42 @@ describe("notifyJobEnd", () => {
     }
   });
 
+  it("says nothing when the removal before an install again succeeds, and tells when it fails", async () => {
+    await addChannel({
+      label: "Team",
+      events: ["uninstall_finished"],
+      settings: { kind: "slack", webhookUrl: SLACK_URL },
+    });
+    const svc = services();
+    const done = await job("uninstall", { replacedBy: "new-install" });
+    await runJob(
+      { kind: "uninstall", jobId: done },
+      fakeStep(),
+      withSelf(svc.fetch),
+      handlersWith("uninstall", settles("succeeded")),
+    );
+    const events = await env.DB.prepare("SELECT count(*) AS n FROM notification_events").first<{
+      n: number;
+    }>();
+    expect(events?.n).toBe(0);
+    expect(svc.posted).toEqual([]);
+
+    // The same job id again (the helper names jobs by kind).
+    await env.DB.prepare("DELETE FROM jobs WHERE id = ?1").bind(done).run();
+    const failed = await job("uninstall", { replacedBy: "new-install" });
+    await expect(
+      runJob(
+        { kind: "uninstall", jobId: failed },
+        fakeStep(),
+        withSelf(svc.fetch),
+        handlersWith("uninstall", settles("failed", true)),
+      ),
+    ).rejects.toThrow();
+    const text = JSON.parse(svc.posted[0]?.body ?? "{}").text as string;
+    expect(text).toContain("Removing what the unfinished install of cut left failed");
+    expect(text).not.toContain("Uninstalled");
+  });
+
   it("an early unwind records no step, so the real end is not answered from a cached result", async () => {
     await addChannel({
       label: "Team",

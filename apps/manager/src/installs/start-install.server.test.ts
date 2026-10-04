@@ -9,6 +9,7 @@ import { createMigrator } from "../db/migrate";
 import { migrations } from "../db/migrations/index";
 import { SETTING, writeSettings } from "../db/settings";
 import type { InstallJobParams } from "../jobs/install";
+import type { UninstallJobParams } from "../jobs/uninstall";
 import { type ArtifactFixture, buildArtifactFixture } from "../test/artifact-fixture";
 import type { StartInstallInput } from "./install-input";
 import { resolveInstallInput, StartInstallError, startInstallCore } from "./start-install.server";
@@ -17,17 +18,21 @@ const NOW = new Date("2026-09-22T12:00:00.000Z");
 
 function harness(fixture: ArtifactFixture, createJob?: (id: string) => Promise<{ id: string }>) {
   const created: Array<{ id: string; params: InstallJobParams }> = [];
+  /** Every Workflow instance created, the removal of a replaced install's leftovers included. */
+  const all: Array<{ id: string; params: InstallJobParams | UninstallJobParams }> = [];
   let n = 0;
   return {
     created,
+    all,
     deps: {
       db: env.DB,
       loadApp: async (slug: string) => {
         if (slug !== "cut") throw new StartInstallError(`"${slug}" is not in the catalog.`);
         return { app: fixture.index, manifest: fixture.manifest };
       },
-      createJob: async (id: string, params: InstallJobParams) => {
-        created.push({ id, params });
+      createJob: async (id: string, params: InstallJobParams | UninstallJobParams) => {
+        all.push({ id, params });
+        if (params.kind === "install") created.push({ id, params });
         return createJob ? createJob(id) : { id };
       },
       now: () => NOW,
@@ -943,5 +948,183 @@ describe("startInstallCore while Appflare updates itself", () => {
     ).first();
     expect(counts).toEqual({ installs: 0, jobs: 1 });
     expect(h.created).toEqual([]);
+  });
+});
+
+describe("startInstallCore, installing a failed install again", () => {
+  /** A failed install of Cut ("old") with what it left: its Worker, a KV namespace, a secret. */
+  async function seedFailed(
+    opts: {
+      status?: string;
+      origin?: string;
+      slug?: string;
+      leftovers?: boolean;
+      workerName?: string;
+      autoUpdate?: string;
+    } = {},
+  ) {
+    await env.DB.prepare(
+      `INSERT INTO installs (id, app_slug, worker_name, catalog_version, artifact_url, status,
+         installed_at, updated_at, origin, catalog_id, auto_update)
+       VALUES ('old', ?1, ?2, '0.9.0', 'https://x/z.zip', ?3, 1, 1, ?4, 'official', ?5)`,
+    )
+      .bind(
+        opts.slug ?? "cut",
+        opts.workerName ?? "cut",
+        opts.status ?? "failed",
+        opts.origin ?? "catalog",
+        opts.autoUpdate ?? "off",
+      )
+      .run();
+    await env.DB.prepare(
+      "INSERT INTO jobs (id, install_id, kind, status, input_json, error) VALUES ('oldjob', 'old', 'install', 'failed', '{}', 'preflight checks: no')",
+    ).run();
+    if (opts.leftovers === false) return;
+    for (const [id, kind, name] of [
+      ["r-worker", "worker", "cut"],
+      ["r-kv", "kv", "cut-cut-kv"],
+      ["r-secret", "secret", "ADMIN_PASSWORD"],
+    ] as const) {
+      await env.DB.prepare(
+        "INSERT INTO resources (id, install_id, kind, name, cf_id, created_at) VALUES (?1, 'old', ?2, ?3, ?4, 1)",
+      )
+        .bind(id, kind, name, kind === "kv" ? "kv-1" : null)
+        .run();
+    }
+  }
+
+  const status = async (id: string) =>
+    (await env.DB.prepare("SELECT status FROM installs WHERE id = ?1").bind(id).first())?.status;
+
+  it("records the removal of what it left, keeping nothing, and the new install that waits for it", async () => {
+    await seedFailed();
+    const f = await buildArtifactFixture();
+    const h = harness(f);
+    const result = await startInstallCore(
+      // The failed install's Worker is still in the account: no reason to refuse.
+      { ...h.deps, listAccountWorkers: async () => ["appflare", "cut"] },
+      input({ replaces: "old" }),
+    );
+    expect(result).toEqual({ installId: "id1", jobId: "id2" });
+    // The removal first, then the install, which carries its id.
+    expect(h.all.map((c) => c.params.kind)).toEqual(["uninstall", "install"]);
+    expect(h.all[0]).toEqual({
+      id: "id3",
+      params: { kind: "uninstall", jobId: "id3", installId: "old", deleteResources: ["r-kv"] },
+    });
+    expect(h.created[0]?.params.cleanupJob).toBe("id3");
+    expect(await status("old")).toBe("uninstalling");
+    expect(await status("id1")).toBe("installing");
+    const removal = await env.DB.prepare(
+      "SELECT kind, status, input_json, workflow_instance_id FROM jobs WHERE id = 'id3'",
+    ).first<{ input_json: string }>();
+    expect(removal).toMatchObject({
+      kind: "uninstall",
+      status: "queued",
+      workflow_instance_id: "id3",
+    });
+    expect(JSON.parse(removal?.input_json ?? "{}")).toEqual({
+      installId: "old",
+      deleteResources: ["r-kv"],
+      retry: false,
+      replacedBy: "id1",
+    });
+    // Nothing kept: no resource of it is marked retained.
+    const kept = await env.DB.prepare(
+      "SELECT count(*) AS n FROM resources WHERE retained_at IS NOT NULL",
+    ).first<{ n: number }>();
+    expect(kept?.n).toBe(0);
+    // The automatic-update choice carries over; the job's record names what it replaces.
+    const row = await env.DB.prepare("SELECT auto_update FROM installs WHERE id = 'id1'").first();
+    expect(row?.auto_update).toBe("off");
+    const job = await env.DB.prepare("SELECT input_json FROM jobs WHERE id = 'id2'").first<{
+      input_json: string;
+    }>();
+    expect(JSON.parse(job?.input_json ?? "{}")).toMatchObject({
+      replaces: "old",
+      cleanupJob: "id3",
+    });
+  });
+
+  it("retires a failed install that left nothing at once, under another Worker name too", async () => {
+    await seedFailed({ leftovers: false });
+    const f = await buildArtifactFixture();
+    const h = harness(f);
+    await startInstallCore(h.deps, input({ replaces: "old", workerName: "links" }));
+    expect(h.all.map((c) => c.params.kind)).toEqual(["install"]);
+    expect(h.created[0]?.params.cleanupJob).toBeUndefined();
+    expect(await status("old")).toBe("uninstalled");
+    expect(await status("id1")).toBe("installing");
+  });
+
+  it("needs no removal when only secret records are left, its Worker being gone", async () => {
+    await seedFailed({ leftovers: false });
+    await env.DB.prepare(
+      `INSERT INTO resources (id, install_id, kind, name, created_at, deleted_at) VALUES
+         ('r-worker', 'old', 'worker', 'cut', 1, 2), ('r-secret', 'old', 'secret', 'ADMIN_PASSWORD', 1, NULL)`,
+    ).run();
+    const f = await buildArtifactFixture();
+    const h = harness(f);
+    await startInstallCore(h.deps, input({ replaces: "old" }));
+    expect(h.all.map((c) => c.params.kind)).toEqual(["install"]);
+    expect(await status("old")).toBe("uninstalled");
+    const secret = await env.DB.prepare(
+      "SELECT deleted_at FROM resources WHERE id = 'r-secret'",
+    ).first<{ deleted_at: number | null }>();
+    expect(secret?.deleted_at).toBe(NOW.getTime());
+  });
+
+  it("refuses what cannot be installed again, before anything is recorded", async () => {
+    const f = await buildArtifactFixture();
+    for (const [seed, message] of [
+      [{ status: "installed" }, "Only an install that did not finish can be installed again."],
+      [{ origin: "repository" }, "Install again works for apps from a catalog."],
+      [{ slug: "other" }, "Install again installs the same app again"],
+    ] as const) {
+      await reset();
+      await createMigrator(migrations).ensure(env.DB);
+      await seedFailed(seed);
+      const h = harness(f);
+      await expect(startInstallCore(h.deps, input({ replaces: "old" }))).rejects.toThrow(message);
+      expect(h.all).toEqual([]);
+      expect(await env.DB.prepare("SELECT id FROM installs WHERE id = 'id1'").first()).toBeNull();
+    }
+    // A job of it running.
+    await reset();
+    await createMigrator(migrations).ensure(env.DB);
+    await seedFailed();
+    await env.DB.prepare("UPDATE jobs SET status = 'running' WHERE id = 'oldjob'").run();
+    await expect(startInstallCore(harness(f).deps, input({ replaces: "old" }))).rejects.toThrow(
+      "A job of this install is running.",
+    );
+    expect(await status("old")).toBe("failed");
+  });
+
+  it("without `replaces`, a failed install that left things still blocks its Worker name", async () => {
+    await seedFailed();
+    const f = await buildArtifactFixture();
+    await expect(startInstallCore(harness(f).deps, input())).rejects.toThrow(
+      'A failed install of the Worker "cut" still owns resources in this account. Uninstall it first.',
+    );
+  });
+
+  it("when the removal cannot start, fails the new install and leaves the old one to finish uninstalling", async () => {
+    await seedFailed();
+    const f = await buildArtifactFixture();
+    const h = harness(f, async () => {
+      throw new Error("Workflows is unavailable");
+    });
+    await expect(startInstallCore(h.deps, input({ replaces: "old" }))).rejects.toThrow(
+      "start: could not start removing the install that did not finish: Workflows is unavailable",
+    );
+    expect(h.all.map((c) => c.params.kind)).toEqual(["uninstall"]);
+    expect(await status("old")).toBe("uninstalling");
+    expect(await status("id1")).toBe("failed");
+    const jobs = await env.DB.prepare("SELECT id, status FROM jobs ORDER BY id").all();
+    expect(jobs.results).toEqual([
+      { id: "id2", status: "failed" },
+      { id: "id3", status: "failed" },
+      { id: "oldjob", status: "failed" },
+    ]);
   });
 });

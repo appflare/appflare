@@ -1,5 +1,6 @@
 import { Badge, Banner, Empty, LinkButton, Table, Text } from "@cloudflare/kumo";
 import {
+  ArrowCounterClockwiseIcon,
   ArrowRightIcon,
   ArrowsClockwiseIcon,
   GitBranchIcon,
@@ -153,6 +154,16 @@ function JobPage() {
               <div className="flex flex-wrap items-center gap-3">
                 {failureTopic !== null && <DocsLink topic={failureTopic} variant="inline" />}
                 {isAdmin && <SendReportButton jobId={job.id} reportedAt={job.reportedAt} />}
+                {/* An install that did not finish, once its cause is fixed. */}
+                {isAdmin && job.againHref != null && (
+                  <LinkButton
+                    href={job.againHref}
+                    variant="primary"
+                    icon={<ArrowCounterClockwiseIcon />}
+                  >
+                    Install again
+                  </LinkButton>
+                )}
               </div>
             )
           }

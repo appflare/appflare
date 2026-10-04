@@ -135,7 +135,7 @@ async function install(opts: {
       loadApp: async () => ({ app, manifest: catalogOnlyManifest(catalog) }),
       sandboxConnected: opts.sandboxConnected ?? sandbox !== undefined,
       createJob: async (id, p) => {
-        params = p;
+        if (p.kind === "install") params = p;
         return { id };
       },
       newId: () => `id${++n}`,

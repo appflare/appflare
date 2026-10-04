@@ -10,6 +10,7 @@ import { installs, jobs, resources } from "../../db/schema";
 import { readSettings, SETTING } from "../../db/settings";
 import type { InstallJobParams } from "../install";
 import { cleanupSandboxBuildsPhase } from "../install/artifact-source";
+import { awaitCleanupPhase, CLEANUP_WAIT_NOTE } from "../install/cleanup-wait";
 import { healthColumns, healthLabel } from "../install/health";
 import {
   checkLiveHealthPhase,
@@ -121,8 +122,11 @@ export async function runSelfDeployingInstall(
       log.info(
         `Installing ${params.slug} ${params.version} with its own installer, as stage ${stage}.`,
       );
+      if (params.cleanupJob !== undefined) log.info(CLEANUP_WAIT_NOTE);
       return {};
     });
+    // "Install again": what the failed install left is removed first.
+    if (params.cleanupJob !== undefined) await awaitCleanupPhase(steps, step, params.cleanupJob);
     if (params.sandboxEnableJob !== undefined) {
       await awaitSandboxEnabledPhase(steps, step, env, params.sandboxEnableJob);
     }
