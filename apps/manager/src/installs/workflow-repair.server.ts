@@ -18,16 +18,21 @@ import {
  * Managers up to 0.2.0 recorded each Workflow an app defines but never
  * created it (they took the Worker's upload for the call that creates it), so
  * the app's binding failed on every `create()`. A Workflow the jobs created
- * or found carries its Cloudflare id; this looks at the recorded ones that do
- * not, of apps that are installed (not mid-job): one it finds in Cloudflare
- * gets its id, one that is missing is created as the installed version
- * defines it (its Worker and class), and one that version no longer defines
- * is marked gone, since nothing runs it. What it could not fix stays without
- * an id, which the app page shows, and is tried again the next day.
+ * or updated carries its Cloudflare id; one an update or rollback could not
+ * update (Cloudflare refused the call) loses it. This looks at the recorded
+ * ones without, of apps that are installed (not mid-job): each the installed
+ * version defines is created, or updated, for its Worker and class; one that
+ * version no longer defines gets its id when it exists and is marked gone
+ * when it does not, since nothing runs it. A Workflow of that name that runs
+ * another script is left alone. What it could not fix stays without an id,
+ * which the app page shows, and is tried again the next day.
  *
- * Runs from the cron at most once per UTC day once there is nothing left to
- * fix, through the `repairWorkflows` notification unit (its own invocation
- * and subrequest budget over `SELF`), and never fails the run.
+ * Each run looks at up to {@link WORKFLOW_REPAIRS_PER_RUN} rows after the
+ * last one the run before looked at (a cursor in `settings`), so rows that
+ * keep failing never hold back the others; a pass that reaches the end is
+ * done for the UTC day and the next one starts from the first row. It runs
+ * from the cron through the `repairWorkflows` notification unit (its own
+ * invocation and subrequest budget over `SELF`) and never fails the run.
  */
 
 /** Workflows looked at per call: each one is up to two Cloudflare calls and one D1 write. */
@@ -38,7 +43,9 @@ export interface WorkflowRepairReport {
   checked: number;
   /** Created now (they did not exist). */
   created: string[];
-  /** Already in Cloudflare; their ids are recorded now. */
+  /** Already in Cloudflare and pointed at the installed version's Worker and class again. */
+  updated: string[];
+  /** Already in Cloudflare, not defined by the installed version: their ids are recorded. */
   found: string[];
   /** Not defined by the installed version any more, and not in Cloudflare: marked gone. */
   unused: string[];
@@ -47,6 +54,8 @@ export interface WorkflowRepairReport {
 }
 
 interface Candidate {
+  /** The row's rowid, for the cursor. */
+  seq: number;
   id: string;
   install_id: string;
   binding: string | null;
@@ -59,11 +68,11 @@ interface Candidate {
 const SETTLED = `i.status = 'installed' AND NOT EXISTS (
     SELECT 1 FROM jobs j WHERE j.install_id = i.id AND j.status IN ('queued', 'running'))`;
 
-const CANDIDATES_SQL = `SELECT r.id, r.install_id, r.binding, r.name, i.worker_name, i.manifest_json
+const CANDIDATES_SQL = `SELECT r.rowid AS seq, r.id, r.install_id, r.binding, r.name,
+    i.worker_name, i.manifest_json
   FROM resources r JOIN installs i ON i.id = r.install_id
   WHERE r.kind = 'workflow' AND r.cf_id IS NULL AND r.deleted_at IS NULL
-    AND r.retained_at IS NULL AND r.managed_by = 'appflare' AND ${SETTLED}
-  ORDER BY r.rowid`;
+    AND r.retained_at IS NULL AND r.managed_by = 'appflare' AND ${SETTLED}`;
 
 /**
  * The Workflow a row stands for in the installed version: by its binding, or
@@ -110,20 +119,36 @@ export async function repairWorkflows(deps: {
   const report: WorkflowRepairReport = {
     checked: 0,
     created: [],
+    updated: [],
     found: [],
     unused: [],
     failed: [],
   };
+  const orm = createDb(deps.db);
+  // Each run goes on after the last row the one before looked at, so rows
+  // that keep failing never hold back the ones after them.
+  const saved = Number(
+    (await readSettings(orm, [SETTING.workflowRepairCursor])).workflow_repair_cursor ?? "0",
+  );
+  const after = Number.isSafeInteger(saved) && saved > 0 ? saved : 0;
   const { results } = await deps.db
-    .prepare(`${CANDIDATES_SQL} LIMIT ?1`)
-    .bind(WORKFLOW_REPAIRS_PER_RUN)
+    .prepare(`${CANDIDATES_SQL} AND r.rowid > ?1 ORDER BY r.rowid LIMIT ?2`)
+    .bind(after, WORKFLOW_REPAIRS_PER_RUN)
     .all<Candidate>();
+  // Fewer rows than the limit: the end of the list. Done for today; the
+  // next day starts from the first row again.
+  const finish = async (last: number | null) => {
+    const reachedEnd = last === null || results.length < WORKFLOW_REPAIRS_PER_RUN;
+    await writeSettings(orm, {
+      [SETTING.workflowRepairCursor]: reachedEnd ? "0" : String(last),
+      ...(reachedEnd ? { [SETTING.workflowRepairDay]: utcDay(now()) } : {}),
+    });
+  };
   if (results.length === 0) {
-    await writeSettings(createDb(deps.db), { [SETTING.workflowRepairDay]: utcDay(now()) });
+    await finish(null);
     return report;
   }
   const api = await deps.api();
-  const orm = createDb(deps.db);
   const setId = (id: string, cfId: string) =>
     orm.update(resources).set({ cf_id: cfId }).where(eq(resources.id, id));
   for (const row of results) {
@@ -140,25 +165,26 @@ export async function repairWorkflows(deps: {
       } catch (error) {
         if (!isWorkflowNotFound(error)) throw error;
       }
-      if (existing !== null) {
-        if (!isInstallWorkflow(existing, await installWorkerNames(orm, row.install_id))) {
-          report.failed.push({
-            name: row.name,
-            reason: `it runs the Worker "${existing.script_name}", which is not this app's`,
-          });
-          continue;
-        }
-        await setId(row.id, existing.id);
-        report.found.push(row.name);
-        continue;
-      }
-      if (parsed === null || !parsed.success) {
-        report.failed.push({ name: row.name, reason: "the installed version is not readable" });
+      if (
+        existing !== null &&
+        !isInstallWorkflow(existing, await installWorkerNames(orm, row.install_id))
+      ) {
+        report.failed.push({
+          name: row.name,
+          reason: `it runs the Worker "${existing.script_name}", which is not this app's`,
+        });
         continue;
       }
       if (target === undefined) {
-        await orm.update(resources).set({ deleted_at: now() }).where(eq(resources.id, row.id));
-        report.unused.push(row.name);
+        if (existing !== null) {
+          await setId(row.id, existing.id);
+          report.found.push(row.name);
+        } else if (parsed === null || !parsed.success) {
+          report.failed.push({ name: row.name, reason: "the installed version is not readable" });
+        } else {
+          await orm.update(resources).set({ deleted_at: now() }).where(eq(resources.id, row.id));
+          report.unused.push(row.name);
+        }
         continue;
       }
       // An uninstall or another job may have started since the list was read.
@@ -170,12 +196,15 @@ export async function repairWorkflows(deps: {
         report.failed.push({ name: row.name, reason: "a job is changing the app" });
         continue;
       }
-      const created = await api.workflows.putWorkflow(target.name, {
+      // One that exists is put on the installed version's Worker and class
+      // too: a row loses its id when an update's call was refused, which may
+      // have left the Workflow on the previous version's class.
+      const put = await api.workflows.putWorkflow(target.name, {
         script_name: target.scriptName,
         class_name: target.className,
       });
-      await setId(row.id, created.id);
-      report.created.push(row.name);
+      await setId(row.id, put.id);
+      (existing === null ? report.created : report.updated).push(row.name);
     } catch (error) {
       report.failed.push({
         name: row.name,
@@ -183,12 +212,7 @@ export async function repairWorkflows(deps: {
       });
     }
   }
-  // Done for today, unless this run stopped at its limit having fixed some:
-  // the next run goes on with the rest.
-  const fixed = report.created.length + report.found.length + report.unused.length;
-  if (results.length < WORKFLOW_REPAIRS_PER_RUN || fixed === 0) {
-    await writeSettings(createDb(deps.db), { [SETTING.workflowRepairDay]: utcDay(now()) });
-  }
+  await finish(results.at(-1)?.seq ?? null);
   return report;
 }
 
@@ -197,6 +221,7 @@ export function workflowRepairLog(report: WorkflowRepairReport): string | null {
   if (report.checked === 0) return null;
   const parts = [`${report.checked} checked`];
   if (report.created.length > 0) parts.push(`created ${report.created.join(", ")}`);
+  if (report.updated.length > 0) parts.push(`updated ${report.updated.join(", ")}`);
   if (report.found.length > 0) parts.push(`found ${report.found.join(", ")}`);
   if (report.unused.length > 0) parts.push(`no longer used ${report.unused.join(", ")}`);
   if (report.failed.length > 0) {

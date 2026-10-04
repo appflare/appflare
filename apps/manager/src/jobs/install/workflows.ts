@@ -122,8 +122,8 @@ export type WorkflowStepMode = "install" | "serving";
  * `install` (the app is not live yet): a refusal fails the step, and a fresh
  * row is released, since nothing was created. `serving` (update and
  * rollback, after promotion): a refusal or a Workflow of another script is a
- * warning; the row stays without a Cloudflare id, so the app page marks it
- * and the cron's repair tries again, and the job goes on.
+ * warning; the row is left (or put) without a Cloudflare id, so the app page
+ * marks it and the cron's repair tries again, and the job goes on.
  *
  * Settings the app's config gives a Workflow (`limits`, `concurrency`,
  * `schedules`, `default_retention`) are not in artifacts, so Cloudflare's
@@ -196,8 +196,14 @@ export async function putWorkflowPhase(
           ? "it runs on a schedule, which needs the Workers Paid plan"
           : errorMessage(error);
         if (opts.mode === "serving") {
+          // Without its id the app page marks it and the cron's repair tries
+          // again: a kept one may still run the previous version's class.
+          await orm
+            .update(resources)
+            .set({ cf_id: null })
+            .where(opts.fresh ? eq(resources.id, id) : byName);
           log.warn(
-            `Cloudflare refused the Workflow "${target.name}" (${why}). The version serves without it, so the parts of the app that use it do not work; Appflare tries again on its next scheduled check.`,
+            `Cloudflare refused the Workflow "${target.name}" (${why}). The version serves without it, so the parts of the app that use it may not work; Appflare tries again on its next scheduled check.`,
           );
           return {};
         }

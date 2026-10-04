@@ -102,10 +102,11 @@ export interface ResourceView {
   /** Created by the app's own installer, which alone deletes it (self-deploying tier). */
   managedByApp: boolean;
   /**
-   * A Workflow of an installed app that is not known to exist in Cloudflare:
-   * recorded without its Cloudflare id, as earlier managers left them. The
-   * cron tries to create it (installs/workflow-repair.server.ts), as an
-   * update does, unless a Workflow of that name runs another script.
+   * A Workflow of an installed app that is not known to be set up in
+   * Cloudflare: recorded without its Cloudflare id, as earlier managers left
+   * them, or as an update or rollback leaves one Cloudflare refused to
+   * update. The cron tries again (installs/workflow-repair.server.ts), unless
+   * a Workflow of that name runs another script.
    */
   missing: boolean;
 }

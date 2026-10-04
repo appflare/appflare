@@ -2138,6 +2138,19 @@ describe("update job, Workflows of an app of one Worker", () => {
     ).toEqual([["cut-mail", null, null]]);
   });
 
+  it("drops a kept Workflow's id when Cloudflare refuses to update it, for the repair", async () => {
+    const r = await update(
+      { ...NEW_APP, bindings: [...(NEW_APP.bindings ?? []), jobs("JobsV2")] },
+      { ...existing(), failOnce: new Map([["PUT /workflows/cut-jobs", 400]]) },
+      { resources: [...RESOURCES, recorded] },
+    );
+    expect(r.error).toBeNull();
+    expect(r.job?.status).toBe("succeeded");
+    // Still on the old class in Cloudflare, so no longer marked as set up.
+    expect(r.fake.state.workflowDefs["cut-jobs"]?.class_name).toBe("Jobs");
+    expect(r.resources.find((row) => row.kind === "workflow")?.cf_id).toBeNull();
+  });
+
   it("takes over a deleted row of a reused binding under the new Workflow's name", async () => {
     const r = await update(
       { ...NEW_APP, bindings: [...(NEW_APP.bindings ?? []), jobs("Jobs")] },

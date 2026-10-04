@@ -79,6 +79,7 @@ describe("repair of installed apps' Workflows", () => {
     expect(report).toEqual({
       checked: 1,
       created: ["cut-jobs"],
+      updated: [],
       found: [],
       unused: [],
       failed: [],
@@ -143,8 +144,26 @@ describe("repair of installed apps' Workflows", () => {
     });
   });
 
-  it("records the id of a Workflow that exists, without changing it", async () => {
+  it("puts a Workflow that exists back on the installed version's class", async () => {
+    // As an update leaves it when Cloudflare refused the new class: no id, the old class.
     await seed({ bindings: [jobs] }, [prefix]);
+    const { fake, report } = await repair({
+      workflows: ["cut-jobs"],
+      workflowDefs: { "cut-jobs": { script_name: "cut", class_name: "OldJobs" } },
+    });
+    expect(report.updated).toEqual(["cut-jobs"]);
+    expect(fake.state.calls).toEqual(["GET /workflows/cut-jobs", "PUT /workflows/cut-jobs"]);
+    expect(fake.state.workflowDefs).toEqual({
+      "cut-jobs": { script_name: "cut", class_name: "Jobs" },
+    });
+    expect(await rows()).toEqual([
+      { binding: "JOBS", name: "cut-jobs", cf_id: "wf-cut-jobs", live: 1 },
+    ]);
+    expect(workflowRepairLog(report)).toBe("workflows: 1 checked, updated cut-jobs");
+  });
+
+  it("records the id of an existing Workflow the installed version no longer defines", async () => {
+    await seed({ bindings: [] }, [prefix]);
     const { fake, report } = await repair({
       workflows: ["cut-jobs"],
       workflowDefs: { "cut-jobs": { script_name: "cut", class_name: "Jobs" } },
@@ -230,6 +249,31 @@ describe("repair of installed apps' Workflows", () => {
     expect(again.report.created).toEqual(["cut-jobs"]);
     const done = await readSettings(createDb(env.DB), [SETTING.workflowRepairDay]);
     expect(done.workflow_repair_day).toBe("2026-10-05");
+  });
+
+  it("does not let Workflows that keep failing hold back the ones after them", async () => {
+    const many = Array.from({ length: WORKFLOW_REPAIRS_PER_RUN + 2 }, (_, i) => ({
+      type: "workflow",
+      name: `FLOW_${i}`,
+      workflow_name: `flow-${i}`,
+      class_name: `Flow${i}`,
+    }));
+    await seed(
+      { bindings: many },
+      many.map((b) => ({ kind: "workflow", binding: b.name, name: `cut-flow-${b.name.slice(5)}` })),
+    );
+    // The first rows' names run another script, which no run will ever fix.
+    const taken = many.slice(0, WORKFLOW_REPAIRS_PER_RUN).map((b) => `cut-flow-${b.name.slice(5)}`);
+    const first = await repair({ workflows: [...taken] });
+    expect(first.report.failed).toHaveLength(WORKFLOW_REPAIRS_PER_RUN);
+    expect(await workflowRepairNeeded(env.DB, NOW)).toBe(true);
+    const second = await repair({ workflows: [...taken] });
+    expect(second.report.checked).toBe(2);
+    expect(second.report.created).toEqual(["cut-flow-10", "cut-flow-11"]);
+    // The pass reached the end: done for today, from the first row tomorrow.
+    expect(await workflowRepairNeeded(env.DB, NOW)).toBe(false);
+    const tomorrow = await repair({ workflows: [...taken] }, new Date("2026-10-05T12:00:00.000Z"));
+    expect(tomorrow.report.failed.map((f) => f.name)).toEqual(taken);
   });
 
   it(`goes on in the next run after ${WORKFLOW_REPAIRS_PER_RUN} Workflows`, async () => {

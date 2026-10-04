@@ -158,6 +158,11 @@ export const SETTING = {
    * installed apps that do not exist in Cloudflare (installs/workflow-repair.server.ts).
    */
   workflowRepairDay: "workflow_repair_day",
+  /**
+   * The rowid of the last Workflow row the repair looked at in the current
+   * pass, so each run goes on from there; "0" (or absent) starts from the first.
+   */
+  workflowRepairCursor: "workflow_repair_cursor",
 } as const;
 
 export type SettingKey = (typeof SETTING)[keyof typeof SETTING];
