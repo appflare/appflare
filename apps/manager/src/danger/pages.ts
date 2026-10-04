@@ -3,6 +3,7 @@ import { dashboardUrl } from "../cloudflare/dashboard-links";
 import { COLOR_MODE_SCRIPT, COLOR_MODE_SCRIPT_SHA256 } from "../components/color-mode";
 import { messageSegments } from "../components/message-links";
 import { settingsLink } from "../components/settings-links";
+import { managerSiteLink } from "../site-links";
 import type { RemovalStep } from "./removal.server";
 
 /**
@@ -194,6 +195,6 @@ ${
     ? `<li>The Cloudflare Access applications of apps Appflare protected, and the "Appflare users" policy they use, so those apps keep asking for a sign-in. Who can sign in is managed under Zero Trust, Access in the Cloudflare dashboard from now on.</li>`
     : ""
 }</ul>
-<p>To manage the apps again, reinstall Appflare with the installer from the repository, as <a href="${INSTALL_DOCS_URL}" rel="noreferrer">the install guide</a> describes. It starts empty and does not know the apps already in the account.</p>
+<p>To manage the apps again, reinstall Appflare with the installer from the repository, as <a href="${escapeHtml(managerSiteLink(INSTALL_DOCS_URL, "removedInstallGuide"))}" rel="noreferrer">the install guide</a> describes. It starts empty and does not know the apps already in the account.</p>
 ${TAIL}`;
 }

@@ -4,13 +4,13 @@ import { appflareDevLink } from "./appflare-dev-link";
 describe("appflareDevLink", () => {
   it("hands appflare.dev this manager's origin in the fragment, encoded", () => {
     expect(appflareDevLink("https://appflare.acme.workers.dev")).toBe(
-      "https://appflare.dev/my/#manager=https%3A%2F%2Fappflare.acme.workers.dev",
+      "https://appflare.dev/my/?utm_source=appflare-manager&utm_medium=app&utm_content=appflareDev#manager=https%3A%2F%2Fappflare.acme.workers.dev",
     );
   });
 
   it("sends only the origin, never a path, query or fragment", () => {
     expect(appflareDevLink("https://apps.example.com/settings/account?x=1#connection")).toBe(
-      "https://appflare.dev/my/#manager=https%3A%2F%2Fapps.example.com",
+      "https://appflare.dev/my/?utm_source=appflare-manager&utm_medium=app&utm_content=appflareDev#manager=https%3A%2F%2Fapps.example.com",
     );
   });
 

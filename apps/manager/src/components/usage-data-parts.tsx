@@ -1,5 +1,6 @@
 import { TELEMETRY_DOCS_URL } from "@appflare/schema";
 import { Link, Switch, Text } from "@cloudflare/kumo";
+import { managerSiteLink } from "../site-links";
 import { TELEMETRY_COPY, type TelemetryStatus } from "../telemetry/telemetry";
 
 /**
@@ -11,7 +12,11 @@ import { TELEMETRY_COPY, type TelemetryStatus } from "../telemetry/telemetry";
 /** The "What is sent" link to the docs page. */
 export function WhatIsSentLink() {
   return (
-    <Link href={TELEMETRY_DOCS_URL} target="_blank" rel="noopener noreferrer">
+    <Link
+      href={managerSiteLink(TELEMETRY_DOCS_URL, "usageData")}
+      target="_blank"
+      rel="noopener noreferrer"
+    >
       {TELEMETRY_COPY.whatIsSent}
       <Link.ExternalIcon />
     </Link>

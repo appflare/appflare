@@ -146,9 +146,12 @@ describe("renderMessage", () => {
       M,
     );
     expect(message.lines[1]).toBe(
-      `Cloudflare Access could not be moved back to workers.dev, so Appflare refuses sign-in there until you follow the Access recovery steps: ${docsUrl("accessLockedOut")}`,
+      `Cloudflare Access could not be moved back to workers.dev, so Appflare refuses sign-in there until you follow the Access recovery steps: ${ACCESS_LOCKED_OUT_URL}`,
     );
-    expect(ACCESS_LOCKED_OUT_URL).toBe(docsUrl("accessLockedOut"));
+    // The docs topic's page and heading, tagged as a notification's link rather than the app's.
+    const untagged = (url: string) => Object.assign(new URL(url), { search: "" }).href;
+    expect(untagged(ACCESS_LOCKED_OUT_URL)).toBe(untagged(docsUrl("accessLockedOut")));
+    expect(new URL(ACCESS_LOCKED_OUT_URL).searchParams.get("utm_medium")).toBe("notification");
   });
 
   it("leaves the link out when the manager URL is not known", () => {

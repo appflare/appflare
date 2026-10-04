@@ -2,6 +2,7 @@ import { SITE_URL } from "@appflare/schema/links";
 import { z } from "zod";
 import { appLink } from "../components/app-links";
 import { settingsLink } from "../components/settings-links";
+import { managerSiteLink } from "../site-links";
 import type { NOTIFICATION_EVENTS } from "./schema";
 
 /**
@@ -103,7 +104,11 @@ export interface Message {
 }
 
 /** The docs' Access recovery steps ("If you are locked out"). */
-export const ACCESS_LOCKED_OUT_URL = `${SITE_URL}/security/#if-you-are-locked-out`;
+export const ACCESS_LOCKED_OUT_URL = managerSiteLink(
+  `${SITE_URL}/security/#if-you-are-locked-out`,
+  "accessLockedOut",
+  "notification",
+);
 
 function managerLink(managerUrl: string | null, path: string): string | null {
   return managerUrl === null ? null : `${managerUrl.replace(/\/+$/, "")}${path}`;

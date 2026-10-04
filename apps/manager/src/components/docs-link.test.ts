@@ -14,7 +14,7 @@ describe("DocsLink", () => {
   it("renders a labelled help button that opens the topic in a new tab", () => {
     const html = render();
     expect(html).toMatch(/^<a /);
-    expect(html).toContain(`href="${docsUrl("customDomains")}"`);
+    expect(html).toContain(`href="${docsUrl("customDomains").replaceAll("&", "&amp;")}"`);
     expect(html).toContain('target="_blank"');
     expect(html).toContain('rel="noopener noreferrer"');
     expect(html).toContain(`aria-label="${DOCS_LINK_LABEL}"`);
@@ -23,7 +23,7 @@ describe("DocsLink", () => {
   it("renders an inline Learn more link that opens the topic in a new tab", () => {
     const html = render("inline");
     expect(html).toMatch(/^<a /);
-    expect(html).toContain(`href="${docsUrl("customDomains")}"`);
+    expect(html).toContain(`href="${docsUrl("customDomains").replaceAll("&", "&amp;")}"`);
     expect(html).toContain('target="_blank"');
     expect(html).toContain('rel="noopener noreferrer"');
     expect(html).toContain("Learn more");

@@ -94,10 +94,12 @@ describe("docs topics", () => {
     ]);
   });
 
-  it("builds absolute URLs with the site's trailing slash", () => {
-    expect(docsUrl("customDomains")).toBe("https://appflare.dev/guides/custom-domains/");
+  it("builds absolute URLs with the site's trailing slash, tagged with the topic", () => {
+    expect(docsUrl("customDomains")).toBe(
+      "https://appflare.dev/guides/custom-domains/?utm_source=appflare-manager&utm_medium=app&utm_content=customDomains",
+    );
     expect(docsUrl("webhookSignature")).toBe(
-      "https://appflare.dev/guides/notifications/#verify-the-signature",
+      "https://appflare.dev/guides/notifications/?utm_source=appflare-manager&utm_medium=app&utm_content=webhookSignature#verify-the-signature",
     );
   });
 
