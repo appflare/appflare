@@ -96,6 +96,8 @@ describe("bare addresses", () => {
     expect(html).not.toContain("<a ");
     expect(html).toContain("www.example.org");
     expect(html).toContain("admin@example.org");
+    // Written with character references, they are decoded before GFM sees them.
+    expect(render("See www&#46;example.org or admin&#64;example.org.")).not.toContain("<a ");
     // An author's own links are kept as they are.
     expect(links(render("[Mail us](mailto:admin@example.org) or <https://x.dev>"))).toEqual([
       ["mailto:admin@example.org", "Mail us"],

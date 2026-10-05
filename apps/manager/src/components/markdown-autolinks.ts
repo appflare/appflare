@@ -25,11 +25,20 @@ interface MdNode {
   position?: { start: { offset?: number }; end: { offset?: number } };
 }
 
+/** The text a link shows. */
+function linkText(node: MdNode): string {
+  if (node.type === "text") return node.value ?? "";
+  return (node.children ?? []).map(linkText).join("");
+}
+
 /** Whether `link` is an autolink literal, as written, that is not an `http(s)://` address. */
 function notHttpLiteral(link: MdNode, source: string): boolean {
   const start = link.position?.start.offset;
   const end = link.position?.end.offset;
-  if (start === undefined || end === undefined) return false;
+  // GFM also links names in text that was decoded from character references
+  // (`www&#46;example.org`, `admin&#64;example.org`); such a link has no
+  // position, so it is judged by the text it shows.
+  if (start === undefined || end === undefined) return !/^https?:\/\//i.test(linkText(link));
   const written = source.slice(start, end);
   // A Markdown link `[…](…)` or an angle autolink `<…>` is the author's own choice.
   if (written.startsWith("[") || written.startsWith("<")) return false;
