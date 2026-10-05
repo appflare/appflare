@@ -87,3 +87,24 @@ describe("a setting with a few choices", () => {
     expect(heading?.querySelector("p")).toBeNull();
   });
 });
+
+describe("help that starts with Optional", () => {
+  it("is kept whole on choice cards, whose legend has no (optional) mark", () => {
+    render({ ...redirectStatus, help: "Optional. The HTTP status short links answer with." });
+    expect(container.textContent).toContain("Optional. The HTTP status");
+  });
+
+  it("drops the repeat on a text field labelled (optional)", () => {
+    render({
+      name: "FOOTER",
+      label: "Footer",
+      help: "Optional. The line under every page.",
+      required: false,
+      kind: "text",
+      shownDefault: "",
+      options: null,
+    });
+    expect(container.textContent).toContain("The line under every page.");
+    expect(container.textContent).not.toContain("Optional. The line");
+  });
+});

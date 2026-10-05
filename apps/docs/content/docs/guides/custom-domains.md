@@ -32,8 +32,9 @@ Appflare. You can also create a new token and replace the old one with **Rotate 
 ## Add a domain
 
 On the app's **Domains and email** tab, admins find **Custom domains** and select
-**Add a domain**. The install form offers the same under **Address**, and the install
-adds the domain once the app runs.
+**Add a domain**. The install form offers the same: pick the domain at the right of
+the **Address** field and type the name before it. The install adds the domain once
+the app runs.
 
 ![Form for adding a custom domain to Short links](/screenshots/domains-custom-form.png)
 
@@ -66,8 +67,8 @@ domains first.
 Some apps need every name under one hostname rather than one exact hostname. A
 tunnel, for example, gives each session an address of its own, such as
 `https://a1b2c3.tunnels.example.com`. For these apps the section is called
-**Wildcard domain**, and the install form's **Address** offers **Wildcard domain**
-instead of a custom domain. The dialog says why the app needs it.
+**Wildcard domain**, and the install form's **Address** lists your domains as
+wildcard bases instead of custom domains. The dialog says why the app needs it.
 
 1. Choose the domain and enter the hostname the app gets, such as `tunnels` for
    `tunnels.example.com`. The app answers on that hostname and on every name under it

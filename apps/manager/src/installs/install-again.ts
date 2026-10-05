@@ -1,7 +1,6 @@
 import {
   accessOfferOf,
   type CatalogManifest,
-  enteredSecrets,
   hyperdriveDeclarations,
   needsWildcardHostname,
 } from "@appflare/schema";
@@ -184,22 +183,13 @@ export function installAgainPrefill(
 }
 
 /**
- * What the form says it needs again: secret values and connection strings
- * are never stored, and generated secrets get new values. Null when the
- * app takes neither.
+ * What the banner says must be entered again: database connection strings,
+ * which have no note of their own; null when the app has none. Secrets are
+ * said next to their fields ({@link SECRETS_AGAIN_NOTE}), once.
  */
 export function reenterNote(catalog: CatalogManifest): string | null {
-  const secrets = enteredSecrets(catalog.secrets);
-  const generated = secrets.some((s) => s.generate !== undefined);
-  const databases = hyperdriveDeclarations(catalog.resources?.hyperdrive).length > 0;
-  if (secrets.length === 0 && !databases) return null;
-  const what =
-    secrets.length > 0 && databases
-      ? "secrets and database connections"
-      : secrets.length > 0
-        ? "secrets"
-        : "database connections";
-  return `Appflare never stores the values of ${what}, so enter them again.${generated ? " Generated secrets have new values." : ""}`;
+  if (hyperdriveDeclarations(catalog.resources?.hyperdrive).length === 0) return null;
+  return "Appflare never stores database connection strings, so enter them again.";
 }
 
 /** Under the install form's Secrets heading when installing again. */

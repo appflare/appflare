@@ -100,8 +100,8 @@ protected apps a run; opening the app's page picks a change up at once.
 
 ## Turn it on at install
 
-In the [install form](/guides/install-apps/#the-install-form), under **Address**,
-tick **Protect with Cloudflare Access**.
+In the [install form](/guides/install-apps/#the-install-form), under the app's
+address, tick **Protect with Cloudflare Access**.
 
 ![Protect with Cloudflare Access in the install form, with who gets in and the login methods](/screenshots/install-access.png)
 

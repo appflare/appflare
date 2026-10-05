@@ -78,20 +78,44 @@ export function DatabaseFields({
   databases,
   values,
   onChange,
+  withHeading = true,
 }: {
   databases: readonly HyperdriveDeclaration[];
   values: Readonly<Record<string, string>>;
   onChange(binding: string, value: string): void;
+  /**
+   * False inside a form group with a heading of its own: the fields then
+   * follow the group's other fields, and the note sits under them.
+   */
+  withHeading?: boolean;
 }) {
   if (databases.length === 0) return null;
+  const note = (
+    <Text variant="secondary" size="sm">
+      The app keeps its data in a database you run elsewhere. Appflare never stores the connection
+      string.
+    </Text>
+  );
+  if (!withHeading) {
+    return (
+      <>
+        {databases.map((decl) => (
+          <DatabaseField
+            key={decl.binding}
+            decl={decl}
+            value={values[decl.binding] ?? ""}
+            onChange={(value) => onChange(decl.binding, value)}
+          />
+        ))}
+        {note}
+      </>
+    );
+  }
   return (
     <div className="grid gap-4">
       <div className="grid gap-1.5">
         <Text bold>Databases</Text>
-        <Text variant="secondary" size="sm">
-          The app keeps its data in a database you run elsewhere. Appflare never stores the
-          connection string.
-        </Text>
+        {note}
       </div>
       {databases.map((decl) => (
         <DatabaseField

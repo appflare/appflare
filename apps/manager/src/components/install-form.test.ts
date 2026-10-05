@@ -3,7 +3,7 @@ import { Banner } from "@cloudflare/kumo";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
-import { installVarFields } from "../installs/install-vars";
+import { type InstallVarField, installVarFields } from "../installs/install-vars";
 import { baseCatalog } from "../test/artifact-fixture";
 
 // The form only needs the router once a job has started, and the server
@@ -20,12 +20,12 @@ vi.mock("../installs/access-change.functions", () => ({
 }));
 // The address and email pickers load their choices from the account; only
 // where the address choice sits matters here, so it is a marker.
-vi.mock("./install-domain-fields", () => ({
-  InstallDomainFields: () => createElement("div", { "data-address-choice": "" }),
+vi.mock("./install-address-field", () => ({
+  InstallAddressField: () => createElement("div", { "data-address-choice": "" }),
 }));
 vi.mock("./email-routing-fields", () => ({ EmailRoutingFields: () => null }));
 
-const { InstallForm, installFormNotice } = await import("./install-form");
+const { InstallForm, installFormNotice, filledByAppflare } = await import("./install-form");
 
 type Props = Parameters<typeof InstallForm>[0];
 
@@ -101,26 +101,60 @@ describe("the install form's notices", () => {
 });
 
 describe("the install form's order", () => {
-  it("starts with the address, the Worker name and the domain choice, before the app's settings", () => {
-    const html = render(
-      baseCatalog({
-        vars: [{ name: "SITE_TITLE", label: "Site title", default: "My site" }],
-      }),
-    );
-    const at = (needle: string) => {
-      const i = html.indexOf(needle);
-      expect(i, needle).toBeGreaterThanOrEqual(0);
-      return i;
-    };
-    const workerName = at('aria-label="Worker name"');
+  const catalog = baseCatalog({
+    secrets: [
+      { name: "ADMIN_PASSWORD", label: "Admin password", generate: "password" },
+      { name: "SMTP_PASSWORD", label: "Mail password", optional: true },
+    ],
+    vars: [
+      { name: "SITE_TITLE", label: "Site title", default: "My site" },
+      { name: "ALLOWED_ORIGINS", label: "Allowed origins" },
+    ],
+  });
+  const html = render(catalog);
+  const at = (needle: string) => {
+    const i = html.indexOf(needle);
+    expect(i, needle).toBeGreaterThanOrEqual(0);
+    return i;
+  };
+
+  it("starts with the address, in a panel of its own, then what the app needs", () => {
+    const panel = at("data-address-panel");
     const address = at("data-address-choice");
-    const displayName = at(">Name<");
-    const secrets = at("Admin password");
-    const settings = at("Site title");
-    expect(workerName).toBeLessThan(address);
-    expect(address).toBeLessThan(displayName);
-    expect(displayName).toBeLessThan(secrets);
-    expect(secrets).toBeLessThan(settings);
+    const needs = at("What Cut needs");
+    expect(panel).toBeLessThan(address);
+    expect(address).toBeLessThan(needs);
+    // A secret it must have and a setting with no default are asked up front.
+    expect(needs).toBeLessThan(at("Admin password"));
+    expect(at("Admin password")).toBeLessThan(at("Allowed origins"));
+  });
+
+  it("folds the name, optional secrets and settings with a default into Optional settings", () => {
+    const fold = at("Optional settings");
+    expect(html).toMatch(/Optional settings <span[^>]*>\(3\)/);
+    expect(at("Allowed origins")).toBeLessThan(fold);
+    expect(fold).toBeLessThan(at(">Name in Appflare<"));
+    expect(fold).toBeLessThan(at("Mail password"));
+    expect(fold).toBeLessThan(at("Site title"));
+    // Closed, it names what is inside.
+    expect(html).toContain("Name in Appflare, Mail password and Site title");
+  });
+
+  it("keeps an optional secret to one field, with no switch to set it", () => {
+    expect(html).not.toContain("Set it now");
+    // The one switch left is "Show technical names".
+    expect(html.split('role="switch"').length - 1).toBe(1);
+    expect(html).toMatch(/Mail password.*\(optional\)/);
+  });
+
+  it("puts the technical names switch in the header, away from the fields", () => {
+    expect(at("Show technical names")).toBeLessThan(at("data-address-panel"));
+  });
+
+  it("says in its footer what is left before Install", () => {
+    expect(html).toContain('data-install-readiness="blocked"');
+    expect(html).toContain("To install, fill in Allowed origins.");
+    expect(html).toContain("1 of 2 left to fill in");
   });
 });
 
@@ -149,7 +183,7 @@ describe("the install form's labels", () => {
   });
 });
 
-describe("placeholders in the install form", () => {
+describe("settings Appflare fills in", () => {
   const catalog = baseCatalog({
     vars: [
       {
@@ -158,24 +192,24 @@ describe("placeholders in the install form", () => {
         default: "{{appUrl}}/auth/callback",
       },
       { name: "PREVIEW_HOST", label: "Preview host", default: "{{workerHostname}}" },
+      { name: "SITE_TITLE", label: "Site title", default: "My site" },
     ],
   });
 
-  it("show as chips that say what they become, and never as raw text", () => {
+  it("are not asked: the install keeps their defaults, and the app's page shows them", () => {
     const html = render(catalog);
-    expect(html).toContain("App address");
-    expect(html).toContain('data-placeholder="{{appUrl}}"');
-    expect(html).toContain('value="/auth/callback"');
-    expect(html).not.toContain('value="{{appUrl}}/auth/callback"');
-    // Nothing is filled in: the stored value keeps the placeholder.
-    expect(html).not.toContain("https://cut.acme.workers.dev/auth/callback");
-    expect(html).toContain(">Insert<");
+    expect(html).not.toContain("Sign-in callback");
+    expect(html).not.toContain("Preview host");
+    expect(html).not.toContain("data-placeholder");
+    expect(html).toContain("Site title");
   });
 
-  it("show the workers.dev forms by their own name", () => {
-    const html = render(catalog);
-    expect(html).toContain('data-placeholder="{{workerHostname}}"');
-    expect(html).toContain("workers.dev hostname");
+  it("are the derived ones and those whose default holds a placeholder, never a seed-only one", () => {
+    expect(filledByAppflare({ shownDefault: "{{accountId}}" }, [])).toBe(true);
+    expect(filledByAppflare({ shownDefault: "https://{{accessTeamDomain}}" }, [])).toBe(true);
+    expect(filledByAppflare({ shownDefault: "", derivedFrom: "SESSION" }, [])).toBe(true);
+    expect(filledByAppflare({ shownDefault: "cloudflare_access" }, [])).toBe(false);
+    expect(filledByAppflare({ shownDefault: "{{appUrl}}", seedOnly: true }, [])).toBe(false);
   });
 });
 
@@ -216,5 +250,88 @@ describe("the app's own Cloudflare token", () => {
 
   it("is not shown for an app that needs no token of its own", () => {
     expect(render(baseCatalog())).not.toContain("data-app-token-help");
+  });
+});
+
+describe("links beside the fields", () => {
+  const link = (path: string) => ({ label: `Get ${path}`, url: `https://example.org/${path}` });
+  const html = render(
+    baseCatalog({
+      secrets: [
+        { name: "API_KEY", label: "API key", help: "The key.", link: link("api") },
+        { name: "SESSION", label: "Session key", generate: "password", link: link("session") },
+        { name: "EXTRA", label: "Extra key", optional: true, link: link("extra") },
+      ],
+      vars: [{ name: "MODEL", label: "Model", default: "small", link: link("model") }],
+    }),
+  );
+
+  it("follow the help of every kind of field, up front and folded, opening in a new tab", () => {
+    for (const path of ["api", "session", "extra", "model"]) {
+      expect(html).toMatch(
+        new RegExp(`<a[^>]*href="https://example.org/${path}"[^>]*target="_blank"`),
+      );
+      expect(html).toContain(`Get ${path}`);
+    }
+    // The generated secret's link sits in its help, apart from the badge's refresh button.
+    expect(html.indexOf("Get session")).toBeGreaterThan(html.indexOf("Session key"));
+    // The optional ones are in the fold.
+    expect(html.indexOf("Get extra")).toBeGreaterThan(html.indexOf("Optional settings"));
+    expect(html.indexOf("Get model")).toBeGreaterThan(html.indexOf("Optional settings"));
+  });
+});
+
+describe("what holds the install", () => {
+  const prefill = (vars: Record<string, string>) => ({
+    replaces: "old",
+    workerName: "cut",
+    displayName: "",
+    vars,
+    access: false,
+    domain: null,
+    emailZoneId: null,
+  });
+  const field = (over: Partial<InstallVarField> & { name: string; label: string }) => ({
+    required: false,
+    kind: "text" as const,
+    shownDefault: "",
+    options: null,
+    ...over,
+  });
+
+  it("names a setting whose value cannot be used, and Install stays off", () => {
+    const html = render(baseCatalog(), {
+      varFields: [field({ name: "RULES", label: "Rules", kind: "json", shownDefault: "[]" })],
+      prefill: prefill({ RULES: "{not json" }),
+    });
+    expect(html).toContain('data-install-readiness="blocked"');
+    expect(html).toContain("To install again, fix Rules.");
+    expect(html).toMatch(/<button[^>]*disabled=""[^>]*>.*Install again/);
+    // The fold holds it, so it is open.
+    expect(html).toMatch(/data-fold[^>]*>.*?aria-expanded="true"/s);
+  });
+
+  it("names a required setting emptied in the fold, which opens", () => {
+    const html = render(baseCatalog(), {
+      varFields: [field({ name: "MODE", label: "Mode", required: true, shownDefault: "fast" })],
+      prefill: prefill({ MODE: "" }),
+    });
+    expect(html).toContain("fix Mode");
+    expect(html).toMatch(/data-fold[^>]*>.*?aria-expanded="true"/s);
+  });
+
+  it("shows a setting Appflare fills in when an install made again changed it", () => {
+    const callback = field({
+      name: "CALLBACK",
+      label: "Sign-in callback",
+      shownDefault: "{{appUrl}}/cb",
+    });
+    expect(render(baseCatalog(), { varFields: [callback] })).not.toContain("Sign-in callback");
+    const html = render(baseCatalog(), {
+      varFields: [callback],
+      prefill: prefill({ CALLBACK: "https://login.example.org/cb" }),
+    });
+    expect(html).toContain("Sign-in callback");
+    expect(html).toMatch(/data-fold[^>]*>.*?aria-expanded="true"/s);
   });
 });

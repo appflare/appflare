@@ -115,8 +115,8 @@ twice.
 
 On the app's **Domains and email** tab, admins select **Add an external domain**.
 The [install form](/guides/install-apps/#the-install-form) offers the same under
-**Address**: choose **External domain, whose DNS is managed elsewhere**, and the
-install adds the domain once the app runs.
+**Address**: pick **Another domain, managed elsewhere** at the right of the field and
+type the whole hostname. The install adds the domain once the app runs.
 
 1. Enter the hostname: one exact name, such as `app.example.org`. Appflare stores it
    in lower case, and an international name in its Punycode form.

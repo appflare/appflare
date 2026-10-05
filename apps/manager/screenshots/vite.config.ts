@@ -5,6 +5,7 @@ import react from "@vitejs/plugin-react";
 import { defaultClientConditions, defineConfig, type Plugin } from "vite";
 import { kumoLoaderAsAppflareLoader } from "../scripts/kumo-loader.ts";
 import catalog from "./fixtures/catalog.json" with { type: "json" };
+import formApps from "./fixtures/form-apps.json" with { type: "json" };
 
 const fixturePath = resolve(import.meta.dirname, "fixtures/data.ts");
 function fixtureServerCalls(): Plugin {
@@ -43,8 +44,8 @@ function fixtureServerCalls(): Plugin {
         );
       });
       const media = new Map(
-        catalog.apps.flatMap((app) =>
-          [app.media.icon, ...(app.media.screenshots ?? [])]
+        [...catalog.apps, ...formApps.apps].flatMap((app) =>
+          [app.media.icon, ...("screenshots" in app.media ? app.media.screenshots : [])]
             .filter((file): file is NonNullable<typeof file> => file != null)
             .map(
               (file) =>

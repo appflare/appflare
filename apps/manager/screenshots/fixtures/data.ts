@@ -14,14 +14,30 @@ import catalogIndexJson from "./catalog.json";
 import cloudmarkManifest from "./cloudmark-manifest.json";
 import cutManifest from "./cut-manifest.json";
 import emdashManifest from "./emdash-manifest.json";
+import formAppsJson from "./form-apps.json";
 
 // Parsed as the manager reads them, so a fixture in an outdated shape fails
 // here instead of rendering a page the manager would never show.
 const catalogIndex: IndexJson = indexJsonSchema.parse(catalogIndexJson);
+/**
+ * Apps whose install forms are pictured, besides the catalog's: kept out of
+ * the catalog list, opened only by their own page (`/catalog/open-seo`). Their
+ * rows and manifests came from the public catalog on 2026-10-04.
+ */
+const formApps: IndexJson = indexJsonSchema.parse({
+  generatedAt: formAppsJson.generatedAt,
+  apps: formAppsJson.apps,
+});
 const manifests: Record<string, CatalogManifest> = {
   cut: catalogManifestSchema.parse(cutManifest.catalog),
   cloudmark: catalogManifestSchema.parse(cloudmarkManifest.catalog),
   emdash: catalogManifestSchema.parse(emdashManifest.catalog),
+  ...Object.fromEntries(
+    Object.entries(formAppsJson.manifests).map(([slug, manifest]) => [
+      slug,
+      catalogManifestSchema.parse(manifest),
+    ]),
+  ),
 };
 
 const now = "2026-09-28T09:00:00.000Z";
@@ -36,7 +52,10 @@ const names: Record<string, string> = {
   formzero: "Contact forms",
 };
 const icons = new Map(
-  catalogIndex.apps.map((app) => [app.slug, `/api/catalog/media/${app.media?.icon?.sha256}`]),
+  [...catalogIndex.apps, ...formApps.apps].map((app) => [
+    app.slug,
+    app.media?.icon === undefined ? undefined : `/api/catalog/media/${app.media.icon.sha256}`,
+  ]),
 );
 function first<T>(items: T[]): T {
   const item = items[0];
@@ -98,6 +117,59 @@ const view = {
   manualPlan: null,
   accountId: "1a2b3c4d1a2b3c4d1a2b3c4d1a2b3c4d",
 };
+/** An account with many domains, for the address's searchable domain picker. */
+const manyZones = [
+  "example.com",
+  ...[
+    "acme",
+    "atlas",
+    "birch",
+    "bramble",
+    "cedar",
+    "cinder",
+    "copper",
+    "delta",
+    "ember",
+    "fable",
+    "fjord",
+    "garnet",
+    "harbor",
+    "hazel",
+    "indigo",
+    "juniper",
+    "kestrel",
+    "lantern",
+    "linden",
+    "maple",
+    "meadow",
+    "nimbus",
+    "orchid",
+    "pebble",
+    "quarry",
+    "raven",
+    "saffron",
+    "sequoia",
+    "tundra",
+    "umber",
+    "vale",
+    "willow",
+    "yarrow",
+    "zephyr",
+    "alder",
+    "basalt",
+    "coral",
+    "drift",
+    "ember-shop",
+  ].map((name, i) => `${name}${i % 3 === 0 ? ".org" : i % 3 === 1 ? ".dev" : ".net"}`),
+].map((name, i) => ({ id: `zone-${i}`, name }));
+
+/** The same account on Workers Free, its plan not detected: the install form asks about it. */
+const freePlanView = {
+  ...view,
+  workersPlan: { state: "unknown" },
+  containers: { state: "needs-workers-paid" },
+  plan: { plan: "free", source: "default" },
+};
 const needs = {
   total: 7,
   workersPaid: 2,
@@ -123,6 +195,12 @@ const popularityBySlug: Record<string, { stars: number; installs: number }> = {
   formzero: { stars: 38, installs: 180 },
   "r2-explorer": { stars: 96, installs: 180 },
   statusbeam: { stars: 121, installs: 180 },
+  "auth-inbox": { stars: 88, installs: 40 },
+  edgekey: { stars: 45, installs: 40 },
+  garrul: { stars: 73, installs: 40 },
+  mailflare: { stars: 160, installs: 40 },
+  "open-seo": { stars: 410, installs: 180 },
+  sink: { stars: 5200, installs: 520 },
 };
 const moduleBytesBySlug: Record<string, number> = {
   cloudmark: 79_000,
@@ -206,7 +284,9 @@ const job = {
 
 function detail(slug: string) {
   const app = first(
-    catalogIndex.apps.filter((entry) => entry.slug === slug).concat(catalogIndex.apps),
+    [...catalogIndex.apps, ...formApps.apps]
+      .filter((entry) => entry.slug === slug)
+      .concat(catalogIndex.apps),
   );
   const catalog = manifests[app.slug] ?? manifests.cut ?? null;
   // The fields the index row and the catalog manifest shape, typed as the page reads them.
@@ -233,10 +313,10 @@ function detail(slug: string) {
     createsKnown: true,
     sandboxConnected: true,
     sandbox,
-    cronTriggers: app.services.includes("cron") ? 1 : 0,
-    moduleBytes: moduleBytesBySlug[app.slug],
-    accountPlan: "paid",
-    capabilities: view,
+    cronTriggers: app.services.includes("cron") ? (app.slug === "open-seo" ? 2 : 1) : 0,
+    moduleBytes: moduleBytesBySlug[app.slug] ?? 150_000,
+    accountPlan: variant === "free-plan" ? "free" : "paid",
+    capabilities: variant === "free-plan" ? freePlanView : view,
     primitives: { ids: app.services, keyValueDurableObjects: false, complete: true },
     appLicense: { expression: app.license, note: null },
     sourceBuilds: true,
@@ -641,8 +721,52 @@ export function fixture(name: string, args: unknown[]): unknown {
       zones: [{ id: "zone-example", name: "example.com" }],
       accountId: view.accountId,
     }),
-    getDomainOptions: () => ({
+    getEmailZoneOptions: () => ({
       zones: [{ id: "zone-example", name: "example.com" }],
+      inactiveZones: [],
+      noZones: false,
+    }),
+    previewEmailRouting: () => ({
+      zoneId: "zone-example",
+      zoneName: "example.com",
+      routing: { enabled: true, status: "ready" },
+      addresses: [],
+      wantsCatchAll: true,
+      catchAll: {
+        state: "free",
+        action: "drop",
+        previous: { enabled: false, actions: [{ type: "drop" }] },
+      },
+      foreignMx: [],
+      problems: [],
+      warnings: [],
+      missing: [],
+      enablesRouting: false,
+      sendsEmail: false,
+      destinations: null,
+    }),
+    // "Install again" for an OpenSEO install that did not finish (`?again=install-open-seo-failed`).
+    getInstallAgain: () => ({
+      installId: "install-open-seo-failed",
+      appKey: "open-seo",
+      label: "SEO research",
+      version: "0.1.10",
+      workerName: "seo",
+      displayName: "SEO research",
+      vars: { OPENROUTER_MODEL: "openai/gpt-5.6-luna" },
+      access: true,
+      domain: { kind: "custom", zoneId: "zone-example", hostname: "seo.example.com" },
+      emailZoneId: null,
+      autoUpdate: "inherit",
+      leftovers: [
+        { kind: "worker", name: "seo" },
+        { kind: "d1", name: "seo-db" },
+      ],
+      failedJobId: "01K5Q3MGN7F6YP8T2RC9VJ4BXA",
+      refusal: null,
+    }),
+    getDomainOptions: () => ({
+      zones: variant === "many-domains" ? manyZones : [{ id: "zone-example", name: "example.com" }],
       inactiveZones: [],
       missing: [],
       noZones: false,
@@ -679,10 +803,16 @@ export function fixture(name: string, args: unknown[]): unknown {
       checkedAt: now,
       workersDevTurnedOff: false,
     }),
-    listTakenWorkerNames: () => ({
-      installed: apps.map((app) => app.workerName),
-      account: ["appflare", ...apps.map((app) => app.workerName)],
-    }),
+    listTakenWorkerNames: () => {
+      const names = {
+        installed: apps.map((app) => app.workerName),
+        account: ["appflare", ...apps.map((app) => app.workerName)],
+      };
+      // A slow account, to picture the name while it is checked.
+      return variant === "slow-names"
+        ? new Promise((done) => setTimeout(() => done(names), 120_000))
+        : names;
+    },
   };
   const call = result[name];
   if (!call) throw new Error(`Missing screenshot fixture: ${name}`);

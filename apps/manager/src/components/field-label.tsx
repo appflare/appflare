@@ -90,20 +90,71 @@ export function FieldLabel({ label, name }: { label: string; name: string }) {
   );
 }
 
+/**
+ * A line of help with more behind a "More" toggle, for help that is
+ * written in parts rather than split from one text ({@link FieldHelp}). The
+ * folded part stays in the page, hidden, so its words are found in the
+ * page's text and announced once shown. Inline content, like FieldHelp.
+ */
+export function MoreText({ children, more }: { children: ReactNode; more: ReactNode }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <>
+      {children}
+      <span hidden={!open}> {more}</span>{" "}
+      <Button
+        type="button"
+        variant="ghost"
+        size="xs"
+        aria-expanded={open}
+        className="inline-flex align-baseline"
+        onClick={() => setOpen((o) => !o)}
+      >
+        {open ? "Less" : "More"}
+      </Button>
+    </>
+  );
+}
+
 /** Help longer than this shows its first sentence, and the rest behind "More". */
 export const SHORT_HELP_LENGTH = 140;
 
 /**
+ * A folded summary shorter than this (or of fewer than {@link MIN_SUMMARY_WORDS}
+ * words) takes the next sentence too: "Optional." alone says nothing.
+ */
+export const MIN_SUMMARY_LENGTH = 24;
+export const MIN_SUMMARY_WORDS = 4;
+
+/**
  * `text` as one line of help and the rest: the first sentence when the whole
- * is longer than {@link SHORT_HELP_LENGTH}, else all of it.
+ * is longer than {@link SHORT_HELP_LENGTH}, else all of it. A first sentence
+ * too short to stand alone takes the next ones until it can; when that
+ * leaves little behind, the whole help shows.
  */
 export function splitHelp(text: string): { short: string; more: string | null } {
   const trimmed = text.trim();
   if (trimmed.length <= SHORT_HELP_LENGTH) return { short: trimmed, more: null };
-  const end = /[.!?](?=\s+\S)/.exec(trimmed);
-  if (end === null) return { short: trimmed, more: null };
-  const cut = end.index + 1;
-  return { short: trimmed.slice(0, cut), more: trimmed.slice(cut).trim() };
+  const ends = [...trimmed.matchAll(/[.!?](?=\s+\S)/g)].map((m) => m.index + 1);
+  const cut = ends.find((end) => {
+    const summary = trimmed.slice(0, end);
+    return summary.length >= MIN_SUMMARY_LENGTH && summary.split(/\s+/).length >= MIN_SUMMARY_WORDS;
+  });
+  if (cut === undefined) return { short: trimmed, more: null };
+  const more = trimmed.slice(cut).trim();
+  // A fold for a few words is more work than reading them.
+  if (more.length < MIN_SUMMARY_LENGTH) return { short: trimmed, more: null };
+  return { short: trimmed.slice(0, cut), more };
+}
+
+/**
+ * Help of a field already labelled "(optional)", without a leading
+ * "Optional." or "Optional:" that only repeats the label (catalog entries
+ * often start that way); the next word gets its capital.
+ */
+export function withoutOptionalPrefix(text: string): string {
+  const rest = text.trim().replace(/^optional\s*[.:]\s*/i, "");
+  return rest.charAt(0).toUpperCase() + rest.slice(1);
 }
 
 /**
@@ -114,8 +165,11 @@ export function FieldHelp({
   text,
   after,
   links = false,
+  optional = false,
 }: {
   text: string;
+  /** The field is labelled "(optional)": a leading "Optional." in `text` is dropped. */
+  optional?: boolean;
   after?: ReactNode;
   /**
    * Render `[label](/path)` in `text` as links (`message-links.ts`). Only for
@@ -124,7 +178,7 @@ export function FieldHelp({
   links?: boolean;
 }) {
   const [open, setOpen] = useState(false);
-  const { short, more } = splitHelp(text);
+  const { short, more } = splitHelp(optional ? withoutOptionalPrefix(text) : text);
   return (
     <>
       {links ? <MessageText message={short} /> : short}
@@ -172,10 +226,13 @@ export function fieldDescription({
   help,
   note,
   link,
+  optional = false,
 }: {
   help?: string | undefined;
   note?: ReactNode;
   link?: CatalogFieldLink | undefined;
+  /** The field is labelled "(optional)": a leading "Optional." in `help` is dropped. */
+  optional?: boolean;
 }): ReactNode {
   const hasNote = note !== undefined && note !== null && note !== "";
   const after =
@@ -189,5 +246,5 @@ export function fieldDescription({
         <FieldLink link={link} />
       </>
     );
-  return help === undefined ? after : <FieldHelp text={help} after={after} />;
+  return help === undefined ? after : <FieldHelp text={help} after={after} optional={optional} />;
 }

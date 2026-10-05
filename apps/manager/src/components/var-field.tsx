@@ -58,9 +58,16 @@ export function VarField({
   }
   const label = <FieldLabel label={field.label} name={field.name} />;
   const note = field.seedOnly === true ? SEED_ONLY_VAR_NOTE : undefined;
-  const description = fieldDescription({ help: field.help, note, link: field.link });
+  // Choice cards have a legend with no "(optional)" mark: their help keeps its own words.
+  const cards = field.options !== null && field.options.length <= MAX_CARD_OPTIONS;
+  const description = fieldDescription({
+    help: field.help,
+    note,
+    link: field.link,
+    optional: !field.required && !cards,
+  });
   const problem = varValueProblem(field, value) ?? undefined;
-  if (field.options !== null && field.options.length <= MAX_CARD_OPTIONS) {
+  if (cards && field.options !== null) {
     return (
       <Radio.Group
         value={value}

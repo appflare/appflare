@@ -1,0 +1,1074 @@
+{
+  "generatedAt": "2026-10-04T17:17:58.272Z",
+  "apps": [
+    {
+      "slug": "open-seo",
+      "name": "OpenSEO",
+      "summary": "Self-hosted SEO research: keywords, rankings, backlinks and site audits, on your own Cloudflare account and behind Cloudflare Access.",
+      "tagline": "Find search terms, track rankings, and check your site's health",
+      "addedAt": "2026-09-24T08:09:39+03:00",
+      "version": "0.1.10",
+      "artifacts": {
+        "zip": "https://github.com/appflare/catalog/releases/download/open-seo@0.1.10/open-seo-0.1.10.zip",
+        "manifest": "https://github.com/appflare/catalog/releases/download/open-seo@0.1.10/manifest.json",
+        "sig": "https://github.com/appflare/catalog/releases/download/open-seo@0.1.10/manifest.sig",
+        "digest": "62bcae45fdf56e1ef8ab7127f963cd497903366d54014d289a01ca31def6249f"
+      },
+      "tier": "artifact",
+      "plan": "free",
+      "requires": ["r2", "access"],
+      "lastVerified": null,
+      "authors": [
+        {
+          "name": "Ben Senescu",
+          "github": "bensenescu",
+          "x": "bensenescu"
+        },
+        {
+          "name": "Every App",
+          "url": "https://everyapp.dev",
+          "github": "every-app"
+        }
+      ],
+      "maintainers": ["MendyLanda"],
+      "media": {
+        "icon": {
+          "url": "https://appflare.github.io/catalog/apps/open-seo/icon.png",
+          "sha256": "9d8d56587bd72607f0b86b096442122303b2be7406e43895da1c189a3ee72d27"
+        }
+      },
+      "services": ["kv", "d1", "r2", "durable-objects", "workflows", "cron", "access"],
+      "categories": ["marketing", "analytics"],
+      "license": "MIT",
+      "revision": 1,
+      "accessOffer": "required"
+    },
+    {
+      "slug": "sink",
+      "name": "Sink",
+      "summary": "Link shortener with visit analytics: custom slugs, expiring links, QR codes, AI slug suggestions and a realtime globe, all on Cloudflare.",
+      "tagline": "Create short links and track their visits",
+      "addedAt": "2026-09-27T01:13:10+03:00",
+      "version": "0.3.0",
+      "artifacts": {
+        "zip": "https://github.com/appflare/catalog/releases/download/sink@0.3.0/sink-0.3.0.zip",
+        "manifest": "https://github.com/appflare/catalog/releases/download/sink@0.3.0/manifest.json",
+        "sig": "https://github.com/appflare/catalog/releases/download/sink@0.3.0/manifest.sig",
+        "digest": "ad58e8a120ee874b8bd65e5487aea51535311819c59044289f8eb7b313269eed"
+      },
+      "tier": "artifact",
+      "plan": "free",
+      "requires": ["r2", "workers-ai"],
+      "lastVerified": "2026-10-04T10:21:53.000Z",
+      "authors": [
+        {
+          "name": "miantiao",
+          "url": "https://miantiao.me",
+          "github": "miantiao-me",
+          "x": "miantiao_me"
+        }
+      ],
+      "maintainers": ["MendyLanda"],
+      "media": {
+        "icon": {
+          "url": "https://appflare.github.io/catalog/apps/sink/icon.png",
+          "sha256": "07eb308b47d29f08f2d629285c20b138741630e0bbe6562c0b437ec5415ba5e4"
+        }
+      },
+      "services": ["kv", "d1", "r2", "analytics-engine", "cron", "workers-ai"],
+      "categories": ["utilities", "analytics"],
+      "license": "AGPL-3.0-only",
+      "revision": 1,
+      "accessOffer": "offered"
+    },
+    {
+      "slug": "garrul",
+      "name": "Garrul",
+      "summary": "Self-hosted comments for static sites and blogs: an embeddable widget with threads, reactions and votes, OAuth or anonymous posting behind Turnstile, a moderation queue, and reply emails.",
+      "tagline": "Comments and reactions for your website, hosted in your account",
+      "addedAt": "2026-09-27T05:55:55+03:00",
+      "version": "2.29.0",
+      "artifacts": {
+        "zip": "https://github.com/appflare/catalog/releases/download/garrul@2.29.0/garrul-2.29.0.zip",
+        "manifest": "https://github.com/appflare/catalog/releases/download/garrul@2.29.0/manifest.json",
+        "sig": "https://github.com/appflare/catalog/releases/download/garrul@2.29.0/manifest.sig",
+        "digest": "2b6f35520bf73094c61299b4a14aff432e6a5439cd7d10934a57da5f75da449f"
+      },
+      "tier": "artifact",
+      "plan": "free",
+      "requires": ["analytics-engine"],
+      "lastVerified": "2026-10-04T10:13:02.000Z",
+      "authors": [
+        {
+          "name": "KingPin",
+          "url": "https://sumguy.com",
+          "github": "KingPin"
+        }
+      ],
+      "maintainers": ["MendyLanda"],
+      "media": {
+        "icon": {
+          "url": "https://appflare.github.io/catalog/apps/garrul/icon.png",
+          "sha256": "b6c98bbadfa8a210065c149e0c132aad782d48a488c7644526d0a5ffcefacdbe"
+        }
+      },
+      "services": ["kv", "d1", "analytics-engine", "cron"],
+      "categories": ["community"],
+      "license": "Apache-2.0",
+      "revision": 1,
+      "accessOffer": "offered"
+    },
+    {
+      "slug": "auth-inbox",
+      "name": "Auth Inbox",
+      "summary": "An inbox for sign-up and verification mail: Email Routing delivers it, an AI model of your choice pulls out codes and links and sorts each mail, and a dashboard, per-user grants and a remote MCP server let people and agents read them.",
+      "tagline": "Get sign-up codes and links in one private inbox",
+      "addedAt": "2026-09-27T06:14:13+03:00",
+      "version": "0.0.0-20260709.83927b8",
+      "artifacts": {
+        "zip": "https://github.com/appflare/catalog/releases/download/auth-inbox@0.0.0-20260709.83927b8/auth-inbox-0.0.0-20260709.83927b8.zip",
+        "manifest": "https://github.com/appflare/catalog/releases/download/auth-inbox@0.0.0-20260709.83927b8/manifest.json",
+        "sig": "https://github.com/appflare/catalog/releases/download/auth-inbox@0.0.0-20260709.83927b8/manifest.sig",
+        "digest": "0f9fa0c25cd57be00ecbde259cd7d45b26601bbf5b470fb223fc83e00b44925d"
+      },
+      "tier": "artifact",
+      "plan": "free",
+      "requires": ["zone", "email-routing"],
+      "lastVerified": "2026-10-04T10:07:09.000Z",
+      "authors": [
+        {
+          "name": "Tony Chen",
+          "url": "https://tonychen.net",
+          "github": "TooonyChen"
+        }
+      ],
+      "maintainers": ["MendyLanda"],
+      "media": {},
+      "services": ["d1", "email-routing", "zone"],
+      "categories": ["email", "ai"],
+      "license": "MIT",
+      "revision": 1,
+      "accessOffer": "offered"
+    },
+    {
+      "slug": "edgekey",
+      "name": "EdgeKey",
+      "summary": "A shop for digital goods: sell card keys and codes, take payment through USDT, Epay, Alipay or Stripe, and deliver each order automatically by page and email.",
+      "tagline": "Sell digital codes and deliver them automatically after payment",
+      "addedAt": "2026-09-27T07:10:18+03:00",
+      "version": "0.0.0-20260817.fa69913",
+      "artifacts": {
+        "zip": "https://github.com/appflare/catalog/releases/download/edgekey@0.0.0-20260817.fa69913/edgekey-0.0.0-20260817.fa69913.zip",
+        "manifest": "https://github.com/appflare/catalog/releases/download/edgekey@0.0.0-20260817.fa69913/manifest.json",
+        "sig": "https://github.com/appflare/catalog/releases/download/edgekey@0.0.0-20260817.fa69913/manifest.sig",
+        "digest": "dc58a530981196e0fc86880dd2cbbc2cdff33dfdcde626dbfc9353e3ac0264aa"
+      },
+      "tier": "artifact",
+      "plan": "free",
+      "requires": [],
+      "lastVerified": "2026-10-04T10:10:34.000Z",
+      "authors": [
+        {
+          "name": "ggyy",
+          "github": "34892002"
+        }
+      ],
+      "maintainers": ["MendyLanda"],
+      "media": {
+        "icon": {
+          "url": "https://appflare.github.io/catalog/apps/edgekey/icon.png",
+          "sha256": "2b9854d3d27c83ecfd2007c1e87a71480d3aa747409e1c753c026ab95f4b69d3"
+        }
+      },
+      "services": ["d1", "cron"],
+      "categories": ["business", "ecommerce"],
+      "license": "MIT",
+      "revision": 1,
+      "accessOffer": "offered"
+    },
+    {
+      "slug": "mailflare",
+      "name": "Mailflare",
+      "summary": "A self-hosted email service for your own domains: mailboxes, forwarding rules, and a web inbox, on Email Routing, D1, R2, Queues, and Durable Objects.",
+      "tagline": "Email and shared inboxes for your own domain",
+      "addedAt": "2026-09-24T07:29:19+03:00",
+      "version": "0.0.0-20260920.1bf70d2",
+      "artifacts": {
+        "zip": "https://github.com/appflare/catalog/releases/download/mailflare@0.0.0-20260920.1bf70d2/mailflare-0.0.0-20260920.1bf70d2.zip",
+        "manifest": "https://github.com/appflare/catalog/releases/download/mailflare@0.0.0-20260920.1bf70d2/manifest.json",
+        "sig": "https://github.com/appflare/catalog/releases/download/mailflare@0.0.0-20260920.1bf70d2/manifest.sig",
+        "digest": "2d8739cfbef1ba06730d746c57b3dc8f02aaa3296254f0c25624774e7ab19c89"
+      },
+      "tier": "artifact",
+      "plan": "paid",
+      "requires": ["zone", "email-routing", "r2"],
+      "lastVerified": null,
+      "authors": [
+        {
+          "name": "Hieu Nguyen",
+          "github": "hieunc229",
+          "x": "hieuSSR"
+        }
+      ],
+      "maintainers": ["MendyLanda"],
+      "media": {
+        "icon": {
+          "url": "https://appflare.github.io/catalog/apps/mailflare/icon.png",
+          "sha256": "99e25176a3c443b584503fe07a5ed66fe2e06413b7e1c605e52649ed57bdc493"
+        }
+      },
+      "services": [
+        "d1",
+        "r2",
+        "durable-objects",
+        "queues",
+        "cron",
+        "images",
+        "email-routing",
+        "zone"
+      ],
+      "categories": ["email"],
+      "license": "AGPL-3.0-only",
+      "revision": 1,
+      "accessOffer": "offered"
+    }
+  ],
+  "manifests": {
+    "open-seo": {
+      "$schema": "https://appflare.github.io/catalog/schema/v1.json",
+      "slug": "open-seo",
+      "name": "OpenSEO",
+      "summary": "Self-hosted SEO research: keywords, rankings, backlinks and site audits, on your own Cloudflare account and behind Cloudflare Access.",
+      "tagline": "Find search terms, track rankings, and check your site's health",
+      "repo": "every-app/open-seo",
+      "license": "MIT",
+      "categories": ["marketing", "analytics"],
+      "authors": [
+        {
+          "name": "Ben Senescu",
+          "github": "bensenescu",
+          "x": "bensenescu"
+        },
+        {
+          "name": "Every App",
+          "url": "https://everyapp.dev",
+          "github": "every-app"
+        }
+      ],
+      "maintainers": ["MendyLanda"],
+      "source": {
+        "ref": "v0.1.10",
+        "sha": "95c4d10c1c1d7bf57ad7328a682a86e16eec2f06"
+      },
+      "install": {
+        "packageManager": "pnpm",
+        "wranglerConfig": "wrangler.jsonc",
+        "buildCommand": "pnpm exec vite build --mode selfhost",
+        "workers": [
+          {
+            "name": "app",
+            "wranglerConfig": "wrangler.jsonc",
+            "primary": true,
+            "configPatch": {
+              "ratelimits": [
+                {
+                  "name": "MCP_RATE_LIMIT",
+                  "namespace_id": "1001",
+                  "simple": {
+                    "limit": 5000,
+                    "period": 60
+                  }
+                }
+              ]
+            }
+          },
+          {
+            "name": "audit",
+            "wranglerConfig": "wrangler.audit.jsonc",
+            "workersDev": false
+          }
+        ],
+        "health": {
+          "path": "/api/health"
+        }
+      },
+      "plan": "free",
+      "requires": ["r2", "access"],
+      "access": {
+        "mode": "required"
+      },
+      "secrets": [
+        {
+          "name": "DATAFORSEO_API_KEY",
+          "label": "DataForSEO API key",
+          "help": "The Base64 credentials DataForSEO sends by email (app.dataforseo.com, API Access, Send by email): the Base64 of your DataForSEO email:password. See docs/DATAFORSEO_API_KEY.md in the OpenSEO repository.",
+          "link": {
+            "label": "Get API access",
+            "url": "https://app.dataforseo.com/api-access"
+          }
+        },
+        {
+          "name": "OPENROUTER_API_KEY",
+          "label": "OpenRouter API key",
+          "help": "Turns on SAM, the in-app SEO agent. Create a key at openrouter.ai/settings/keys; OpenRouter bills the agent's requests. Leave empty to hide SAM.",
+          "optional": true,
+          "workers": ["app"],
+          "link": {
+            "label": "Get a key",
+            "url": "https://openrouter.ai/settings/keys"
+          }
+        },
+        {
+          "name": "GOOGLE_CLIENT_SECRET",
+          "label": "Google OAuth client secret",
+          "help": "For Google Search Console and Google Analytics, with the client ID below. Leave both empty to skip them.",
+          "optional": true,
+          "workers": ["app"],
+          "link": {
+            "label": "Create a client",
+            "url": "https://console.cloud.google.com/apis/credentials"
+          }
+        },
+        {
+          "name": "BETTER_AUTH_SECRET",
+          "label": "Token encryption key",
+          "help": "Encrypts the Google tokens OpenSEO stores. Changing it later disconnects Search Console and Analytics until you connect them again.",
+          "generate": "base64-key-32",
+          "workers": ["app"]
+        }
+      ],
+      "vars": [
+        {
+          "name": "AUTH_MODE",
+          "label": "Sign-in mode",
+          "help": "Leave it as cloudflare_access: OpenSEO then signs people in through the Cloudflare Access protection Appflare puts in front of it.",
+          "default": "cloudflare_access"
+        },
+        {
+          "name": "TEAM_DOMAIN",
+          "label": "Cloudflare Access team domain",
+          "help": "Filled in by Appflare from the app's Cloudflare Access protection: your Zero Trust team's address. OpenSEO checks each sign-in's Access token against it.",
+          "default": "https://{{accessTeamDomain}}",
+          "workers": ["app"]
+        },
+        {
+          "name": "POLICY_AUD",
+          "label": "Cloudflare Access audience (AUD) tag",
+          "help": "Filled in by Appflare: the audience tag of the app's Cloudflare Access application.",
+          "default": "{{accessAud}}",
+          "workers": ["app"]
+        },
+        {
+          "name": "GOOGLE_CLIENT_ID",
+          "label": "Google OAuth client ID",
+          "help": "Optional. A Web application client from the Google Cloud Console with the Search Console API (and, for Analytics, the Analytics APIs) enabled. Its authorized redirect URIs are the app's address plus /api/gsc/oauth/callback and /api/ga4/oauth/callback.",
+          "optional": true,
+          "workers": ["app"],
+          "link": {
+            "label": "Create a client",
+            "url": "https://console.cloud.google.com/apis/credentials"
+          }
+        },
+        {
+          "name": "OPENROUTER_MODEL",
+          "label": "SAM model",
+          "help": "Optional. The OpenRouter model id SAM uses, for example openai/gpt-5.6-luna. Leave empty for OpenSEO's default.",
+          "optional": true,
+          "workers": ["app"],
+          "link": {
+            "label": "Browse models",
+            "url": "https://openrouter.ai/models"
+          }
+        },
+        {
+          "name": "OPENSEO_TELEMETRY_DISABLED",
+          "label": "Disable anonymous telemetry",
+          "help": "Set to 1 to opt out of OpenSEO's anonymized telemetry.",
+          "optional": true,
+          "workers": ["app"]
+        }
+      ],
+      "postInstall": [
+        {
+          "type": "markdown",
+          "content": "Open {{appUrl}} and sign in through Cloudflare Access with the email of your Appflare account. Every Appflare user can sign in, and all of them work in one shared workspace with the same projects. The database is already migrated."
+        },
+        {
+          "type": "markdown",
+          "content": "{{appUrl}}/api/health lists OpenSEO's configuration checks (DataForSEO, Search Console, SAM) once you are signed in. For Search Console or Analytics, add {{appUrl}}/api/gsc/oauth/callback and {{appUrl}}/api/ga4/oauth/callback as redirect URIs of your Google OAuth client; they change if you give the app a custom domain."
+        },
+        {
+          "type": "markdown",
+          "content": "The MCP server at {{appUrl}}/mcp sits behind Cloudflare Access too. MCP clients sign in with Access's Managed OAuth, which you turn on in the Zero Trust dashboard on the app's Access application (Additional settings, OAuth), as upstream's [operations guide](https://github.com/every-app/open-seo/blob/main/docs/SELF_HOSTING_CLOUDFLARE_OPERATIONS.md) describes."
+        }
+      ],
+      "resources": {
+        "r2": {
+          "R2": {
+            "lifecycle": [
+              {
+                "id": "dataforseo-cache-expiry",
+                "prefix": "dataforseo-cache/",
+                "deleteAfterDays": 7
+              }
+            ]
+          }
+        }
+      }
+    },
+    "sink": {
+      "$schema": "https://appflare.github.io/catalog/schema/v1.json",
+      "slug": "sink",
+      "name": "Sink",
+      "summary": "Link shortener with visit analytics: custom slugs, expiring links, QR codes, AI slug suggestions and a realtime globe, all on Cloudflare.",
+      "tagline": "Create short links and track their visits",
+      "homepage": "https://sink.cool",
+      "repo": "miantiao-me/Sink",
+      "license": "AGPL-3.0-only",
+      "categories": ["utilities", "analytics"],
+      "authors": [
+        {
+          "name": "miantiao",
+          "url": "https://miantiao.me",
+          "github": "miantiao-me",
+          "x": "miantiao_me"
+        }
+      ],
+      "maintainers": ["MendyLanda"],
+      "source": {
+        "ref": "v0.3.0",
+        "sha": "6cb6ba3cbd7aa880e562d57fb010d2192b4a9e39"
+      },
+      "install": {
+        "packageManager": "pnpm",
+        "wranglerConfig": "wrangler.jsonc",
+        "buildCommand": ["pnpm run build:map", "pnpm run build:sphere", "pnpm run build"]
+      },
+      "plan": "free",
+      "requires": ["r2", "workers-ai"],
+      "secrets": [
+        {
+          "name": "NUXT_SITE_TOKEN",
+          "label": "Site token",
+          "help": "The dashboard's sign-in password and the API key for Sink's API. At least 8 characters; keep it stable, since changing it signs out every browser and API client."
+        },
+        {
+          "name": "NUXT_CF_API_TOKEN",
+          "label": "Analytics API token",
+          "help": "A Cloudflare API token with Account Analytics Read on this account, used to read visits through the Analytics Engine SQL API. Without it links still work, but the charts, logs and realtime view stay empty.",
+          "optional": true,
+          "cloudflareToken": true
+        }
+      ],
+      "vars": [
+        {
+          "name": "NUXT_CF_ACCOUNT_ID",
+          "label": "Cloudflare account ID",
+          "help": "The account whose Analytics Engine data the dashboard reads: this one. Filled in on every install and update.",
+          "default": "{{accountId}}"
+        },
+        {
+          "name": "NUXT_HOME_URL",
+          "label": "Home page redirect",
+          "help": "Send visitors of / to this URL instead of Sink's home page.",
+          "optional": true
+        },
+        {
+          "name": "NUXT_NOT_FOUND_REDIRECT",
+          "label": "Unknown link redirect",
+          "help": "Send visitors of a short link that does not exist to this URL (always a 302) instead of a 404 page.",
+          "optional": true
+        },
+        {
+          "name": "NUXT_REDIRECT_STATUS_CODE",
+          "label": "Redirect status",
+          "help": "The HTTP status short links answer with.",
+          "type": "select",
+          "default": "301",
+          "options": [
+            {
+              "value": "301",
+              "label": "301 Moved Permanently"
+            },
+            {
+              "value": "302",
+              "label": "302 Found"
+            },
+            {
+              "value": "307",
+              "label": "307 Temporary Redirect"
+            },
+            {
+              "value": "308",
+              "label": "308 Permanent Redirect"
+            }
+          ],
+          "optional": true
+        }
+      ],
+      "postInstall": [
+        {
+          "type": "markdown",
+          "content": "Open {{appUrl}}/dashboard, sign in with the site token, and open **Links** once: it finishes Sink's storage setup, and creating links fails with \"storage not ready\" until then."
+        },
+        {
+          "type": "markdown",
+          "content": "Visit analytics need the analytics API token. Sink keeps visits in the Analytics Engine dataset `sink`, whose name is shared by the whole account, so install Sink only once per account. A daily job backs up the links to the R2 bucket."
+        }
+      ],
+      "tokenPermissions": [
+        {
+          "group": "Account Analytics",
+          "scope": "account",
+          "access": "read",
+          "reason": "Optional: reads visits through the Analytics Engine SQL API for the charts, logs and realtime view."
+        }
+      ],
+      "bump": {
+        "autoMerge": false
+      }
+    },
+    "garrul": {
+      "$schema": "https://appflare.github.io/catalog/schema/v1.json",
+      "slug": "garrul",
+      "name": "Garrul",
+      "summary": "Self-hosted comments for static sites and blogs: an embeddable widget with threads, reactions and votes, OAuth or anonymous posting behind Turnstile, a moderation queue, and reply emails.",
+      "tagline": "Comments and reactions for your website, hosted in your account",
+      "homepage": "https://garrul.com",
+      "repo": "KingPin/Garrul",
+      "license": "Apache-2.0",
+      "categories": ["community"],
+      "authors": [
+        {
+          "name": "KingPin",
+          "url": "https://sumguy.com",
+          "github": "KingPin"
+        }
+      ],
+      "maintainers": ["MendyLanda"],
+      "source": {
+        "ref": "v2.29.0",
+        "sha": "30cb07d9f003585010b9734f04bc55f5ce307176"
+      },
+      "install": {
+        "packageManager": "npm",
+        "wranglerConfig": "wrangler.example.toml",
+        "buildCommand": [
+          "npm run build:styles",
+          "npm run build:embed",
+          "npm run build:agents",
+          "npm run build:version"
+        ],
+        "health": {
+          "path": "/api/v1/health"
+        }
+      },
+      "plan": "free",
+      "requires": ["analytics-engine"],
+      "secrets": [
+        {
+          "name": "TURNSTILE_SITE_KEY",
+          "label": "Turnstile site key",
+          "help": "Anonymous comments pass a Turnstile check. Create a widget under Turnstile in the Cloudflare dashboard with this app's hostname, then paste its site key here."
+        },
+        {
+          "name": "TURNSTILE_SECRET",
+          "label": "Turnstile secret key",
+          "help": "The secret key of the same Turnstile widget."
+        },
+        {
+          "name": "JWT_SECRET",
+          "label": "Sign-in state key",
+          "help": "Signs the short-lived state of each OAuth sign-in.",
+          "generate": "password"
+        },
+        {
+          "name": "IP_HASH_SECRET",
+          "label": "IP hash key",
+          "help": "Garrul stores a keyed hash of each commenter's IP, never the IP. Keep it: a new value makes every stored hash unmatchable.",
+          "generate": "password"
+        },
+        {
+          "name": "GH_CLIENT_ID",
+          "label": "GitHub OAuth client ID",
+          "help": "For GitHub sign-in, from github.com/settings/developers, with the callback path /api/v1/auth/github/callback on this app's address. The admin pages need at least one sign-in provider.",
+          "optional": true
+        },
+        {
+          "name": "GH_CLIENT_SECRET",
+          "label": "GitHub OAuth client secret",
+          "optional": true
+        },
+        {
+          "name": "GOOGLE_CLIENT_ID",
+          "label": "Google OAuth client ID",
+          "help": "For Google sign-in, with the callback path /api/v1/auth/google/callback on this app's address.",
+          "optional": true
+        },
+        {
+          "name": "GOOGLE_CLIENT_SECRET",
+          "label": "Google OAuth client secret",
+          "optional": true
+        },
+        {
+          "name": "DISCORD_CLIENT_ID",
+          "label": "Discord OAuth client ID",
+          "help": "For Discord sign-in, with the callback path /api/v1/auth/discord/callback on this app's address.",
+          "optional": true
+        },
+        {
+          "name": "DISCORD_CLIENT_SECRET",
+          "label": "Discord OAuth client secret",
+          "optional": true
+        },
+        {
+          "name": "RESEND_API_KEY",
+          "label": "Resend API key",
+          "help": "Turns on reply notification emails, from resend.com/api-keys. Set the sender address below too.",
+          "optional": true
+        },
+        {
+          "name": "CF_API_TOKEN",
+          "label": "Usage page API token",
+          "help": "Turns on the admin usage page: a Cloudflare API token for this account with Account Analytics Read, D1 Read and Workers KV Storage Read.",
+          "optional": true,
+          "cloudflareToken": true
+        }
+      ],
+      "vars": [
+        {
+          "name": "ALLOWED_ORIGINS",
+          "label": "Sites that embed the comments",
+          "help": "The origins of the sites that show the widget, comma separated, without a trailing slash, for example https://blog.example.com.",
+          "default": ""
+        },
+        {
+          "name": "ADMIN_EMAILS",
+          "label": "Admin emails",
+          "help": "Comma separated. Whoever signs in through OAuth with one of these addresses becomes an admin.",
+          "default": ""
+        },
+        {
+          "name": "PUBLIC_BASE_URL",
+          "label": "Public URL",
+          "help": "The app's address, used in comment permalinks and in emails.",
+          "default": "{{appUrl}}",
+          "optional": true
+        },
+        {
+          "name": "OAUTH_CALLBACK_BASE",
+          "label": "OAuth callback base",
+          "help": "The address the OAuth providers send readers back to; the same as the public URL unless the app sits behind a proxy.",
+          "default": "{{appUrl}}",
+          "optional": true
+        },
+        {
+          "name": "EMAIL_FROM",
+          "label": "Sender address",
+          "help": "For reply notification emails, on a domain verified in Resend, for example Garrul <comments@example.com>.",
+          "default": "",
+          "optional": true
+        },
+        {
+          "name": "CF_ACCOUNT_ID",
+          "label": "Cloudflare account ID",
+          "help": "The account the usage page reads, with the usage page API token: this one. Filled in on every install and update.",
+          "default": "{{accountId}}",
+          "optional": true
+        }
+      ],
+      "postInstall": [
+        {
+          "type": "markdown",
+          "content": "Add the widget to a page of a site listed under Sites that embed the comments:\n\n```html\n<div id=\"garrul\" data-slug=\"hello-world\" data-api=\"{{appUrl}}\"></div>\n<script src=\"{{appUrl}}/embed.js\" defer></script>\n```"
+        },
+        {
+          "type": "markdown",
+          "content": "Open {{appUrl}}/admin and sign in through an OAuth provider with an address listed under Admin emails. Without a provider set, only anonymous comments work."
+        },
+        {
+          "type": "markdown",
+          "content": "Safari and Brave block the sign-in cookie of a `workers.dev` address inside another site, so give the app a subdomain of your site's domain before readers sign in."
+        }
+      ],
+      "tokenPermissions": [
+        {
+          "group": "Account Analytics",
+          "scope": "account",
+          "access": "read",
+          "reason": "Optional: shows the Worker's requests on the admin usage page."
+        },
+        {
+          "group": "D1",
+          "scope": "account",
+          "access": "read",
+          "reason": "Optional: shows the database's usage on the admin usage page."
+        },
+        {
+          "group": "Workers KV Storage",
+          "scope": "account",
+          "access": "read",
+          "reason": "Optional: shows the KV namespace's usage on the admin usage page."
+        }
+      ],
+      "resources": {
+        "d1": {
+          "DB": {
+            "migrationsDir": "src/db/migrations"
+          }
+        }
+      }
+    },
+    "auth-inbox": {
+      "$schema": "https://appflare.github.io/catalog/schema/v1.json",
+      "slug": "auth-inbox",
+      "name": "Auth Inbox",
+      "summary": "An inbox for sign-up and verification mail: Email Routing delivers it, an AI model of your choice pulls out codes and links and sorts each mail, and a dashboard, per-user grants and a remote MCP server let people and agents read them.",
+      "tagline": "Get sign-up codes and links in one private inbox",
+      "repo": "TooonyChen/AuthInbox",
+      "license": "MIT",
+      "categories": ["email", "ai"],
+      "authors": [
+        {
+          "name": "Tony Chen",
+          "url": "https://tonychen.net",
+          "github": "TooonyChen"
+        }
+      ],
+      "maintainers": ["MendyLanda"],
+      "source": {
+        "ref": "main",
+        "sha": "83927b8b2b37bb61a53db69017c05a13570be89d"
+      },
+      "install": {
+        "packageManager": "pnpm",
+        "wranglerConfig": "wrangler.toml.example",
+        "buildCommand": "pnpm --filter auth-inbox-web run build",
+        "health": {
+          "path": "/api/auth/setup"
+        },
+        "emailRouting": {
+          "catchAll": true
+        }
+      },
+      "plan": "free",
+      "requires": ["zone", "email-routing"],
+      "secrets": [
+        {
+          "name": "JWT_SECRET",
+          "label": "Session signing key",
+          "help": "Signs dashboard sign-in sessions. Setting a new value signs everyone out.",
+          "generate": "password"
+        },
+        {
+          "name": "AI_API_KEY",
+          "label": "AI API key",
+          "help": "The API key of your AI provider (Google AI Studio, OpenAI, Anthropic, DeepSeek, Groq and others), for the base URL and model below."
+        },
+        {
+          "name": "AI_FALLBACK_API_KEY",
+          "label": "Fallback AI API key",
+          "help": "Optional. The key for a second provider, used after the primary one fails three times. The fallback also needs its base URL and model below.",
+          "optional": true
+        }
+      ],
+      "vars": [
+        {
+          "name": "AI_BASE_URL",
+          "label": "AI base URL",
+          "help": "Your provider's API base URL, without a trailing slash. OpenAI: https://api.openai.com. Anthropic: https://api.anthropic.com. DeepSeek: https://api.deepseek.com. Groq: https://api.groq.com/openai. The default is Gemini's OpenAI-compatible endpoint.",
+          "default": "https://generativelanguage.googleapis.com/v1beta/openai"
+        },
+        {
+          "name": "AI_API_FORMAT",
+          "label": "AI request format",
+          "help": "How the app talks to the provider.",
+          "type": "select",
+          "options": [
+            {
+              "value": "openai",
+              "label": "Chat Completions (OpenAI, Gemini, DeepSeek, Groq)"
+            },
+            {
+              "value": "responses",
+              "label": "OpenAI Responses API"
+            },
+            {
+              "value": "anthropic",
+              "label": "Anthropic Messages"
+            }
+          ],
+          "default": "openai",
+          "optional": true
+        },
+        {
+          "name": "AI_MODEL",
+          "label": "AI model",
+          "help": "The model ID, for example gemini-2.0-flash, gpt-4o-mini or claude-3-5-haiku-20241022.",
+          "default": "gemini-2.0-flash"
+        },
+        {
+          "name": "AI_FALLBACK_BASE_URL",
+          "label": "Fallback AI base URL",
+          "help": "Optional. The base URL of the fallback provider.",
+          "optional": true
+        },
+        {
+          "name": "AI_FALLBACK_API_FORMAT",
+          "label": "Fallback AI request format",
+          "help": "Only used when a fallback provider is set.",
+          "type": "select",
+          "options": [
+            {
+              "value": "openai",
+              "label": "Chat Completions (OpenAI, Gemini, DeepSeek, Groq)"
+            },
+            {
+              "value": "responses",
+              "label": "OpenAI Responses API"
+            },
+            {
+              "value": "anthropic",
+              "label": "Anthropic Messages"
+            }
+          ],
+          "default": "openai",
+          "optional": true
+        },
+        {
+          "name": "AI_FALLBACK_MODEL",
+          "label": "Fallback AI model",
+          "help": "Optional. The model ID of the fallback provider.",
+          "optional": true
+        },
+        {
+          "name": "UseBark",
+          "label": "Bark notifications",
+          "help": "Push each new code to iOS devices through Bark (https://bark.day.app).",
+          "type": "select",
+          "options": [
+            {
+              "value": "false",
+              "label": "Off"
+            },
+            {
+              "value": "true",
+              "label": "On"
+            }
+          ],
+          "default": "false",
+          "optional": true
+        },
+        {
+          "name": "barkTokens",
+          "label": "Bark device tokens",
+          "help": "The device tokens from the Bark app, in brackets and comma separated, for example [token1, token2]. Only used when Bark notifications are on.",
+          "optional": true
+        },
+        {
+          "name": "barkUrl",
+          "label": "Bark server URL",
+          "help": "The Bark server to push through; your own if you run one.",
+          "default": "https://api.day.app",
+          "optional": true
+        }
+      ],
+      "postInstall": [
+        {
+          "type": "markdown",
+          "content": "Open {{appUrl}} right away: while no account exists, the sign-in page lets anyone create the first admin account, so create yours before sharing the address."
+        },
+        {
+          "type": "markdown",
+          "content": "Every address of the zone you picked now reaches the app. Use any of them for a sign-up, and the code or link shows up in the dashboard. Promotional mail is kept without calling the AI provider."
+        },
+        {
+          "type": "markdown",
+          "content": "AI agents connect to {{appUrl}}/mcp with an API key created in the dashboard (Claude Code, Cursor and other clients that send a header)."
+        }
+      ]
+    },
+    "edgekey": {
+      "$schema": "https://appflare.github.io/catalog/schema/v1.json",
+      "slug": "edgekey",
+      "name": "EdgeKey",
+      "summary": "A shop for digital goods: sell card keys and codes, take payment through USDT, Epay, Alipay or Stripe, and deliver each order automatically by page and email.",
+      "tagline": "Sell digital codes and deliver them automatically after payment",
+      "repo": "34892002/edgeKey",
+      "license": "MIT",
+      "categories": ["business", "ecommerce"],
+      "authors": [
+        {
+          "name": "ggyy",
+          "github": "34892002"
+        }
+      ],
+      "maintainers": ["MendyLanda"],
+      "source": {
+        "ref": "main",
+        "sha": "fa69913b89a3dbd916be931fb4e06a0ae80958f4"
+      },
+      "install": {
+        "packageManager": "bun",
+        "wranglerConfig": "wrangler.jsonc",
+        "buildCommand": "bun run build"
+      },
+      "plan": "free",
+      "secrets": [
+        {
+          "name": "AUTH_SECRET",
+          "label": "Session secret",
+          "help": "Signs admin sign-in sessions. Setting a new value signs every admin out.",
+          "generate": "password"
+        },
+        {
+          "name": "EDGEKEY_ADMIN_PASSWORD",
+          "label": "Admin password",
+          "help": "The password of the admin account `admin`.",
+          "generate": "password",
+          "seedOnly": true
+        },
+        {
+          "name": "TURNSTILE_SITE_KEY",
+          "label": "Turnstile site key",
+          "help": "With the secret key below, puts a Cloudflare Turnstile check on the admin sign-in page. Set both or neither.",
+          "optional": true
+        },
+        {
+          "name": "TURNSTILE_SECRET_KEY",
+          "label": "Turnstile secret key",
+          "help": "The secret key of the same Turnstile widget.",
+          "optional": true
+        }
+      ],
+      "postInstall": [
+        {
+          "type": "markdown",
+          "content": "Open {{appUrl}}/admin and sign in as `admin` with the admin password from the install form (Appflare does not keep it). Then set the site name, payment channels and email delivery in the admin panel; upstream's docs/pay folder explains each payment provider."
+        }
+      ],
+      "resources": {
+        "d1": {
+          "DB": {
+            "schema": ["scripts/seed.sql"],
+            "seed": {
+              "hashes": {
+                "admin": {
+                  "from": "EDGEKEY_ADMIN_PASSWORD",
+                  "method": "bcrypt",
+                  "cost": 10
+                }
+              },
+              "statements": [
+                {
+                  "sql": "INSERT INTO \"Admin\" (\"username\", \"passwordHash\", \"nickname\", \"status\", \"updatedAt\") VALUES ('admin', ?, '\u7ba1\u7406\u5458', 'ACTIVE', CURRENT_TIMESTAMP) ON CONFLICT(\"username\") DO NOTHING",
+                  "params": [
+                    {
+                      "hash": "admin"
+                    }
+                  ]
+                }
+              ],
+              "beforeSchema": true
+            }
+          }
+        }
+      }
+    },
+    "mailflare": {
+      "$schema": "https://appflare.github.io/catalog/schema/v1.json",
+      "slug": "mailflare",
+      "name": "Mailflare",
+      "summary": "A self-hosted email service for your own domains: mailboxes, forwarding rules, and a web inbox, on Email Routing, D1, R2, Queues, and Durable Objects.",
+      "tagline": "Email and shared inboxes for your own domain",
+      "repo": "hieunc229/mailflare",
+      "license": "AGPL-3.0-only",
+      "categories": ["email"],
+      "authors": [
+        {
+          "name": "Hieu Nguyen",
+          "github": "hieunc229",
+          "x": "hieuSSR"
+        }
+      ],
+      "maintainers": ["MendyLanda"],
+      "source": {
+        "ref": "main",
+        "sha": "1bf70d2ef2771360a546704182752eb7a1ff63f2"
+      },
+      "install": {
+        "packageManager": "npm",
+        "wranglerConfig": "wrangler.jsonc",
+        "fixedWorkerName": true,
+        "buildCommand": "opennextjs-cloudflare build",
+        "health": {
+          "path": "/api/setup/status"
+        }
+      },
+      "plan": "paid",
+      "requires": ["zone", "email-routing", "r2"],
+      "secrets": [
+        {
+          "name": "CF_TOKEN",
+          "label": "Cloudflare API token for Mailflare",
+          "help": "A token you create for the app, separate from Appflare's, with the permissions listed below: Zone Read, DNS Edit, Zone Settings Edit, and Email Routing Rules Edit on the zones you will connect, plus the account's Email Sending Edit to send mail. Paste the token secret only, without \"Bearer\".",
+          "cloudflareToken": true
+        }
+      ],
+      "vars": [
+        {
+          "name": "APP_URL",
+          "label": "Public URL",
+          "help": "Optional. The address people open the app at, used in password-reset links and JMAP. Leave it empty to use the address of each request.",
+          "optional": true
+        }
+      ],
+      "postInstall": [
+        {
+          "type": "markdown",
+          "content": "Open {{appUrl}}/setup to check the configuration and create the first admin account. The database is already migrated."
+        },
+        {
+          "type": "markdown",
+          "content": "Then add a domain that uses Cloudflare DNS in this account. Mailflare turns on Email Routing for it, sets up the MX and sending records it needs, and routes each mailbox you create to this Worker."
+        },
+        {
+          "type": "markdown",
+          "content": "Sending to arbitrary recipients needs Workers Paid with Email Sending turned on for the domain, and the account's Email Sending Edit on CF_TOKEN."
+        }
+      ],
+      "tokenPermissions": [
+        {
+          "group": "Zone",
+          "scope": "zone",
+          "access": "read",
+          "reason": "Finds the zone of each domain you connect."
+        },
+        {
+          "group": "DNS",
+          "scope": "zone",
+          "access": "edit",
+          "reason": "Writes the MX and sending records, replacing conflicting MX records after you confirm."
+        },
+        {
+          "group": "Zone Settings",
+          "scope": "zone",
+          "access": "edit",
+          "reason": "Turns Email Routing on for a connected domain."
+        },
+        {
+          "group": "Email Routing Rules",
+          "scope": "zone",
+          "access": "edit",
+          "reason": "Routes each mailbox address, or the catch-all, to the Worker."
+        },
+        {
+          "group": "Email Sending",
+          "scope": "account",
+          "access": "edit",
+          "reason": "Optional: sets the domain up for outbound mail through Email Sending."
+        }
+      ]
+    }
+  }
+}
