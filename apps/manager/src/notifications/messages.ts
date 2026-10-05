@@ -61,7 +61,17 @@ export const notificationFactsSchema = z.discriminatedUnion("type", [
     outcome,
     jobId: z.string(),
   }),
-  z.object({ type: z.literal("uninstall_finished"), app: appRef, outcome, jobId: z.string() }),
+  z.object({
+    type: z.literal("uninstall_finished"),
+    app: appRef,
+    outcome,
+    jobId: z.string(),
+    /**
+     * The removal of what an install that did not finish left, before
+     * installing it again ("Install again"); only its failure is news.
+     */
+    replaced: z.literal(true).optional(),
+  }),
   z.object({ type: z.literal("health_failing"), app: appRef }),
   z.object({ type: z.literal("manager_update_available"), from: z.string(), to: z.string() }),
   z.object({ type: z.literal("domain_active"), app: appRef, hostname: z.string() }),
@@ -178,11 +188,19 @@ export function renderMessage(facts: NotificationFacts, managerUrl: string | nul
             lines: [`${facts.app.instance} was uninstalled.`],
             url: managerLink(managerUrl, `/jobs/${facts.jobId}`),
           }
-        : {
-            title: `Uninstall failed: ${facts.app.instance}`,
-            lines: [`Uninstalling ${facts.app.instance} failed. The job log says where.`],
-            url: managerLink(managerUrl, `/jobs/${facts.jobId}`),
-          };
+        : facts.replaced === true
+          ? {
+              title: `Removing what the unfinished install of ${facts.app.instance} left failed`,
+              lines: [
+                `Installing ${facts.app.instance} again waits for this, so it did not start. The job log says where it stopped.`,
+              ],
+              url: managerLink(managerUrl, `/jobs/${facts.jobId}`),
+            }
+          : {
+              title: `Uninstall failed: ${facts.app.instance}`,
+              lines: [`Uninstalling ${facts.app.instance} failed. The job log says where.`],
+              url: managerLink(managerUrl, `/jobs/${facts.jobId}`),
+            };
     case "health_failing":
       return {
         title: `Health check failing: ${facts.app.instance}`,

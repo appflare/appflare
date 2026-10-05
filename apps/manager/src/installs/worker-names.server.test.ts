@@ -43,4 +43,29 @@ describe("takenWorkerNames", () => {
     expect(names.installed.sort()).toEqual(["cut", "cut-2"]);
     expect(names.account).toBeNull();
   });
+
+  it("leaves out, by install, the names a replaced failed install's removal frees", async () => {
+    await install("old", "links", "failed");
+    // Another install still holds "cut-2" (and "cut"), so those stay taken.
+    for (const [id, name] of [
+      ["r1", "links"],
+      ["r2", "links-api"],
+      ["r3", "cut-2"],
+    ]) {
+      await env.DB.prepare(
+        "INSERT INTO resources (id, install_id, kind, name, created_at) VALUES (?1, 'old', 'worker', ?2, 1)",
+      )
+        .bind(id, name)
+        .run();
+    }
+    const names = await takenWorkerNames(
+      {
+        db: env.DB,
+        listAccountWorkers: async () => ["links", "links-api", "cut-2", "appflare"],
+      },
+      "old",
+    );
+    expect(names.installed.sort()).toEqual(["cut", "cut-2"]);
+    expect(names.account).toEqual(["cut-2", "appflare"]);
+  });
 });

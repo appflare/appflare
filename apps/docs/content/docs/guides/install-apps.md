@@ -204,8 +204,24 @@ For an [app of several Workers](#apps-of-several-workers), step 4 and step 6 run
 once per Worker, as described below.
 
 If a step fails, the job stops and names the step. Everything created so far stays
-recorded. Nothing is deleted automatically. To try again, [uninstall](/guides/uninstall/)
-the failed install, which removes what it created, and install again.
+recorded. Nothing is deleted automatically.
+
+Once the cause is fixed (a permission added to the token, a domain freed), use
+**Install again**. It is on the app's page, on its row under **Needs attention** on
+Home, and on the log of the failed job. It opens the install form filled in from
+last time: the Worker name, the address and domain, Cloudflare Access, the name and
+the settings. The automatic-update choice carries over. Appflare never stores secret
+values or database connection strings, so you enter those again; generated secrets
+get new values, and you confirm Workers Paid, build costs and the app's requirements
+again. When the catalog has a newer version by then, the form installs it
+and says what no longer applies.
+
+Installing again first uninstalls the failed install, deleting everything it left in
+the account and keeping nothing, then installs the app anew. The new install waits
+for that removal, so nothing is created twice and nothing is left behind. If the
+removal itself fails, the new install creates nothing and fails too: open the earlier
+install's app page, finish uninstalling it from its danger zone, then use **Install
+again** on the new install's page.
 
 ## Apps of several Workers
 

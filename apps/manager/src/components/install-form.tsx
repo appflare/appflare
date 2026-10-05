@@ -21,6 +21,7 @@ import type { CapabilitiesView } from "../capabilities/capabilities";
 import { accessStartsOn } from "../installs/access-offer";
 import { appTokenSecret } from "../installs/app-token-secret";
 import { DISPLAY_NAME_MAX_LENGTH, displayNameProblem } from "../installs/display-name";
+import { type InstallFormPrefill, SECRETS_AGAIN_NOTE } from "../installs/install-again";
 import type { InstallDomainInput } from "../installs/install-input";
 import {
   enteredVarFields,
@@ -133,6 +134,7 @@ export function InstallForm({
   planDetected = false,
   reviewedBuildId = null,
   capabilities = null,
+  prefill = null,
 }: {
   catalog: CatalogManifest;
   /**
@@ -182,11 +184,16 @@ export function InstallForm({
    * account cannot protect apps with Cloudflare Access; null when unknown.
    */
   capabilities?: Pick<CapabilitiesView, "zeroTrust" | "accessServiceTokens"> | null;
+  /**
+   * "Install again" (../installs/install-again.ts): what the form starts
+   * with, from the failed install it replaces; null for a new install.
+   */
+  prefill?: InstallFormPrefill | null;
 }) {
   const jobStarted = useJobStarted();
-  const [workerName, setWorkerName] = useState(defaultWorkerName);
+  const [workerName, setWorkerName] = useState(prefill?.workerName ?? defaultWorkerName);
   /** Empty: no display name, so the install goes by the app's name. */
-  const [displayName, setDisplayName] = useState("");
+  const [displayName, setDisplayName] = useState(prefill?.displayName ?? "");
   const [secrets, setSecrets] = useState<Record<string, string>>(() =>
     initialSecretValues(catalog.secrets),
   );
@@ -194,7 +201,7 @@ export function InstallForm({
   const databases = hyperdriveDeclarations(catalog.resources?.hyperdrive);
   const [connections, setConnections] = useState<Record<string, string>>({});
   /** Settings the admin edited; the others follow their default. */
-  const [editedVars, setEditedVars] = useState<Record<string, string>>({});
+  const [editedVars, setEditedVars] = useState<Record<string, string>>(prefill?.vars ?? {});
   const accountPaid = accountPlan === "paid";
   const [paidTicked, setPaidTicked] = useState(false);
   const [rememberPaid, setRememberPaid] = useState(false);
@@ -211,10 +218,10 @@ export function InstallForm({
   const [appToken, setAppToken] = useState("");
   const confirmsCost = sandboxBuild ?? installer;
   const receivesEmail = catalog.install.emailRouting !== undefined;
-  const [emailZoneId, setEmailZoneId] = useState<string | null>(null);
+  const [emailZoneId, setEmailZoneId] = useState<string | null>(prefill?.emailZoneId ?? null);
   const [emailReady, setEmailReady] = useState(false);
   const [domain, setDomain] = useState<{ value: InstallDomainInput | null; complete: boolean }>({
-    value: null,
+    value: prefill?.domain ?? null,
     complete: true,
   });
   const onDomainChange = useCallback(
@@ -224,7 +231,9 @@ export function InstallForm({
   // Cloudflare Access: not for an app whose own installer decides its Workers.
   const offersAccess = installer === null;
   const accessOffer = accessOfferOf(catalog);
-  const [accessTicked, setAccessTicked] = useState(() => accessStartsOn(catalog));
+  const [accessTicked, setAccessTicked] = useState(
+    () => prefill?.access ?? accessStartsOn(catalog),
+  );
   const accessCheck = useAppAccessCheck(offersAccess && canInstall && blockedReason === null);
   // The live check, once it answered; until then what the stored probes show.
   const accessProblem =
@@ -282,6 +291,7 @@ export function InstallForm({
   const nameCheck = useWorkerNameCheck(
     workerName,
     installer === null && !fixedWorkerName && canInstall && blockedReason === null,
+    prefill?.replaces ?? null,
   );
   const namePattern = workerNameFormatProblem(workerName);
   const shownNameCheck =
@@ -338,11 +348,12 @@ export function InstallForm({
                 slug: appKey,
                 ...(confirmsCost === null ? {} : { buildConfirmed }),
                 ...(installer === null ? {} : { appToken: appToken.trim() }),
+                ...(prefill === null ? {} : { replaces: prefill.replaces }),
               },
             });
       // A generated first-admin password, shown once more on the job page.
       holdSeedCredentials(jobId, generatedSeedCredentials(catalog.secrets, secrets));
-      await jobStarted(jobId, "Install started");
+      await jobStarted(jobId, prefill === null ? "Install started" : "Installing again");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not start the install.");
       setPending(false);
@@ -406,6 +417,7 @@ export function InstallForm({
                   disabled={disabled}
                   onChange={onDomainChange}
                   wildcard={catalog.install.wildcardHostname ?? null}
+                  initial={prefill?.domain ?? null}
                 />
               )}
 
@@ -465,6 +477,7 @@ export function InstallForm({
                       {catalog.secrets.some(isSeedOnly)
                         ? " Those that create the first admin account are not kept at all."
                         : ""}
+                      {prefill === null ? "" : ` ${SECRETS_AGAIN_NOTE}`}
                     </Text>
                   </div>
                   <SecretFields
@@ -570,7 +583,7 @@ export function InstallForm({
               icon={<DownloadSimpleIcon />}
               disabled={disabled || !ready}
             >
-              Install
+              {prefill === null ? "Install" : "Install again"}
             </BusyButton>
           </div>
         </form>

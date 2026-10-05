@@ -66,9 +66,12 @@ const D1_PER_STEP = 2;
  * What the job spends besides the Workers other than the primary one: the
  * primary Worker with its canary and live health check (up to 10 probes and
  * their sleeps), the app's resources, D1 migrations, secrets, snapshots and
- * records. A large app of one Worker (a database with 30 migrations, six
- * resources, two secrets) spends under 50 subrequests on all of it (the
- * worked example in ./units/client.ts); this leaves room for many times that.
+ * records, and for an install that replaces one that did not finish the
+ * wait for its removal (at most 9 polls with their sleeps, each poll one D1
+ * query and at most one log write). A large app of one Worker (a database
+ * with 30 migrations, six resources, two secrets) spends under 50
+ * subrequests on all of it (the worked example in ./units/client.ts); this
+ * leaves room for many times that.
  */
 export const JOB_RESERVE: JobCost = { steps: 400, subrequests: 1_500, unitCalls: 40 };
 

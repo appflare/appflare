@@ -106,7 +106,9 @@ A very large R2 bucket can take more than one run to empty. The job says so, and
 ## Failed installs
 
 An install that failed can be uninstalled the same way. This removes whatever it
-had created, and frees its Worker name for a new install.
+had created, and frees its Worker name for a new install. **Install again** does this
+for you, keeping nothing, and fills in the install form with the failed install's
+choices; see [Installing apps](/guides/install-apps/).
 
 ## Installing again
 

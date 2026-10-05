@@ -27,6 +27,7 @@ import { entryJobCost, otherWorkerCost } from "./entry-budget";
 import { entryWorkers } from "./entry-workers";
 import { API_STEP, type InstallJobParams, runInstall } from "./install";
 import type { JobEnv } from "./run-job";
+import { runUninstall, type UninstallJobParams } from "./uninstall";
 
 /**
  * End-to-end test of the install job against a stateful
@@ -622,6 +623,49 @@ function fakeWorld(fixture: ArtifactFixture, over: Partial<FakeState> = {}) {
       if (m?.[1]) state.applied.push(m[1]);
       return ok([{ results: [], success: true, meta: {} }]);
     }
+    // What an uninstall deletes ("Install again" removes a failed install first).
+    const deleted =
+      /^DELETE \/(storage\/kv\/namespaces|d1\/database|workers\/scripts|workflows|r2\/buckets)\/([^/]+)$/.exec(
+        key,
+      );
+    if (deleted?.[1] !== undefined && deleted[2] !== undefined) {
+      const [, what, id] = deleted;
+      const gone = () =>
+        Response.json(
+          { success: false, errors: [{ code: 10007, message: "not found" }] },
+          { status: 404 },
+        );
+      switch (what) {
+        case "storage/kv/namespaces": {
+          if (!state.kv.some((n) => n.id === id)) return gone();
+          state.kv = state.kv.filter((n) => n.id !== id);
+          return ok(null);
+        }
+        case "d1/database": {
+          if (!state.d1.some((d) => d.uuid === id)) return gone();
+          state.d1 = state.d1.filter((d) => d.uuid !== id);
+          // The fake keeps one database's tables: they go with it.
+          state.applied = [];
+          state.queries = [];
+          return ok(null);
+        }
+        case "workers/scripts": {
+          if (!state.scripts.includes(id)) return gone();
+          state.scripts = state.scripts.filter((n) => n !== id);
+          return ok(null);
+        }
+        case "workflows": {
+          if (!state.workflows.includes(id)) return gone();
+          state.workflows = state.workflows.filter((n) => n !== id);
+          return ok(null);
+        }
+        default: {
+          if (!state.r2.includes(id)) return gone();
+          state.r2 = state.r2.filter((n) => n !== id);
+          return ok(null);
+        }
+      }
+    }
     return Response.json(
       { success: false, errors: [{ code: 7003, message: `no route ${key}` }] },
       { status: 404 },
@@ -674,7 +718,7 @@ async function start(fixture: ArtifactFixture, over: Partial<StartInstallInput> 
             : withRevisedCatalog(fixture.manifest, fixture.revised.catalog),
       }),
       createJob: async (id, p) => {
-        params = p;
+        if (p.kind === "install") params = p;
         return { id };
       },
       newId: () => `id${++n}`,
@@ -3479,5 +3523,211 @@ describe("install job, an app protected with Cloudflare Access", () => {
     ]);
     const [app] = [...access.cf.apps.values()];
     expect(app?.destinations).toEqual([{ type: "worker", worker_id: "tag-cut" }]);
+  });
+});
+
+/**
+ * "Install again": the failed install's leftovers are removed by an
+ * uninstall job, then the new install job (which waits for it) runs, both
+ * against the same fake account the failed install left things in.
+ */
+describe("install again", () => {
+  type Failed = Awaited<ReturnType<typeof install>>;
+
+  /** Starts installing `failed` again, as the form sends it, with the same choices. */
+  async function startAgain(failed: Failed, over: Partial<StartInstallInput> = {}) {
+    const created: Array<InstallJobParams | UninstallJobParams> = [];
+    let n = 0;
+    const ids = await startInstallCore(
+      {
+        db: env.DB,
+        loadApp: async () => ({ app: failed.fixture.index, manifest: failed.fixture.manifest }),
+        createJob: async (id, p) => {
+          created.push(p);
+          return { id };
+        },
+        // The failed install's own Worker is in the account until its removal.
+        listAccountWorkers: async () => [...failed.fake.state.scripts],
+        newId: () => `again${++n}`,
+      },
+      {
+        slug: "cut",
+        workerName: "cut",
+        secrets: { ADMIN_PASSWORD: PASSWORD },
+        vars: { HOME_PAGE: "admin" },
+        paidConfirmed: false,
+        requirementsConfirmed: false,
+        replaces: "id1",
+        ...over,
+      },
+    );
+    const cleanup = created.find((p): p is UninstallJobParams => p.kind === "uninstall");
+    const job = created.find((p): p is InstallJobParams => p.kind === "install");
+    if (job === undefined) throw new Error("no install job");
+    return { ...ids, cleanup, job, created };
+  }
+
+  async function runJobs(
+    failed: Failed,
+    started: Awaited<ReturnType<typeof startAgain>>,
+    options: { cleanup?: boolean } = {},
+  ) {
+    const self = fakeSelf(jobEnv(), { fetch: failed.fake.fetch });
+    const deps = { fetch: failed.fake.fetch, signingKeys: failed.fixture.keys };
+    if (started.cleanup !== undefined && options.cleanup !== false) {
+      await runUninstall({
+        params: started.cleanup,
+        step: fakeStep(),
+        env: { ...jobEnv(), SELF: self },
+        deps,
+      }).catch(() => undefined);
+    }
+    const step = fakeStep();
+    failed.fake.state.stepOf = () => step.names.at(-1);
+    let error: unknown = null;
+    try {
+      await runInstall({ params: started.job, step, env: { ...jobEnv(), SELF: self }, deps });
+    } catch (e) {
+      error = e;
+    }
+    const rows = async (installId: string) =>
+      (
+        await env.DB.prepare(
+          "SELECT kind, name, deleted_at FROM resources WHERE install_id = ?1 ORDER BY rowid",
+        )
+          .bind(installId)
+          .all<{ kind: string; name: string; deleted_at: number | null }>()
+      ).results;
+    const status = async (table: "installs" | "jobs", id: string) =>
+      (await env.DB.prepare(
+        `SELECT status${table === "jobs" ? ", error" : ""} FROM ${table} WHERE id = ?1`,
+      )
+        .bind(id)
+        .first<{ status: string; error?: string | null }>()) ?? null;
+    return {
+      error,
+      step,
+      oldResources: await rows("id1"),
+      newResources: await rows(started.installId),
+      oldInstall: await status("installs", "id1"),
+      newInstall: await status("installs", started.installId),
+      newJob: await status("jobs", started.jobId),
+    };
+  }
+
+  const twoResources: ArtifactFixtureOptions = {
+    bindings: [
+      { type: "kv_namespace", name: "CUT_KV" },
+      { type: "d1", name: "DB" },
+    ],
+    d1: { DB: [{ name: "0001_init.sql", content: "CREATE TABLE links (id TEXT);" }] },
+  };
+
+  it("removes what the failed install left, then installs once: nothing duplicated or orphaned", async () => {
+    // Fails at its migration, after its KV namespace, D1 database and Worker exist.
+    const failed = await install(twoResources, {
+      failMigration: { file: "0001_init.sql", status: 400, times: 1 },
+    });
+    expect(failed.job?.status).toBe("failed");
+    expect(failed.installRow?.status).toBe("failed");
+    expect(failed.fake.state.kv.map((n) => n.title)).toEqual(["cut-cut-kv"]);
+    expect(failed.fake.state.scripts).toContain("cut");
+
+    const started = await startAgain(failed);
+    // The removal, recorded first and started first; the install waits for it.
+    expect(started.created.map((p) => p.kind)).toEqual(["uninstall", "install"]);
+    expect(started.job.cleanupJob).toBe(started.cleanup?.jobId);
+    const old = await env.DB.prepare("SELECT status FROM installs WHERE id = 'id1'").first();
+    expect(old?.status).toBe("uninstalling");
+
+    const r = await runJobs(failed, started);
+    expect(r.error).toBeNull();
+    expect(r.newJob?.status).toBe("succeeded");
+    expect(r.newInstall?.status).toBe("installed");
+    expect(r.oldInstall?.status).toBe("uninstalled");
+    // The wait came first and copied the removal's progress into this log.
+    expect(r.step.names.slice(0, 2)).toEqual([
+      "start",
+      "wait for the failed install's removal (1)",
+    ]);
+    const logs = (
+      await env.DB.prepare("SELECT message FROM job_logs WHERE job_id = ?1 ORDER BY id")
+        .bind(started.jobId)
+        .all<{ message: string }>()
+    ).results.map((l) => l.message);
+    expect(logs.some((m) => m.startsWith("Removing the failed install: "))).toBe(true);
+    // One of each in the account, all recorded by the new install only.
+    expect(failed.fake.state.kv.map((n) => n.title)).toEqual(["cut-cut-kv"]);
+    expect(failed.fake.state.d1.map((d) => d.name)).toEqual(["cut-db"]);
+    expect(failed.fake.state.scripts.filter((n) => n === "cut")).toHaveLength(1);
+    expect(r.oldResources.length).toBeGreaterThan(0);
+    expect(r.oldResources.every((x) => x.deleted_at !== null)).toBe(true);
+    expect(
+      r.newResources
+        .filter((x) => x.deleted_at === null && ["kv", "d1", "worker"].includes(x.kind))
+        .map((x) => `${x.kind} ${x.name}`),
+    ).toEqual(["kv cut-cut-kv", "d1 cut-db", "worker cut"]);
+  });
+
+  it("protects the app when installed again after the token got the Access permission it lacked", async () => {
+    const access = protectedWorld();
+    // The token cannot change Access applications yet: the switch to the
+    // Worker fails after the upload, and the install fails closed.
+    access.cf.forbidden.add(`PUT /accounts/${ACC}/access/apps/*`);
+    const failed = await install(
+      { bindings: [{ type: "kv_namespace", name: "CUT_KV" }] },
+      access.world,
+      { access: true },
+      {},
+      undefined,
+      "self",
+      addUser,
+    );
+    expect(failed.job?.status).toBe("failed");
+    expect(failed.job?.error).toContain("cover the app's Workers with Cloudflare Access");
+    expect(access.cf.apps.size).toBe(1);
+
+    // The admin adds the permission to the token, then installs again.
+    access.cf.forbidden.clear();
+    const started = await startAgain(failed, { access: true });
+    expect(started.job.access).toBe(true);
+    const r = await runJobs(failed, started);
+    expect(r.error).toBeNull();
+    expect(r.newJob?.status).toBe("succeeded");
+    expect(r.oldInstall?.status).toBe("uninstalled");
+    // The failed install's Access application and token went with it: one of each now.
+    expect(access.cf.apps.size).toBe(1);
+    expect(access.cf.tokens.size).toBe(1);
+    expect([...access.cf.apps.values()][0]?.destinations).toEqual([
+      { type: "worker", worker_id: "tag-cut" },
+    ]);
+    expect(failed.fake.state.kv.map((n) => n.title)).toEqual(["cut-cut-kv"]);
+    const protectedRows = await env.DB.prepare("SELECT install_id FROM install_access").all();
+    expect(protectedRows.results).toEqual([{ install_id: started.installId }]);
+    // Checked through Access with the new install's own token.
+    const health = await env.DB.prepare("SELECT health_status FROM installs WHERE id = ?1")
+      .bind(started.installId)
+      .first<{ health_status: string }>();
+    expect(health?.health_status).toBe("verified");
+  });
+
+  it("creates nothing when what the failed install left could not be removed", async () => {
+    const failed = await install(twoResources, {
+      failMigration: { file: "0001_init.sql", status: 400, times: 1 },
+    });
+    const started = await startAgain(failed);
+    // The removal failed (as a job whose instance ran and stopped).
+    await env.DB.prepare("UPDATE jobs SET status = 'failed', error = ?2 WHERE id = ?1")
+      .bind(started.cleanup?.jobId, "delete D1 database cut-db: Cloudflare refused it")
+      .run();
+    const calls = failed.fake.state.calls.length;
+    const r = await runJobs(failed, started, { cleanup: false });
+    expect(r.newJob?.status).toBe("failed");
+    expect(r.newJob?.error).toContain("wait for the failed install's removal");
+    expect(r.newJob?.error).toContain("delete D1 database cut-db: Cloudflare refused it");
+    expect(r.newInstall?.status).toBe("failed");
+    expect(r.newResources).toEqual([]);
+    // Not one Cloudflare call.
+    expect(failed.fake.state.calls.length).toBe(calls);
   });
 });

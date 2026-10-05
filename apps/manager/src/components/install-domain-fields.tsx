@@ -45,26 +45,39 @@ export function InstallDomainFields({
   disabled,
   onChange,
   wildcard,
+  initial = null,
 }: {
   disabled: boolean;
   /** The app's manifest sets `install.wildcardHostname`, with its reason; null otherwise. */
   wildcard: { reason: string } | null;
   /** A state setter (stable). */
   onChange(domain: InstallDomainInput | null, complete: boolean): void;
+  /** The domain to start with ("Install again"); null starts with workers.dev only. */
+  initial?: InstallDomainInput | null;
 }) {
-  const [choice, setChoice] = useState<Choice>("none");
+  const [choice, setChoice] = useState<Choice>(initial?.kind ?? "none");
   const [custom, setCustom] = useState<DomainOptions | null>(null);
   const [external, setExternal] = useState<ExternalDomainOptions | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
-  const [zoneId, setZoneId] = useState<string | null>(null);
+  const [zoneId, setZoneId] = useState<string | null>(
+    initial?.kind === "custom" || initial?.kind === "wildcard" ? initial.zoneId : null,
+  );
   /** Custom domain: what comes before the zone (empty for its root). */
   const [subdomain, setSubdomain] = useState("");
+  /** A starting hostname in a zone, split into `subdomain` once the zones are read. */
+  const [startHostname, setStartHostname] = useState(
+    initial?.kind === "custom" || initial?.kind === "wildcard" ? initial.hostname : null,
+  );
   /** External domain: the whole hostname. */
-  const [hostname, setHostname] = useState("");
+  const [hostname, setHostname] = useState(initial?.kind === "external" ? initial.hostname : "");
   const [touched, setTouched] = useState(false);
-  const [method, setMethod] = useState<ValidationMethod>("http");
+  const [method, setMethod] = useState<ValidationMethod>(
+    initial?.kind === "external" ? initial.validation : "http",
+  );
   /** Wildcard domain on the zone itself: the admin agreed every name in it reaches the app. */
-  const [wholeDomain, setWholeDomain] = useState(false);
+  const [wholeDomain, setWholeDomain] = useState(
+    initial?.kind === "wildcard" && initial.wholeDomain === true,
+  );
   const inZone = choice === "custom" || choice === "wildcard";
 
   // Read the zones and the gateway the first time a domain is chosen.
@@ -78,7 +91,7 @@ export function InstallDomainFields({
               if (!live) return;
               setCustom(o);
               const [only] = o.zones;
-              if (o.zones.length === 1 && only !== undefined) setZoneId(only.id);
+              if (o.zones.length === 1 && only !== undefined) setZoneId((z) => z ?? only.id);
             })
           : null
         : external === null
@@ -93,6 +106,17 @@ export function InstallDomainFields({
   }, [choice, custom, external]);
 
   const zone = custom?.zones.find((z) => z.id === zoneId) ?? null;
+
+  // The starting hostname, as what comes before its zone, once the zones are read.
+  useEffect(() => {
+    if (startHostname === null || custom === null) return;
+    setStartHostname(null);
+    if (zone === null) return;
+    if (startHostname === zone.name) setSubdomain("");
+    else if (startHostname.endsWith(`.${zone.name}`)) {
+      setSubdomain(startHostname.slice(0, -(zone.name.length + 1)));
+    }
+  }, [startHostname, custom, zone]);
   const customCheck = zone === null ? null : checkSubdomainInZone(subdomain, zone.name);
   const wildcardCheck = zone === null ? null : checkWildcardSubdomain(subdomain, zone.name);
   const gateway = external?.gateway ?? null;

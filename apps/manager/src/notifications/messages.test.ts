@@ -70,6 +70,12 @@ describe("renderMessage", () => {
       `${M}/jobs/j2`,
     ],
     [
+      { type: "uninstall_finished", app, outcome: "failed", jobId: "j3", replaced: true },
+      "Removing what the unfinished install of Links for Ada left failed",
+      "Installing Links for Ada again waits for this, so it did not start. The job log says where it stopped.",
+      `${M}/jobs/j3`,
+    ],
+    [
       { type: "health_failing", app },
       "Health check failing: Links for Ada",
       "Links for Ada answers its health check with a server error.",

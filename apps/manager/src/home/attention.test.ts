@@ -139,7 +139,14 @@ describe("attentionItems", () => {
       input({ apps: [app({ id: "a", label: "Links", status: "failed" })], failedJobs: [failed] }),
     );
     expect(items).toEqual([
-      { kind: "failed-job", key: "job:j9", installId: "a", label: "Links", job: failed },
+      {
+        kind: "failed-job",
+        key: "job:j9",
+        installId: "a",
+        label: "Links",
+        job: failed,
+        againHref: null,
+      },
     ]);
     for (const status of ["installing", "updating"]) {
       expect(
@@ -148,6 +155,26 @@ describe("attentionItems", () => {
     }
     // An app that is no longer listed (uninstalled) has no row.
     expect(attentionItems(input({ failedJobs: [failed] }))).toEqual([]);
+  });
+
+  it("offers admins Install again for a catalog app's install that did not finish", () => {
+    const failed = job({ id: "j9", installId: "a", kind: "install", version: null });
+    const failedApp = app({ id: "a", status: "failed", slug: "team:links", origin: "catalog" });
+    const again = (over: Partial<AttentionInput>) => {
+      const [item] = attentionItems(input({ apps: [failedApp], failedJobs: [failed], ...over }));
+      return item?.kind === "failed-job" ? item.againHref : undefined;
+    };
+    expect(again({})).toBe("/catalog/team:links?again=a#install");
+    // Members cannot install; an app built from a repository is built again instead.
+    expect(again({ isAdmin: false })).toBeNull();
+    expect(again({ apps: [{ ...failedApp, origin: "repository" }] })).toBeNull();
+    // Only for the install job: a failed update of an installed app keeps its log only.
+    expect(
+      again({
+        apps: [{ ...failedApp, status: "installed" }],
+        failedJobs: [{ ...failed, kind: "update" }],
+      }),
+    ).toBeNull();
   });
 
   it("lists an installed app that did not answer or answered with an error", () => {

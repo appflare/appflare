@@ -3,6 +3,7 @@ import { Banner, Button, Empty } from "@cloudflare/kumo";
 import { PlusIcon, StorefrontIcon, WarningCircleIcon } from "@phosphor-icons/react";
 import { createFileRoute, useLocation } from "@tanstack/react-router";
 import { useEffect, useRef, useState } from "react";
+import { z } from "zod";
 import { ANALYTICS_ENGINE_CAPABILITY_LINK } from "../../../capabilities/capability-rows";
 import {
   type AppNeedsOf,
@@ -39,12 +40,19 @@ import {
 import { AppStatStrip } from "../../../components/app-stat-strip";
 import { BuildFromSourceCard } from "../../../components/build-from-source-card";
 import { DocsLink } from "../../../components/docs-link";
+import { InstallAgainBanner } from "../../../components/install-again-banner";
 import { InstallForm } from "../../../components/install-form";
 import { plainMessage } from "../../../components/message-links";
 import { MessageLinkButtons, MessageText } from "../../../components/message-text";
 import { PageHeader } from "../../../components/page-header";
 import { SANDBOX_CAPABILITY_LINK_LABEL } from "../../../components/sandbox-first";
 import { ScreenshotGallery } from "../../../components/screenshot-gallery";
+import {
+  type InstallAgainRecord,
+  installAgainPrefill,
+  reenterNote,
+} from "../../../installs/install-again";
+import { getInstallAgain } from "../../../installs/install-again.functions";
 import { CATALOG_STALE_MS } from "../../../router-timing";
 import { SANDBOX_CAPABILITY_HREF } from "../../../sandbox/readiness";
 
@@ -58,7 +66,10 @@ import { SANDBOX_CAPABILITY_HREF } from "../../../sandbox/readiness";
  * different Worker names, unless its Worker name is fixed) opens below when
  * "Install" is pressed, or when the page is opened at `#install`. When the
  * account is not known to offer everything the app asks for, the admin
- * confirms what is left above the form before Install enables.
+ * confirms what is left above the form before Install enables. Opened with
+ * `?again=<install id>` ("Install again" for an install of the app that did
+ * not finish), the form starts from that install's choices and installing
+ * replaces it (installs/install-again.ts).
  */
 const CATALOG_CRUMB = { label: "Catalog", href: "/catalog" };
 
@@ -66,7 +77,19 @@ const CATALOG_CRUMB = { label: "Catalog", href: "/catalog" };
 const INSTALL_HASH = "install";
 
 export const Route = createFileRoute("/_app/catalog/$slug")({
-  loader: ({ params }) => getCatalogEntry({ data: { slug: params.slug } }),
+  // `?again=<install id>`: "Install again" for an install of this app that did not finish.
+  validateSearch: z.object({ again: z.string().min(1).max(64).optional() }),
+  loaderDeps: ({ search }) => ({ again: search.again }),
+  loader: async ({ params, deps }) => {
+    const [detail, again] = await Promise.all([
+      getCatalogEntry({ data: { slug: params.slug } }),
+      // Admins only; anyone else gets the page as it is.
+      deps.again === undefined
+        ? null
+        : getInstallAgain({ data: { installId: deps.again } }).catch(() => null),
+    ]);
+    return { ...detail, again };
+  },
   staleTime: CATALOG_STALE_MS,
   // The deepest route's title wins over the root's "<page> · Appflare".
   head: ({ loaderData }) => ({
@@ -76,7 +99,7 @@ export const Route = createFileRoute("/_app/catalog/$slug")({
 });
 
 function CatalogEntryPage() {
-  const detail = Route.useLoaderData();
+  const { again, ...detail } = Route.useLoaderData();
   const { slug } = Route.useParams();
   if (detail.app === null) {
     return (
@@ -100,15 +123,25 @@ function CatalogEntryPage() {
     );
   }
   // Keyed by app, so the install form's state never carries over to another app's page.
-  return <AppPage key={detail.key ?? slug} detail={detail} app={detail.app} />;
+  return (
+    <AppPage
+      key={detail.key ?? slug}
+      detail={detail}
+      app={detail.app}
+      // Only for this app: a link from another app's install starts a new install.
+      again={again !== null && again.appKey === (detail.key ?? slug) ? again : null}
+    />
+  );
 }
 
 function AppPage({
   detail,
   app,
+  again,
 }: {
   detail: CatalogDetail;
   app: NonNullable<CatalogDetail["app"]>;
+  again: InstallAgainRecord | null;
 }) {
   const { viewer } = Route.useRouteContext();
   const { catalog } = detail;
@@ -126,13 +159,13 @@ function AppPage({
     setRevealRequest((n) => n + 1);
   };
 
-  // Opening the page at `#install`, or changing the fragment to it while here.
+  // Opening the page at `#install` (or for "Install again"), or changing the fragment to it while here.
   useEffect(() => {
-    if (installable && hash === INSTALL_HASH) {
+    if (installable && (hash === INSTALL_HASH || again !== null)) {
       setInstallOpen(true);
       setRevealRequest((n) => n + 1);
     }
-  }, [installable, hash]);
+  }, [installable, hash, again]);
 
   useEffect(() => {
     if (revealRequest > 0) reveal(installRef.current);
@@ -207,11 +240,14 @@ function AppPage({
           className="grid scroll-mt-6 gap-4 outline-none"
         >
           <InstallPanel
+            // A new "Install again" starts the form over.
+            key={again?.installId ?? "new"}
             detail={detail}
             app={app}
             checks={checks}
             needsOf={needsOf}
             canInstall={canInstall}
+            again={again}
           />
         </section>
       )}
@@ -291,16 +327,32 @@ function InstallPanel({
   checks,
   needsOf,
   canInstall,
+  again,
 }: {
   detail: CatalogDetail;
   app: NonNullable<CatalogDetail["app"]>;
   checks: RequirementChecks;
   needsOf: AppNeedsOf;
   canInstall: boolean;
+  again: InstallAgainRecord | null;
 }) {
   const { catalog } = detail;
+  const replacing = again !== null && again.refusal === null ? again : null;
+  // Never carried over from the install that did not finish: confirmed again every time.
   const [requirementsConfirmed, setRequirementsConfirmed] = useState(false);
   if (catalog === null || detail.suggestedWorkerName === null) return null;
+  const startAgain =
+    replacing === null
+      ? null
+      : installAgainPrefill(replacing, {
+          catalog,
+          version: app.version,
+          varFields: detail.varFields,
+          defaultWorkerName: detail.suggestedWorkerName,
+          fixedWorkerName: detail.fixedWorkerName,
+        });
+  // The install being replaced is no reason to refuse one that installs once.
+  const others = detail.instances.filter((i) => i.installId !== replacing?.installId);
   const sandboxBuild = app.tier === "sandbox" ? (app.build ?? null) : null;
   const installer = app.tier === "self-deploying" ? (app.build ?? null) : null;
   // Sandbox builds off: the install turns them on first when the account
@@ -313,9 +365,9 @@ function InstallPanel({
     detail.capabilities,
   );
   const blocked: { reason: string; link: { href: string; label: string } | null } | null =
-    detail.fixedWorkerName && detail.instances[0] !== undefined
+    detail.fixedWorkerName && others[0] !== undefined
       ? {
-          reason: `${app.name} is already installed as "${detail.instances[0].workerName}". It only works under one Worker name, so it installs once per account.`,
+          reason: `${app.name} is already installed as "${others[0].workerName}". It only works under one Worker name, so it installs once per account.`,
           link: null,
         }
       : sandboxMissing !== null
@@ -336,6 +388,14 @@ function InstallPanel({
       : null;
   return (
     <>
+      {again !== null && (
+        <InstallAgainBanner
+          again={again}
+          appName={app.name}
+          changes={startAgain?.changes ?? []}
+          reenter={reenterNote(catalog)}
+        />
+      )}
       {checks.pending.length > 0 && (
         <BeforeYouInstall
           rows={checks.pending.map((check) => ({
@@ -357,7 +417,7 @@ function InstallPanel({
       )}
       <InstallForm
         // A new suggestion (after another install) resets the form.
-        key={detail.suggestedWorkerName}
+        key={`${detail.suggestedWorkerName}:${replacing?.installId ?? ""}`}
         catalog={catalog}
         appKey={detail.key ?? app.slug}
         varFields={detail.varFields}
@@ -375,6 +435,7 @@ function InstallPanel({
         accountPlan={detail.accountPlan}
         planDetected={detail.capabilities.plan.source === "detected"}
         capabilities={detail.capabilities}
+        prefill={startAgain?.prefill ?? null}
       />
       {detail.sourceBuilds && (
         <BuildFromSourceCard
