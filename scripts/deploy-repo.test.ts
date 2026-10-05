@@ -167,15 +167,14 @@ describe("the deploy repository's npm project", () => {
     expect(readme).toContain(`(${SITE_URL}/start/deploy-button/)`);
     expect(readme).toContain(`(${SITE_URL}/start/install/)`);
     const docsLinks = readme.match(/\]\((https:\/\/[^)]+)\)/g) ?? [];
-    for (const link of docsLinks.filter((l) => !/github\.com|cloudflare\.com/.test(l))) {
+    const external = /github\.com|cloudflare\.com|link\.appflare\.dev/;
+    for (const link of docsLinks.filter((l) => !external.test(l))) {
       expect(link).toContain(SITE_URL);
     }
   });
 
   it("points the README's button at another repository when asked", () => {
-    expect(DEPLOY_BUTTON_URL).toBe(
-      "https://deploy.workers.cloudflare.com/?url=https://github.com/appflare/deploy",
-    );
+    expect(DEPLOY_BUTTON_URL).toBe("https://link.appflare.dev/deploy");
     const readme = deployRepoReadme("1.2.3", { repository: "someone/appflare-deploy-trial" });
     expect(readme).toContain(
       "(https://deploy.workers.cloudflare.com/?url=https://github.com/someone/appflare-deploy-trial)",

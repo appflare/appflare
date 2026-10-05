@@ -13,8 +13,7 @@ import { type InstallApp, installPagePath, requestLabel } from "../../install/re
  */
 
 /** The Deploy to Cloudflare button's link, which deploys Appflare from the browser. */
-export const DEPLOY_URL =
-  "https://deploy.workers.cloudflare.com/?url=https://github.com/appflare/deploy";
+export const DEPLOY_URL = "https://link.appflare.dev/deploy";
 /** Cloudflare's own image for that button. */
 export const DEPLOY_BUTTON_IMAGE = "https://deploy.workers.cloudflare.com/button";
 

@@ -183,6 +183,16 @@ describe("linkEvents", () => {
     ]);
   });
 
+  it("counts Appflare's short link to the button the same way", () => {
+    expect(linkEvents("https://link.appflare.dev/deploy", here)).toEqual([
+      ["outbound_click", { host: "link.appflare.dev" }],
+      ["deploy_button_clicked", { path: "/start/install/" }],
+    ]);
+    expect(linkEvents("https://link.appflare.dev/other", here)).toEqual([
+      ["outbound_click", { host: "link.appflare.dev" }],
+    ]);
+  });
+
   it("ignores links within the site and links that are not web pages", () => {
     expect(linkEvents("https://appflare.dev/apps/", here)).toEqual([]);
     expect(linkEvents("/apps/", here)).toEqual([]);
