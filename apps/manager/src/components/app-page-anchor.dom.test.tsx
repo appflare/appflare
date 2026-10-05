@@ -123,6 +123,7 @@ const install = {
   version: "1.2.0",
   latestVersion: "1.2.0",
   updateAvailable: false,
+  reinstallNeeded: false,
   address: null,
   updatedAt: "2026-09-27T09:00:00.000Z",
   uninstalledAt: null,

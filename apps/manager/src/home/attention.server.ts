@@ -114,7 +114,12 @@ export async function readUpdateNeeds(
   const candidates = await updateCandidates(db, withUpdate, listed);
   for (const c of candidates) {
     const block = unattendedUpdateBlock(c);
-    if (block === "needs-approval" || block === "failed-before" || block === "rolled-back") {
+    if (
+      block === "reinstall-needed" ||
+      block === "needs-approval" ||
+      block === "failed-before" ||
+      block === "rolled-back"
+    ) {
       needs.set(c.installId, NEEDS_ADMIN_COPY[block]);
     } else if (block === null && c.latest !== null && c.waiting === c.latest.version) {
       needs.set(c.installId, WAITING_FOR_INPUT);

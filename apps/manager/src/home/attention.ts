@@ -1,3 +1,4 @@
+import { NEEDS_ADMIN_COPY } from "../auto-update/auto-update";
 import type { CapabilityId } from "../capabilities/capability-rows";
 import type { HealthStatus } from "../db/schema";
 import type { DeployCopyCleanup } from "../deploy-button/deploy-copy";
@@ -14,7 +15,9 @@ import { installAgainHref, offersInstallAgain } from "../installs/install-again"
  * 2b. an app whose catalog entry now requires Cloudflare Access protection
  *    while Appflare does not protect it (a catalog revision said so; Appflare
  *    never protects an app on its own, and holds its updates meanwhile);
- * 3. an app with an update (one that needs the admin's input says why);
+ * 3. an app with an update (one that needs the admin's input says why, and
+ *    one whose catalog entry changed how it is installed says it takes a
+ *    reinstall);
  * 4. something in the account that apps need and that is not ready yet
  *    (admins only; each can be put away with "Not needed", in this browser);
  * 5. the deploy-copy cleanup, and the notice that an older Appflare serves a
@@ -53,6 +56,11 @@ export interface AttentionApp {
   version: string;
   latestVersion: string | null;
   updateAvailable: boolean;
+  /**
+   * The catalog's newer version takes a reinstall: its entry changed how the
+   * app is installed (installs/tier-change.ts). Never with `updateAvailable`.
+   */
+  reinstallNeeded?: boolean;
   /**
    * Why the update waits for an admin's input (a sentence), when the
    * install's own page has to start it; null when Update can start it.
@@ -176,6 +184,8 @@ export type AttentionItem =
       latestVersion: string;
       /** Why it waits for the admin's input ("Review"); null when Update starts it. */
       needs: string | null;
+      /** No update can start: the new version takes a reinstall (`needs` says so). */
+      reinstall: boolean;
     } & AppItem)
   | { kind: "account"; key: string; row: AccountAttentionRow }
   | { kind: "deploy-copy"; key: string; cleanup: DeployCopyCleanup }
@@ -252,7 +262,10 @@ export function attentionItems(input: AttentionInput): AttentionItem[] {
   const updates: AttentionItem[] = input.apps
     .flatMap((app) => {
       const latest = app.latestVersion;
-      if (app.status !== "installed" || !app.updateAvailable || latest === null) return [];
+      const reinstall = app.reinstallNeeded === true;
+      if (app.status !== "installed" || !(app.updateAvailable || reinstall) || latest === null) {
+        return [];
+      }
       return [
         {
           kind: "update" as const,
@@ -261,7 +274,11 @@ export function attentionItems(input: AttentionInput): AttentionItem[] {
           label: app.label,
           version: app.version,
           latestVersion: latest,
-          needs: app.updateNeeds ?? input.leftForAdmin?.get(app.id) ?? null,
+          // Never null for a reinstall, so no Update button offers it.
+          needs: reinstall
+            ? NEEDS_ADMIN_COPY["reinstall-needed"]
+            : (app.updateNeeds ?? input.leftForAdmin?.get(app.id) ?? null),
+          reinstall,
         },
       ];
     })
@@ -285,7 +302,7 @@ export function attentionItems(input: AttentionInput): AttentionItem[] {
 }
 
 /** What an app's row in the sidebar shows beside its name, most severe first. */
-export type AppSignal = "failed" | "not-responding" | "update";
+export type AppSignal = "failed" | "not-responding" | "update" | "reinstall";
 
 /** Each app's most severe row, as the dot on its sidebar row; apps without one are left out. */
 export function appSignals(items: readonly AttentionItem[]): Map<string, AppSignal> {
@@ -297,7 +314,9 @@ export function appSignals(items: readonly AttentionItem[]): Map<string, AppSign
         : item.kind === "not-responding"
           ? "not-responding"
           : item.kind === "update"
-            ? "update"
+            ? item.reinstall
+              ? "reinstall"
+              : "update"
             : null;
     // Items come most severe first: the first one of an app wins.
     if (signal !== null && "installId" in item && !signals.has(item.installId)) {
@@ -312,6 +331,7 @@ export const APP_SIGNAL_LABELS: Record<AppSignal, string> = {
   failed: "Something did not finish",
   "not-responding": "Not responding",
   update: "Update available",
+  reinstall: "New version takes a reinstall",
 };
 
 /** The count on the sidebar's Home item and what it stands for. */

@@ -74,6 +74,7 @@ async function checkCapabilities(accountId: string, token: string): Promise<void
     accountId,
     token,
     onRequest: logCfRequest,
+    version: env.APPFLARE_VERSION,
     ...apiBaseOption(env),
   });
 }

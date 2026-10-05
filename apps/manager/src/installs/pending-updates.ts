@@ -1,11 +1,13 @@
 import { isUpdateAvailable } from "../catalog/versions";
 import { settingsLink } from "../components/settings-links";
+import { tierChanged } from "./tier-change";
 
 /**
  * Pending updates, for notifications: installs the catalog lists a newer
  * version of. Only an installed app counts (one that is updating, failed, or
  * uninstalled does not), and every install counts on its own, so two
- * installs of one app are two updates. Appflare's own version travels along
+ * installs of one app are two updates; one whose catalog entry changed how
+ * it is installed is marked as taking a reinstall (tier-change.ts). Appflare's own version travels along
  * (the sidebar's Appflare card shows it too); it is never counted with the
  * apps. Client-safe (no bindings).
  */
@@ -14,6 +16,8 @@ export interface PendingAppUpdate {
   installId: string;
   version: string;
   latestVersion: string;
+  /** No update can move it there: the entry changed how it is installed. */
+  reinstall?: true;
 }
 
 /** Appflare itself, as the sidebar's Appflare card shows it. */
@@ -38,23 +42,28 @@ export interface PendingInstallRow {
   status: string;
   appSlug: string;
   catalogVersion: string;
+  /** How it was built (`installs.build_kind`); artifact when absent. */
+  buildKind?: string;
 }
 
 export function pendingUpdates(
   installs: readonly PendingInstallRow[],
-  /** Each catalog's version of its apps, by app key (the rows' `appSlug` is theirs). */
-  catalogVersions: ReadonlyMap<string, string>,
+  /** Each catalog's version (and tier) of its apps, by app key (the rows' `appSlug` is theirs). */
+  catalogApps: ReadonlyMap<string, { version: string; tier?: string }>,
   manager: ManagerStatus,
 ): PendingUpdates {
   const apps: PendingAppUpdate[] = [];
   for (const row of installs) {
     if (row.status !== "installed") continue;
-    const latest = catalogVersions.get(row.appSlug);
-    if (latest === undefined || !isUpdateAvailable(row.catalogVersion, latest)) continue;
+    const latest = catalogApps.get(row.appSlug);
+    if (latest === undefined || !isUpdateAvailable(row.catalogVersion, latest.version)) continue;
     apps.push({
       installId: row.id,
       version: row.catalogVersion,
-      latestVersion: latest,
+      latestVersion: latest.version,
+      ...(tierChanged(row.buildKind ?? "artifact", latest.tier)
+        ? { reinstall: true as const }
+        : {}),
     });
   }
   return { apps, manager };

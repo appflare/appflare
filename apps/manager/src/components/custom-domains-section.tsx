@@ -1,8 +1,8 @@
-import { Banner, Button, LayerDialog, Select, Table, Text } from "@cloudflare/kumo";
+import { Badge, Banner, Button, LayerDialog, Select, Table, Text } from "@cloudflare/kumo";
 import { ArrowsClockwiseIcon, PlusIcon, TrashIcon, WarningCircleIcon } from "@phosphor-icons/react";
 import { useRouter } from "@tanstack/react-router";
 import { type FormEvent, useCallback, useEffect, useId, useState } from "react";
-import { checkSubdomainInZone } from "../installs/custom-domain-input";
+import { checkSubdomainInZone, DOMAIN_SETTING_UP } from "../installs/custom-domain-input";
 import {
   addCustomDomain,
   checkCustomDomain,
@@ -114,13 +114,21 @@ export function CustomDomainsSection({ install }: { install: InstallDetail }) {
 const AUTO_CHECK_MS = 10_000;
 /** Automatic checks at most per page view: about three minutes. */
 const AUTO_CHECKS = 18;
+/**
+ * Between automatic checks after those, while the server still says the
+ * domain is being set up; that ends a bounded time after it was added
+ * (`DOMAIN_SETUP_WINDOW_MS`), so these end too.
+ */
+const SETTING_UP_CHECK_MS = 30_000;
 
 /**
  * One probe of the app on this hostname, shown here. The install's health
  * stays the check of its main address. A domain that has not reached the
  * app yet (just added, its certificate on the way) is checked on its own
- * every {@link AUTO_CHECK_MS} while the page is open; once the app answers,
- * or Cloudflare Access answers on the domain, the server records the domain
+ * every {@link AUTO_CHECK_MS} while the page is open, and every
+ * {@link SETTING_UP_CHECK_MS} after that while Cloudflare is still attaching
+ * it (shown as being set up, not as unhealthy); once the app answers, or
+ * Cloudflare Access answers on the domain, the server records the domain
  * as live and may turn workers.dev off, and the page reloads to show it.
  */
 function DomainCheck({
@@ -175,11 +183,15 @@ function DomainCheck({
     let live = true;
     let timer: ReturnType<typeof setTimeout> | undefined;
     let attempt = 0;
+    /** The last answer said the domain is being set up; a failed check keeps that. */
+    let settingUp = false;
     const tick = async () => {
       attempt++;
       const next = await check();
       if (!live || (await reached(next))) return;
+      if (next !== null) settingUp = next.settingUp === true;
       if (attempt < AUTO_CHECKS) timer = setTimeout(tick, AUTO_CHECK_MS);
+      else if (settingUp) timer = setTimeout(tick, SETTING_UP_CHECK_MS);
     };
     void tick();
     return () => {
@@ -194,15 +206,26 @@ function DomainCheck({
 
   return (
     <span className="flex flex-wrap items-center gap-2">
-      {result !== null && (
+      {result?.settingUp === true ? (
         <>
-          <HealthBadge status={result.status} access={result.access === true} />
+          <Badge variant="neutral" appearance="dot">
+            {DOMAIN_SETTING_UP.label}
+          </Badge>
           <Text as="span" variant="secondary" size="sm">
-            {result.access === true
-              ? `${ACCESS_DOMAIN_NOTE} Checked at ${formatTime(result.checkedAt)}.`
-              : `${result.detail} at ${formatTime(result.checkedAt)}`}
+            {DOMAIN_SETTING_UP.note(result.detail)} Checked at {formatTime(result.checkedAt)}.
           </Text>
         </>
+      ) : (
+        result !== null && (
+          <>
+            <HealthBadge status={result.status} access={result.access === true} />
+            <Text as="span" variant="secondary" size="sm">
+              {result.access === true
+                ? `${ACCESS_DOMAIN_NOTE} Checked at ${formatTime(result.checkedAt)}.`
+                : `${result.detail} at ${formatTime(result.checkedAt)}`}
+            </Text>
+          </>
+        )
       )}
       {error !== null && (
         <Text as="span" variant="error" size="sm">

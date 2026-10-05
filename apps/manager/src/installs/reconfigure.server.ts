@@ -13,6 +13,7 @@ import {
 import { and, eq, inArray, isNull, sql } from "drizzle-orm";
 import { ulid } from "ulidx";
 import { readAccessPlaceholderValues } from "../access/placeholder-values.server";
+import type { AccessPreflightProblem } from "../access/preflight.server";
 import { PROTECT_MESSAGES, readInstallProtection } from "../access/protect.server";
 import { effectiveManifest } from "../catalog/revisions.server";
 import { createDb, type Database } from "../db/client";
@@ -563,7 +564,7 @@ export interface StartAccessChangeDeps extends StartReconfigureDeps {
    * (`accessCapabilityProblem`), null when they can; asked before turning
    * protection on. Without it the job's first Access step refuses instead.
    */
-  accessPreflight?: () => Promise<string | null>;
+  accessPreflight?: () => Promise<AccessPreflightProblem | null>;
 }
 
 /**
@@ -611,8 +612,9 @@ export async function startAccessChangeCore(
     }
   } else {
     if (deps.accessPreflight !== undefined) {
+      // Its words read on their own, a refusal or "could not ask".
       const problem = await deps.accessPreflight();
-      if (problem !== null) throw new VersionActionError(problem);
+      if (problem !== null) throw new VersionActionError(problem.message);
     }
   }
   const stored = parseStoredVars(install.config_json);

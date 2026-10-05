@@ -10,6 +10,7 @@ import {
 import { createServerFn } from "@tanstack/react-start";
 import { and, eq, inArray, ne } from "drizzle-orm";
 import { z } from "zod";
+import { accessCapabilityProblem } from "../access/preflight.server";
 import type { AccountPlan } from "../account/plan";
 import { hasRole } from "../auth/roles";
 import type { CapabilitiesView } from "../capabilities/capabilities";
@@ -332,6 +333,7 @@ export const installSourceBuild = createServerFn({ method: "POST" })
           async listAccountWorkers() {
             return (await (await getCfClient(env)).workers.listScripts()).map((s) => s.id);
           },
+          accessPreflight: async () => accessCapabilityProblem(await getCfClient(env)),
         },
         data,
       );

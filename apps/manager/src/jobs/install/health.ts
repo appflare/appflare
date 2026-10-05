@@ -88,6 +88,35 @@ export function isEdgeErrorPage(probe: HealthProbe): boolean {
 }
 
 /**
+ * Codes of Cloudflare's own error pages (`error code: <n>`) that say the
+ * hostname has no route to anything yet, per Cloudflare's 1xxx error
+ * reference: 1001 (DNS resolution error), 1016 (origin DNS error, with HTTP
+ * 530), 1018 (could not find host: a recently added hostname whose settings
+ * are still reaching the edge), and 522 (the connection timed out). Others
+ * are answers about a hostname that works, and are judged as before: 1015
+ * (rate limited), 1027 (the free plan's daily requests used up), the
+ * Worker's own failures (1101, 1102), and 1042, which Cloudflare defines as
+ * a Worker's fetch of another Worker on its zone being refused, so a domain
+ * that already serves the app can pass it on (the 1042 seen while a
+ * workers.dev route goes live is handled by the workers.dev checks).
+ */
+const NOT_ATTACHED_CODES = new Set(["1001", "1016", "1018", "522"]);
+
+/**
+ * What Cloudflare answers on a hostname it has not finished attaching to a
+ * Worker: no TLS connection while the certificate is issued, HTTP 530 while
+ * the record and the route are made, or one of the error pages in
+ * {@link NOT_ATTACHED_CODES}. Seen for a few minutes after a Workers custom
+ * domain is added.
+ */
+export function isHostnameNotAttachedYet(probe: HealthProbe): boolean {
+  if (probe.kind === "error") return true;
+  if (probe.status === 530) return true;
+  const code = /^error code: (\d+)/.exec(probe.bodyStart.trimStart())?.[1];
+  return code !== undefined && NOT_ATTACHED_CODES.has(code);
+}
+
+/**
  * Cloudflare Access answering in the Worker's place: a redirect to the
  * team's sign-in page, `https://<team>.cloudflareaccess.com/cdn-cgi/access/login/<host>?...`.
  * A request without an Access session to a protected workers.dev host, the

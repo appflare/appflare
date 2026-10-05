@@ -14,6 +14,24 @@ const app = { installId: "i1", app: "Cut", instance: "Links for Ada", workerName
 const M = "https://appflare.ada.workers.dev";
 
 describe("renderMessage", () => {
+  it("says an update that takes a reinstall does, and how", () => {
+    const facts: NotificationFacts = {
+      type: "update_available",
+      app,
+      from: "1.0.0",
+      to: "1.1.0",
+      reinstall: true,
+    };
+    expect(notificationFactsSchema.parse(facts)).toEqual(facts);
+    const message = renderMessage(facts, M);
+    expect(message.title).toBe("New version takes a reinstall: Links for Ada");
+    expect(message.lines).toEqual([
+      "Cut 1.1.0 is available. Links for Ada runs 1.0.0.",
+      "Cut changed how it is installed, so Links for Ada cannot be updated in place: uninstall it and install it again to get 1.1.0.",
+    ]);
+    expect(message.url).toBe(`${M}/apps/i1`);
+  });
+
   const cases: Array<[NotificationFacts, string, string, string]> = [
     [
       { type: "update_available", app, from: "1.0.0", to: "1.1.0" },

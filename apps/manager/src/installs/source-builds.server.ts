@@ -19,6 +19,7 @@ import {
 } from "@appflare/schema";
 import { and, desc, eq, inArray, isNotNull, isNull } from "drizzle-orm";
 import { ulid } from "ulidx";
+import { type AccessPreflightProblem, accessInstallRefusal } from "../access/preflight.server";
 import type { AccountPlan } from "../account/plan";
 import { readAccountPlan, writeAccountPlan } from "../account/plan.server";
 import { parseStoredCapabilities } from "../capabilities/capabilities";
@@ -617,6 +618,13 @@ export interface InstallSourceDeps {
   workflows?: WorkflowLookup;
   createJob(id: string, params: InstallJobParams): Promise<{ id: string }>;
   listAccountWorkers?(): Promise<string[]>;
+  /**
+   * For an install protected with Cloudflare Access: why the account or the
+   * token cannot protect it, or that Cloudflare could not be asked
+   * (`accessCapabilityProblem`); null when they can. Without it the install
+   * job's first Access step refuses instead.
+   */
+  accessPreflight?: () => Promise<AccessPreflightProblem | null>;
   now?: () => Date;
   newId?: () => string;
 }
@@ -677,6 +685,11 @@ export async function installSourceBuildCore(
     throw fail(
       `${manifest.catalog.name} only works as the Worker "${fixedName}"; its Worker name cannot be changed.`,
     );
+  }
+  // Checked live, before anything is created, as for a catalog install.
+  if (resolved.access === true && deps.accessPreflight !== undefined) {
+    const problem = await deps.accessPreflight();
+    if (problem !== null) throw fail(accessInstallRefusal(manifest.catalog.name, problem));
   }
   if (resolved.domain !== undefined) {
     const [held] = await orm

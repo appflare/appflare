@@ -76,7 +76,19 @@ describe("planAppUpdates", () => {
           choice: "on",
           latest: { version: "1.1.0", tier: "sandbox" },
         }),
-        candidate({ installId: "installer", choice: "on", buildKind: "self-deploying" }),
+        candidate({
+          installId: "installer",
+          choice: "on",
+          buildKind: "self-deploying",
+          latest: { version: "1.1.0", tier: "self-deploying" },
+        }),
+        // The entry moved from its own installer to a release (OpenSEO 0.1.10), or back.
+        candidate({ installId: "no-installer", choice: "on", buildKind: "self-deploying" }),
+        candidate({
+          installId: "now-installer",
+          choice: "on",
+          latest: { version: "1.1.0", tier: "self-deploying" },
+        }),
         candidate({ installId: "tried", choice: "on", triedBefore: "failed" }),
         candidate({ installId: "rolled", choice: "on", triedBefore: "rolled-back" }),
         candidate({ installId: "waits", choice: "on", waiting: "1.1.0" }),
@@ -95,6 +107,8 @@ describe("planAppUpdates", () => {
       ["sandbox", "needs-approval"],
       ["now-sandbox", "needs-approval"],
       ["installer", "needs-approval"],
+      ["no-installer", "reinstall-needed"],
+      ["now-installer", "reinstall-needed"],
       ["tried", "failed-before"],
       ["rolled", "rolled-back"],
       ["waits", "waiting"],
@@ -129,7 +143,12 @@ describe("planUpdateAll", () => {
       candidate({ installId: "waits", waiting: "1.1.0" }),
       candidate({ installId: "sandbox", buildKind: "sandbox" }),
       candidate({ installId: "now-sandbox", latest: { version: "1.1.0", tier: "sandbox" } }),
-      candidate({ installId: "installer", buildKind: "self-deploying" }),
+      candidate({
+        installId: "installer",
+        buildKind: "self-deploying",
+        latest: { version: "1.1.0", tier: "self-deploying" },
+      }),
+      candidate({ installId: "no-installer", buildKind: "self-deploying" }),
       candidate({ installId: "tried", triedBefore: "failed" }),
       candidate({ installId: "rolled", triedBefore: "rolled-back" }),
       candidate({ installId: "busy", status: "updating" }),
@@ -147,13 +166,24 @@ describe("planUpdateAll", () => {
         reason: "needs-approval",
       },
       { installId: "installer", action: "needs-admin", version: "1.1.0", reason: "needs-approval" },
+      {
+        installId: "no-installer",
+        action: "needs-admin",
+        version: "1.1.0",
+        reason: "reinstall-needed",
+      },
       { installId: "tried", action: "needs-admin", version: "1.1.0", reason: "failed-before" },
       { installId: "rolled", action: "needs-admin", version: "1.1.0", reason: "rolled-back" },
       { installId: "busy", action: "skip", reason: "not-installed" },
       { installId: "unlisted", action: "skip", reason: "not-in-catalog" },
       { installId: "current", action: "skip", reason: "up-to-date" },
     ]);
-    for (const reason of ["needs-approval", "failed-before", "rolled-back"] as const) {
+    for (const reason of [
+      "reinstall-needed",
+      "needs-approval",
+      "failed-before",
+      "rolled-back",
+    ] as const) {
       expect(NEEDS_ADMIN_COPY[reason]).toMatch(/^[A-Z].*\.$/);
     }
   });
@@ -181,6 +211,7 @@ describe("planUpdateAll", () => {
     for (const c of [
       candidate(),
       candidate({ buildKind: "sandbox" }),
+      candidate({ buildKind: "self-deploying" }),
       candidate({ triedBefore: "failed" }),
       candidate({ status: "failed" }),
     ]) {

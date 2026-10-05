@@ -15,7 +15,9 @@ import {
 import type { Database } from "../db/client";
 import { readSettings, SETTING, writeSettings } from "../db/settings";
 import {
+  type CapabilitiesStaleness,
   type CapabilitiesView,
+  capabilitiesStaleness,
   capabilitiesView,
   parseStoredCapabilities,
   type StoredCapabilities,
@@ -23,8 +25,12 @@ import {
 
 /**
  * Runs the account capability probes and keeps their answer in
- * `settings.account_capabilities`: at token save (with the new token), when an
- * admin chooses "Check again", and once a UTC day from the cron. Each run is one
+ * `settings.account_capabilities`, with the Appflare version that ran them:
+ * at token save (with the new token), when an admin chooses "Check again",
+ * on the first request a new version serves when the answer is an older
+ * version's (an update that added a probe, an Access permission say, must
+ * not leave it unknown until the next day), and from the cron once a UTC
+ * day or whenever the stored answer is stale that way. Each run is one
  * read call per probe, nine in all: R2, Containers, the Workers plan, one zone
  * of the account, Email Routing on that zone (skipped when there is no
  * zone), the workers.dev subdomain, the Zero
@@ -55,6 +61,12 @@ function keepOnFailure<T extends { state: string }>(next: T, previous: T | undef
   return failed && previous !== undefined ? previous : next;
 }
 
+export interface RefreshOptions {
+  now?: Date;
+  /** The running Appflare version (`APPFLARE_VERSION`), stored with the answer. */
+  version?: string;
+}
+
 /**
  * Probes with `client` and stores the answer, with the new check time. A
  * probe that failed outright keeps the previous answer, so a network error
@@ -63,8 +75,9 @@ function keepOnFailure<T extends { state: string }>(next: T, previous: T | undef
 export async function refreshCapabilities(
   db: Database,
   client: CapabilityClient,
-  now: Date = new Date(),
+  opts: RefreshOptions = {},
 ): Promise<StoredCapabilities> {
+  const now = opts.now ?? new Date();
   const [probed, domains, setup] = await Promise.all([
     probeAccountCapabilities(client),
     probeDomainCapabilities(client),
@@ -74,6 +87,7 @@ export async function refreshCapabilities(
   const previous = parseStoredCapabilities(row.account_capabilities);
   const stored: StoredCapabilities = {
     checkedAt: now.toISOString(),
+    ...(opts.version === undefined ? {} : { version: opts.version }),
     r2: keepOnFailure(probed.r2, previous?.r2),
     containers: keepOnFailure(probed.containers, previous?.containers),
     workersPlan: keepOnFailure(probed.workersPlan, previous?.workersPlan),
@@ -95,6 +109,8 @@ export interface NewTokenProbe {
   fetch?: FetchLike;
   onRequest?: (log: RequestLog) => void;
   baseUrl?: string;
+  /** The running Appflare version, stored with the answer. */
+  version?: string;
 }
 
 /**
@@ -108,7 +124,10 @@ export async function refreshCapabilitiesForNewToken(
   now: Date = new Date(),
 ): Promise<StoredCapabilities | null> {
   try {
-    return await refreshCapabilities(db, createCapabilityClient(probe), now);
+    return await refreshCapabilities(db, createCapabilityClient(probe), {
+      now,
+      ...(probe.version === undefined ? {} : { version: probe.version }),
+    });
   } catch (error) {
     console.error("capability check after token save failed", {
       error: error instanceof Error ? error.message : String(error),
@@ -117,8 +136,7 @@ export async function refreshCapabilitiesForNewToken(
   }
 }
 
-export interface StoredTokenOptions {
-  now?: Date;
+export interface StoredTokenOptions extends RefreshOptions {
   /** Injectable for tests; the global fetch otherwise. */
   fetch?: FetchLike;
 }
@@ -130,26 +148,30 @@ export async function refreshCapabilitiesWithStoredToken(
   opts: StoredTokenOptions = {},
 ): Promise<StoredCapabilities> {
   const client = await getCfClient(env, opts.fetch === undefined ? {} : { fetch: opts.fetch });
-  return refreshCapabilities(db, client, opts.now);
-}
-
-function utcDay(iso: string): string {
-  return iso.slice(0, 10);
+  return refreshCapabilities(db, client, opts);
 }
 
 /**
- * The cron's daily check: runs when the last one was on an earlier UTC day
- * (or never ran) and a token is configured. Returns whether it ran.
+ * Probes again with the stored token when the stored answer is stale in one
+ * of the `stale` ways (`capabilitiesStaleness`); every way unless given, as
+ * the cron asks: never run, run on an earlier UTC day, by an older version,
+ * or without a probe this version runs. Returns whether it ran: "fresh"
+ * when the answer holds, "no-token" before setup stored a token.
  */
-export async function refreshCapabilitiesDaily(
+export async function refreshCapabilitiesIfStale(
   env: CfClientEnv,
   db: Database,
-  opts: StoredTokenOptions = {},
+  opts: StoredTokenOptions & { stale?: readonly CapabilitiesStaleness[] } = {},
 ): Promise<"checked" | "fresh" | "no-token"> {
   const now = opts.now ?? new Date();
   const row = await readSettings(db, [SETTING.accountCapabilities]);
-  const stored = parseStoredCapabilities(row.account_capabilities);
-  if (stored !== null && utcDay(stored.checkedAt) === utcDay(now.toISOString())) return "fresh";
+  const staleness = capabilitiesStaleness(parseStoredCapabilities(row.account_capabilities), {
+    now,
+    ...(opts.version === undefined ? {} : { version: opts.version }),
+  });
+  if (staleness === null || (opts.stale !== undefined && !opts.stale.includes(staleness))) {
+    return "fresh";
+  }
   try {
     await refreshCapabilitiesWithStoredToken(env, db, { ...opts, now });
     return "checked";
@@ -157,4 +179,22 @@ export async function refreshCapabilitiesDaily(
     if (error instanceof CfTokenNotConfiguredError) return "no-token";
     throw error;
   }
+}
+
+/**
+ * The first request a version serves: probes again only when the stored
+ * answer is an older version's or lacks a probe this version runs, so an
+ * update never leaves the install checks reading answers the running
+ * version did not get. Never-run and earlier-day answers are left to setup
+ * and the cron.
+ */
+export function refreshCapabilitiesAfterVersionChange(
+  env: CfClientEnv,
+  db: Database,
+  opts: StoredTokenOptions & { version: string },
+): Promise<"checked" | "fresh" | "no-token"> {
+  return refreshCapabilitiesIfStale(env, db, {
+    ...opts,
+    stale: ["older-version", "missing-probe"],
+  });
 }

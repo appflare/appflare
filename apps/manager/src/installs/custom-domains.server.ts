@@ -21,8 +21,11 @@ import {
 import { createDb } from "../db/client";
 import { type HealthStatus, installs, resources } from "../db/schema";
 import {
+  type HealthProbe,
+  type HealthSettlement,
   healthCheckOfManifest,
   type InstallProbeHeaders,
+  isHostnameNotAttachedYet,
   probeHealthThroughAccess,
   settleHealthProbe,
 } from "../jobs/install/health";
@@ -578,13 +581,47 @@ export interface CustomDomainCheck extends VarsRefresh {
   checkedAt: string;
   /** The app answered through the domain, so this check turned workers.dev off. */
   workersDevTurnedOff: boolean;
+  /**
+   * Cloudflare is still attaching the domain (`domainSettingUp`): recorded as
+   * `unverified` whatever the answer, and checked again on its own.
+   */
+  settingUp?: true;
+}
+
+/**
+ * How long after it was added a domain that has never reached the app may
+ * still be being set up: Cloudflare makes its record and route and issues
+ * its certificate, which commonly takes one to several minutes, the same
+ * wait the move of Appflare's own address allows.
+ */
+export const DOMAIN_SETUP_WINDOW_MS = 15 * 60_000;
+
+/**
+ * Whether `probe` is Cloudflare still attaching a domain (`isHostnameNotAttachedYet`)
+ * rather than an answer about the app: only for a domain added within
+ * {@link DOMAIN_SETUP_WINDOW_MS} that has never reached the app. A domain
+ * that served the app before answering 530 is a fault, and shows as one.
+ */
+export function domainSettingUp(
+  probe: HealthProbe,
+  domain: { createdAt: Date; liveAt: Date | null },
+  now: Date,
+): boolean {
+  return (
+    domain.liveAt === null &&
+    now.getTime() - domain.createdAt.getTime() < DOMAIN_SETUP_WINDOW_MS &&
+    isHostnameNotAttachedYet(probe)
+  );
 }
 
 /**
  * "Check" next to a custom domain (or a wildcard domain, through its base
  * hostname): one GET of `https://<hostname><health path>`, the same probe as the install's "Check now". The install's health
  * stays the check of its main address, and a new domain may take a while
- * before its certificate and DNS record are live. When the app answers, the
+ * before its certificate and DNS record are live: until then Cloudflare's
+ * own answers (530 and the like) are reported as the domain being set up
+ * (`settingUp`), never as the app being unhealthy, and the app page checks
+ * again on its own. When the app answers, the
  * domain is recorded as live (an address the app is opened at) and, with
  * `api`, workers.dev may be turned off (`applyDomainLive`). So does
  * Cloudflare Access answering on the domain (`domainIsLive`).
@@ -620,7 +657,15 @@ export async function checkCustomDomainCore(
     url,
     probeHeaders === undefined ? undefined : () => probeHeaders(install.id, url),
   );
-  const settled = settleHealthProbe(probe, check.mode);
+  const checkedAt = (deps.now ?? (() => new Date()))();
+  const settingUp = domainSettingUp(
+    probe,
+    { createdAt: domain.created_at, liveAt: domain.live_at },
+    checkedAt,
+  );
+  const answered = settleHealthProbe(probe, check.mode);
+  // Not an answer about the app yet: never unhealthy, never verified.
+  const settled: HealthSettlement = settingUp ? { ...answered, status: "unverified" } : answered;
   let workersDevTurnedOff = false;
   let refresh: VarsRefresh = NO_VARS_REFRESH;
   if (domainIsLive(probe, check.mode)) {
@@ -649,8 +694,9 @@ export async function checkCustomDomainCore(
     hostname: domain.name,
     url,
     ...settled,
-    checkedAt: (deps.now ?? (() => new Date()))().toISOString(),
+    checkedAt: checkedAt.toISOString(),
     workersDevTurnedOff,
+    ...(settingUp ? { settingUp: true as const } : {}),
     ...refresh,
   };
 }

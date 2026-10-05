@@ -5,12 +5,14 @@ const DOT_COLOURS: Record<AppSignal, string> = {
   failed: "bg-kumo-danger",
   "not-responding": "bg-kumo-warning",
   update: "bg-kumo-info",
+  reinstall: "bg-kumo-info",
 };
 
 /**
  * The small dot beside an app's name in the sidebar and on its Home card:
  * red when something it was doing did not finish, amber when it is not
- * responding, blue when an update is available. Its meaning is its
+ * responding, blue when a newer version is out (an update, or a reinstall
+ * when the app's catalog entry changed how it is installed). Its meaning is its
  * accessible name and tooltip.
  */
 export function StatusDot({ signal, className }: { signal: AppSignal; className?: string }) {

@@ -19,7 +19,6 @@ import { listCatalogRecords } from "../catalog/catalogs.server";
 import { findCatalogApp, readCachedListing } from "../catalog/merged.server";
 import { manifestWithRevision, readCatalogRevision } from "../catalog/revisions.server";
 import { installAppKey } from "../catalog/sources";
-import { isUpdateAvailable } from "../catalog/versions";
 import { createDb } from "../db/client";
 import { type BuildKind, installs, type JobStarter, jobs, resources } from "../db/schema";
 import { readSettings, SETTING } from "../db/settings";
@@ -52,6 +51,7 @@ import {
   EMAIL_ROUTE_KIND,
   WILDCARD_DOMAIN_KIND,
 } from "./resource-kinds";
+import { updateOffer } from "./tier-change";
 import { wildcardHostnameOf, wildcardOfManifest } from "./wildcard-domain-input";
 import { domainHostnames, primaryDomain, type WorkersDevChoice } from "./workers-dev";
 import { settingsUseWorkerUrl } from "./workers-dev.server";
@@ -387,8 +387,7 @@ export async function readInstallDetail(installId: string): Promise<InstallDetai
     status: row.status,
     version: row.catalog_version,
     latestVersion: listed?.version ?? null,
-    updateAvailable:
-      row.status === "installed" && isUpdateAvailable(row.catalog_version, listed?.version),
+    ...updateOffer(row, listed),
     address:
       row.status === "installed"
         ? appOpenUrl(appAddress(addressInput(row, addressDomains, sub)), openPath)

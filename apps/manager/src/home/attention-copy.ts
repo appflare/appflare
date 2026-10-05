@@ -63,7 +63,9 @@ export function attentionCopy(item: AttentionItem): { title: string; description
       };
     case "update":
       return {
-        title: `${item.label} ${item.latestVersion} is available`,
+        title: item.reinstall
+          ? `${item.label} ${item.latestVersion} takes a reinstall`
+          : `${item.label} ${item.latestVersion} is available`,
         description:
           item.needs === null
             ? `You have ${item.version}.`

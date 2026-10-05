@@ -443,6 +443,7 @@ export function scheduledUpdatesLog(outcome: ScheduledUpdatesOutcome): string[] 
 
 /** Skips worth a log line (the others are the normal state of an install). */
 const SKIP_NOTES: Partial<Record<AppSkipReason, string>> = {
+  "reinstall-needed": "its catalog entry changed how it is installed; it takes a reinstall",
   "failed-before": "an update to this version already failed",
   "rolled-back": "it was rolled back from this version",
   limit: "next run",

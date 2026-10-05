@@ -119,6 +119,7 @@ export const connectCloudflare = createServerFn({ method: "POST" })
       accountId: connected.accountId,
       token: data.token,
       onRequest: logCfRequest,
+      version: env.APPFLARE_VERSION,
       ...apiBaseOption(env),
     });
     return {

@@ -657,6 +657,37 @@ describe("updating a self-deploying app", () => {
     expect((await installRow("id1"))?.status).toBe("installed");
   });
 
+  it("refuses an update once the entry ships a release instead, saying to reinstall", async () => {
+    const s = setup();
+    await install(s);
+    // The entry moved from its own installer to a release Appflare deploys.
+    const app: IndexApp = {
+      ...(await indexApp(selfDeployingCatalog(), "1.1.0")),
+      tier: "artifact",
+    };
+    const created: string[] = [];
+    await expect(
+      startUpdateCore(
+        {
+          db: env.DB,
+          loadApp: async () => app,
+          loadManifest: async () => {
+            throw new Error("not reached");
+          },
+          sandboxConnected: true,
+          createJob: async (id: string) => {
+            created.push(id);
+            return { id };
+          },
+        },
+        { installId: "id1" },
+      ),
+    ).rejects.toThrow(
+      "Cut changed how it is installed (it no longer ships its own installer). Uninstall it and install it again.",
+    );
+    expect(created).toEqual([]);
+  });
+
   it("offers no rollback", async () => {
     const s = setup();
     await install(s);

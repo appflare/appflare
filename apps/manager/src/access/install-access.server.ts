@@ -350,20 +350,34 @@ export interface InstallTokenReady {
 }
 
 /**
+ * The account's Access service tokens, or the token's refusal in the words
+ * protecting refuses with (`tokensPermission`). A read, so a caller can find
+ * the permission missing before it makes anything.
+ */
+export function listAccessServiceTokens(
+  client: Pick<CloudflareClient, "access">,
+): Promise<AccessServiceToken[]> {
+  return asAccessError(INSTALL_ACCESS_MESSAGES.tokensPermission, () =>
+    client.access.listServiceTokens(),
+  );
+}
+
+/**
  * Makes sure the install has its own working service token and returns it.
  * Caller holds `withAccessLock`. When a new token replaces a stored one on a
  * protected install, the application's token policy is pointed at it.
+ * `listed`: the account's tokens, when the caller just read them
+ * (`listAccessServiceTokens`); read here otherwise.
  */
 export async function ensureInstallServiceToken(
   deps: InstallAccessDeps,
   installId: string,
+  listed?: readonly AccessServiceToken[],
 ): Promise<InstallTokenReady> {
   requireAuthSecret(deps.authSecret);
   const { access } = deps.client;
   const record = await readInstallAccess(deps.db, installId);
-  const tokens = await asAccessError(INSTALL_ACCESS_MESSAGES.tokensPermission, () =>
-    access.listServiceTokens(),
-  );
+  const tokens = listed ?? (await listAccessServiceTokens(deps.client));
   if (record !== null && tokens.some((t) => t.id === record.tokenId)) {
     if (await readable(deps.authSecret, record)) {
       return { tokenId: record.tokenId, clientId: record.clientId, outcome: "kept" };

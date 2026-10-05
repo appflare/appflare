@@ -13,6 +13,7 @@ import {
   addCustomDomainCore,
   CustomDomainError,
   checkCustomDomainCore,
+  DOMAIN_SETUP_WINDOW_MS,
   getDomainOptionsCore,
   removeCustomDomainCore,
 } from "./custom-domains.server";
@@ -723,6 +724,85 @@ describe("checkCustomDomainCore", () => {
       "SELECT live_at FROM resources WHERE kind = 'domain'",
     ).first();
     expect(live).toEqual({ live_at: null });
+  });
+
+  /** One check of the domain added at NOW, `minutes` later, answered with `response`. */
+  async function checkAnswering(response: () => Response, minutes: number) {
+    const { api } = fakeZoneApi();
+    await addCustomDomainCore(deps(api), add("cut.example.com"));
+    return checkCustomDomainCore(
+      {
+        db: env.DB,
+        now: () => new Date(NOW.getTime() + minutes * 60_000),
+        fetch: async () => response(),
+      },
+      { installId: INSTALL_ID, resourceId: "i1:domain:id1" },
+    );
+  }
+
+  it("says a new domain is being set up while Cloudflare answers for it, never that it is unhealthy", async () => {
+    const attaching = await checkAnswering(
+      () => new Response("error code: 1016", { status: 530 }),
+      2,
+    );
+    expect(attaching).toMatchObject({ status: "unverified", detail: "HTTP 530", settingUp: true });
+  });
+
+  it("reads a plain 530 on a new domain the same way", async () => {
+    expect(await checkAnswering(() => new Response("", { status: 530 }), 1)).toMatchObject({
+      status: "unverified",
+      settingUp: true,
+    });
+  });
+
+  it("reads Cloudflare's timeout page on a new domain as it being set up", async () => {
+    expect(
+      await checkAnswering(() => new Response("error code: 522", { status: 522 }), 1),
+    ).toMatchObject({ status: "unverified", detail: "HTTP 522", settingUp: true });
+  });
+
+  it("says a domain is unhealthy once the time it may take has passed", async () => {
+    const late = await checkAnswering(
+      () => new Response("error code: 1016", { status: 530 }),
+      DOMAIN_SETUP_WINDOW_MS / 60_000 + 1,
+    );
+    expect(late).toMatchObject({ status: "unhealthy", detail: "HTTP 530" });
+    expect(late.settingUp).toBeUndefined();
+  });
+
+  it("does not read a rate limit on a new domain as it being set up", async () => {
+    const limited = await checkAnswering(
+      () => new Response("error code: 1015", { status: 429 }),
+      1,
+    );
+    expect(limited.settingUp).toBeUndefined();
+  });
+
+  it("does not mistake the app's own failure on a new domain for one being set up", async () => {
+    const crashed = await checkAnswering(
+      () => new Response("error code: 1101", { status: 500 }),
+      1,
+    );
+    expect(crashed).toMatchObject({ status: "unhealthy" });
+    expect(crashed.settingUp).toBeUndefined();
+  });
+
+  it("never hides a 530 on a domain that reached the app before", async () => {
+    const { api } = fakeZoneApi();
+    await addCustomDomainCore(deps(api), add("cut.example.com"));
+    await env.DB.prepare("UPDATE resources SET live_at = ?1 WHERE kind = 'domain'")
+      .bind(NOW.getTime())
+      .run();
+    const result = await checkCustomDomainCore(
+      {
+        db: env.DB,
+        now: () => new Date(NOW.getTime() + 60_000),
+        fetch: async () => new Response("error code: 1016", { status: 530 }),
+      },
+      { installId: INSTALL_ID, resourceId: "i1:domain:id1" },
+    );
+    expect(result).toMatchObject({ status: "unhealthy", detail: "HTTP 530" });
+    expect(result.settingUp).toBeUndefined();
   });
 
   async function checkReaching(opts: { withApi: boolean }) {

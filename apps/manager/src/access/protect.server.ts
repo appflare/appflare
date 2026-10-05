@@ -38,6 +38,7 @@ import {
   ensureInstallServiceToken,
   INSTALL_ACCESS_MESSAGES,
   type InstallAccessDeps,
+  listAccessServiceTokens,
   policyReferences,
   probesPolicy,
   probesPolicyName,
@@ -590,7 +591,8 @@ export interface ProtectResult {
  * Protects the install with its own Access application, or brings the one
  * it has in step (idempotent; see the module comment). Checks everything
  * that can be checked first (the install, the Zero Trust organization, that
- * no other application covers any of the install's addresses), then makes
+ * no other application covers any of the install's addresses, that the
+ * token reads service tokens), then makes
  * sure "Appflare users" and the install's token exist, then creates or
  * rewrites the application, then records it. Throws `AccessToggleError`
  * with a message for people on a refusal.
@@ -649,6 +651,8 @@ async function protectLocked(
   const subdomain = await accountSubdomain(deps);
   const teamDomain = await teamDomainOf(client);
   const apps = await policiesCall(() => client.access.listApps());
+  // The service token permission too, before "Appflare users" is made below.
+  const serviceTokens = await listAccessServiceTokens(client);
   const externalHosts = [
     ...new Set([...recorded.externalDomains, ...(request.pendingExternalHosts ?? [])]),
   ].map((h) => h.toLowerCase());
@@ -689,7 +693,7 @@ async function protectLocked(
 
   // Then what the application references, then the application.
   const users = await ensureAppAccessUsersPolicy(deps);
-  const token = await ensureInstallServiceToken(deps, installId);
+  const token = await ensureInstallServiceToken(deps, installId, serviceTokens);
   // Read again: a token made anew points the recorded application's policy at itself.
   const probesPolicyId = (await readInstallAccess(deps.db, installId))?.probesPolicyId ?? null;
 

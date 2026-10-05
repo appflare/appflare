@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  capabilitiesStaleness,
   capabilitiesView,
   manualPlanControl,
   paidPlanBadge,
@@ -62,6 +63,56 @@ describe("the stored capabilities row", () => {
     expect(
       parseStoredCapabilities(JSON.stringify({ ...before, zone: { state: "maybe" } })),
     ).toBeNull();
+  });
+});
+
+describe("capabilitiesStaleness", () => {
+  const complete = stored({
+    version: "0.2.0",
+    zone: { state: "none" },
+    emailRouting: { state: "no-zone" },
+    workersDev: { state: "not-registered" },
+    zeroTrust: { state: "none" },
+    analyticsEngine: { state: "enabled" },
+    accessServiceTokens: { state: "readable" },
+  });
+  const sameDay = new Date("2026-09-24T23:00:00.000Z");
+
+  it("holds an answer of this version from today", () => {
+    expect(capabilitiesStaleness(complete, { now: sameDay, version: "0.2.0" })).toBeNull();
+    // A caller that does not know the version only looks at the day and the probes.
+    expect(capabilitiesStaleness(complete, { now: sameDay })).toBeNull();
+  });
+
+  it("says why an answer is stale", () => {
+    expect(capabilitiesStaleness(null, { now: sameDay, version: "0.2.0" })).toBe("never-checked");
+    expect(capabilitiesStaleness(complete, { now: sameDay, version: "0.2.1" })).toBe(
+      "older-version",
+    );
+    const { version: _version, ...unversioned } = complete;
+    expect(capabilitiesStaleness(unversioned, { now: sameDay, version: "0.2.0" })).toBe(
+      "older-version",
+    );
+    // A row from before the service token probe, version known or not.
+    const { accessServiceTokens: _tokens, ...withoutTokens } = complete;
+    expect(capabilitiesStaleness(withoutTokens, { now: sameDay, version: "0.2.0" })).toBe(
+      "missing-probe",
+    );
+    expect(capabilitiesStaleness(withoutTokens, { now: sameDay })).toBe("missing-probe");
+    expect(
+      capabilitiesStaleness(complete, {
+        now: new Date("2026-09-25T00:10:00.000Z"),
+        version: "0.2.0",
+      }),
+    ).toBe("earlier-day");
+  });
+
+  it("holds a newer version's answer, so two versions serving at once do not take turns", () => {
+    expect(capabilitiesStaleness(complete, { now: sameDay, version: "0.1.9" })).toBeNull();
+  });
+
+  it("reads the version back from the stored row", () => {
+    expect(parseStoredCapabilities(JSON.stringify(complete))?.version).toBe("0.2.0");
   });
 });
 

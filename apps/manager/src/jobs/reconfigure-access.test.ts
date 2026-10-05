@@ -214,8 +214,10 @@ describe("turning protection on", () => {
         {
           db: env.DB,
           createJob: async (id) => ({ id }),
-          accessPreflight: async () =>
-            "This Cloudflare account has no Zero Trust organization yet.",
+          accessPreflight: async () => ({
+            message: "This Cloudflare account has no Zero Trust organization yet.",
+            unchecked: false,
+          }),
         },
         { installId: INSTALL_ID, access: "on" },
       ),

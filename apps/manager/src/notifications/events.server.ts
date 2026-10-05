@@ -272,7 +272,7 @@ export async function sweepFinishedJobs(
 }
 
 const INSTALL_COLUMNS =
-  "id, app_slug, catalog_id, worker_name, display_name, catalog_version, manifest_json, health_status, status";
+  "id, app_slug, catalog_id, worker_name, display_name, catalog_version, manifest_json, health_status, status, build_kind";
 
 /**
  * Update available (apps and Appflare) and health failing, from the caches
@@ -294,11 +294,14 @@ export async function detectConditions(
   const needsInstalls = wants(channels, "update_available") || wants(channels, "health_failing");
   const installs = needsInstalls
     ? (
-        await db
-          .prepare(`SELECT ${INSTALL_COLUMNS} FROM installs WHERE status = 'installed'`)
-          .all<
-            InstallRow & { catalog_id: string | null; health_status: string | null; status: string }
-          >()
+        await db.prepare(`SELECT ${INSTALL_COLUMNS} FROM installs WHERE status = 'installed'`).all<
+          InstallRow & {
+            catalog_id: string | null;
+            health_status: string | null;
+            status: string;
+            build_kind: string;
+          }
+        >()
       ).results
     : [];
   // What messages call the installs, read only once a message may name one.
@@ -318,8 +321,9 @@ export async function detectConditions(
           status: r.status,
           appSlug: installAppKey(r),
           catalogVersion: r.catalog_version,
+          buildKind: r.build_kind,
         })),
-        new Map([...apps].map(([key, l]) => [key, l.app.version])),
+        new Map([...apps].map(([key, l]) => [key, { version: l.app.version, tier: l.app.tier }])),
         { current: env.APPFLARE_VERSION, latest: null, updateAvailable: false, activeJobId: null },
       );
       const byId = new Map(installs.map((r) => [r.id, r]));
@@ -328,13 +332,16 @@ export async function detectConditions(
         if (row === undefined) continue;
         await emit({
           type: "update_available",
-          dedupeKey: `update_available:${row.id}:${update.latestVersion}`,
+          // Apart from a plain update's: a manager from before the reinstall
+          // notice may have sent this version as an update already.
+          dedupeKey: `update_available:${row.id}:${update.latestVersion}${update.reinstall === true ? ":reinstall" : ""}`,
           occurredAt: now,
           facts: {
             type: "update_available",
             app: appRefOf(row, await labelsOf(), apps.get(installAppKey(row))?.app.name),
             from: update.version,
             to: update.latestVersion,
+            ...(update.reinstall === true ? { reinstall: true as const } : {}),
           },
         });
       }

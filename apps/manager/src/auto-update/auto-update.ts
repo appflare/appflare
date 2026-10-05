@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { isUpdateAvailable } from "../catalog/versions";
+import { tierChanged } from "../installs/tier-change";
 
 /**
  * Automatic updates: which updates the cron may start on its own. Pure and
@@ -69,6 +70,7 @@ export type AppSkipReason =
   | "not-installed"
   | "not-in-catalog"
   | "up-to-date"
+  | "reinstall-needed"
   | "needs-approval"
   | "failed-before"
   | "rolled-back"
@@ -81,8 +83,16 @@ export type AppDecision =
 
 /** Why an update is not offered at all: nothing to update to. */
 export type NoUpdateReason = "not-installed" | "not-in-catalog" | "up-to-date";
-/** Why an offered update is left for an admin to start from the app's page. */
-export type NeedsAdminReason = "needs-approval" | "failed-before" | "rolled-back";
+/**
+ * Why an offered update is left for an admin: to start from the app's page,
+ * or, for `reinstall-needed`, to uninstall and install again (the entry
+ * changed how it is installed, so no update can start).
+ */
+export type NeedsAdminReason =
+  | "reinstall-needed"
+  | "needs-approval"
+  | "failed-before"
+  | "rolled-back";
 
 /**
  * Whether an install's update may start without an admin's input, judged
@@ -97,6 +107,8 @@ export function unattendedUpdateBlock(
   // Nothing the catalog publishes is an update of a repository's code.
   if (c.latest === null || c.origin === "repository") return "not-in-catalog";
   if (!isUpdateAvailable(c.version, c.latest.version)) return "up-to-date";
+  // No update of either kind can carry it across (tier-change.ts).
+  if (tierChanged(c.buildKind, c.latest.tier)) return "reinstall-needed";
   // Building in the account, or running the app's own installer, costs
   // money on Workers Paid; the admin approves every run. An app built from
   // source at a commit the admin chose moves back to the catalog's release
@@ -183,6 +195,8 @@ export function planUpdateAll(
 
 /** Why an update waits for an admin, as a sentence shown beside the app's name. */
 export const NEEDS_ADMIN_COPY: Record<NeedsAdminReason, string> = {
+  "reinstall-needed":
+    "It changed how it is installed, so it cannot be updated in place: uninstall it and install it again to get this version.",
   "needs-approval":
     "It is built in your account or runs its own installer, which you approve each time.",
   "failed-before": "An update to this version failed before.",
@@ -265,6 +279,8 @@ export const AUTO_UPDATE_COPY = {
   installOnNeedsApproval:
     "Updates of this app still wait for an admin, who approves each build or installer run.",
   installOff: "Updates of this app start only when an admin starts them.",
+  reinstallNeeded: (version: string) =>
+    `Version ${version} changed how this app is installed, so no update, automatic or not, can move it there: uninstall it and install it again to get it.`,
   waiting: (version: string) =>
     `Version ${version} needs something from you (a new secret or a confirmation), so Appflare left it for you. It tries again on its own only when a newer version is out.`,
 } as const;
