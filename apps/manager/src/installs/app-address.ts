@@ -2,8 +2,9 @@ import { CUSTOM_DOMAIN_KIND, CUSTOM_HOSTNAME_KIND, WILDCARD_DOMAIN_KIND } from "
 import { workersDevBase } from "./workers-dev";
 
 /**
- * An install's primary address: the URL its "Open" button opens, on the
- * home list, the app page and job pages. Client-safe (no bindings).
+ * An install's primary address: where its "Open" button opens the app, on
+ * the home list, the app page and job pages, with the entry's `openPath`
+ * after it (`appOpenUrl` in `@appflare/schema`). Client-safe (no bindings).
  *
  * Health checks and version checks do not use it: they go through the
  * workers.dev URL while that is on (see `appBaseUrl`), since a domain may

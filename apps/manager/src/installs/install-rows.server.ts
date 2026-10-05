@@ -1,4 +1,5 @@
 import { env } from "cloudflare:workers";
+import { appOpenUrl } from "@appflare/schema";
 import { desc, ne } from "drizzle-orm";
 import { type CatalogRecord, listCatalogRecords, sourceOf } from "../catalog/catalogs.server";
 import { catalogIndexUrl } from "../catalog/index.server";
@@ -13,6 +14,7 @@ import { type AddressDomain, type AppAddressInput, appAddress } from "./app-addr
 import { readAddressDomains } from "./app-address.server";
 import { distinctLabels } from "./display-name";
 import { recordedName } from "./install-names.server";
+import { readOpenPaths } from "./open-path.server";
 import { updateOffer } from "./tier-change";
 
 /**
@@ -55,7 +57,10 @@ export interface InstallRow {
    * (tier-change.ts); never with `updateAvailable`.
    */
   reinstallNeeded: boolean;
-  /** Where "Open" takes the app (`appAddress`); null until installed, or with no address. */
+  /**
+   * Where "Open" takes the app: its primary address (`appAddress`), with
+   * its entry's `openPath` after it; null until installed, or with no address.
+   */
   address: string | null;
   /** ISO 8601 */
   updatedAt: string;
@@ -143,19 +148,29 @@ export function readInstallRecords(db: Database): Promise<InstallRecord[]> {
     .orderBy(desc(installs.installed_at));
 }
 
-/** Where installs are reached: the account's workers.dev subdomain and every install's domains. */
+/**
+ * Where installs are reached: the account's workers.dev subdomain, every
+ * install's domains, and where in each app its Open button goes.
+ */
 export interface InstallAddresses {
   sub: string | null;
   domains: Map<string, AddressDomain[]>;
+  /** Each installed app's `openPath` (`readOpenPaths`), by install id; none for the root. */
+  openPaths: Map<string, string>;
 }
 
 /**
- * The account's workers.dev subdomain and the installs' domains, read
- * together. Needs nothing else, so it goes alongside the installs' own read.
+ * The account's workers.dev subdomain, the installs' domains and their open
+ * paths, read together. Needs nothing else, so it goes alongside the
+ * installs' own read.
  */
 export async function readInstallAddresses(db: Database): Promise<InstallAddresses> {
-  const [sub, domains] = await Promise.all([subdomain(), readAddressDomains(db)]);
-  return { sub, domains };
+  const [sub, domains, openPaths] = await Promise.all([
+    subdomain(),
+    readAddressDomains(db),
+    readOpenPaths(env.DB),
+  ]);
+  return { sub, domains, openPaths };
 }
 
 /**
@@ -168,11 +183,14 @@ export function installRowsOf(
   rows: readonly InstallRecord[],
   lookup: AppLookup,
   records: readonly CatalogRecord[],
-  { sub, domains }: InstallAddresses,
+  { sub, domains, openPaths }: InstallAddresses,
 ): InstallRow[] {
   const sources = new Map(records.map((r) => [r.id, sourceOf(r)]));
   const addressOf = (row: InstallRecord): string | null =>
-    appAddress(addressInput(row, domains.get(row.id) ?? [], sub));
+    appOpenUrl(
+      appAddress(addressInput(row, domains.get(row.id) ?? [], sub)),
+      openPaths.get(row.id),
+    );
   const listedRows = rows.map((row): Omit<InstallRow, "label"> => {
     // An install from a repository is never the catalog's app of the same name,
     // and an install is only ever compared with its own catalog's listing.

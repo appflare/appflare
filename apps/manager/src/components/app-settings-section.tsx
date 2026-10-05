@@ -37,6 +37,7 @@ import { EmailRoutingFields } from "./email-routing-fields";
 import {
   FieldHelp,
   FieldLabel,
+  fieldDescription,
   TechnicalNamesProvider,
   TechnicalNamesSwitch,
   useShowTechnicalNames,
@@ -735,9 +736,9 @@ function SecretRow({
           )}
         </div>
       </div>
-      {(slot.help !== undefined || derivedNote !== undefined) && (
+      {(slot.help !== undefined || slot.link !== undefined || derivedNote !== undefined) && (
         <Text variant="secondary" size="sm">
-          <FieldHelp text={slot.help ?? ""} after={derivedNote} />
+          {fieldDescription({ help: slot.help, note: derivedNote, link: slot.link })}
         </Text>
       )}
       {value !== undefined &&

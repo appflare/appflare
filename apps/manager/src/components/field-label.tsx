@@ -1,4 +1,5 @@
-import { Button, Switch } from "@cloudflare/kumo";
+import type { CatalogFieldLink } from "@appflare/schema";
+import { Button, Link, Switch } from "@cloudflare/kumo";
 import { createContext, type ReactNode, useContext, useState } from "react";
 import { localChoice } from "./local-choice";
 import { MessageText } from "./message-text";
@@ -8,7 +9,8 @@ import { Tooltip } from "./tooltip";
  * Labels of the install and settings forms: the catalog's human label only.
  * The variable or secret name the app reads is technical detail, shown on
  * hover and, with the form's "Show technical names" switch on, inline after
- * the label in muted monospace.
+ * the label in muted monospace. A field's help is plain text; the catalog's
+ * `link` for the field (where to get the value) follows it.
  */
 
 const TechnicalNamesContext = createContext(false);
@@ -146,4 +148,46 @@ export function FieldHelp({
       )}
     </>
   );
+}
+
+/**
+ * A catalog field's `link`, such as "Get a key": opens its https:// URL in a
+ * new tab, without telling the site where the admin came from.
+ */
+export function FieldLink({ link }: { link: CatalogFieldLink }) {
+  return (
+    <Link href={link.url} target="_blank" rel="noopener noreferrer">
+      {link.label}
+      <Link.ExternalIcon />
+    </Link>
+  );
+}
+
+/**
+ * What a catalog field says under its label: its help (the rest behind
+ * "More"), then `note`, then its link; undefined when it has none of them.
+ * Inline content, for a field's description paragraph.
+ */
+export function fieldDescription({
+  help,
+  note,
+  link,
+}: {
+  help?: string | undefined;
+  note?: ReactNode;
+  link?: CatalogFieldLink | undefined;
+}): ReactNode {
+  const hasNote = note !== undefined && note !== null && note !== "";
+  const after =
+    link === undefined ? (
+      hasNote ? (
+        note
+      ) : undefined
+    ) : (
+      <>
+        {hasNote && <>{note} </>}
+        <FieldLink link={link} />
+      </>
+    );
+  return help === undefined ? after : <FieldHelp text={help} after={after} />;
 }

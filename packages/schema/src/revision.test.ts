@@ -111,6 +111,29 @@ describe("catalog manifest revision", () => {
     expect(REVISABLE_CATALOG_FIELDS).toContain("access");
   });
 
+  it("accepts a revision that adds or changes openPath or a field's link", () => {
+    expect(REVISABLE_CATALOG_FIELDS).toContain("openPath");
+    const linked = {
+      ...released,
+      revision: 2,
+      openPath: "/dashboard",
+      secrets: released.secrets.map((s) => ({
+        ...s,
+        link: { label: "Get a key", url: "https://example.com/keys" },
+      })),
+      vars: released.vars.map((v) => ({
+        ...v,
+        link: { label: "Which page", url: "https://example.com/docs" },
+      })),
+    };
+    expect(catalogRevisionProblem(released, linked)).toBeNull();
+    expect(
+      catalogRevisionProblem(linked, { ...linked, revision: 3, openPath: "/admin/" }),
+    ).toBeNull();
+    const { openPath: _gone, ...withoutPath } = linked;
+    expect(catalogRevisionProblem(linked, { ...withoutPath, revision: 3 })).toBeNull();
+  });
+
   it('accepts a revision that adds "access" to requires, and no other requirement change', () => {
     const required = catalogManifestSchema.parse({
       ...released,

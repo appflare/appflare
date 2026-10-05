@@ -39,34 +39,23 @@ tracks a branch gets at most one bump a week while its last one is still open.
 
 ## Who merges a bump
 
-By default, one of the app's maintainers from `CODEOWNERS` reviews the upstream
-changes and merges once the checks pass. The merge is their approval.
+The catalog works like a package index. It checks that every upstream release it
+lists builds, matches its hashes and installs into a CI account. It does not review
+upstream code. You decide whether and when to update an installed app: a new version
+shows **Update available**, and [automatic updates](/guides/updates/#automatic-updates)
+are off by default.
 
-### Auto-merge
+So a bump merges itself once its checks pass, whether the app is pinned to a tag or
+tracks a branch. When it opens the pull request, the bot turns on GitHub auto-merge,
+and GitHub squash-merges it once the required checks pass: `verify passed`, which
+includes the full install check, and `commit messages`. A failing check leaves the
+pull request open for one of the app's maintainers from `CODEOWNERS`.
 
-An app whose maintainers trust upstream's tags to be releasable as they are can let
-its bumps merge themselves:
+A bump waits for a maintainer to merge it when:
 
-```jsonc
-"bump": { "autoMerge": true }
-```
-
-For such an app, the bot turns on GitHub auto-merge when it opens the pull request.
-GitHub squash-merges it once the required checks pass: `verify passed`, which
-includes the full install check, and `commit messages`. Auto-merge skips the review,
-not the checks. A failing check leaves the pull request open for a maintainer.
-
-Maintainers are still asked to review and can step in until the checks finish:
-
-- To stop one bump, disable auto-merge on the pull request, or close it.
-- To stop all future bumps from merging themselves, remove `bump.autoMerge` from the
-  app's `appflare.jsonc`, or set it to `false`. Pull requests already open keep
-  auto-merge until it is disabled on each.
-
-A bump still waits for a maintainer when:
-
-- the app also sets `source.version`, since someone has to set the new version
-  first;
+- the app sets `"bump": { "autoMerge": false }` (see [Opting out](#opting-out));
+- the app is on the sandbox or self-deploying tier, since CI does not install those;
+- the app sets `source.version`, since someone has to set the new version first;
 - `verify passed` is not a required check on the catalog's `main` branch, so nothing
   would hold the merge until the install check finished;
 - GitHub refuses to turn on auto-merge for the pull request.
@@ -74,9 +63,27 @@ A bump still waits for a maintainer when:
 The pull request's description says who merges it. In the last two cases the bot also
 comments on the pull request to explain why it does not merge itself.
 
-An auto-merged bump is not published at once. GitHub starts no workflows for a merge
-that the bot's own token enabled, so the bump workflow's next daily run starts the
-publish.
+Maintainers can still step in until the checks finish. To stop one bump, disable
+auto-merge on the pull request, or close it.
+
+A bump that merged itself is not published at once. GitHub starts no workflows for a
+merge that the bot's own token enabled, so the bump workflow's next daily run starts
+the publish.
+
+### Opting out
+
+An app whose maintainers want to merge each bump themselves sets:
+
+```jsonc
+"bump": { "autoMerge": false }
+```
+
+Use it for an upstream whose releases often break installs in ways the install check
+does not catch, or need a migration guide or a manifest change before users update.
+Pull requests already open keep auto-merge until it is disabled on each.
+
+Sandbox and self-deploying entries may not set `"autoMerge": true`, and leaving it
+out does not make their bumps merge themselves.
 
 Adding `bump` changes the app's `appflare.jsonc`, and a change to a released version
 without a new pin fails to publish. Add it in the same pull request as a move of

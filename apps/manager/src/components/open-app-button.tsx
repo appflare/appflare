@@ -2,7 +2,8 @@ import { LinkButton } from "@cloudflare/kumo";
 import { ArrowSquareOutIcon } from "@phosphor-icons/react";
 
 /**
- * "Open": the app at its primary address (`appAddress`), in a new tab. Used
+ * "Open": the app at its primary address (`appAddress`), at the entry's
+ * `openPath` when it has one, in a new tab. Used
  * on the home list, the app page and job pages; the Worker name next to it
  * stays plain text.
  */

@@ -1,6 +1,7 @@
 import type { EnvBinding } from "@appflare/cf-api";
 import {
   boundToWorker,
+  type CatalogFieldLink,
   type CatalogSecret,
   type CatalogVar,
   connectionStringProblems,
@@ -56,6 +57,8 @@ export interface SecretSlot {
   /** The catalog's label, or the name for a secret the version no longer declares. */
   label: string;
   help?: string;
+  /** Where to get a value (the catalog's `link`), shown beside the field. */
+  link?: CatalogFieldLink;
   /**
    * A fresh value is generated in the form (the catalog's `generate`): a
    * value of the kind it names; undefined when the admin enters one.
@@ -100,7 +103,7 @@ export interface SecretSlot {
 export function secretSlots(
   declared: ReadonlyArray<
     Pick<CatalogSecret, "name" | "label" | "help" | "generate" | "derive"> &
-      Partial<Pick<CatalogSecret, "optional" | "multiline" | "seedOnly">>
+      Partial<Pick<CatalogSecret, "optional" | "multiline" | "seedOnly" | "link">>
   >,
   recordedNames: readonly string[],
   vars: readonly (Pick<CatalogVar, "name" | "derive"> & { label?: string })[] = [],
@@ -123,6 +126,7 @@ export function secretSlots(
       name: s.name,
       label: s.label,
       ...(s.help === undefined ? {} : { help: s.help }),
+      ...(s.link === undefined ? {} : { link: s.link }),
       generate: s.generate,
       declared: true,
       optional: isOptionalSecret(s),

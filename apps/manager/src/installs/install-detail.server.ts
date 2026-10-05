@@ -1,5 +1,6 @@
 import { env } from "cloudflare:workers";
 import {
+  appOpenUrl,
   appTokenPermissions,
   artifactManifestSchema,
   combinedWorkerFacts,
@@ -101,6 +102,14 @@ export interface ResourceView {
   cfId: string | null;
   /** Created by the app's own installer, which alone deletes it (self-deploying tier). */
   managedByApp: boolean;
+  /**
+   * A Workflow of an installed app that is not known to be set up in
+   * Cloudflare: recorded without its Cloudflare id, as earlier managers left
+   * them, or as an update or rollback leaves one Cloudflare refused to
+   * update. The cron tries again (installs/workflow-repair.server.ts), unless
+   * a Workflow of that name runs another script.
+   */
+  missing: boolean;
 }
 
 /** A custom domain of the install (a `domain` resource), or its wildcard domain. */
@@ -295,11 +304,14 @@ export async function readInstallDetail(installId: string): Promise<InstallDetai
   let tokenPermissions: TokenPermission[] = [];
   let entryWorkers: EntryWorkerPlaceholders | undefined;
   let otherWorkers: OtherWorkerView[] = [];
+  // Where its Open button goes within the app (the entry's `openPath`).
+  let openPath: string | undefined;
   const installerCatalog =
     row.build_kind === "self-deploying" ? recordedCatalog(row.manifest_json) : null;
   if (installerCatalog !== null) {
     // A self-deploying install records its catalog manifest, not an artifact's.
     name = installerCatalog.name;
+    openPath = installerCatalog.openPath;
     postInstall = installerCatalog.postInstall.map((p) =>
       renderPostInstall(p.content, placeholders),
     );
@@ -320,6 +332,7 @@ export async function readInstallDetail(installId: string): Promise<InstallDetai
       }
       const manifest = manifestWithRevision(parsed.data, recorded);
       name = manifest.catalog.name;
+      openPath = manifest.catalog.openPath;
       // An app of several Workers: `{{appUrl:<name>}}` names one of them.
       entryWorkers = entryPlaceholderValues(manifest.catalog, row.worker_name, sub, primaryUrl);
       otherWorkers = otherWorkerViews(manifest, row.worker_name, sub);
@@ -339,6 +352,12 @@ export async function readInstallDetail(installId: string): Promise<InstallDetai
     name: r.name,
     cfId: r.cf_id,
     managedByApp: r.managed_by === "app",
+    missing:
+      r.kind === "workflow" &&
+      r.cf_id === null &&
+      r.managed_by !== "app" &&
+      r.retained_at === null &&
+      row.status === "installed",
   });
   const live = resourceRows.filter((r) => r.retained_at === null);
   const activeJob = jobRows.find((j) => j.status === "queued" || j.status === "running");
@@ -369,7 +388,10 @@ export async function readInstallDetail(installId: string): Promise<InstallDetai
     version: row.catalog_version,
     latestVersion: listed?.version ?? null,
     ...updateOffer(row, listed),
-    address: row.status === "installed" ? appAddress(addressInput(row, addressDomains, sub)) : null,
+    address:
+      row.status === "installed"
+        ? appOpenUrl(appAddress(addressInput(row, addressDomains, sub)), openPath)
+        : null,
     workersDevEnabled: row.workers_dev_enabled,
     workersDevNote: workersDevNoteOf(row, addressDomains),
     workersDevChoice: row.workers_dev_choice,

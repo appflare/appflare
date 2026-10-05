@@ -4,6 +4,12 @@ import { CloudflareApiError } from "./errors";
 import { type FakeResponseSpec, makeFakeFetch } from "./fake-fetch";
 import { ACCESS_SERVICE_TOKEN_IN_USE, isServiceTokenInUse } from "./namespaces/access";
 import { isAddressableObjectKey } from "./namespaces/r2";
+import {
+  isWorkflowCronPaidOnly,
+  isWorkflowNotFound,
+  WORKFLOW_CRON_REQUIRES_PAID_PLAN_CODE,
+  WORKFLOW_NOT_FOUND_CODE,
+} from "./namespaces/workflows";
 
 const TOKEN = "cf-token-DO-NOT-LEAK-123";
 const ACCOUNT = "acc-123";
@@ -678,6 +684,48 @@ describe("workflows", () => {
   it("getWorkflow surfaces 404 as a CloudflareApiError", async () => {
     const { client } = make({ status: 404, errors: [{ code: 10200, message: "not found" }] });
     await expect(client.workflows.getWorkflow("nope")).rejects.toMatchObject({ status: 404 });
+  });
+
+  it("putWorkflow -> PUT /workflows/{name} with the script, class and settings", async () => {
+    const { fake, client } = make({
+      result: { id: "w1", name: "cut-jobs", script_name: "cut", class_name: "Jobs" },
+    });
+    const body = {
+      script_name: "cut",
+      class_name: "Jobs",
+      limits: { steps: 500 },
+      concurrency: { limit: 10 },
+      schedules: [{ cron: "0 * * * *" }],
+      default_retention: { success_retention: "3 days", error_retention: 86_400_000 },
+    };
+    expect(await client.workflows.putWorkflow("cut-jobs", body)).toMatchObject({
+      name: "cut-jobs",
+      script_name: "cut",
+    });
+    expect(fake.last().method).toBe("PUT");
+    expect(fake.last().url).toBe(`${A}/workflows/cut-jobs`);
+    expect(fake.last().headers.get("content-type")).toContain("application/json");
+    expect(await fake.last().request.json()).toEqual(body);
+  });
+
+  it("tells a missing Workflow and a paid-only schedule from other refusals", () => {
+    const notFound = new CloudflareApiError({
+      status: 404,
+      method: "GET",
+      path: "/workflows/x",
+      errors: [{ code: WORKFLOW_NOT_FOUND_CODE, message: "workflow.not_found" }],
+    });
+    const paidOnly = new CloudflareApiError({
+      status: 400,
+      method: "PUT",
+      path: "/workflows/x",
+      errors: [{ code: WORKFLOW_CRON_REQUIRES_PAID_PLAN_CODE, message: "paid plan" }],
+    });
+    expect(isWorkflowNotFound(notFound)).toBe(true);
+    expect(isWorkflowNotFound(paidOnly)).toBe(false);
+    expect(isWorkflowCronPaidOnly(paidOnly)).toBe(true);
+    expect(isWorkflowCronPaidOnly(notFound)).toBe(false);
+    expect(isWorkflowNotFound(new Error("boom"))).toBe(false);
   });
 
   it("deleteWorkflow -> DELETE /workflows/{name}", async () => {

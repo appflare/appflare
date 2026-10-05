@@ -46,7 +46,8 @@ import type { CatalogManifest } from "./catalog";
 
 /**
  * The top-level catalog manifest fields a revision may change: how the entry
- * is presented, what its install and settings forms ask for, and how the app
+ * is presented (where its Open buttons go, `openPath`, included), what its
+ * install and settings forms ask for (a field's `link` too), and how the app
  * goes with Cloudflare Access (`access`: the protection the manager puts in
  * front of the Worker, never the Worker itself). Everything else (`slug`,
  * `repo`, `source`, `install`, `plan`, `requires`, `tokenPermissions`,
@@ -71,6 +72,7 @@ export const REVISABLE_CATALOG_FIELDS: readonly string[] = [
   "bump",
   "revision",
   "access",
+  "openPath",
 ];
 
 /**
