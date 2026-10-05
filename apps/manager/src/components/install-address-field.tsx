@@ -233,7 +233,9 @@ export function InstallAddressField({
   const [place, setPlace] = useState<AddressPlace>(() => initialPlace(initial));
   const [zones, setZones] = useState<DomainOptions | null>(null);
   const [external, setExternal] = useState<ExternalDomainOptions | null>(null);
-  const [loadError, setLoadError] = useState<string | null>(null);
+  /** Why the account's domains, or the options for another domain, could not be read. */
+  const [zonesError, setZonesError] = useState<string | null>(null);
+  const [externalError, setExternalError] = useState<string | null>(null);
   /** On a domain: the name before it (empty for the domain itself). */
   const [name, setName] = useState<string | null>(null);
   /** A starting hostname in one of the account's domains, split into `name` once they are read. */
@@ -258,12 +260,14 @@ export function InstallAddressField({
   useEffect(() => {
     if (!withDomains) return;
     let live = true;
-    const fail = (err: unknown) => {
-      if (live) setLoadError(err instanceof Error ? err.message : "Could not read the domains.");
+    const fail = (set: (message: string) => void) => (err: unknown) => {
+      if (live) set(err instanceof Error ? err.message : "Could not read the domains.");
     };
-    getDomainOptions().then((o) => live && setZones(o), fail);
+    getDomainOptions().then((o) => live && setZones(o), fail(setZonesError));
     // A wildcard app cannot use another domain; its options are not needed.
-    if (wildcard === null) getExternalDomainOptions().then((o) => live && setExternal(o), fail);
+    if (wildcard === null) {
+      getExternalDomainOptions().then((o) => live && setExternal(o), fail(setExternalError));
+    }
     return () => {
       live = false;
     };
@@ -387,7 +391,9 @@ export function InstallAddressField({
         : externalCheck?.ok === true
           ? `https://${externalCheck.hostname}`
           : null;
-  const loadingZones = withDomains && zones === null && loadError === null;
+  const loadingZones = withDomains && zones === null && zonesError === null;
+  // Each lookup's error shows only with the choice it serves.
+  const loadError = place === "external" ? externalError : place === "workers" ? null : zonesError;
   const showNames = useTechnicalNames();
   const domainOptions = domainGroups({
     workersDev: workersDevLabel,
@@ -510,7 +516,7 @@ export function InstallAddressField({
         </Text>
       )}
 
-      {loadError !== null && place !== "workers" && (
+      {loadError !== null && (
         <Banner variant="error" icon={<WarningCircleIcon weight="fill" />} title={loadError} />
       )}
 
