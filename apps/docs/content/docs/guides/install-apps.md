@@ -27,7 +27,11 @@ right end of the field.
   starts as the Worker name, so the app answers at, say, `https://open-seo.example.com`.
   Leave the name empty to give the app the domain itself. The list has a search box,
   so an account with many domains finds one by typing. The app's Worker name then
-  shows on its own line; **Change** edits it.
+  shows on its own line; **Change** edits it. The form checks the name as you type.
+  If it already has DNS records, or already serves another Worker, the form says so:
+  the install then leaves the name alone and the app answers on `workers.dev`. Choose
+  another name, or install anyway and add the domain from the app's page later. A name
+  another app here uses must be changed before you can install.
 - **Another domain, managed elsewhere**, an [external domain](/guides/external-domains/):
   type the whole hostname.
 

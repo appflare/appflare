@@ -6,7 +6,7 @@ import {
   type FetchLike,
   type Zone,
 } from "@appflare/cf-api";
-import { and, eq, inArray, isNull } from "drizzle-orm";
+import { and, eq, inArray, isNull, ne } from "drizzle-orm";
 import { ulid } from "ulidx";
 import {
   type AccessAddressSync,
@@ -30,7 +30,8 @@ import {
   settleHealthProbe,
 } from "../jobs/install/health";
 import { checkHostnameInZone } from "./custom-domain-input";
-import { CUSTOM_DOMAIN_KIND, WILDCARD_DOMAIN_KIND } from "./resource-kinds";
+import type { InstallHostnameAnswer } from "./install-hostname-check";
+import { ADDRESS_KINDS, CUSTOM_DOMAIN_KIND, WILDCARD_DOMAIN_KIND } from "./resource-kinds";
 import {
   NO_VARS_REFRESH,
   type RefreshVars,
@@ -380,6 +381,116 @@ export async function attachCheckedDomain(
       );
     }
     throw error;
+  }
+}
+
+/**
+ * The install form's check of a custom domain's hostname
+ * (`install-hostname-check.ts`), the way the install job's domain step
+ * (`attachCheckedDomain`) would find it, without changing anything. First,
+ * in the database, whether another install here records it (starting the
+ * install refuses that, whatever Cloudflare says). Then the reads the job
+ * makes with the same token: the zone; Workers Routes, which Cloudflare
+ * requires to attach a name to a Worker (probed with a read, as the add
+ * dialog does); the Workers custom domains (another Worker's); the DNS
+ * records at the name. No permission beyond what the custom domains feature
+ * asks for. A read the token may not make answers `unknown`.
+ *
+ * `replaces` ("Install again"): the failed install whose removal comes first
+ * frees its domains, and the domains of its Workers.
+ */
+export async function checkInstallHostnameCore(
+  deps: { db: D1Database; api: CloudflareClient },
+  request: { zoneId: string; hostname: string; workerName: string; replaces?: string },
+): Promise<InstallHostnameAnswer> {
+  const orm = createDb(deps.db);
+  const replaced =
+    request.replaces === undefined
+      ? null
+      : await orm
+          .select({ id: installs.id, workerName: installs.worker_name })
+          .from(installs)
+          .where(eq(installs.id, request.replaces))
+          .limit(1)
+          .then((rows) => rows[0] ?? null);
+  // As the zone check below normalizes it, which needs the zone's name only to refuse a name outside it.
+  const normalized = normalizedHostname(request.hostname);
+  if (normalized !== null) {
+    const [held] = await orm
+      .select({ id: resources.id })
+      .from(resources)
+      .where(
+        and(
+          inArray(resources.kind, [...ADDRESS_KINDS]),
+          eq(resources.name, normalized),
+          isNull(resources.deleted_at),
+          ...(replaced === null ? [] : [ne(resources.install_id, replaced.id)]),
+        ),
+      )
+      .limit(1);
+    if (held !== undefined) return { state: "other-app" };
+  }
+
+  let zone: Zone;
+  try {
+    zone = await readZone(deps.api, request.zoneId);
+  } catch (error) {
+    if (error instanceof CustomDomainError) return { state: "unknown" };
+    throw error;
+  }
+  const checked = checkHostnameInZone(request.hostname, zone.name);
+  if (!checked.ok) throw new CustomDomainError(checked.error);
+  const { hostname } = checked;
+
+  // Workers the new install's own removal of the failed one frees.
+  const freed = new Set<string>([request.workerName]);
+  if (replaced !== null) {
+    freed.add(replaced.workerName);
+    const workers = await orm
+      .select({ name: resources.name })
+      .from(resources)
+      .where(
+        and(
+          eq(resources.install_id, replaced.id),
+          eq(resources.kind, "worker"),
+          isNull(resources.deleted_at),
+        ),
+      );
+    for (const w of workers) freed.add(w.name);
+  }
+  const [routes, domains] = await Promise.all([
+    unlessForbidden(() => deps.api.zones.listWorkerRoutes(zone.id)),
+    unlessForbidden(() => deps.api.workerDomains.listDomains({ hostname })),
+  ]);
+  // Without it the job's attach is refused, and the app stays on workers.dev.
+  if (routes === null) return { state: "cannot-attach", missing: [PERMISSION.routes] };
+  if (domains === null) return { state: "unknown" };
+  const existing = domains.find((d) => d.hostname.toLowerCase() === hostname);
+  if (existing !== undefined) {
+    // Its own Worker's domain already (or one the removal frees): the job takes it as it is.
+    return freed.has(existing.service)
+      ? { state: "free" }
+      : { state: "other-worker", worker: existing.service };
+  }
+  const records = await unlessForbidden(() =>
+    deps.api.zones.listDnsRecords(zone.id, { name: hostname }),
+  );
+  if (records === null) return { state: "unknown" };
+  const conflicting = records.filter((r) => ADDRESS_RECORD_TYPES.has(r.type));
+  return conflicting.length === 0
+    ? { state: "free" }
+    : {
+        state: "records",
+        records: conflicting.map((r) => ({ type: r.type, content: r.content ?? null })),
+      };
+}
+
+/** A hostname as `checkHostnameInZone` normalizes it (case, trailing dot, Punycode); null when it is not one. */
+function normalizedHostname(input: string): string | null {
+  try {
+    return new URL(`https://${input.trim().toLowerCase().replace(/\.$/, "")}/`).hostname;
+  } catch {
+    return null;
   }
 }
 

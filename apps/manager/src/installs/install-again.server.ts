@@ -109,6 +109,8 @@ const recordedChoices = z
   .object({
     vars: z.record(z.string(), z.string()).catch({}),
     access: z.boolean().catch(false),
+    /** The app's name when the install started (it records its manifest only once it finishes). */
+    appName: z.string().min(1).nullable().catch(null),
     domain: installDomainInput.nullable().catch(null),
     emailRouting: z
       .object({ zoneId: z.string() })
@@ -164,7 +166,7 @@ export async function readInstallAgain(
   return {
     installId: row.id,
     appKey: installAppKey(row),
-    label: installLabel(namedInstall(row)),
+    label: installLabel(namedInstall({ ...row, app_name: choices.appName ?? null })),
     version: row.catalog_version,
     workerName: row.worker_name,
     displayName: row.display_name,

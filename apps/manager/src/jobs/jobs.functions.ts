@@ -13,7 +13,11 @@ import { appAddress } from "../installs/app-address";
 import { readAddressDomains } from "../installs/app-address.server";
 import { installLabel } from "../installs/display-name";
 import { installAgainHref, offersInstallAgain } from "../installs/install-again";
-import { namedInstall, readInstallLabels } from "../installs/install-names.server";
+import {
+  installJobAppName,
+  namedInstall,
+  readInstallLabels,
+} from "../installs/install-names.server";
 import { readOpenPaths } from "../installs/open-path.server";
 import { isDeleteRetainedJob } from "../installs/removed-apps.server";
 import { sandboxBinding } from "../sandbox/binding";
@@ -200,6 +204,7 @@ export const getJob = createServerFn({ method: "GET" })
               workerName: installs.worker_name,
               displayName: installs.display_name,
               manifestJson: installs.manifest_json,
+              appName: installJobAppName,
               status: installs.status,
               workersDevEnabled: installs.workers_dev_enabled,
               servedDomain: installs.served_domain,
@@ -215,7 +220,7 @@ export const getJob = createServerFn({ method: "GET" })
     let install: JobView["install"] = null;
     let againHref: string | null = null;
     if (installRow !== undefined) {
-      const { workersDevEnabled, servedDomain, manifestJson, origin, catalogId, ...rest } =
+      const { workersDevEnabled, servedDomain, manifestJson, appName, origin, catalogId, ...rest } =
         installRow;
       if (job.kind === "install" && job.status === "failed" && offersInstallAgain(installRow)) {
         againHref = installAgainHref(
@@ -229,6 +234,7 @@ export const getJob = createServerFn({ method: "GET" })
         worker_name: installRow.workerName,
         display_name: installRow.displayName,
         manifest_json: manifestJson,
+        app_name: appName,
       });
       const labels = await readInstallLabels(env.DB, [named]);
       let address: string | null = null;

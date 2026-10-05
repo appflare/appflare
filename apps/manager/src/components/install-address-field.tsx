@@ -18,7 +18,7 @@ import {
   WarningIcon,
   XCircleIcon,
 } from "@phosphor-icons/react";
-import { type ReactNode, useEffect, useId, useState } from "react";
+import { type ReactNode, useEffect, useId, useRef, useState } from "react";
 import {
   checkExternalHostname,
   EXTERNAL_DOMAIN_COST,
@@ -31,6 +31,11 @@ import { getDomainOptions } from "../installs/custom-domains.functions";
 import type { DomainOptions } from "../installs/custom-domains.server";
 import type { ExternalDomainOptions } from "../installs/external-domain-input";
 import { getExternalDomainOptions } from "../installs/external-domains.functions";
+import {
+  hostnameConsequence,
+  hostnameStatus,
+  type InstallHostnameCheck,
+} from "../installs/install-hostname-check";
 import { type InstallDomainInput, WORKER_NAME_MAX_LENGTH } from "../installs/install-input";
 import {
   checkWildcardSubdomain,
@@ -78,7 +83,7 @@ export type AddressPlace = "workers" | `zone:${string}` | "external";
  * address the app will have).
  */
 export interface AddressStatus {
-  tone: "neutral" | "success" | "danger" | "pending";
+  tone: "neutral" | "success" | "warning" | "danger" | "pending";
   text: string;
 }
 
@@ -207,6 +212,7 @@ export function InstallAddressField({
   otherWorkers,
   disabled,
   onDomainChange,
+  hostnameCheck = null,
   initial = null,
 }: {
   appName: string;
@@ -227,6 +233,11 @@ export function InstallAddressField({
   disabled: boolean;
   /** A state setter (stable): the domain to send (null for workers.dev only) and whether it is complete. */
   onDomainChange(domain: InstallDomainInput | null, complete: boolean): void;
+  /**
+   * The live check of the chosen name in one of the account's domains
+   * (`useInstallHostnameCheck`); null shows no state.
+   */
+  hostnameCheck?: InstallHostnameCheck | null;
   /** The domain to start with ("Install again"); null starts on workers.dev. */
   initial?: InstallDomainInput | null;
 }) {
@@ -256,6 +267,7 @@ export function InstallAddressField({
   const inputId = useId();
   const statusId = useId();
   const noteId = useId();
+  const consequenceId = useId();
 
   useEffect(() => {
     if (!withDomains) return;
@@ -366,7 +378,24 @@ export function InstallAddressField({
       ? { tone: "danger", text: error }
       : place === "workers"
         ? workersDevStatus(check, fixedWorkerName ? { appName } : null)
-        : null;
+        : // A name in one of the account's domains: whether it is in use already.
+          zoneCheck?.ok === true && wildcard === null
+          ? hostnameStatus(hostnameCheck)
+          : null;
+  // A name the install would leave out: what that means, and the choices.
+  // While a name on the same domain is checked again (each keystroke), the
+  // last one stays, so the form below does not jump; the answer replaces it.
+  const onZone = place.startsWith("zone:") && zoneCheck?.ok === true && wildcard === null;
+  const lastConsequence = useRef<{
+    place: AddressPlace;
+    shown: ReturnType<typeof hostnameConsequence>;
+  } | null>(null);
+  let consequence = onZone ? hostnameConsequence(hostnameCheck) : null;
+  if (onZone && hostnameCheck?.state === "checking" && lastConsequence.current?.place === place) {
+    consequence = lastConsequence.current.shown;
+  } else {
+    lastConsequence.current = consequence === null ? null : { place, shown: consequence };
+  }
   // What the chosen place means, quietly, for a domain only.
   const note =
     place === "external"
@@ -374,7 +403,9 @@ export function InstallAddressField({
         ? null
         : `Whoever runs its DNS points a CNAME at ${gateway.hostname}. ${WORKERS_DEV_OFF}`
       : zone !== null && zoneCheck?.ok === true
-        ? zoneNote(zoneCheck.hostname, zone.name, wildcard !== null)
+        ? consequence !== null
+          ? null
+          : zoneNote(zoneCheck.hostname, zone.name, wildcard !== null)
         : place.startsWith("zone:") && zones === null
           ? "Reading the account's domains…"
           : null;
@@ -442,7 +473,11 @@ export function InstallAddressField({
               id={inputId}
               aria-label={left.label}
               aria-invalid={error !== null}
-              aria-describedby={[statusId, noteId].join(" ")}
+              aria-describedby={[
+                statusId,
+                noteId,
+                ...(consequence === null ? [] : [consequenceId]),
+              ].join(" ")}
               value={left.value}
               onChange={(e) => left.onChange(e.currentTarget.value)}
               onBlur={() => setTouched(true)}
@@ -514,6 +549,18 @@ export function InstallAddressField({
         <Text variant="secondary" size="sm">
           {wildcard.reason} {WILDCARD_EXTERNAL_REFUSAL}
         </Text>
+      )}
+
+      {consequence !== null && (
+        // The address field's description points here, so the choices are read with it.
+        <div id={consequenceId}>
+          <Banner
+            variant="alert"
+            icon={<WarningIcon weight="fill" />}
+            title={consequence.title}
+            description={consequence.description}
+          />
+        </div>
       )}
 
       {loadError !== null && (
@@ -765,6 +812,7 @@ function workersNote(otherWorkers: readonly string[]): ReactNode {
 function TrayLine({ status, url }: { status: AddressStatus | null; url: string | null }) {
   const icon: Record<AddressStatus["tone"], ReactNode> = {
     success: <CheckCircleIcon aria-hidden weight="fill" className="shrink-0 text-kumo-success" />,
+    warning: <WarningCircleIcon aria-hidden weight="fill" className="shrink-0 text-kumo-warning" />,
     danger: <XCircleIcon aria-hidden weight="fill" className="shrink-0 text-kumo-danger" />,
     pending: <AppflareLoader size="sm" />,
     neutral: <InfoIcon aria-hidden className="shrink-0 text-kumo-subtle" />,
@@ -775,6 +823,8 @@ function TrayLine({ status, url }: { status: AddressStatus | null; url: string |
         {url}
       </span>
     );
+  // A reason or a warning may take a second line on a phone.
+  const reason = status?.tone === "danger" || status?.tone === "warning";
   if (status === null) {
     return (
       <span data-address-status="address" className="flex min-w-0 items-center gap-1.5">
@@ -792,6 +842,7 @@ function TrayLine({ status, url }: { status: AddressStatus | null; url: string |
         className={cn(
           "flex min-w-0 items-center gap-1.5",
           status.tone === "success" && "text-kumo-success",
+          status.tone === "warning" && "text-kumo-warning",
           status.tone === "danger" && "text-kumo-danger",
           (status.tone === "neutral" || status.tone === "pending") && "text-kumo-subtle",
         )}
@@ -800,8 +851,8 @@ function TrayLine({ status, url }: { status: AddressStatus | null; url: string |
         {/* A reason may take a second line on a phone; the tray keeps room for it. */}
         <span
           data-address-status-text=""
-          className={cn("min-w-0", status.tone === "danger" ? "line-clamp-2" : "truncate")}
-          title={status.tone === "danger" ? status.text : undefined}
+          className={cn("min-w-0", reason ? "line-clamp-2" : "truncate")}
+          title={reason ? status.text : undefined}
         >
           {status.text}
         </span>

@@ -30,6 +30,8 @@
     "bcryptjs": "3.0.3",
     "better-auth": "1.7.5",
     "drizzle-orm": "0.45.3",
+    "mdast-util-gfm-autolink-literal": "2.0.1",
+    "micromark-extension-gfm-autolink-literal": "2.1.0",
     "react": "19.3.0",
     "react-dom": "19.3.0",
     "react-markdown": "10.1.0",

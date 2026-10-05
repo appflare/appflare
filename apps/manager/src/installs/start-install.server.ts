@@ -550,6 +550,9 @@ export async function startInstallCore(
   const inputJsonFor = (enableJobId: string | null) =>
     JSON.stringify({
       slug: app.slug,
+      // The app's name, for what names the install before it records its manifest
+      // (a failed install's notification); see `recordedName`.
+      appName: manifest.catalog.name,
       version: app.version,
       workerName,
       secrets: Object.keys(resolved.secrets),

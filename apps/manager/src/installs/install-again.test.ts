@@ -219,6 +219,20 @@ describe("readInstallAgain", () => {
     expect(await readInstallAgain(env.DB, "missing")).toBeNull();
   });
 
+  it("names an install without a display name by the app's name its job recorded", async () => {
+    await seed();
+    await env.DB.prepare("UPDATE installs SET display_name = NULL WHERE id = 'old'").run();
+    await env.DB.prepare(
+      "UPDATE jobs SET input_json = json_set(input_json, '$.appName', 'Cut') WHERE id = 'job1'",
+    ).run();
+    expect((await readInstallAgain(env.DB, "old"))?.label).toBe("Cut");
+    // A job from before the name was recorded: the slug, as before.
+    await env.DB.prepare(
+      "UPDATE jobs SET input_json = json_remove(input_json, '$.appName') WHERE id = 'job1'",
+    ).run();
+    expect((await readInstallAgain(env.DB, "old"))?.label).toBe("cut");
+  });
+
   it("says why an install that finished cannot be installed again", async () => {
     await seed("installed");
     const read = await readInstallAgain(env.DB, "old");

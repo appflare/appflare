@@ -27,6 +27,7 @@ import { accessStartsOn } from "../installs/access-offer";
 import { appTokenSecret } from "../installs/app-token-secret";
 import { DISPLAY_NAME_MAX_LENGTH, displayNameProblem } from "../installs/display-name";
 import { type InstallFormPrefill, SECRETS_AGAIN_NOTE } from "../installs/install-again";
+import { hostnameAllowsInstall, hostnameLeftOut } from "../installs/install-hostname-check";
 import type { InstallDomainInput } from "../installs/install-input";
 import {
   enteredVarFields,
@@ -60,6 +61,7 @@ import {
 import { Section, SectionBody } from "./section";
 import { generatedSeedCredentials, holdSeedCredentials } from "./seed-credentials";
 import { tooltipContent } from "./tooltip";
+import { useInstallHostnameCheck } from "./use-hostname-check";
 import { type PlaceholderChips, VarField } from "./var-field";
 import { useWorkerNameCheck } from "./worker-name-field";
 import {
@@ -315,6 +317,13 @@ export function InstallForm({
     (namePattern === null ? null : { state: "invalid" as const, message: namePattern });
   const nameValid =
     installer !== null || shownNameCheck === null || workerNameAllowsInstall(shownNameCheck);
+  // The custom domain, checked live like the Worker name: in use already, or free.
+  const hostnameCheck = useInstallHostnameCheck(
+    domain.value,
+    workerName,
+    installer === null && canInstall && blockedReason === null,
+    prefill?.replaces ?? null,
+  );
   const displayNameError = displayNameProblem(displayName);
   const disabled = !canInstall || blockedReason !== null || pending;
 
@@ -454,6 +463,9 @@ export function InstallForm({
   const blockers = [
     !nameValid && "choose a Worker name that is free",
     !domain.complete && "finish the address",
+    domain.complete &&
+      !hostnameAllowsInstall(hostnameCheck) &&
+      "choose an address no other app here uses",
     leftToFill.length > 0 && `fill in ${listWords(leftToFill.map((e) => e.label))}`,
     // Every secret the app must have, counted again as the server counts them.
     leftToFill.length === 0 &&
@@ -482,7 +494,16 @@ export function InstallForm({
   ].filter((b): b is string => typeof b === "string");
   // Install is on exactly when the footer has nothing left to name.
   const ready = blockers.length === 0;
-  const shownUrl = domain.value === null ? workerUrl : `https://${domain.value.hostname}`;
+  // A domain the install would leave out (records or another Worker's): the app answers on workers.dev.
+  const shownUrl =
+    domain.value === null || hostnameLeftOut(hostnameCheck)
+      ? workerUrl
+      : `https://${domain.value.hostname}`;
+  const footerLine = installFooterLine({
+    again: prefill !== null,
+    appName: catalog.name,
+    blocker: blockers[0] ?? null,
+  });
 
   return (
     <Section
@@ -536,6 +557,7 @@ export function InstallForm({
                     otherWorkers={otherWorkers}
                     disabled={disabled}
                     onDomainChange={onDomainChange}
+                    hostnameCheck={hostnameCheck}
                     initial={prefill?.domain ?? null}
                   />
                   {offersAccess && (
@@ -699,18 +721,18 @@ export function InstallForm({
                 data-install-readiness={blockers.length === 0 ? "ready" : "blocked"}
                 className="min-w-0 flex-1 text-pretty text-kumo-subtle text-sm"
               >
-                {disabled ? null : blockers.length === 0 ? (
-                  <>
-                    {prefill === null ? "Installs" : "Installs again"} {catalog.name}
-                    {shownUrl === null ? "" : " at "}
-                    {shownUrl !== null && (
-                      <span className="break-all font-medium text-kumo-default">{shownUrl}</span>
-                    )}
-                    .
-                  </>
+                {disabled ? null : !footerLine.ready ? (
+                  footerLine.text
                 ) : (
                   <>
-                    {prefill === null ? "To install" : "To install again"}, {blockers[0]}.
+                    {footerLine.text}
+                    {shownUrl !== null && (
+                      <>
+                        {" at "}
+                        <span className="break-all font-medium text-kumo-default">{shownUrl}</span>
+                      </>
+                    )}
+                    .
                   </>
                 )}
               </p>
@@ -733,6 +755,28 @@ export function InstallForm({
       </SectionBody>
     </Section>
   );
+}
+
+/**
+ * The footer's line: what Install does ("Installs Cut", followed by " at "
+ * and the address when there is one), or the first thing left before it can
+ * ("To install, fill in …"). Installing again puts "again" after the app's
+ * name, where it reads naturally.
+ */
+export function installFooterLine(input: {
+  again: boolean;
+  appName: string;
+  /** The first thing left before Install turns on; null when nothing is. */
+  blocker: string | null;
+}): { ready: boolean; text: string } {
+  const { again, appName, blocker } = input;
+  if (blocker === null) {
+    return { ready: true, text: again ? `Installs ${appName} again` : `Installs ${appName}` };
+  }
+  return {
+    ready: false,
+    text: again ? `To install ${appName} again, ${blocker}.` : `To install, ${blocker}.`,
+  };
 }
 
 /** The display name's label, also the first entry of the fold's summary. */
