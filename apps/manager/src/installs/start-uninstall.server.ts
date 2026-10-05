@@ -111,13 +111,13 @@ export async function startUninstallCore(
     );
   }
 
-  const params: UninstallJobParams = {
-    kind: "uninstall",
+  const job = uninstallJob(install, {
     jobId,
     installId: request.installId,
     deleteResources,
-    ...(selfDeploying ? { selfDeploying: true } : {}),
-  };
+    retry,
+  });
+  const params = job.params;
   const statuses = (retry ? ["uninstalling"] : STARTABLE).map((s) => `'${s}'`).join(", ");
   const at = now.getTime();
   // One batch (a transaction). The job row is the claim: it is inserted only if
@@ -134,18 +134,7 @@ export async function startUninstallCore(
            )
            AND ${NO_ACTIVE_SELF_UPDATE_SQL}`,
       )
-      .bind(
-        jobId,
-        request.installId,
-        JSON.stringify({
-          installId: request.installId,
-          deleteResources,
-          retry,
-          ...(selfDeploying
-            ? { selfDeploying: true, sandboxRun: installerRunId("destroy", install.version) }
-            : {}),
-        }),
-      ),
+      .bind(jobId, request.installId, job.inputJson),
     deps.db
       .prepare(
         `UPDATE installs SET status = 'uninstalling', updated_at = ?3
@@ -184,6 +173,45 @@ export async function startUninstallCore(
   }
   await db.update(jobs).set({ workflow_instance_id: instanceId }).where(eq(jobs.id, jobId));
   return { jobId };
+}
+
+/**
+ * An uninstall job of an install: its Workflow params, and what
+ * `jobs.input_json` records of it (ids and names only). A self-deploying
+ * app's own installer removes everything it created, so nothing is listed
+ * for deletion. `replacedBy` marks the removal of a failed install that
+ * "Install again" replaces with a new install.
+ */
+export function uninstallJob(
+  install: { buildKind: string; version: string },
+  request: {
+    jobId: string;
+    installId: string;
+    deleteResources: string[];
+    retry: boolean;
+    replacedBy?: string;
+  },
+): { params: UninstallJobParams; inputJson: string } {
+  const selfDeploying = install.buildKind === "self-deploying";
+  const deleteResources = selfDeploying ? [] : request.deleteResources;
+  return {
+    params: {
+      kind: "uninstall",
+      jobId: request.jobId,
+      installId: request.installId,
+      deleteResources,
+      ...(selfDeploying ? { selfDeploying: true } : {}),
+    },
+    inputJson: JSON.stringify({
+      installId: request.installId,
+      deleteResources,
+      retry: request.retry,
+      ...(request.replacedBy === undefined ? {} : { replacedBy: request.replacedBy }),
+      ...(selfDeploying
+        ? { selfDeploying: true, sandboxRun: installerRunId("destroy", install.version) }
+        : {}),
+    }),
+  };
 }
 
 function startRefusal(status: string): string | null {

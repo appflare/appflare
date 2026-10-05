@@ -3,6 +3,7 @@ import { appOpenUrl } from "@appflare/schema";
 import { createServerFn } from "@tanstack/react-start";
 import { eq } from "drizzle-orm";
 import { z } from "zod";
+import { installAppKey } from "../catalog/sources";
 import { invalidateScriptsCache, SCRIPTS_CACHE_MS } from "../cloudflare/scripts-cache.server";
 import { createDb } from "../db/client";
 import { installs, type JobStarter, jobs } from "../db/schema";
@@ -11,6 +12,7 @@ import { moveInputOf } from "../domains/move-address-lines";
 import { appAddress } from "../installs/app-address";
 import { readAddressDomains } from "../installs/app-address.server";
 import { installLabel } from "../installs/display-name";
+import { installAgainHref, offersInstallAgain } from "../installs/install-again";
 import { namedInstall, readInstallLabels } from "../installs/install-names.server";
 import { readOpenPaths } from "../installs/open-path.server";
 import { isDeleteRetainedJob } from "../installs/removed-apps.server";
@@ -86,6 +88,11 @@ export interface JobView {
      */
     address: string | null;
   } | null;
+  /**
+   * "Install again" for the failed install job of a catalog app's install
+   * that did not finish (see installs/install-again.ts); null otherwise.
+   */
+  againHref?: string | null;
   /** The job's log lines, oldest first: all of them, or those after `logsAfter`. */
   logs: JobLogRow[];
   /**
@@ -196,6 +203,8 @@ export const getJob = createServerFn({ method: "GET" })
               status: installs.status,
               workersDevEnabled: installs.workers_dev_enabled,
               servedDomain: installs.served_domain,
+              origin: installs.origin,
+              catalogId: installs.catalog_id,
             })
             .from(installs)
             .where(eq(installs.id, job.install_id))
@@ -204,8 +213,16 @@ export const getJob = createServerFn({ method: "GET" })
     ]);
     const installRow = installRows[0];
     let install: JobView["install"] = null;
+    let againHref: string | null = null;
     if (installRow !== undefined) {
-      const { workersDevEnabled, servedDomain, manifestJson, ...rest } = installRow;
+      const { workersDevEnabled, servedDomain, manifestJson, origin, catalogId, ...rest } =
+        installRow;
+      if (job.kind === "install" && job.status === "failed" && offersInstallAgain(installRow)) {
+        againHref = installAgainHref(
+          installRow.id,
+          installAppKey({ app_slug: installRow.slug, catalog_id: catalogId }),
+        );
+      }
       const named = namedInstall({
         id: installRow.id,
         app_slug: installRow.slug,
@@ -266,6 +283,7 @@ export const getJob = createServerFn({ method: "GET" })
       finishedAt: job.finished_at?.toISOString() ?? null,
       reportedAt: job.reported_at?.toISOString() ?? null,
       install,
+      againHref,
       logsAfter: data.afterLogId ?? null,
       logs: logs.map((l) => ({
         id: l.id,

@@ -41,6 +41,7 @@ import {
   refuseDuringSelfUpdate,
   selfUpdateBusyMessage,
 } from "../jobs/self-update/guard";
+import type { UninstallJobParams } from "../jobs/uninstall";
 import {
   afterRefusedClaim,
   launchSandboxEnable,
@@ -55,6 +56,11 @@ import { ENABLE_SANDBOX_PLACE } from "../sandbox/connect-copy";
 import { installAccessChoice } from "./access-offer";
 import { derivedVarValues, withDerivedSecrets } from "./derived-secrets";
 import { DISPLAY_NAME_MAX_LENGTH } from "./display-name";
+import {
+  INSTALL_AGAIN_REFUSALS,
+  type ReplacedInstall,
+  readReplacedInstall,
+} from "./install-again.server";
 import type { InstallDomainInput, StartInstallInput } from "./install-input";
 import {
   enteredDerivedVarProblems,
@@ -64,6 +70,7 @@ import {
   varValueProblem,
 } from "./install-vars";
 import { ADDRESS_KINDS } from "./resource-kinds";
+import { uninstallJob } from "./start-uninstall.server";
 import { WILDCARD_EXTERNAL_REFUSAL } from "./wildcard-domain-input";
 
 /**
@@ -118,8 +125,11 @@ export interface StartInstallDeps {
    * manifest; throws `StartInstallError` when unavailable.
    */
   loadApp(key: string): Promise<CatalogEntry>;
-  /** Creates the Workflow instance (`env.JOBS.create`). */
-  createJob(id: string, params: InstallJobParams): Promise<{ id: string }>;
+  /**
+   * Creates the Workflow instance (`env.JOBS.create`): the install's, and
+   * for "Install again" first the removal of the failed install it replaces.
+   */
+  createJob(id: string, params: InstallJobParams | UninstallJobParams): Promise<{ id: string }>;
   /**
    * Worker names already in the account, when they can be listed. Best effort:
    * when absent or failing, the install job's own check refuses the name later.
@@ -358,6 +368,18 @@ export async function startInstallCore(
   // Derived secrets (a bcrypt hash of a password, say) join the job's
   // secrets here, and derived vars (a VAPID public key) its stored settings.
   const resolved = await withDerivedValues(manifest.catalog, checked);
+  // "Install again": the failed install of this app the new one replaces.
+  // What it left in the account is removed first, keeping nothing, so its
+  // names are free for the new install (see ./install-again.ts).
+  let replaced: ReplacedInstall | null = null;
+  if (input.replaces !== undefined) {
+    const read = await readReplacedInstall(deps.db, input.replaces, {
+      slug: app.slug,
+      catalogId,
+    });
+    if (!read.ok) throw new StartInstallError(read.refusal);
+    replaced = read.install;
+  }
   // Where the artifact comes from: the signed release, or a build of the pin
   // in the account's sandbox Worker, which the admin confirms paying for.
   // A self-deploying app has no artifact at all: its own installer runs in
@@ -425,6 +447,8 @@ export async function startInstallCore(
           inArray(resources.kind, [...ADDRESS_KINDS]),
           eq(resources.name, resolved.domain.hostname),
           isNull(resources.deleted_at),
+          // The failed install being replaced lets go of it first.
+          ...(replaced === null ? [] : [ne(resources.install_id, replaced.id)]),
         ),
       )
       .limit(1);
@@ -471,8 +495,10 @@ export async function startInstallCore(
     } catch {
       // The install job checks the account again before creating anything.
     }
-    const taken = (installer !== null ? installerWorkers : [workerName]).find((w) =>
-      existing.includes(w),
+    // The Workers of the failed install being replaced are deleted first.
+    const freed = new Set(replaced?.workerNames ?? []);
+    const taken = (installer !== null ? installerWorkers : [workerName]).find(
+      (w) => existing.includes(w) && !freed.has(w),
     );
     if (taken !== undefined) {
       throw new StartInstallError(
@@ -490,7 +516,23 @@ export async function startInstallCore(
   //    uses it (nor the app, when its Worker name is fixed), so two concurrent
   //    starts cannot both win.
   // 3. The job row is inserted only if the install row was.
+  // 5. "Install again": the new install leaves the failed one it replaces out
+  //    of the Worker name check, and is inserted only while that one is still
+  //    failed (or retired by 1) with no job running. Then the failed one is
+  //    uninstalled: by a job that deletes everything it left in the account,
+  //    which the new install's job waits for, or, with nothing left, at once.
   const [installId, jobId] = earlyIds ?? [newId(), newId()];
+  const cleanupJobId = replaced?.hasLeftovers === true ? newId() : null;
+  const cleanup =
+    replaced === null || cleanupJobId === null
+      ? null
+      : uninstallJob(replaced, {
+          jobId: cleanupJobId,
+          installId: replaced.id,
+          deleteResources: replaced.dataResourceIds,
+          retry: false,
+          replacedBy: installId,
+        });
   let first: SandboxFirst | null = null;
   if (sandboxFirstNeeded && deps.sandboxAutoEnable !== undefined) {
     try {
@@ -531,6 +573,8 @@ export async function startInstallCore(
             sandboxRun: installerRunId("deploy", app.version),
           }),
       ...(enableJobId === null ? {} : { sandboxEnableJob: enableJobId }),
+      ...(replaced === null ? {} : { replaces: replaced.id }),
+      ...(cleanupJobId === null ? {} : { cleanupJob: cleanupJobId }),
     });
   // 4. With sandbox builds off, the install row also requires the enable job
   //    it waits for (or, for a new one, that no job runs), and a new enable
@@ -551,13 +595,22 @@ export async function startInstallCore(
         .prepare(
           `INSERT INTO installs (id, app_slug, worker_name, instance_name, display_name,
              catalog_version, artifact_url, artifact_digest, pin_sha, status, config_json,
-             installed_at, updated_at, build_kind, catalog_id)
-           SELECT ?1, ?2, ?3, coalesce(?10, ?3), ?10, ?4, ?5, ?6, ?7, 'installing', ?8, ?9, ?9, ?12, ?14
+             installed_at, updated_at, build_kind, catalog_id, auto_update)
+           SELECT ?1, ?2, ?3, coalesce(?10, ?3), ?10, ?4, ?5, ?6, ?7, 'installing', ?8, ?9, ?9, ?12, ?14,
+             coalesce((SELECT auto_update FROM installs WHERE id = ?15), 'inherit')
            WHERE NOT EXISTS (
              SELECT 1 FROM installs
              WHERE status != 'uninstalled'
+               AND (?15 IS NULL OR id != ?15)
                AND (worker_name = ?3 OR (?11 = 1 AND app_slug = ?2 AND coalesce(catalog_id, 'official') = ?14))
            )
+             AND (?15 IS NULL OR EXISTS (
+               SELECT 1 FROM installs WHERE id = ?15
+                 AND (status = 'failed' OR (status = 'uninstalled' AND ?16 = 0))
+                 AND NOT EXISTS (
+                   SELECT 1 FROM jobs WHERE install_id = ?15 AND status IN ('queued', 'running')
+                 )
+             ))
              AND ${sandboxFirstGuardSql(sandbox, "?13")}
              AND ${NO_ACTIVE_SELF_UPDATE_SQL}`,
         )
@@ -581,6 +634,8 @@ export async function startInstallCore(
           installer === null ? "artifact" : "self-deploying",
           enableJobId,
           catalogId,
+          replaced?.id ?? null,
+          cleanupJobId === null ? 0 : 1,
         ),
       deps.db
         .prepare(
@@ -591,6 +646,7 @@ export async function startInstallCore(
         )
         .bind(jobId, installId, inputJsonFor(enableJobId)),
       ...(sandbox?.kind === "enable" ? [sandboxEnableClaim(deps.db, sandbox, jobId)] : []),
+      ...(replaced === null ? [] : replaceStatements(deps.db, replaced, installId, cleanup, now)),
     ]);
     return results[1]?.meta.changes === 1;
   };
@@ -609,6 +665,12 @@ export async function startInstallCore(
     // A self-update that started after the check above wins the claim.
     const selfUpdate = await activeSelfJob(deps.db);
     if (selfUpdate !== null) throw new StartInstallError(selfUpdateBusyMessage(selfUpdate));
+    if (replaced !== null) {
+      const again = await readReplacedInstall(deps.db, replaced.id);
+      if (!again.ok && again.refusal !== INSTALL_AGAIN_REFUSALS.missing) {
+        throw new StartInstallError(again.refusal);
+      }
+    }
     const [clash] = await db
       .select({ status: installs.status, worker: installs.worker_name })
       .from(installs)
@@ -676,7 +738,32 @@ export async function startInstallCore(
     ...(resolved.domain === undefined ? {} : { domain: resolved.domain }),
     ...(resolved.access === true ? { access: true } : {}),
     ...(enableJobId === null ? {} : { sandboxEnableJob: enableJobId }),
+    ...(cleanupJobId === null ? {} : { cleanupJob: cleanupJobId }),
   };
+  if (cleanup !== null && replaced !== null) {
+    // The removal first: the install job waits for it.
+    try {
+      const removal = await deps.createJob(cleanup.params.jobId, cleanup.params);
+      await db
+        .update(jobs)
+        .set({ workflow_instance_id: removal.id })
+        .where(eq(jobs.id, cleanup.params.jobId));
+    } catch (error) {
+      // The failed install stays `uninstalling`, so its page offers to finish
+      // uninstalling it; nothing of the new install exists in the account.
+      const message = error instanceof Error ? error.message : String(error);
+      const reason = `start: could not start removing the install that did not finish: ${message}`;
+      await db
+        .update(jobs)
+        .set({ status: "failed", error: reason, finished_at: now })
+        .where(inArray(jobs.id, [cleanup.params.jobId, jobId]));
+      await db
+        .update(installs)
+        .set({ status: "failed", updated_at: now })
+        .where(eq(installs.id, installId));
+      throw new StartInstallError(reason);
+    }
+  }
   let instanceId: string;
   try {
     // The enable job first: the install job waits for it.
@@ -701,4 +788,61 @@ export async function startInstallCore(
   }
   await db.update(jobs).set({ workflow_instance_id: instanceId }).where(eq(jobs.id, jobId));
   return { jobId, installId };
+}
+
+/**
+ * The claim's statements for "Install again", after the new install's own:
+ * each applies only if the new install row was inserted. With something
+ * left in the account, the failed install's removal job is recorded and the
+ * install becomes `uninstalling`, as an uninstall that keeps nothing; with
+ * nothing left, the failed install is retired to `uninstalled` at once.
+ */
+function replaceStatements(
+  db: D1Database,
+  replaced: ReplacedInstall,
+  installId: string,
+  cleanup: ReturnType<typeof uninstallJob> | null,
+  now: Date,
+): D1PreparedStatement[] {
+  const at = now.getTime();
+  if (cleanup === null) {
+    // Nothing left but secret records, which went with its Worker.
+    return [
+      db
+        .prepare(
+          `UPDATE installs SET status = 'uninstalled', uninstalled_at = ?3, updated_at = ?3
+           WHERE id = ?1 AND status = 'failed'
+             AND EXISTS (SELECT 1 FROM installs WHERE id = ?2)
+             AND NOT EXISTS (
+               SELECT 1 FROM resources r
+               WHERE r.install_id = ?1 AND r.deleted_at IS NULL AND r.kind != 'secret'
+             )`,
+        )
+        .bind(replaced.id, installId, at),
+      db
+        .prepare(
+          `UPDATE resources SET deleted_at = ?3
+           WHERE install_id = ?1 AND deleted_at IS NULL AND kind = 'secret'
+             AND EXISTS (SELECT 1 FROM installs WHERE id = ?1 AND status = 'uninstalled')
+             AND EXISTS (SELECT 1 FROM installs WHERE id = ?2)`,
+        )
+        .bind(replaced.id, installId, at),
+    ];
+  }
+  return [
+    db
+      .prepare(
+        `INSERT INTO jobs (id, install_id, kind, status, input_json)
+         SELECT ?1, ?2, 'uninstall', 'queued', ?3
+         WHERE EXISTS (SELECT 1 FROM installs WHERE id = ?4)
+           AND EXISTS (SELECT 1 FROM installs WHERE id = ?2 AND status = 'failed')`,
+      )
+      .bind(cleanup.params.jobId, replaced.id, cleanup.inputJson, installId),
+    db
+      .prepare(
+        `UPDATE installs SET status = 'uninstalling', updated_at = ?3
+         WHERE id = ?2 AND EXISTS (SELECT 1 FROM jobs WHERE id = ?1)`,
+      )
+      .bind(cleanup.params.jobId, replaced.id, at),
+  ];
 }

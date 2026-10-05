@@ -115,6 +115,12 @@ export const startInstallInput = z.object({
    * Appflare's users get in. Refused for an app deployed by its own installer.
    */
   access: z.boolean().optional(),
+  /**
+   * "Install again": the failed install of the same app this one replaces.
+   * What it left in the account is removed first (nothing is kept), and its
+   * Worker name is free for the new install.
+   */
+  replaces: z.string().min(1).max(64).optional(),
 });
 export type StartInstallInput = z.infer<typeof startInstallInput>;
 

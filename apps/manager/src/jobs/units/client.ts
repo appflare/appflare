@@ -46,6 +46,12 @@ import { createJobUnits, type JobUnitsApi } from "./units";
  *     sandbox Worker up to 30 times in its own invocation; without `SELF` it
  *     runs here, once, at 1 read plus up to 10 `info()` calls (11); plus the
  *     `info()` call of each "check sandbox Worker" step, and the run itself;
+ *   - for an install that replaces one that did not finish ("Install
+ *     again"): the wait for that install's removal, 1 D1 query per poll plus
+ *     1 log write for each poll that copies lines; polls 5, 10, 20 and 40
+ *     seconds apart see a removal of a few resources at the first or second
+ *     (2 to 4), at most 10 before the polls move 5 minutes apart, a sleep
+ *     that resumes in a fresh invocation (../install/cleanup-wait.ts);
  *   - 1 for the "notify channels" call at the end of an install, update or
  *     uninstall, when a notification channel exists (none without `SELF`);
  *   - the manifest and signature (4 with the release redirects) and KV reads;

@@ -141,6 +141,17 @@ export async function jobEventOf(db: D1Database, jobId: string): Promise<JobEven
     case "uninstall":
       // Deleting what an uninstalled app kept is an uninstall job too; not news.
       if (input.deleteRetained === true) return null;
+      // Removing what an install that did not finish left, for "Install
+      // again": an install under the same name starts next, so "Uninstalled"
+      // would mislead. Only its failure is news.
+      if (typeof input.replacedBy === "string") {
+        if (outcome === "succeeded") return null;
+        return {
+          ...base,
+          type: "uninstall_finished",
+          facts: { type: "uninstall_finished", app, outcome, jobId, replaced: true },
+        };
+      }
       return {
         ...base,
         type: "uninstall_finished",

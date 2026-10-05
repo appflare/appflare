@@ -65,6 +65,7 @@ import {
   sourceManifest,
 } from "./install/artifact-source";
 import { planBindings, withWorkflowRefs } from "./install/bindings";
+import { awaitCleanupPhase, CLEANUP_WAIT_NOTE, cleanupJobField } from "./install/cleanup-wait";
 import { checkCronLimitPhase, putSchedulesChecked } from "./install/cron-limit";
 import { seedD1Phase, seedOnlyValuesSchema, seedValues } from "./install/d1-seed";
 import { installDomainPhase, servedAddressPhase, unservedWildcardPhase } from "./install/domain";
@@ -200,6 +201,12 @@ export const installJobParams = z.object({
    * manager version does not carry it.
    */
   access: z.boolean().optional(),
+  /**
+   * "Install again": the `uninstall` job that removes what the failed
+   * install this one replaces left in the account; the job waits for it
+   * before anything else (./install/cleanup-wait.ts).
+   */
+  cleanupJob: cleanupJobField,
 });
 export type InstallJobParams = z.infer<typeof installJobParams>;
 
@@ -262,8 +269,10 @@ export async function runInstall(ctx: JobContext): Promise<void> {
       log.info(
         `Installing ${appSlugLabel(params.slug)} ${params.version} as Worker "${params.workerName}".`,
       );
+      if (params.cleanupJob !== undefined) log.info(CLEANUP_WAIT_NOTE);
       return {};
     });
+    if (params.cleanupJob !== undefined) await awaitCleanupPhase(steps, step, params.cleanupJob);
     if (params.sandboxEnableJob !== undefined) {
       await awaitSandboxEnabledPhase(steps, step, env, params.sandboxEnableJob);
     }
