@@ -13,6 +13,7 @@ import {
   addCustomDomainCore,
   CustomDomainError,
   checkCustomDomainCore,
+  checkInstallHostnameCore,
   DOMAIN_SETUP_WINDOW_MS,
   getDomainOptionsCore,
   removeCustomDomainCore,
@@ -897,5 +898,138 @@ describe("checkCustomDomainCore", () => {
     expect(world.subdomain).toEqual([]);
     expect(install).toMatchObject({ workers_dev_enabled: 1 });
     expect(domain).toEqual({ live_at: NOW.getTime() });
+  });
+});
+
+describe("checkInstallHostnameCore", () => {
+  const ask = (hostname: string, extra: { workerName?: string; replaces?: string } = {}) => ({
+    zoneId: "z-a",
+    hostname,
+    workerName: extra.workerName ?? "memory-note",
+    ...(extra.replaces === undefined ? {} : { replaces: extra.replaces }),
+  });
+
+  it("answers free for a name with no records and no Worker, changing nothing", async () => {
+    const { world, api } = fakeZoneApi();
+    expect(await checkInstallHostnameCore(deps(api), ask("notes.example.com"))).toEqual({
+      state: "free",
+    });
+    expect(world.calls.every((c) => c.startsWith("GET "))).toBe(true);
+    expect(world.calls).toContain(
+      "GET /zones/z-a/dns_records?name.exact=notes.example.com&page=1&per_page=100",
+    );
+  });
+
+  it("reports the DNS address records the install would leave alone", async () => {
+    const { api } = fakeZoneApi({
+      records: {
+        "z-a": [
+          { id: "r1", type: "CNAME", name: "notes.example.com", content: "elsewhere.example.net" },
+          { id: "r2", type: "TXT", name: "notes.example.com", content: "v=spf1 -all" },
+        ],
+      },
+    });
+    expect(await checkInstallHostnameCore(deps(api), ask("Notes.Example.com"))).toEqual({
+      state: "records",
+      records: [{ type: "CNAME", content: "elsewhere.example.net" }],
+    });
+  });
+
+  it("does not count a TXT record alone, which a custom domain lives beside", async () => {
+    const { api } = fakeZoneApi({
+      records: { "z-a": [{ id: "r2", type: "TXT", name: "notes.example.com", content: "x" }] },
+    });
+    expect(await checkInstallHostnameCore(deps(api), ask("notes.example.com"))).toEqual({
+      state: "free",
+    });
+  });
+
+  it("reports a domain of another Worker, and takes the Worker's own as free", async () => {
+    const { api } = fakeZoneApi({
+      domains: new Map([
+        ["cfd-1", { hostname: "notes.example.com", service: "someone-else", zone_id: "z-a" }],
+      ]),
+    });
+    expect(await checkInstallHostnameCore(deps(api), ask("notes.example.com"))).toEqual({
+      state: "other-worker",
+      worker: "someone-else",
+    });
+    expect(
+      await checkInstallHostnameCore(
+        deps(api),
+        ask("notes.example.com", { workerName: "someone-else" }),
+      ),
+    ).toEqual({ state: "free" });
+  });
+
+  it("refuses a name another app here records, unless the install being replaced holds it", async () => {
+    const { world, api } = fakeZoneApi({
+      domains: new Map([
+        ["cfd-1", { hostname: "links.example.com", service: "cut", zone_id: "z-a" }],
+      ]),
+    });
+    await env.DB.prepare(
+      `INSERT INTO resources (id, install_id, kind, name, cf_id, created_at)
+       VALUES ('d1', ?1, 'domain', 'links.example.com', 'cfd-1', 1)`,
+    )
+      .bind(INSTALL_ID)
+      .run();
+    expect(await checkInstallHostnameCore(deps(api), ask("links.example.com"))).toEqual({
+      state: "other-app",
+    });
+    // Nothing asked of Cloudflare: starting the install refuses it anyway.
+    expect(world.calls).toEqual([]);
+
+    // "Install again" of the install that holds it (Worker cut): its removal frees the domain.
+    expect(
+      await checkInstallHostnameCore(
+        deps(api),
+        ask("links.example.com", { workerName: "cut-2", replaces: INSTALL_ID }),
+      ),
+    ).toEqual({ state: "free" });
+  });
+
+  it("finds another app's name even when the token may not read the zone", async () => {
+    const { api } = fakeZoneApi({ refuse: new Map([["GET /zones/z-a", 403]]) });
+    await env.DB.prepare(
+      `INSERT INTO resources (id, install_id, kind, name, cf_id, created_at)
+       VALUES ('d1', ?1, 'domain', 'links.example.com', 'cfd-1', 1)`,
+    )
+      .bind(INSTALL_ID)
+      .run();
+    expect(await checkInstallHostnameCore(deps(api), ask("Links.Example.com."))).toEqual({
+      state: "other-app",
+    });
+    expect(await checkInstallHostnameCore(deps(api), ask("notes.example.com"))).toEqual({
+      state: "unknown",
+    });
+  });
+
+  it("says the token cannot attach domains when it lacks Workers Routes, not Available", async () => {
+    const { api } = fakeZoneApi({ refuse: new Map([["GET /zones/z-a/workers/routes", 403]]) });
+    expect(await checkInstallHostnameCore(deps(api), ask("notes.example.com"))).toEqual({
+      state: "cannot-attach",
+      missing: ["Workers Routes: Edit"],
+    });
+  });
+
+  it("answers unknown when the token may not read the zone, the domains or the records", async () => {
+    for (const refused of [
+      "GET /zones/z-a",
+      "GET /workers/domains",
+      "GET /zones/z-a/dns_records",
+    ]) {
+      const { api } = fakeZoneApi({ refuse: new Map([[refused, 403]]) });
+      expect(await checkInstallHostnameCore(deps(api), ask("notes.example.com"))).toEqual({
+        state: "unknown",
+      });
+    }
+  });
+
+  it("refuses a hostname outside the zone", async () => {
+    const { api } = fakeZoneApi();
+    await expect(checkInstallHostnameCore(deps(api), ask("notes.other.net"))).rejects.toThrow(
+      CustomDomainError,
+    );
   });
 });

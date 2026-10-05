@@ -1,7 +1,11 @@
 import { desc, eq, sql } from "drizzle-orm";
 import { createDb } from "../db/client";
 import { installs, type JobStarter, jobs } from "../db/schema";
-import { namedInstall, readInstallLabels } from "../installs/install-names.server";
+import {
+  installJobAppName,
+  namedInstall,
+  readInstallLabels,
+} from "../installs/install-names.server";
 import { isDeleteRetainedJob } from "../installs/removed-apps.server";
 import { JOB_LIST_LIMIT } from "./job-list";
 import { isAccessChangeJob, isRestoreJob } from "./reconcile.server";
@@ -49,6 +53,7 @@ export async function listRecentJobs(
       displayName: installs.display_name,
       workerName: installs.worker_name,
       manifestJson: installs.manifest_json,
+      appName: installJobAppName,
     })
     .from(jobs)
     .leftJoin(installs, eq(jobs.install_id, installs.id))
@@ -65,6 +70,7 @@ export async function listRecentJobs(
             worker_name: row.workerName ?? row.installId,
             display_name: row.displayName,
             manifest_json: row.manifestJson,
+            app_name: row.appName,
           }),
         ],
   );

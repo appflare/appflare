@@ -11,10 +11,12 @@ import {
   type CustomDomainCheck,
   CustomDomainError,
   checkCustomDomainCore,
+  checkInstallHostnameCore,
   type DomainOptions,
   getDomainOptionsCore,
   removeCustomDomainCore,
 } from "./custom-domains.server";
+import { type InstallHostnameAnswer, installHostnameInput } from "./install-hostname-check";
 import { varsRefresher } from "./reconfigure.server";
 import type { VarsRefresh } from "./vars-refresh.server";
 
@@ -40,6 +42,20 @@ export const getDomainOptions = createServerFn({ method: "GET" }).handler(
     );
   },
 );
+
+/**
+ * The install form's live check of a custom domain's hostname: whether the
+ * install job could attach it, or would leave it out (DNS records of its own,
+ * another Worker's domain), or the install would be refused (another app's).
+ */
+export const checkInstallHostname = createServerFn({ method: "GET" })
+  .validator(installHostnameInput)
+  .handler(async ({ data }): Promise<InstallHostnameAnswer> => {
+    await requireRole("admin");
+    return asUserError(async () =>
+      checkInstallHostnameCore({ db: env.DB, api: await getCfClient(env) }, data),
+    );
+  });
 
 /** Attaches a hostname to the install's Worker, or reports the DNS records it would replace. */
 export const addCustomDomain = createServerFn({ method: "POST" })

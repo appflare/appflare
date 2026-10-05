@@ -2,7 +2,11 @@ import { managerUpdateView, readManagerLatest } from "../catalog/manager-release
 import { catalogLookup } from "../catalog/merged.server";
 import { installAppKey } from "../catalog/sources";
 import { installLabel } from "../installs/display-name";
-import { namedInstall, readInstallLabels } from "../installs/install-names.server";
+import {
+  installJobAppNameSql,
+  namedInstall,
+  readInstallLabels,
+} from "../installs/install-names.server";
 import { pendingUpdates } from "../installs/pending-updates";
 import type { AppRef, NotificationFacts } from "./messages";
 import {
@@ -40,6 +44,11 @@ export interface InstallRow {
   display_name: string | null;
   catalog_version: string;
   manifest_json: string | null;
+  /**
+   * The app's name its install job recorded, for an install without a
+   * manifest yet (one that failed): it names the app as a finished one would.
+   */
+  app_name?: string | null;
 }
 
 /**
@@ -98,7 +107,8 @@ export async function jobEventOf(db: D1Database, jobId: string): Promise<JobEven
   const row = await db
     .prepare(
       `SELECT j.kind, j.status, j.input_json, j.finished_at,
-              i.id, i.app_slug, i.worker_name, i.display_name, i.catalog_version, i.manifest_json
+              i.id, i.app_slug, i.worker_name, i.display_name, i.catalog_version, i.manifest_json,
+              CASE WHEN i.manifest_json IS NULL THEN ${installJobAppNameSql("i")} END AS app_name
        FROM jobs j JOIN installs i ON i.id = j.install_id
        WHERE j.id = ?1`,
     )

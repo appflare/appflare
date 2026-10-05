@@ -34,7 +34,8 @@ Appflare. You can also create a new token and replace the old one with **Rotate 
 On the app's **Domains and email** tab, admins find **Custom domains** and select
 **Add a domain**. The install form offers the same: pick the domain at the right of
 the **Address** field and type the name before it. The install adds the domain once
-the app runs.
+the app runs. The form warns when the name already has DNS records: the install does
+not replace them, so add the domain here afterwards if you want them replaced.
 
 ![Form for adding a custom domain to Short links](/screenshots/domains-custom-form.png)
 

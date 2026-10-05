@@ -771,6 +771,11 @@ export function fixture(name: string, args: unknown[]): unknown {
       missing: [],
       noZones: false,
     }),
+    // A name on one of the account's domains is free, or (`?fixture=dns-records`) already has a record.
+    checkInstallHostname: () =>
+      variant === "dns-records"
+        ? { state: "records", records: [{ type: "CNAME", content: "old-site.example.net" }] }
+        : { state: "free" },
     getManagerAddress: () => managerAddress,
     getManagerAddressOptions: () => ({
       zones: [

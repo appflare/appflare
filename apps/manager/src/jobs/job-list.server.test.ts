@@ -57,6 +57,22 @@ describe("listRecentJobs", () => {
     expect(rows[3]?.startedAt).toBe(new Date(1_000).toISOString());
   });
 
+  it("names a failed install, which has no manifest yet, by the name its install job recorded", async () => {
+    await seedInstall({ status: "failed" });
+    await env.DB.prepare(
+      "UPDATE installs SET app_slug = 'memory-note', manifest_json = NULL WHERE id = ?1",
+    )
+      .bind(INSTALL_ID)
+      .run();
+    await addJob("j1", {
+      kind: "install",
+      status: "failed",
+      input: { slug: "memory-note", appName: "Memory Note" },
+    });
+    const [row] = await listRecentJobs(env.DB);
+    expect(row?.install).toEqual({ id: INSTALL_ID, label: "Memory Note" });
+  });
+
   it("names the install by its display name when it has one", async () => {
     await seedInstall();
     await env.DB.prepare("UPDATE installs SET display_name = 'Team links' WHERE id = ?1")

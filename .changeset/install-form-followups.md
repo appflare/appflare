@@ -1,0 +1,10 @@
+---
+"@appflare/manager": patch
+---
+
+Install form, notification and Next steps fixes.
+
+- **The install form checks a name on one of your domains.** As you type, the address control asks Cloudflare whether the name is already in use, the way it checks the Worker name. When it already has DNS records, or already serves another Worker, the tray under the address says so and a note explains what happens: the install leaves the name alone and the app answers on its workers.dev address only. You can choose another name, or install anyway and add the domain from the app's page later, where you can choose to replace the records. The footer then shows the workers.dev address the app will have. A name that another app installed here already uses holds Install until you change it, since starting the install would refuse it. When the Cloudflare token lacks Workers Routes: Edit, which Cloudflare needs to add a domain to an app, the form says so instead of "Available". The check reads what the custom domains permissions already allow; without them the tray says the name could not be checked.
+- On "Install again", the footer reads "Installs Memory Note again at …" and "To install Memory Note again, …" instead of "Installs again Memory Note at …".
+- Notifications of a failed install, and of a failed uninstall of an install that never finished, name the app as a finished install would ("Memory Note", with its Worker name where another install reads the same) instead of by its catalog id ("memory-note"). The job page, the jobs list and the "Install again" banner name such installs the same way.
+- Bare `https://` addresses in an app's Next steps, such as its own address or its health and MCP paths, are now links like the Markdown links beside them, opening in a new tab. Trailing punctuation stays out of the link, addresses in inline code stay code to copy, and only addresses written with `http://` or `https://` become links. Release notes in What's new link bare addresses the same way.

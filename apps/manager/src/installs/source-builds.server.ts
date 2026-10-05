@@ -722,6 +722,8 @@ export async function installSourceBuildCore(
   const installId = row.install_id;
   const inputJson = JSON.stringify({
     slug,
+    // The app's name, for what names the install before it records its manifest.
+    appName: manifest.catalog.name,
     version: prebuilt.version,
     workerName,
     secrets: Object.keys(resolved.secrets),

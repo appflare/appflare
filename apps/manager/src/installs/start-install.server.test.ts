@@ -88,6 +88,8 @@ describe("startInstallCore", () => {
     });
     expect(job?.input_json).not.toContain("hunter2");
     expect(JSON.parse(job?.input_json ?? "{}").secrets).toEqual(["ADMIN_PASSWORD"]);
+    // The app's name, for naming the install before it records its manifest.
+    expect(JSON.parse(job?.input_json ?? "{}").appName).toBe("Cut");
 
     expect(h.created).toHaveLength(1);
     expect(h.created[0]?.params).toMatchObject({

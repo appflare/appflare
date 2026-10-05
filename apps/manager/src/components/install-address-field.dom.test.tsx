@@ -239,3 +239,60 @@ describe("the Worker name field on a domain", () => {
     expect(field()).not.toBeNull();
   });
 });
+
+describe("a name on one of the account's domains that the install would leave out", () => {
+  async function showChecked(
+    hostnameCheck: Parameters<typeof InstallAddressField>[0]["hostnameCheck"],
+  ) {
+    await act(async () =>
+      root.render(
+        <TooltipProvider>
+          <InstallAddressField
+            appName="Cut"
+            workerName="links"
+            onWorkerNameChange={() => {}}
+            check={{ state: "free" }}
+            fixedWorkerName={false}
+            subdomain="acme"
+            withDomains
+            wildcard={null}
+            otherWorkers={[]}
+            disabled={false}
+            onDomainChange={() => {}}
+            hostnameCheck={hostnameCheck}
+            initial={{ kind: "custom", zoneId: "z1", hostname: "links.example.com" }}
+          />
+        </TooltipProvider>,
+      ),
+    );
+  }
+  const note = () =>
+    [...container.querySelectorAll('[role="alert"], [id]')].some((el) =>
+      el.textContent?.includes("The install will leave this name out"),
+    );
+
+  it("keeps its note while the name is checked again, so nothing below moves", async () => {
+    await showChecked({ state: "records", records: [{ type: "A", content: "192.0.2.1" }] });
+    expect(note()).toBe(true);
+    expect(
+      container.querySelector("[data-address-status]")?.getAttribute("data-address-status"),
+    ).toBe("warning");
+    await showChecked({ state: "checking" });
+    expect(note()).toBe(true);
+    await showChecked({ state: "free" });
+    expect(note()).toBe(false);
+    // Checked again from free: nothing to keep.
+    await showChecked({ state: "checking" });
+    expect(note()).toBe(false);
+  });
+
+  it("is read with the address field", async () => {
+    await showChecked({ state: "other-worker", worker: "blog" });
+    const field = container.querySelector<HTMLInputElement>('input[aria-label="Subdomain"]');
+    const described = (field?.getAttribute("aria-describedby") ?? "")
+      .split(" ")
+      .map((id) => document.getElementById(id)?.textContent ?? "")
+      .join(" ");
+    expect(described).toContain("remove the domain from blog in Cloudflare, then install");
+  });
+});

@@ -14,6 +14,7 @@ vi.mock("./use-account-id", () => ({ useAccountId: () => "0123456789abcdef012345
 vi.mock("../installs/installs.functions", () => ({ startInstall: vi.fn() }));
 vi.mock("../installs/source-builds.functions", () => ({ installSourceBuild: vi.fn() }));
 vi.mock("../installs/worker-names.functions", () => ({ listTakenWorkerNames: vi.fn() }));
+vi.mock("../installs/custom-domains.functions", () => ({ checkInstallHostname: vi.fn() }));
 vi.mock("../installs/access-change.functions", () => ({
   checkAppAccess: vi.fn(),
   startAccessChange: vi.fn(),
@@ -25,7 +26,9 @@ vi.mock("./install-address-field", () => ({
 }));
 vi.mock("./email-routing-fields", () => ({ EmailRoutingFields: () => null }));
 
-const { InstallForm, installFormNotice, filledByAppflare } = await import("./install-form");
+const { InstallForm, installFormNotice, filledByAppflare, installFooterLine } = await import(
+  "./install-form"
+);
 
 type Props = Parameters<typeof InstallForm>[0];
 
@@ -305,7 +308,7 @@ describe("what holds the install", () => {
       prefill: prefill({ RULES: "{not json" }),
     });
     expect(html).toContain('data-install-readiness="blocked"');
-    expect(html).toContain("To install again, fix Rules.");
+    expect(html).toContain("To install Cut again, fix Rules.");
     expect(html).toMatch(/<button[^>]*disabled=""[^>]*>.*Install again/);
     // The fold holds it, so it is open.
     expect(html).toMatch(/data-fold[^>]*>.*?aria-expanded="true"/s);
@@ -333,5 +336,46 @@ describe("what holds the install", () => {
     });
     expect(html).toContain("Sign-in callback");
     expect(html).toMatch(/data-fold[^>]*>.*?aria-expanded="true"/s);
+  });
+});
+
+describe("the footer's line", () => {
+  it("puts again after the app's name when installing again", () => {
+    expect(installFooterLine({ again: true, appName: "Memory Note", blocker: null })).toEqual({
+      ready: true,
+      text: "Installs Memory Note again",
+    });
+    expect(
+      installFooterLine({ again: true, appName: "Memory Note", blocker: "fill in API key" }),
+    ).toEqual({ ready: false, text: "To install Memory Note again, fill in API key." });
+  });
+
+  it("reads plainly for a new install", () => {
+    expect(installFooterLine({ again: false, appName: "Cut", blocker: null })).toEqual({
+      ready: true,
+      text: "Installs Cut",
+    });
+    expect(installFooterLine({ again: false, appName: "Cut", blocker: "fix Rules" }).text).toBe(
+      "To install, fix Rules.",
+    );
+  });
+
+  it("names the address after the app on Install again", () => {
+    const html = render(baseCatalog(), {
+      prefill: {
+        replaces: "old",
+        workerName: "cut",
+        displayName: "",
+        vars: {},
+        access: false,
+        domain: null,
+        emailZoneId: null,
+      },
+    });
+    expect(html).toContain('data-install-readiness="ready"');
+    expect(html).toMatch(
+      /Installs Cut again at <span[^>]*>https:\/\/cut\.acme\.workers\.dev<\/span>\./,
+    );
+    expect(html).not.toContain("Installs again");
   });
 });

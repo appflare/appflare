@@ -1,6 +1,7 @@
 import { CodeBlock, Link, Text } from "@cloudflare/kumo";
 import type { ComponentProps } from "react";
-import ReactMarkdown, { type Components } from "react-markdown";
+import ReactMarkdown, { type Components, type Options } from "react-markdown";
+import { remarkHttpAutolinks } from "./markdown-autolinks";
 
 /** The languages Kumo's code block takes (the package does not export the type by name). */
 type CodeLang = NonNullable<ComponentProps<typeof CodeBlock>["lang"]>;
@@ -54,7 +55,8 @@ export function fenceCode(pre: MarkdownNode | undefined): string {
 /**
  * Markdown from a signed catalog manifest (`postInstall`), rendered with Kumo
  * typography. Raw HTML is dropped (`skipHtml`) and react-markdown's default URL
- * transform removes `javascript:` and other unsafe links. Fenced code is a
+ * transform removes `javascript:` and other unsafe links. Bare `https://`
+ * addresses become links too (`markdownPlugins`). Fenced code is a
  * Kumo code block; headings sit below the section they appear in.
  */
 export const markdownComponents: Components = {
@@ -117,10 +119,17 @@ export const markdownComponents: Components = {
   ),
 };
 
+/** Remark plugins every Markdown in the manager uses: bare `http(s)://` addresses become links. */
+export const markdownPlugins: Options["remarkPlugins"] = [
+  // Typed against the two processor fields it uses rather than unified's own
+  // `Processor` (unified is react-markdown's dependency, not ours).
+  remarkHttpAutolinks as unknown as NonNullable<Options["remarkPlugins"]>[number],
+];
+
 export function Markdown({ children }: { children: string }) {
   return (
     <div className="grid gap-3">
-      <ReactMarkdown skipHtml components={markdownComponents}>
+      <ReactMarkdown skipHtml remarkPlugins={markdownPlugins} components={markdownComponents}>
         {children}
       </ReactMarkdown>
     </div>

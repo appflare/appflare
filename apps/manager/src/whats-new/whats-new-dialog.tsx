@@ -2,7 +2,7 @@ import { Badge, Empty, LayerDialog, Link, Text } from "@cloudflare/kumo";
 import { SparkleIcon } from "@phosphor-icons/react";
 import ReactMarkdown, { type Components } from "react-markdown";
 import { compareVersions } from "../catalog/versions";
-import { markdownComponents } from "../components/markdown";
+import { markdownComponents, markdownPlugins } from "../components/markdown";
 import { Timestamp } from "../components/timestamp";
 import { isUnread, type ReleaseNote } from "./release-notes";
 
@@ -44,6 +44,7 @@ function ReleaseBody({ children }: { children: string }) {
     <div className="grid gap-3">
       <ReactMarkdown
         skipHtml
+        remarkPlugins={markdownPlugins}
         disallowedElements={["img"]}
         unwrapDisallowed
         components={releaseComponents}

@@ -4,6 +4,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AppAccessCheck } from "../access/app-access";
 import { type InstallFormPrefill, SECRETS_AGAIN_NOTE } from "../installs/install-again";
+import { HOSTNAME_CHECK_DELAY_MS } from "../installs/install-hostname-check";
 import { WORKER_NAME_CHECK_DELAY_MS } from "../installs/worker-name-check";
 
 /**
@@ -21,6 +22,9 @@ const server = vi.hoisted(() => ({
       : { installed: ["links"], account: ["appflare", "links"] },
   ),
   jobStarted: vi.fn(async () => {}),
+  checkInstallHostname: vi.fn(
+    async (_: unknown): Promise<Record<string, unknown>> => ({ state: "free" }),
+  ),
 }));
 vi.mock("./job-started", () => ({ useJobStarted: () => server.jobStarted }));
 vi.mock("./use-account-id", () => ({ useAccountId: () => "0123456789abcdef0123456789abcdef" }));
@@ -40,14 +44,15 @@ vi.mock("../installs/access-change.functions", () => ({
 vi.mock("../installs/worker-names.functions", () => ({
   listTakenWorkerNames: server.listTakenWorkerNames,
 }));
-// The address control reads the account's domains; the prefill here stays on workers.dev.
+// The address control reads the account's domains, and checks a name in one of them.
 vi.mock("../installs/custom-domains.functions", () => ({
   getDomainOptions: vi.fn(async () => ({
-    zones: [],
+    zones: [{ id: "z1", name: "example.com" }],
     inactiveZones: [],
     missing: [],
     noZones: false,
   })),
+  checkInstallHostname: server.checkInstallHostname,
 }));
 vi.mock("../installs/external-domains.functions", () => ({
   getExternalDomainOptions: vi.fn(async () => ({ gateway: null, accountZones: [] })),
@@ -165,5 +170,98 @@ describe("InstallForm, installing again", () => {
     expect(String((sent.secrets as Record<string, string>).ADMIN_PASSWORD).length).toBeGreaterThan(
       0,
     );
+  });
+
+  describe("with a custom domain from last time", () => {
+    const withDomain: InstallFormPrefill = {
+      ...PREFILL,
+      access: false,
+      domain: { kind: "custom", zoneId: "z1", hostname: "links.example.com" },
+    };
+
+    async function renderWithDomain() {
+      await act(async () =>
+        root.render(
+          <InstallForm
+            catalog={catalog}
+            varFields={[]}
+            subdomain="example"
+            canInstall
+            defaultWorkerName="links-2"
+            fixedWorkerName={false}
+            blockedReason={null}
+            requirementsConfirmed
+            prefill={withDomain}
+          />,
+        ),
+      );
+      // The domains are read, then the name is checked once typing would have paused.
+      for (let i = 0; i < 3; i++) {
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, HOSTNAME_CHECK_DELAY_MS + 50));
+        });
+      }
+    }
+
+    function readiness(): string {
+      return container.querySelector("[data-install-readiness]")?.textContent ?? "";
+    }
+
+    it("warns that a name with DNS records is left out, and still installs", async () => {
+      server.checkInstallHostname.mockResolvedValue({
+        state: "records",
+        records: [{ type: "CNAME", content: "elsewhere.example.net" }],
+      });
+      await renderWithDomain();
+      expect(server.checkInstallHostname).toHaveBeenLastCalledWith({
+        data: {
+          zoneId: "z1",
+          hostname: "links.example.com",
+          workerName: "links",
+          replaces: "old-install",
+        },
+      });
+      const tray = container.querySelector("[data-address-status]");
+      expect(tray?.getAttribute("data-address-status")).toBe("warning");
+      expect(tray?.textContent).toContain("This name already has a DNS record (CNAME).");
+      expect(container.textContent).toContain("The install will leave this name out");
+      expect(container.textContent).toContain("delete the records in Cloudflare, then install");
+      // Read with the address field: its description points at the note.
+      const field = container.querySelector<HTMLInputElement>('input[aria-label="Subdomain"]');
+      const described = (field?.getAttribute("aria-describedby") ?? "")
+        .split(" ")
+        .map((id) => document.getElementById(id)?.textContent ?? "")
+        .join(" ");
+      expect(described).toContain("delete the records in Cloudflare, then install");
+      // Where the app will answer: workers.dev, since the domain is left out.
+      expect(readiness()).toBe("Installs Links again at https://links.example.workers.dev.");
+      const button = [...container.querySelectorAll("button")].find(
+        (b) => b.textContent === "Install again",
+      );
+      expect(button?.disabled).toBe(false);
+      await act(async () => button?.click());
+      const call = server.startInstall.mock.calls.at(-1)?.[0] as
+        | { data: Record<string, unknown> }
+        | undefined;
+      // Installing anyway keeps the choice: the job adds the domain if the records are gone.
+      expect(call?.data.domain).toEqual({
+        kind: "custom",
+        zoneId: "z1",
+        hostname: "links.example.com",
+      });
+    });
+
+    it("holds Install for a name another app here uses", async () => {
+      server.checkInstallHostname.mockResolvedValue({ state: "other-app" });
+      await renderWithDomain();
+      expect(
+        container.querySelector("[data-address-status]")?.getAttribute("data-address-status"),
+      ).toBe("danger");
+      expect(readiness()).toBe("To install Links again, choose an address no other app here uses.");
+      const button = [...container.querySelectorAll("button")].find(
+        (b) => b.textContent === "Install again",
+      );
+      expect(button?.disabled).toBe(true);
+    });
   });
 });
