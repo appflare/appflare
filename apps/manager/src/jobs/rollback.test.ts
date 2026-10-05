@@ -116,6 +116,53 @@ beforeEach(async () => {
 });
 
 describe("rollback job", () => {
+  it("leaves alone a Workflow of another script that a row without an id names", async () => {
+    const old = await buildArtifactFixture({
+      bindings: [{ type: "workflow", name: "JOBS", workflow_name: "jobs", class_name: "Jobs" }],
+    });
+    await env.DB.prepare("UPDATE snapshots SET manifest_json = ?1 WHERE id = 'upd1'")
+      .bind(JSON.stringify(old.manifest))
+      .run();
+    await env.DB.prepare(
+      `INSERT INTO resources (id, install_id, kind, binding, name, cf_id, created_at)
+       VALUES ('i1:workflow:JOBS', ?1, 'workflow', 'JOBS', 'cut-jobs', NULL, 1)`,
+    )
+      .bind(INSTALL_ID)
+      .run();
+    const r = await rollback({ workflows: ["cut-jobs"] });
+    expect(r.error).toBeNull();
+    expect(r.job?.status).toBe("succeeded");
+    expect(r.fake.state.calls).toContain("GET /workflows/cut-jobs");
+    expect(r.fake.state.calls).not.toContain("PUT /workflows/cut-jobs");
+  });
+
+  it("puts each Workflow the snapshot's version defines back on that version's class", async () => {
+    const old = await buildArtifactFixture({
+      bindings: [{ type: "workflow", name: "JOBS", workflow_name: "jobs", class_name: "Jobs" }],
+    });
+    await env.DB.prepare("UPDATE snapshots SET manifest_json = ?1 WHERE id = 'upd1'")
+      .bind(JSON.stringify(old.manifest))
+      .run();
+    await env.DB.prepare(
+      `INSERT INTO resources (id, install_id, kind, binding, name, cf_id, created_at)
+       VALUES ('i1:workflow:JOBS', ?1, 'workflow', 'JOBS', 'cut-jobs', 'wf-cut-jobs', 1)`,
+    )
+      .bind(INSTALL_ID)
+      .run();
+    const r = await rollback({
+      workflows: ["cut-jobs"],
+      workflowDefs: { "cut-jobs": { script_name: "cut", class_name: "JobsV2" } },
+    });
+    expect(r.error).toBeNull();
+    expect(r.job?.status).toBe("succeeded");
+    expect(r.fake.state.workflowDefs).toEqual({
+      "cut-jobs": { script_name: "cut", class_name: "Jobs" },
+    });
+    expect(r.step.names.indexOf("deploy snapshot version")).toBeLessThan(
+      r.step.names.indexOf("update Workflow cut-jobs"),
+    );
+  });
+
   it("redeploys the snapshot's version and restores the install's catalog state, not its data", async () => {
     const r = await rollback();
     expect(r.error).toBeNull();

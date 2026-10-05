@@ -146,6 +146,12 @@ export type {
   PutSecretArgs,
   UploadScriptArgs,
 } from "./namespaces/workers";
+export {
+  isWorkflowCronPaidOnly,
+  isWorkflowNotFound,
+  WORKFLOW_CRON_REQUIRES_PAID_PLAN_CODE,
+  WORKFLOW_NOT_FOUND_CODE,
+} from "./namespaces/workflows";
 
 export type {
   CreateDnsRecordArgs,

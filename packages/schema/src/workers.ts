@@ -98,11 +98,12 @@ export function bindingEntryRefs(binding: WorkerBinding): string[] {
 
 /**
  * Whether a `workflow` binding defines its Workflow: it names no script, so
- * uploading its Worker creates (or updates) the Workflow to run that Worker's
- * class. One whose `script_name` names another Worker runs the Workflow that
- * Worker defines instead, as wrangler 4.136.2 tells them apart
- * (`checkWorkflowConflicts`: a binding with no `script_name`, or the
- * Worker's own name, is deployed with it).
+ * the Workflow runs that Worker's class, and whoever deploys the Worker
+ * creates (or updates) it with `PUT /workflows/{name}` (the upload alone
+ * creates none). One whose `script_name` names another Worker runs the
+ * Workflow that Worker defines instead, as wrangler 4.136.2 tells them apart
+ * (`triggersDeploy`: a binding with no `script_name`, or the Worker's own
+ * name, gets that call after the deploy).
  */
 export function definesWorkflow(binding: WorkerBinding): boolean {
   return (

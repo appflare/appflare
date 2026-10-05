@@ -102,6 +102,14 @@ export interface ResourceView {
   cfId: string | null;
   /** Created by the app's own installer, which alone deletes it (self-deploying tier). */
   managedByApp: boolean;
+  /**
+   * A Workflow of an installed app that is not known to be set up in
+   * Cloudflare: recorded without its Cloudflare id, as earlier managers left
+   * them, or as an update or rollback leaves one Cloudflare refused to
+   * update. The cron tries again (installs/workflow-repair.server.ts), unless
+   * a Workflow of that name runs another script.
+   */
+  missing: boolean;
 }
 
 /** A custom domain of the install (a `domain` resource), or its wildcard domain. */
@@ -344,6 +352,12 @@ export async function readInstallDetail(installId: string): Promise<InstallDetai
     name: r.name,
     cfId: r.cf_id,
     managedByApp: r.managed_by === "app",
+    missing:
+      r.kind === "workflow" &&
+      r.cf_id === null &&
+      r.managed_by !== "app" &&
+      r.retained_at === null &&
+      row.status === "installed",
   });
   const live = resourceRows.filter((r) => r.retained_at === null);
   const activeJob = jobRows.find((j) => j.status === "queued" || j.status === "running");

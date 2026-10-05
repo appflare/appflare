@@ -127,11 +127,11 @@ export type ResourceBindingPlan =
     });
 
 /**
- * A `workflow` binding. Workflow names are account-wide, and uploading a script
- * whose binding names another script's Workflow reassigns that Workflow to it
- * (wrangler warns "will reassign these workflows"). So the install renames each
- * one like any other resource, `<workerName>-<workflow_name>`, and checks the
- * name is free first.
+ * A `workflow` binding. Workflow names are account-wide, and the call that
+ * creates a Workflow for a script (`PUT /workflows/{name}`) takes one of that
+ * name from another script (wrangler warns "will reassign these workflows").
+ * So the install renames each one like any other resource,
+ * `<workerName>-<workflow_name>`, and checks the name is free first.
  */
 export interface WorkflowPlan {
   binding: string;
@@ -142,9 +142,10 @@ export interface WorkflowPlan {
 
 /**
  * A `workflow` binding that runs a Workflow another Worker of the app defines
- * (its `script_name` is `{{workerName:<name>}}`): that Worker's upload creates
- * the Workflow, which is planned and recorded once, under the binding of the
- * Worker that defines it; this binding is sent with the same Workflow name.
+ * (its `script_name` is `{{workerName:<name>}}`): the Workflow is created for
+ * that Worker once it is uploaded, planned and recorded once, under the
+ * binding of the Worker that defines it; this binding is sent with the same
+ * Workflow name.
  */
 export interface WorkflowRef {
   binding: string;
@@ -369,8 +370,8 @@ export function planBindings(
       });
     } else if (binding.type === "workflow") {
       const upstream = upstreamWorkflowName(binding);
-      // A Workflow another Worker of the app defines: that Worker's upload
-      // creates it, and the upload points this binding at that Worker.
+      // A Workflow another Worker of the app defines: it is created for that
+      // Worker, and the upload points this binding at that Worker.
       if (entryWorkerRefName(binding.script_name) !== null) {
         workflowRuns.push({ binding: binding.name, upstream });
         continue;
