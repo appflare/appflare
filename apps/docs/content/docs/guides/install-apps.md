@@ -5,68 +5,86 @@ description: The install form, secrets, what the install job does, and post-inst
 
 Open the app's page in **Catalog**. Only admins can install apps.
 
-![Install form with plain setting names and an App address chip](/screenshots/install-app-settings.png)
+![Install form for OpenSEO: the address with its status and Cloudflare Access, what the app needs, and its optional settings folded](/screenshots/install-app-settings.png)
 
 ## The install form
 
-**Worker name.** The app is served at
-`https://<worker-name>.<your-subdomain>.workers.dev`, and its resources are named
-after it. Use 1 to 54 lowercase letters, digits, or dashes, not starting or ending
-with a dash. The name must not belong to an existing Worker in the account: Appflare
-never takes over a Worker it did not create.
+The form comes in groups: the app's address and who can open it first, then what the
+app needs from you, then its optional settings, folded. Its footer says what is left
+to fill in before you can install, or the address the app will be installed at.
 
-**Name.** How this install is listed in Appflare. It defaults to the Worker name.
+**Address.** One field that reads as the address the app will have:
+`https://`, the name you type, and the domain, which you pick from the list at the
+right end of the field.
 
-**Secrets.** Stored as encrypted secrets on the app's Worker. Appflare keeps only
-their names. Some secrets are generated for you: the field is filled with a random
-32-character value (or, for an app that sends push notifications, a new VAPID
-private key) that you can copy, replace, or regenerate. Copy it before you
-install. It is shown only on this form and cannot be read back afterwards. A
-secret of several lines, such as a PEM private key, gets a text area: paste it with
-its line breaks. Its text shows while you enter it and cannot be read back once
-the app is installed. A secret
-marked optional is one the app works without: it is left unset unless you turn on
-**Set it now**, and you can set or remove it later in the app's
-[settings](/guides/settings/#remove-a-secret).
+- **Your workers.dev address** (the default). The name is the app's Worker name, and
+  the app answers at `https://<worker-name>.<your-subdomain>.workers.dev`. Use 1 to 54
+  lowercase letters, digits, or dashes, not starting or ending with a dash. The line
+  under the field says **Available**, or why the name cannot be used: it belongs to
+  another Worker in the account (Appflare never takes over a Worker it did not create)
+  or to an app installed here.
+- **One of your domains**, a [custom domain](/guides/custom-domains/). The name
+  starts as the Worker name, so the app answers at, say, `https://open-seo.example.com`.
+  Leave the name empty to give the app the domain itself. The list has a search box,
+  so an account with many domains finds one by typing. The app's Worker name then
+  shows on its own line; **Change** edits it.
+- **Another domain, managed elsewhere**, an [external domain](/guides/external-domains/):
+  type the whole hostname.
+
+The install adds a domain once the app runs. A domain that cannot be added then does
+not fail the install; the log says why, and you can add it later on the app's
+**Domains and email** tab. An app that needs every name under one hostname is offered
+your domains as [wildcard domains](/guides/custom-domains/#wildcard-domains) and no
+other domain. A [self-deploying app](/guides/builds/#self-deploying-apps) has no
+address field: its own installer decides where its Workers answer.
+
+**Protect with Cloudflare Access.** Puts every address of the app behind a
+Cloudflare sign-in that lets in only Appflare's users. The form says how many people
+that is and which paths stay public; **More** shows how they sign in. It starts
+ticked when the app's catalog entry recommends it, and is ticked and marked
+**Required** when the entry requires it. While the account cannot protect apps, it is
+disabled and says why. See [Protect apps with Cloudflare Access](/guides/protect-apps/).
+
+**What the app needs.** The secrets the app cannot run without and the settings that
+have no default, with a count of how many are still empty. Secrets are stored as
+encrypted secrets on the app's Worker; Appflare keeps only their names. Some secrets
+are generated for you and marked **Generated**: the field holds a random
+32-character value (or, for an app that sends push notifications, a new VAPID private
+key) that you can copy or replace. The small arrows inside the badge make a new one.
+Copy it before you install. It is shown only on this form and cannot be read back
+afterwards. A secret of several lines, such as a PEM private key, gets a text area:
+paste it with its line breaks. Its text shows while you enter it and cannot be read
+back once the app is installed.
+
+**Optional settings.** Folded, and naming what it holds. It holds:
+
+- **Name in Appflare**, how this install is listed. Leave it empty to use the app's name.
+- Optional secrets, ones the app works without. Leave one empty and it is not set;
+  you can set or remove it later in the app's [settings](/guides/settings/#remove-a-secret).
+- Settings that have a default or are optional, for example a home page URL. A setting
+  starts with the app's default, and only settings you change are stored; the others
+  follow the app's default on each update. Settings marked JSON take a JSON value, such
+  as `["inbox@example.com"]`, and the form checks it before you can install. A setting
+  with a fixed set of values shows them as choices: cards for up to four, a dropdown
+  for more.
+
+The group opens by itself when it holds something already, such as on
+[Install again](#what-the-install-job-does), or when a value in it cannot be used.
+
+Settings that Appflare fills in itself are not on the form: the ones made from the
+app's address, its Worker name, your account ID or its Cloudflare Access application,
+and those derived from a secret, such as the public key of a VAPID private key. The
+app gets their defaults, and its [settings](/guides/settings/) show them, where you
+can change them. A setting that keeps the app's address follows the Worker name you
+chose and follows the app's domain if its
+[workers.dev URL is turned off](/guides/custom-domains/#turn-off-the-workersdev-url)
+later.
 
 Fields show the app's own labels. The name the app reads each value under (its
 variable or secret name) shows when you hover over a label, or next to every label
 once you turn on **Show technical names** at the top of the form. Long help shows
 its first sentence; **More** shows the rest. Some fields link to where you get the
 value, such as **Get a key** for an API key; the link opens in a new tab.
-
-**Settings.** Variables on the app's Worker, for example a home page URL. A setting
-starts with the app's default. Parts of it that Appflare fills in, such as the app's
-address, its Worker name or your account ID, show as chips ("App address",
-"Account ID"). Hover over, click or tap a chip's name to see what it becomes. A chip
-is removed whole with Backspace or Delete, or with its ×, and **Insert** on the field
-adds one back. The setting keeps
-the chip, not its current value, so the app's address follows the Worker name you
-typed, and follows the app's domain if its
-[workers.dev URL is turned off](/guides/custom-domains/#turn-off-the-workersdev-url)
-later (a "workers.dev address" chip always stays the workers.dev URL). Only settings
-you change are stored; the others follow the app's default on
-each update. Settings marked JSON take a JSON value, such as `["inbox@example.com"]`,
-and the form checks it before you can install. A setting with a fixed set of values
-shows them as choices: cards for up to four, a dropdown for more. A setting derived
-from a secret, such as the public key of a VAPID private key, is read-only: Appflare
-computes it at install, and again whenever that secret gets a new value.
-
-**Address.** Where the app answers besides its `workers.dev` URL: **workers.dev
-only** (the default), a [custom domain](/guides/custom-domains/) in one of this
-account's domains, or an [external domain](/guides/external-domains/) whose DNS is
-managed elsewhere. The install adds the domain once the app runs. A domain that
-cannot be added then does not fail the install; the log says why, and you can add it
-later on the app's **Domains and email** tab. A
-[self-deploying app](/guides/builds/#self-deploying-apps) has no **Address**: its
-own installer decides where its Workers answer.
-
-**Protect with Cloudflare Access.** Puts every address of the app behind a
-Cloudflare sign-in that lets in only Appflare's users. The form says how many people
-that is, how they sign in, and which paths stay public. It starts ticked when the
-app's catalog entry recommends it, and is ticked and fixed when the entry requires
-it. While the account cannot protect apps, it is disabled and says why. See
-[Protect apps with Cloudflare Access](/guides/protect-apps/).
 
 Select **Install**. The manager starts an install job and opens its live log.
 
@@ -165,10 +183,14 @@ plan always comes first.
 - On **Workers Paid**, the install form does not ask you to confirm Workers Paid for
   apps that need it, and installs and updates skip the count of the account's cron
   triggers.
-- On **Workers Free**, the install form asks **This account is on Workers Paid** for
-  each app that needs Workers Paid, and offers it as an option for an app with cron
-  triggers. Ticking it also offers **Remember this for the account**, which records
-  Workers Paid as the **Workers plan** in **Settings > Your account**, unless the plan was detected.
+- When Appflare cannot tell the plan, an app that needs Workers Paid lists the
+  **Workers plan** in **Before you install**, above the form. Ticking **My account has
+  these** there is the confirmation; the form does not ask again. **Choose plan** in that
+  box records the plan for the account, so later installs stop asking.
+- On **Workers Free**, the install form offers **This account is on Workers Paid** as an
+  option for an app with cron triggers. Ticking it also offers **Remember this for the
+  account**, which records Workers Paid as the **Workers plan** in **Settings > Your
+  account**, unless the plan was detected.
 
 The catalog page and the install form show how many cron triggers an app uses. The
 update dialog shows it too when a new version adds cron triggers.

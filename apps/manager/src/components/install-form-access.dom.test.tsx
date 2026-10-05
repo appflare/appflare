@@ -25,7 +25,7 @@ vi.mock("../installs/access-change.functions", () => ({
 }));
 vi.mock("../installs/worker-names.functions", () => ({ listTakenWorkerNames: vi.fn() }));
 // The address choice reads the account's zones; workers.dev only is all this needs.
-vi.mock("./install-domain-fields", () => ({ InstallDomainFields: () => null }));
+vi.mock("./install-address-field", () => ({ InstallAddressField: () => null }));
 vi.mock("../installs/email-routing.functions", () => ({
   getEmailZoneOptions: vi.fn(),
   previewEmailRouting: vi.fn(),

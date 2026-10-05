@@ -9,6 +9,7 @@ import {
   TECHNICAL_NAMES_LABEL,
   TechnicalNamesProvider,
   TechnicalNamesSwitch,
+  withoutOptionalPrefix,
 } from "./field-label";
 
 function render(node: ReactNode, showNames = false): string {
@@ -68,5 +69,39 @@ describe("field help", () => {
     expect(html).not.toContain("It must be the full URL");
     expect(html).toContain('aria-expanded="false"');
     expect(html).toContain(">More<");
+  });
+});
+
+describe("help of an optional field", () => {
+  const google =
+    "Optional. A Web application client from the Google Cloud Console with the Search Console API (and, for Analytics, the Analytics APIs) enabled. Its authorized redirect URIs are the app's address plus /api/gsc/oauth/callback and /api/ga4/oauth/callback.";
+
+  it("drops a leading Optional. or Optional: that repeats the label", () => {
+    expect(withoutOptionalPrefix("Optional. The base URL.")).toBe("The base URL.");
+    expect(withoutOptionalPrefix("optional: the base URL.")).toBe("The base URL.");
+    // "Optional" as a word of the sentence stays.
+    expect(withoutOptionalPrefix("Optional keys that may only read.")).toBe(
+      "Optional keys that may only read.",
+    );
+    expect(withoutOptionalPrefix("Optional, for sending.")).toBe("Optional, for sending.");
+  });
+
+  it("shows the help's first real sentence when the field is labelled optional", () => {
+    const html = renderToStaticMarkup(createElement(FieldHelp, { text: google, optional: true }));
+    expect(html).toContain("A Web application client from the Google Cloud Console");
+    expect(html).not.toMatch(/>Optional\./);
+  });
+
+  it("never folds help down to a word or two", () => {
+    const { short, more } = splitHelp(google);
+    expect(short.startsWith("Optional. A Web application client")).toBe(true);
+    expect(more).toMatch(/^Its authorized redirect URIs/);
+    const shortTail = `Optional. ${"A long sentence that goes on. ".repeat(4)}Done here now.`;
+    expect(splitHelp(shortTail).short.split(/\s+/).length).toBeGreaterThanOrEqual(4);
+  });
+
+  it("shows the whole help when little would be left behind More", () => {
+    const text = `This one sentence carries ${"the whole of the field's meaning, ".repeat(4)}and is long. Short end.`;
+    expect(splitHelp(text)).toEqual({ short: text.trim(), more: null });
   });
 });

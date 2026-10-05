@@ -125,11 +125,15 @@ describe("installAgainPrefill", () => {
 });
 
 describe("reenterNote", () => {
-  it("names what must be entered again, and that generated secrets are new", () => {
-    expect(reenterNote(baseCatalog())).toBe(
-      "Appflare never stores the values of secrets, so enter them again. Generated secrets have new values.",
-    );
-    expect(reenterNote(baseCatalog({ secrets: [] }))).toBeNull();
+  it("names database connections only: secrets are said next to their fields", () => {
+    expect(reenterNote(baseCatalog())).toBeNull();
+    expect(
+      reenterNote(
+        baseCatalog({
+          resources: { hyperdrive: { DB: { protocol: "postgres" } } },
+        } as Parameters<typeof baseCatalog>[0]),
+      ),
+    ).toBe("Appflare never stores database connection strings, so enter them again.");
   });
 });
 

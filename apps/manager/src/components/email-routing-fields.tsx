@@ -20,6 +20,10 @@ import { useAccountId } from "./use-account-id";
 const ROUTING_RECORDS =
   "MX records for route1, route2 and route3.mx.cloudflare.net, an SPF record (v=spf1 include:_spf.mx.cloudflare.net ~all) and a DKIM record";
 
+/** What the Email Routing fields say first: why the app asks for a domain. */
+export const EMAIL_ROUTING_INTRO =
+  "This app receives email through Cloudflare Email Routing. Choose the domain whose email it should receive; it must use Cloudflare DNS.";
+
 /**
  * The install form's Email Routing fields, for an app whose manifest sets
  * `install.emailRouting`: a zone of the account (the active zones the token
@@ -37,6 +41,7 @@ export function EmailRoutingFields({
   onZoneChange,
   onReadyChange,
   headingLevel = "h3",
+  withHeading = true,
 }: {
   slug: string;
   workerName: string;
@@ -48,6 +53,8 @@ export function EmailRoutingFields({
   onReadyChange(ready: boolean): void;
   /** The fields' heading, one level below the section they sit in. */
   headingLevel?: "h3" | "h4";
+  /** False when the form gives the fields a heading of its own, with {@link EMAIL_ROUTING_INTRO}. */
+  withHeading?: boolean;
 }) {
   const [options, setOptions] = useState<EmailZoneOptions | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -113,15 +120,16 @@ export function EmailRoutingFields({
 
   return (
     <div className="grid gap-4">
-      <div className="grid gap-1.5">
-        <Text bold as={headingLevel}>
-          Email
-        </Text>
-        <Text variant="secondary" size="sm">
-          This app receives email through Cloudflare Email Routing. Choose the domain whose email it
-          should receive; it must use Cloudflare DNS.
-        </Text>
-      </div>
+      {withHeading && (
+        <div className="grid gap-1.5">
+          <Text bold as={headingLevel}>
+            Email
+          </Text>
+          <Text variant="secondary" size="sm">
+            {EMAIL_ROUTING_INTRO}
+          </Text>
+        </div>
+      )}
       {options === null && loadError === null && (
         <div className="flex items-center gap-2">
           <AppflareLoader size="sm" />

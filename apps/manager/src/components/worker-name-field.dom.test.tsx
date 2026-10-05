@@ -8,8 +8,12 @@ const server = vi.hoisted(() => ({
   listTakenWorkerNames: vi.fn<() => Promise<TakenWorkerNames>>(),
 }));
 vi.mock("../installs/worker-names.functions", () => server);
+// The domains are only read for an admin who can install; this form never does.
+vi.mock("../installs/custom-domains.functions", () => ({ getDomainOptions: vi.fn() }));
+vi.mock("../installs/external-domains.functions", () => ({ getExternalDomainOptions: vi.fn() }));
 
-const { UNCHECKED_NOTE, useWorkerNameCheck, WorkerNameField } = await import("./worker-name-field");
+const { UNCHECKED_NOTE, useWorkerNameCheck } = await import("./worker-name-field");
+const { InstallAddressField } = await import("./install-address-field");
 const { WORKER_NAME_CHECK_DELAY_MS, ACCOUNT_NAME_MESSAGE, INSTALLED_NAME_MESSAGE } = await import(
   "../installs/worker-name-check"
 );
@@ -37,35 +41,45 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
-/** The form's use of the field: the name in state, checked while `enabled`. */
+/** The install form's use of the address: the name in state, checked while `enabled`. */
 function NameForm({ start, enabled = true }: { start: string; enabled?: boolean }) {
   const [name, setName] = useState(start);
   const check = useWorkerNameCheck(name, enabled);
   return (
     <TooltipProvider>
-      <WorkerNameField
-        value={name}
-        onChange={setName}
+      <InstallAddressField
+        appName="Cut"
+        workerName={name}
+        onWorkerNameChange={setName}
         check={check}
+        fixedWorkerName={!enabled}
         subdomain="acme"
-        description="The app is served at this address."
-        readOnly={!enabled}
+        withDomains={false}
+        wildcard={null}
+        otherWorkers={[]}
+        disabled={false}
+        onDomainChange={noop}
       />
     </TooltipProvider>
   );
 }
 
+function noop() {}
+
 function render(start: string, enabled = true) {
   act(() => root.render(<NameForm start={start} enabled={enabled} />));
 }
 
-/** The state the end of the field shows, if any. */
-function shown(): string | null {
-  return container.querySelector("[data-name-check]")?.getAttribute("data-name-check") ?? null;
+/** The state the line under the address shows: success, danger, neutral, or nothing. */
+function tone(): string | null {
+  return (
+    container.querySelector("[data-address-status]")?.getAttribute("data-address-status") ?? null
+  );
 }
 
+/** What the tray under the address says about the name (announced as it changes). */
 function status(): string {
-  return container.querySelector("[data-name-status]")?.textContent ?? "";
+  return container.querySelector("[data-address-status-text]")?.textContent ?? "";
 }
 
 function type(value: string) {
@@ -86,37 +100,39 @@ async function pause() {
 }
 
 describe("the Worker name's live check", () => {
-  it("shows a spinner while checking, then a check mark for a free name", async () => {
+  it("says it is checking, then Available in green for a free name, in the same tray", async () => {
     render("cut-2");
-    expect(shown()).toBe("checking");
-    expect(status()).toBe("Checking the name.");
+    expect(tone()).toBe("pending");
+    expect(status()).toBe("Checking the name…");
     await pause();
-    expect(shown()).toBe("free");
-    expect(status()).toBe("The name is free.");
+    expect(tone()).toBe("success");
+    expect(status()).toBe("Available");
+    // The address reads whole: the name, then the account's workers.dev subdomain.
+    expect(container.textContent).toContain("acme.workers.dev");
   });
 
   it("says a name is taken by another Worker in the account", async () => {
     render("cut-2");
     await pause();
     type("blog");
-    expect(shown()).toBe("checking");
+    expect(tone()).toBe("pending");
     await pause();
-    expect(shown()).toBe("taken");
-    expect(container.textContent).toContain(ACCOUNT_NAME_MESSAGE);
+    expect(tone()).toBe("danger");
+    expect(status()).toBe(ACCOUNT_NAME_MESSAGE);
   });
 
   it("says a name is taken by an app installed here", async () => {
     render("cut");
     await pause();
-    expect(shown()).toBe("taken");
-    expect(container.textContent).toContain(INSTALLED_NAME_MESSAGE);
+    expect(tone()).toBe("danger");
+    expect(status()).toBe(INSTALLED_NAME_MESSAGE);
   });
 
   it("refuses a name that breaks the rules at once, without asking the server", async () => {
     render("cut-2");
     type("Cut Links");
-    expect(shown()).toBe("invalid");
-    expect(container.textContent).toContain("Use 1 to 54 lowercase letters");
+    expect(tone()).toBe("danger");
+    expect(status()).toContain("Use 1 to 54 lowercase letters");
     await pause();
     expect(server.listTakenWorkerNames).not.toHaveBeenCalled();
   });
@@ -132,28 +148,26 @@ describe("the Worker name's live check", () => {
     type("cut-5");
     await pause();
     expect(server.listTakenWorkerNames).toHaveBeenCalledTimes(1);
-    expect(shown()).toBe("free");
+    expect(tone()).toBe("success");
   });
 
   it("says the account could not be checked when its names cannot be read, and asks again on the next pause", async () => {
     server.listTakenWorkerNames.mockRejectedValueOnce(new Error("offline"));
     render("cut-2");
     await pause();
-    expect(shown()).toBeNull();
-    expect(container.textContent).not.toContain("Use 1 to 54");
-    expect(container.querySelector("[data-name-unchecked]")?.textContent).toBe(UNCHECKED_NOTE);
+    expect(tone()).toBe("neutral");
     expect(status()).toBe(UNCHECKED_NOTE);
     type("cut-3");
     await pause();
-    expect(shown()).toBe("free");
-    expect(container.querySelector("[data-name-unchecked]")).toBeNull();
+    expect(tone()).toBe("success");
     expect(server.listTakenWorkerNames).toHaveBeenCalledTimes(2);
   });
 
-  it("checks nothing for a name that cannot be changed", async () => {
+  it("checks nothing for a name that cannot be changed, and says why", async () => {
     render("cut", false);
     await pause();
-    expect(shown()).toBeNull();
+    expect(tone()).toBe("neutral");
+    expect(status()).toContain("Cut only works under this name");
     expect(server.listTakenWorkerNames).not.toHaveBeenCalled();
   });
 });

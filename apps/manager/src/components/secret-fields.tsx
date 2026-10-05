@@ -9,12 +9,13 @@ import {
   isOptionalSecret,
   isSeedOnly,
 } from "@appflare/schema";
-import { Button, Input, InputArea, Label, SensitiveInput, Switch, Text } from "@cloudflare/kumo";
+import { Badge, Button, Input, InputArea, Label, SensitiveInput } from "@cloudflare/kumo";
 import { ArrowsClockwiseIcon } from "@phosphor-icons/react";
-import type { ReactNode } from "react";
+import { type ReactNode, useId } from "react";
 import { generateTemporaryPassword } from "../auth/temporary-password";
 import { GENERATED_SECRET_LENGTH } from "../installs/install-input";
 import { FieldLabel, fieldDescription } from "./field-label";
+import { Tooltip } from "./tooltip";
 
 /**
  * One field per catalog secret, shared by the install form and the update
@@ -25,11 +26,14 @@ import { FieldLabel, fieldDescription } from "./field-label";
  * prefilled once with a fresh value the
  * admin can copy now (it is shown only here) or regenerate; a multi-line one
  * (`multiline`) is a text area that keeps its line breaks; the others are
- * password fields the admin fills in. An optional secret (`optional: true`)
- * is left unset behind a "Set it now" switch; turning it on opens its field.
+ * password fields the admin fills in. Every field is one label, one control
+ * and one line of help under it.
  *
- * Values are keyed by secret name. An optional secret has no key while it is
- * left unset, so the form sends nothing for it. A derived secret (the
+ * An optional secret (`optional: true`) is the same single field, marked
+ * "(optional)": left empty, it is not set. Values are keyed by secret name,
+ * and an optional secret has no key while its field is empty, so the form
+ * sends nothing for it (the server would skip an empty value as well). An
+ * optional generated secret starts empty, with a Generate button. A derived secret (the
  * catalog's `derive`) gets no field: the server computes it from its source,
  * whose field says so. A seed-only secret (the catalog's `seedOnly`) is only
  * ever in the install form, whose field says it is used once and not kept.
@@ -106,6 +110,7 @@ export function secretsComplete(
 
 export function SecretFields({
   secrets,
+  only,
   vars = [],
   held = [],
   values,
@@ -114,6 +119,12 @@ export function SecretFields({
   fieldExtras = {},
 }: {
   secrets: readonly CatalogSecret[];
+  /**
+   * The names of the secrets to show, for a form that shows them in groups;
+   * every secret the admin enters when left out. `secrets` stays the whole
+   * list, which says what is derived from what.
+   */
+  only?: readonly string[];
   /** Secrets the Worker already has, asked for again by an update; their fields start empty. */
   held?: readonly string[];
   /** The catalog's vars, for the vars derived from a secret. */
@@ -129,19 +140,24 @@ export function SecretFields({
    */
   fieldExtras?: Readonly<Record<string, ReactNode>>;
 }) {
-  return enteredSecrets(secrets).map((secret) => {
-    const value = values[secret.name];
-    const derived = derivedNote(secrets, secret.name, vars);
-    const isHeld = held.includes(secret.name);
-    const extra = fieldExtras[secret.name];
-    if (!isOptionalSecret(secret)) {
+  return enteredSecrets(secrets)
+    .filter((secret) => only === undefined || only.includes(secret.name))
+    .map((secret) => {
+      const value = values[secret.name];
+      const derived = derivedNote(secrets, secret.name, vars);
+      const isHeld = held.includes(secret.name);
+      const optional = isOptionalSecret(secret);
       return (
         <div key={secret.name} className="grid gap-3">
           <SecretField
             secret={secret}
             value={value ?? ""}
-            onChange={(next) => onChange(secret.name, next)}
+            // An optional secret whose field is emptied is left unset.
+            onChange={(next) =>
+              onChange(secret.name, optional && next.length === 0 ? undefined : next)
+            }
             after={after}
+            optional={optional}
             note={
               [
                 derived,
@@ -151,49 +167,11 @@ export function SecretFields({
                 .filter((t) => t !== undefined)
                 .join(" ") || undefined
             }
-            held={isHeld}
           />
-          {extra}
+          {fieldExtras[secret.name]}
         </div>
       );
-    }
-    return (
-      <div key={secret.name} className="grid gap-2">
-        <div className="grid gap-1">
-          <Label showOptional>
-            <FieldLabel label={secret.label} name={secret.name} />
-          </Label>
-          {(secret.help !== undefined || secret.link !== undefined) && (
-            <Text variant="secondary" size="sm">
-              {fieldDescription({ help: secret.help, link: secret.link })}
-            </Text>
-          )}
-        </div>
-        <Switch
-          label="Set it now"
-          checked={value !== undefined}
-          onCheckedChange={(on: boolean) =>
-            onChange(
-              secret.name,
-              on ? (secret.generate ? generatedSecret(secret.generate) : "") : undefined,
-            )
-          }
-        />
-        {value !== undefined && (
-          <>
-            <SecretField
-              secret={secret}
-              withHelp={false}
-              value={value}
-              onChange={(next) => onChange(secret.name, next)}
-              after={after}
-            />
-            {extra}
-          </>
-        )}
-      </div>
-    );
-  });
+    });
 }
 
 /**
@@ -236,6 +214,7 @@ export function MultilineSecretInput({
   onChange,
   description,
   disabled = false,
+  required = true,
 }: {
   label: ReactNode;
   value: string;
@@ -243,12 +222,14 @@ export function MultilineSecretInput({
   /** Help before the note that the value is hidden once saved. */
   description?: ReactNode;
   disabled?: boolean;
+  /** False marks the field "(optional)". */
+  required?: boolean;
 }) {
   return (
     <InputArea
       label={label}
       value={value}
-      required
+      required={required}
       disabled={disabled}
       autoResize
       minRows={6}
@@ -285,53 +266,57 @@ function SecretField({
   value,
   onChange,
   after,
-  withHelp = true,
+  optional = false,
   note,
-  held = false,
 }: {
   secret: CatalogSecret;
   value: string;
   onChange(value: string): void;
   after: string;
-  /** Show the catalog's help and link under the field (off when the switch above already shows them). */
-  withHelp?: boolean;
+  /** Marked "(optional)"; empty means not set. */
+  optional?: boolean;
   /** A sentence after the help, such as which secrets are derived from this one. */
   note?: string | undefined;
-  /** The Worker has it already: the admin keeps it by entering it, or chooses a new one. */
-  held?: boolean;
 }) {
-  const label = <FieldLabel label={secret.label} name={secret.name} />;
-  const help = withHelp ? secret.help : undefined;
-  const link = withHelp ? secret.link : undefined;
+  // Its state beside the label: filled in for the admin, and used once and not kept.
+  const badges = [
+    ...(secret.generate && value.length > 0 ? ["Generated"] : []),
+    ...(isSeedOnly(secret) ? ["Used once"] : []),
+  ];
+  const label = (
+    <span className="inline-flex flex-wrap items-center gap-x-2 gap-y-1">
+      <FieldLabel label={secret.label} name={secret.name} />
+      {badges.map((badge) => (
+        <Badge key={badge} variant="secondary">
+          {badge}
+        </Badge>
+      ))}
+    </span>
+  );
   const generatedNote =
-    !secret.generate || (held && value.length === 0)
+    !secret.generate || value.length === 0
       ? undefined
       : isSeedOnly(secret)
-        ? "Generated for you; the install's page shows it once more."
-        : `Generated for you. Copy it now if you need it: it cannot be shown again after ${after}.`;
+        ? "The install's page shows it once more."
+        : `Copy it now if you need it: it cannot be shown again after ${after}.`;
   const notes = [note, generatedNote].filter((t) => t !== undefined).join(" ") || undefined;
-  const description = fieldDescription({ help, note: notes, link });
+  // The help, its note and the catalog's link (where to get the value), one paragraph.
+  const help = fieldDescription({
+    help: secret.help,
+    note: notes,
+    link: secret.link,
+    optional,
+  });
   if (secret.generate) {
     return (
-      <div className="grid gap-2">
-        <SensitiveInput
-          label={label}
-          value={value}
-          onValueChange={(next: string) => onChange(next)}
-          description={description}
-        />
-        <div>
-          <Button
-            type="button"
-            variant="secondary"
-            size="sm"
-            icon={<ArrowsClockwiseIcon />}
-            onClick={() => onChange(generatedSecret(secret.generate))}
-          >
-            {value.length === 0 ? "Generate" : "Regenerate"}
-          </Button>
-        </div>
-      </div>
+      <GeneratedSecretField
+        secret={secret}
+        value={value}
+        onChange={onChange}
+        optional={optional}
+        help={help}
+        regenerate={() => onChange(generatedSecret(secret.generate))}
+      />
     );
   }
   if (isMultilineSecret(secret)) {
@@ -340,7 +325,8 @@ function SecretField({
         label={label}
         value={value}
         onChange={onChange}
-        description={description}
+        description={help}
+        required={!optional}
       />
     );
   }
@@ -351,9 +337,109 @@ function SecretField({
       autoComplete="off"
       spellCheck={false}
       passwordManagerIgnore
-      required
+      required={!optional}
+      value={value}
       onChange={(e) => onChange(e.currentTarget.value)}
-      description={description}
+      description={help}
     />
+  );
+}
+
+/**
+ * A generated secret's field, laid out as Kumo's Field lays one out (label,
+ * control, help), with its label row built here so the "Generated" badge
+ * and the refresh button inside it sit beside the label, not inside it: a
+ * button inside a `<label>` would take the label's clicks.
+ */
+function GeneratedSecretField({
+  secret,
+  value,
+  onChange,
+  optional,
+  help,
+  regenerate,
+}: {
+  secret: CatalogSecret;
+  value: string;
+  onChange(value: string): void;
+  optional: boolean;
+  help: ReactNode;
+  regenerate(): void;
+}) {
+  const inputId = useId();
+  const helpId = useId();
+  return (
+    <div data-generated-field="" className="grid gap-2">
+      <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+        <Label htmlFor={inputId} showOptional={optional}>
+          <FieldLabel label={secret.label} name={secret.name} />
+        </Label>
+        {value.length > 0 ? (
+          <GeneratedBadge fieldLabel={secret.label} onRegenerate={regenerate} />
+        ) : (
+          // An optional generated secret starts empty: generating it is the way to set one.
+          <Button
+            type="button"
+            variant="secondary"
+            size="xs"
+            icon={<ArrowsClockwiseIcon />}
+            onClick={regenerate}
+          >
+            Generate
+          </Button>
+        )}
+        {isSeedOnly(secret) && <Badge variant="secondary">Used once</Badge>}
+      </div>
+      <SensitiveInput
+        id={inputId}
+        aria-describedby={help === undefined ? undefined : helpId}
+        value={value}
+        required={!optional}
+        onValueChange={(next: string) => onChange(next)}
+      />
+      {help !== undefined && (
+        <p id={helpId} className="m-0 text-kumo-subtle text-sm leading-snug">
+          {help}
+        </p>
+      )}
+    </div>
+  );
+}
+
+/**
+ * "Generated", with a thin divider and a small refresh button inside the
+ * badge: making a new value is a niche need, so it is quiet. The button's
+ * Kumo tooltip says "Regenerate"; its name says which field.
+ */
+export function GeneratedBadge({
+  fieldLabel,
+  onRegenerate,
+}: {
+  fieldLabel: string;
+  onRegenerate(): void;
+}) {
+  return (
+    // Kumo's Badge takes no data attributes; the wrapper marks it for tests and styles.
+    <span data-secret-badge="Generated" className="inline-flex">
+      <Badge variant="secondary" className="gap-0 py-0 pr-0.5">
+        <span className="py-0.5">Generated</span>
+        <span aria-hidden className="mx-1.5 h-3 w-px bg-current opacity-25" />
+        <Tooltip
+          content="Regenerate"
+          render={
+            <Button
+              type="button"
+              variant="ghost"
+              size="xs"
+              shape="circle"
+              aria-label={`Regenerate ${fieldLabel}`}
+              icon={<ArrowsClockwiseIcon />}
+              onClick={onRegenerate}
+              className="size-5 text-current"
+            />
+          }
+        />
+      </Badge>
+    </span>
   );
 }

@@ -40,7 +40,18 @@ vi.mock("../installs/access-change.functions", () => ({
 vi.mock("../installs/worker-names.functions", () => ({
   listTakenWorkerNames: server.listTakenWorkerNames,
 }));
-vi.mock("./install-domain-fields", () => ({ InstallDomainFields: () => null }));
+// The address control reads the account's domains; the prefill here stays on workers.dev.
+vi.mock("../installs/custom-domains.functions", () => ({
+  getDomainOptions: vi.fn(async () => ({
+    zones: [],
+    inactiveZones: [],
+    missing: [],
+    noZones: false,
+  })),
+}));
+vi.mock("../installs/external-domains.functions", () => ({
+  getExternalDomainOptions: vi.fn(async () => ({ gateway: null, accountZones: [] })),
+}));
 vi.mock("../installs/email-routing.functions", () => ({
   getEmailZoneOptions: vi.fn(),
   previewEmailRouting: vi.fn(),
@@ -127,6 +138,12 @@ describe("InstallForm, installing again", () => {
     expect(container.textContent).toContain(SECRETS_AGAIN_NOTE);
     expect(server.listTakenWorkerNames).toHaveBeenCalledWith({ data: { replaces: "old-install" } });
     expect(container.textContent).not.toContain("already");
+    // The freed name reads as available, in the tray under the address.
+    expect(container.querySelector("[data-address-status-text]")?.textContent).toBe("Available");
+    // The fold holds the name in Appflare and a changed setting, so it starts open.
+    expect(
+      container.querySelector("[data-fold] button[aria-expanded]")?.getAttribute("aria-expanded"),
+    ).toBe("true");
     const button = [...container.querySelectorAll("button")].find(
       (b) => b.textContent === "Install again",
     );

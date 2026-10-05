@@ -237,7 +237,8 @@ function AppPage({
           id="install"
           tabIndex={-1}
           aria-label={`Install ${app.name}`}
-          className="grid scroll-mt-6 gap-4 outline-none"
+          // A form reads best at a measure of its own, narrower than the page.
+          className="grid max-w-3xl scroll-mt-6 gap-4 outline-none"
         >
           <InstallPanel
             // A new "Install again" starts the form over.
@@ -436,6 +437,7 @@ function InstallPanel({
         planDetected={detail.capabilities.plan.source === "detected"}
         capabilities={detail.capabilities}
         prefill={startAgain?.prefill ?? null}
+        planAskedAbove={checks.pending.some((check) => check.key === "plan")}
       />
       {detail.sourceBuilds && (
         <BuildFromSourceCard

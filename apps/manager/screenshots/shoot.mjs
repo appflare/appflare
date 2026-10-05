@@ -244,24 +244,29 @@ const shots = [
     cropBottomSelector: "#installed",
   },
   {
+    // The install form of an app with secrets, a generated key, links and
+    // optional settings; the form alone, from its header to its footer.
     name: "install-app-settings",
-    path: "/catalog/cloudmark#install",
-    expected: "Install Cloudmark",
+    path: "/catalog/open-seo#install",
+    expected: "Install OpenSEO",
     blur: true,
-    wait: 600,
-    viewportHeight: 1600,
-    resetScroll: true,
-    cropBottomSelector: "#install",
+    wait: 1200,
+    viewportHeight: 1800,
+    cropSelector: "#install > section:first-of-type",
   },
   {
+    // The address panel: the address, its status, and Cloudflare Access with
+    // how people sign in shown.
     name: "install-access",
     path: "/catalog/cloudmark#install",
     expected: "Install Cloudmark",
     blur: true,
-    wait: 600,
     viewportHeight: 1600,
-    resetScroll: true,
-    cropSelector: "#install-access",
+    prepare: async (page) => {
+      await click(page, "More");
+    },
+    wait: 1200,
+    cropSelector: "[data-address-panel]",
   },
   {
     name: "apps-access",
