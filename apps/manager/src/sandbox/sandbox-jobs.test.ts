@@ -1,6 +1,7 @@
 import { reset } from "cloudflare:test";
 import { env } from "cloudflare:workers";
 import { createClient, type FetchLike } from "@appflare/cf-api";
+import { SANDBOX_CONTAINERS } from "@appflare/schema";
 import { beforeEach, describe, expect, it } from "vitest";
 import { createDb } from "../db/client";
 import { createMigrator } from "../db/migrate";
@@ -133,42 +134,58 @@ async function enable(
   return { world, release, ...(await runJob(world, params, release)) };
 }
 
-function app(name: string, image: string, over: Partial<FakeContainerApp> = {}): FakeContainerApp {
-  const large = name.endsWith("-2");
+/** The image of a sandbox Worker release. */
+const image = (version: string) => `docker.io/mendylanda/appflare-sandbox:${version}`;
+
+/** The container application of `SANDBOX_CONTAINERS[index]`, as an earlier enable created it. */
+function app(
+  index: number,
+  version: string,
+  over: Partial<FakeContainerApp> = {},
+): FakeContainerApp {
+  const c = SANDBOX_CONTAINERS[index];
+  if (c === undefined) throw new Error(`no container ${index}`);
   return {
-    id: `existing-${large ? 2 : 1}`,
-    name,
-    max_instances: large ? 1 : 2,
-    configuration: { image, instance_type: large ? "standard-2" : "standard-1" },
-    durable_objects: { namespace_id: large ? "ns-largesandbox" : "ns-sandbox" },
+    id: `existing-${index + 1}`,
+    name: c.name,
+    max_instances: c.max_instances,
+    configuration: { image: image(version), instance_type: c.instance_type },
+    durable_objects: { namespace_id: `ns-${c.class_name.toLowerCase()}` },
     reads: 10,
     created: {},
     ...over,
   };
 }
 
-/** An account where sandbox builds are on at `version`, as a finished enable leaves it. */
-function enabledAt(version: string): Partial<SandboxAccountState> {
+/**
+ * An account where sandbox builds are on at `version`, as a finished enable
+ * leaves it; with `classes` 2, as a sandbox Worker from before the
+ * self-deploying container classes left it (migration tag v1).
+ */
+function enabledAt(version: string, classes: 2 | 4 = 4): Partial<SandboxAccountState> {
+  const containers = SANDBOX_CONTAINERS.slice(0, classes);
   return {
     worker: {
       version,
       versionId: "5b000000-0000-4000-8000-000000000009",
-      migrationTag: "v1",
+      migrationTag: classes === 4 ? "v2" : "v1",
       metadata: {
         bindings: [
-          { type: "durable_object_namespace", name: "Sandbox", class_name: "Sandbox" },
-          { type: "durable_object_namespace", name: "LargeSandbox", class_name: "LargeSandbox" },
+          ...containers.map((c) => ({
+            type: "durable_object_namespace",
+            name: c.class_name,
+            class_name: c.class_name,
+          })),
           { type: "r2_bucket", name: "BUILDS", bucket_name: "appflare-builds" },
           { type: "plain_text", name: "APPFLARE_VERSION", text: version },
         ],
       },
     },
-    namespaces: { Sandbox: "ns-sandbox", LargeSandbox: "ns-largesandbox" },
+    namespaces: Object.fromEntries(
+      containers.map((c) => [c.class_name, `ns-${c.class_name.toLowerCase()}`]),
+    ),
     buckets: new Set(["appflare-builds"]),
-    apps: [
-      app("appflare-sandbox-standard-1", `docker.io/mendylanda/appflare-sandbox:${version}`),
-      app("appflare-sandbox-standard-2", `docker.io/mendylanda/appflare-sandbox:${version}`),
-    ],
+    apps: containers.map((_, i) => app(i, version)),
   };
 }
 
@@ -194,20 +211,41 @@ describe("enable sandbox builds", () => {
       containers: [
         { name: "appflare-sandbox-standard-1", class_name: "Sandbox" },
         { name: "appflare-sandbox-standard-2", class_name: "LargeSandbox" },
+        { name: "appflare-sandbox-self-deploying-standard-1", class_name: "SelfDeployingSandbox" },
+        {
+          name: "appflare-sandbox-self-deploying-standard-2",
+          class_name: "LargeSelfDeployingSandbox",
+        },
       ],
-      migrations: { new_tag: "v1", steps: [{ new_sqlite_classes: ["Sandbox", "LargeSandbox"] }] },
+      migrations: {
+        new_tag: "v2",
+        steps: [
+          { new_sqlite_classes: ["Sandbox", "LargeSandbox"] },
+          { new_sqlite_classes: ["SelfDeployingSandbox", "LargeSelfDeployingSandbox"] },
+        ],
+      },
       observability: { enabled: true },
     });
     expect(metadata?.bindings).toEqual([
       { type: "durable_object_namespace", name: "Sandbox", class_name: "Sandbox" },
       { type: "durable_object_namespace", name: "LargeSandbox", class_name: "LargeSandbox" },
+      {
+        type: "durable_object_namespace",
+        name: "SelfDeployingSandbox",
+        class_name: "SelfDeployingSandbox",
+      },
+      {
+        type: "durable_object_namespace",
+        name: "LargeSelfDeployingSandbox",
+        class_name: "LargeSelfDeployingSandbox",
+      },
       { type: "r2_bucket", name: "BUILDS", bucket_name: "appflare-builds" },
       { type: "plain_text", name: "APPFLARE_VERSION", text: VERSION },
       { type: "version_metadata", name: "CF_VERSION_METADATA" },
     ]);
     expect(r.world.state.subdomainCalls).toEqual([{ enabled: false, previews_enabled: false }]);
 
-    // Both applications, bound to the namespaces the upload created.
+    // Every application, bound to the namespace the upload created for its class.
     expect(r.world.state.apps.map((a) => a.created)).toEqual([
       {
         name: "appflare-sandbox-standard-1",
@@ -231,6 +269,24 @@ describe("enable sandbox builds", () => {
           instance_type: "standard-2",
         },
         durable_objects: { namespace_id: "ns-largesandbox" },
+      }),
+      expect.objectContaining({
+        name: "appflare-sandbox-self-deploying-standard-1",
+        max_instances: 2,
+        configuration: {
+          image: `docker.io/mendylanda/appflare-sandbox:${VERSION}`,
+          instance_type: "standard-1",
+        },
+        durable_objects: { namespace_id: "ns-selfdeployingsandbox" },
+      }),
+      expect.objectContaining({
+        name: "appflare-sandbox-self-deploying-standard-2",
+        max_instances: 2,
+        configuration: {
+          image: `docker.io/mendylanda/appflare-sandbox:${VERSION}`,
+          instance_type: "standard-2",
+        },
+        durable_objects: { namespace_id: "ns-largeselfdeployingsandbox" },
       }),
     ]);
 
@@ -264,13 +320,18 @@ describe("enable sandbox builds", () => {
     expect(r.error).toBeNull();
     expect(r.job?.status).toBe("succeeded");
     expect(r.world.state.uploads).toEqual([]);
-    expect(r.world.state.apps.map((a) => a.id)).toEqual(["existing-1", "existing-2"]);
+    expect(r.world.state.apps.map((a) => a.id)).toEqual([
+      "existing-1",
+      "existing-2",
+      "existing-3",
+      "existing-4",
+    ]);
     expect(r.world.state.rollouts).toEqual({});
     expect(r.world.manager.state.versionPatches).toEqual([]);
     expect(r.logs).toContain("The sandbox Worker already runs 0.1.2; it is not uploaded again.");
   });
 
-  it("updates an older sandbox Worker: re-uploads it without migrations and rolls both applications", async () => {
+  it("updates an older sandbox Worker: re-uploads it without migrations and rolls every application", async () => {
     const r = await enable(enabledAt("0.1.1"), connected, "update");
     expect(r.error).toBeNull();
     expect(r.job).toMatchObject({ kind: "sandbox_update", status: "succeeded" });
@@ -310,17 +371,63 @@ describe("enable sandbox builds", () => {
           },
         }),
       ],
+      // The self-deploying applications run up to two instances: two steps.
+      [
+        "existing-3",
+        expect.objectContaining({
+          steps: [
+            expect.objectContaining({ step_size: { percentage: 10 } }),
+            expect.objectContaining({ step_size: { percentage: 100 } }),
+          ],
+          target_configuration: { image: image(VERSION), instance_type: "standard-1" },
+        }),
+      ],
+      [
+        "existing-4",
+        expect.objectContaining({
+          steps: [
+            expect.objectContaining({ step_size: { percentage: 10 } }),
+            expect.objectContaining({ step_size: { percentage: 100 } }),
+          ],
+          target_configuration: { image: image(VERSION), instance_type: "standard-2" },
+        }),
+      ],
     ]);
-    // Waited until both rollouts completed; Appflare was already connected.
-    expect(Object.values(r.world.state.rollouts).map((x) => x.status)).toEqual([
-      "completed",
-      "completed",
-    ]);
-    expect(r.world.state.apps.map((a) => a.configuration.image)).toEqual([
-      `docker.io/mendylanda/appflare-sandbox:${VERSION}`,
-      `docker.io/mendylanda/appflare-sandbox:${VERSION}`,
-    ]);
+    // Waited until every rollout completed; Appflare was already connected.
+    expect(Object.values(r.world.state.rollouts).map((x) => x.status)).toEqual(
+      Array(4).fill("completed"),
+    );
+    expect(r.world.state.apps.map((a) => a.configuration.image)).toEqual(
+      Array(4).fill(image(VERSION)),
+    );
     expect(r.world.manager.state.versionPatches).toEqual([]);
+  });
+
+  it("adds the self-deploying classes to a sandbox Worker that has only the build classes", async () => {
+    const r = await enable(enabledAt("0.1.1", 2), connected, "update");
+    expect(r.error).toBeNull();
+    expect(r.job).toMatchObject({ kind: "sandbox_update", status: "succeeded" });
+    // The Worker is at v1: only v2 is applied, which creates the new classes.
+    expect(r.world.state.uploads[0]?.metadata.migrations).toEqual({
+      old_tag: "v1",
+      new_tag: "v2",
+      steps: [{ new_sqlite_classes: ["SelfDeployingSandbox", "LargeSelfDeployingSandbox"] }],
+    });
+    expect(r.world.state.worker?.migrationTag).toBe("v2");
+    // The build applications roll to the new image; the self-deploying ones are created.
+    expect(Object.values(r.world.state.rollouts).map((x) => x.appId)).toEqual([
+      "existing-1",
+      "existing-2",
+    ]);
+    expect(r.world.state.apps.map((a) => [a.id, a.name, a.durable_objects.namespace_id])).toEqual([
+      ["existing-1", "appflare-sandbox-standard-1", "ns-sandbox"],
+      ["existing-2", "appflare-sandbox-standard-2", "ns-largesandbox"],
+      ["app-3", "appflare-sandbox-self-deploying-standard-1", "ns-selfdeployingsandbox"],
+      ["app-4", "appflare-sandbox-self-deploying-standard-2", "ns-largeselfdeployingsandbox"],
+    ]);
+    expect(r.world.state.apps.map((a) => a.configuration.image)).toEqual(
+      Array(4).fill(image(VERSION)),
+    );
   });
 
   it("resumes a rollout an earlier run started instead of starting another", async () => {
@@ -346,17 +453,28 @@ describe("enable sandbox builds", () => {
       "update",
     );
     expect(r.error).toBeNull();
-    expect(Object.keys(r.world.state.rollouts)).toEqual(["rollout-0", "rollout-2"]);
+    expect(Object.keys(r.world.state.rollouts)).toEqual([
+      "rollout-0",
+      "rollout-2",
+      "rollout-3",
+      "rollout-4",
+    ]);
     expect(r.world.state.rollouts["rollout-2"]?.appId).toBe("existing-2");
   });
 
   it("sends the migration tag the Worker has when a retried upload follows a lost answer", async () => {
-    // The first upload applied v1 but its answer was lost; the retry must not
-    // send v1 as a new tag again (Cloudflare would refuse the tag).
+    // The first upload applied v1 and v2 but its answer was lost; the retry
+    // must not send them as new again (Cloudflare would refuse the tag).
     const r = await enable({ lostUploadReplies: 1 });
     expect(r.error).toBeNull();
     expect(r.world.state.uploads.map((u) => u.metadata.migrations)).toEqual([
-      { new_tag: "v1", steps: [{ new_sqlite_classes: ["Sandbox", "LargeSandbox"] }] },
+      {
+        new_tag: "v2",
+        steps: [
+          { new_sqlite_classes: ["Sandbox", "LargeSandbox"] },
+          { new_sqlite_classes: ["SelfDeployingSandbox", "LargeSelfDeployingSandbox"] },
+        ],
+      },
       undefined,
     ]);
     expect(r.job?.status).toBe("succeeded");
@@ -437,7 +555,7 @@ describe("enable sandbox builds", () => {
 });
 
 describe("disable sandbox builds", () => {
-  it("disconnects Appflare, then force-deletes the Worker, both applications and the emptied bucket", async () => {
+  it("disconnects Appflare, then force-deletes the Worker, every application and the emptied bucket", async () => {
     const release = await sandboxRelease(VERSION);
     const world = fakeSandboxAccount(
       release,

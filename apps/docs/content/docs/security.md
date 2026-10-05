@@ -75,9 +75,15 @@ Some apps have no prebuilt release. If you enable the optional sandbox Worker
   catalog maintainer merges every sandbox tier entry and every change of its pinned
   commit by hand, and that a build runs with no credentials.
 - **The build has no credentials.** The container holds no Cloudflare token, no API
-  key and no R2 keys. Dependency install scripts do not run. The manager's API token
-  never leaves the manager; it talks to the sandbox Worker only over a service
-  binding, and the sandbox Worker has no public URL.
+  key and no R2 keys, so the code it runs has nothing to act on your account with.
+  Dependency install scripts do not run. The manager's API token never leaves the
+  manager; it talks to the sandbox Worker only over a service binding, and the sandbox
+  Worker has no public URL.
+- **Requests that name the API are refused.** The sandbox Worker refuses a build's HTTP
+  and HTTPS requests addressed to `api.cloudflare.com`. It matches the host name a
+  request is sent to, so this is not a firewall. A build has the internet, and code set
+  on reaching the API can still do so by its IP address or through another server.
+  Such a request carries no credential, and that is what protects your account.
 - **The output is unsigned, and marked so.** The manager accepts an unsigned
   `manifest.json` only through that binding, only when its sha256 matches what the
   build reported, and only when it names the app, the version and the pinned commit
@@ -109,6 +115,9 @@ app, never the manager's.
   command, and of no other command: the checkout, the dependency install and the build
   still run without credentials. Values the sandbox Worker knows are replaced with
   `[redacted]` in the output it keeps and returns.
+- **Where the installer runs.** In containers of their own, separate from the ones that
+  build apps, because an installer deploys through the Cloudflare API and the sandbox
+  Worker refuses build containers' requests addressed to `api.cloudflare.com`.
 - **What reads the account.** After a run, the sandbox Worker lists the app's Workers
   and their bindings with the same app token. The manager's own token is used only to
   store and delete the secrets on the sandbox Worker.

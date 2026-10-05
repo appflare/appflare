@@ -1,4 +1,9 @@
-import type { SandboxInstanceType } from "@appflare/schema";
+import {
+  SANDBOX_CONTAINERS,
+  type SandboxContainer,
+  type SandboxInstanceType,
+  type SandboxUse,
+} from "@appflare/schema";
 import { getSandbox, Sandbox as SandboxBase } from "@cloudflare/sandbox";
 
 /**
@@ -40,36 +45,110 @@ export interface ExecOutcome {
 }
 
 /**
- * The Sandbox Durable Object that runs `standard-1` containers. A build runs
- * third-party code; it gets the internet (to clone and install) and holds no
- * credentials: no Cloudflare token or key is ever put in a build's
- * container, so there is nothing in it that could act on an account.
+ * The hosts a build container's requests are refused for, matched by name:
+ * the Cloudflare API. This stops a request addressed to the API by name, not
+ * a build set on reaching it. Over HTTPS the runtime matches the server name
+ * the client sends (SNI), so a connection to the API's address that sends no
+ * name goes through, and any relay on the internet can pass requests on. What
+ * keeps a build off an account is that its container never holds a
+ * Cloudflare credential.
+ */
+export const BUILD_DENIED_HOSTS: readonly string[] = ["api.cloudflare.com"];
+
+/**
+ * The Sandbox Durable Object that runs builds on `standard-1` containers. A
+ * build runs third-party code; it gets the internet (to clone and install)
+ * and holds no credentials: no Cloudflare token or key is ever put in a
+ * build's container, so there is nothing in it that could act on an account.
  *
- * A self-deploying run (self-managed.ts) uses the same containers for the
- * app's own installer, and is the one exception: its installer command, and
- * only that command, gets the app's own token (never the manager's) in its
- * environment, because deploying is what the installer is for. Its checkout,
- * dependency install and build run without it, like a build.
- *
- * `deniedHosts` refuses plain-HTTP requests to the Cloudflare API only.
- * @cloudflare/containers matches hosts of HTTPS traffic only when it
- * intercepts HTTPS (`interceptHttps`, off by default), so outbound HTTPS,
- * including to api.cloudflare.com, is not blocked.
+ * It also refuses the container's requests addressed to api.cloudflare.com,
+ * over HTTP and HTTPS (see {@link BUILD_DENIED_HOSTS} for what that does not
+ * stop). `deniedHosts` has @cloudflare/containers send the container's
+ * plain-HTTP requests through this Worker's `ContainerProxy`, which answers
+ * one for a denied host itself (HTTP 520, "Origin is disallowed"). The
+ * library covers HTTPS only with `interceptHttps`, and only by intercepting
+ * every HTTPS connection once any host list is set. It is left off, because
+ * builds then fail at random: the proxy ends every connection after one
+ * response, which Node 22's fetch (undici 6) can crash on mid-download, and
+ * GitHub answered a clone through it with 429. Instead, each time the
+ * container starts, {@link onStart} intercepts the HTTPS connections that
+ * name a denied host (see {@link refuseDeniedHostsOverHttps}); everything
+ * else connects directly.
  */
 export class Sandbox extends SandboxBase<Env> {
-  // TODO: turn on `interceptHttps` so `deniedHosts` covers HTTPS too. It makes
-  // every HTTPS client in the container (git, npm, pnpm, yarn, bun, Node's
-  // fetch) trust /etc/cloudflare/certs/cloudflare-containers-ca.crt; that can
-  // only be tested in a running container, which the tests here cannot start.
-  // Self-deploying runs need api.cloudflare.com over HTTPS, so they would then
-  // move to a container class of their own that allows it, ideally one whose
-  // outbound handler adds the app token to Cloudflare API requests so the
-  // token never enters the container at all.
-  override deniedHosts = ["api.cloudflare.com"];
+  override deniedHosts = [...BUILD_DENIED_HOSTS];
+
+  // The SDK runs this each time it starts the container or reconnects to it.
+  // With the RPC transport (openSandbox) that is before it opens the control
+  // connection every command goes over; when this throws, the connection
+  // fails, so no command runs without the refusal in place.
+  override async onStart(): Promise<void> {
+    await super.onStart();
+    await refuseDeniedHostsOverHttps(this.ctx, this.constructor.name);
+  }
 }
 
 /** The same, bound to the `standard-2` container class for entries that ask for it. */
 export class LargeSandbox extends Sandbox {}
+
+/**
+ * Has the container's HTTPS connections that name a host of
+ * {@link BUILD_DENIED_HOSTS} as their TLS server name end at the Worker's
+ * `ContainerProxy`, set to refuse everything it is sent, instead of the
+ * internet. The runtime terminates TLS for them with a certificate of its own
+ * CA, which nothing in the container trusts (the Sandbox SDK adds it to the
+ * container's trust store only with `interceptHttps`), so a client fails the
+ * handshake; one that skips the certificate check gets HTTP 520. A connection
+ * that sends another server name, or none, is not intercepted. Throws when
+ * the runtime cannot intercept, so the container runs no command without the
+ * refusal.
+ */
+export async function refuseDeniedHostsOverHttps(
+  ctx: DurableObjectState,
+  className: string,
+): Promise<void> {
+  const container = ctx.container;
+  if (container === undefined) throw new Error("this Durable Object has no container");
+  const refuse = ctx.exports.ContainerProxy({
+    props: {
+      containerId: ctx.id.toString(),
+      className,
+      deniedHosts: [...BUILD_DENIED_HOSTS],
+      // Whatever reaches it is refused, even a host the list does not name.
+      enableInternet: false,
+      interceptAll: true,
+    },
+  });
+  for (const host of BUILD_DENIED_HOSTS) {
+    await container.interceptOutboundHttps(host, refuse);
+  }
+}
+
+/**
+ * The Sandbox Durable Object of self-deploying runs (self-managed.ts) on
+ * `standard-1` containers. The app's own installer deploys the app through
+ * the Cloudflare API, so this class does not refuse api.cloudflare.com, and
+ * the installer command, and only that command, gets the app's own token
+ * (never the manager's) in its environment. The checkout, dependency install
+ * and build before it run without the token, like a build. Builds keep
+ * classes of their own, which refuse the API by name and never get a token.
+ */
+export class SelfDeployingSandbox extends SandboxBase<Env> {}
+
+/** The same, bound to the `standard-2` container class for entries that ask for it. */
+export class LargeSelfDeployingSandbox extends SelfDeployingSandbox {}
+
+/** The container class (and its binding) that runs `use` on `instanceType`. */
+export function sandboxClassName(
+  use: SandboxUse,
+  instanceType: SandboxInstanceType,
+): SandboxContainer["class_name"] {
+  const container = SANDBOX_CONTAINERS.find(
+    (c) => c.use === use && c.instance_type === instanceType,
+  );
+  if (container === undefined) throw new Error(`no ${use} container runs on ${instanceType}`);
+  return container.class_name;
+}
 
 /** How long an idle build container lives: a build never pauses this long. */
 const SLEEP_AFTER = "15m";
@@ -80,7 +159,22 @@ export function openBuildSandbox(
   id: string,
   instanceType: SandboxInstanceType,
 ): BuildSandbox {
-  const namespace = instanceType === "standard-2" ? env.LargeSandbox : env.Sandbox;
+  return openSandbox(env[sandboxClassName("build", instanceType)], id);
+}
+
+/** The Sandbox for one self-deploying run, on the requested container size. */
+export function openSelfDeployingSandbox(
+  env: Env,
+  id: string,
+  instanceType: SandboxInstanceType,
+): BuildSandbox {
+  return openSandbox(env[sandboxClassName("self-deploying", instanceType)], id);
+}
+
+function openSandbox(
+  namespace: DurableObjectNamespace<SandboxBase<Env>>,
+  id: string,
+): BuildSandbox {
   const sandbox = getSandbox(namespace, id, {
     sleepAfter: SLEEP_AFTER,
     // Every command names its own directory and environment; no shell state

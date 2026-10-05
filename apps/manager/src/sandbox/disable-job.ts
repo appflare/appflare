@@ -28,7 +28,7 @@ import { NO_CONTAINERS_PERMISSION_REASON } from "./preflight";
  *    and the manager's serving version still does. Its Durable Object
  *    namespaces go with it, and so do its secrets: the records of the
  *    GitHub access tokens it held are deleted next.
- * 2. Delete both container applications, which outlive the Worker.
+ * 2. Delete the container applications, which outlive the Worker.
  * 3. Empty the build bucket, a page per job unit, and delete it.
  * 4. Disconnect the manager: a new version of its Worker without `SANDBOX`,
  *    checked on its preview, then deployed; the job is recorded as done in

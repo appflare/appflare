@@ -10,12 +10,14 @@ import {
   unsupportedWranglerSections,
   verify,
 } from "@appflare/pack";
+import { SANDBOX_CONTAINERS } from "@appflare/schema";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { REPO_ROOT, stampCatalogManifest, zipEntryNames } from "./manager-release.ts";
 import {
   checkSandboxArtifactDir,
   SANDBOX_ALLOWED_SECTIONS,
   SANDBOX_CATALOG_MANIFEST,
+  SANDBOX_CONTAINER_CLASSES,
   SANDBOX_DIR,
   SANDBOX_RELEASE_WRANGLER,
   SANDBOX_WRANGLER_SOURCE,
@@ -42,6 +44,49 @@ describe("sandboxReleaseWranglerConfig", () => {
     expect(config.containers.map((c) => [c.class_name, c.image, c.instance_type])).toEqual([
       ["Sandbox", `docker.io/mendylanda/appflare-sandbox:${VERSION}`, "standard-1"],
       ["LargeSandbox", `docker.io/mendylanda/appflare-sandbox:${VERSION}`, "standard-2"],
+      ["SelfDeployingSandbox", `docker.io/mendylanda/appflare-sandbox:${VERSION}`, "standard-1"],
+      [
+        "LargeSelfDeployingSandbox",
+        `docker.io/mendylanda/appflare-sandbox:${VERSION}`,
+        "standard-2",
+      ],
+    ]);
+  });
+
+  it("declares the container classes the manager deploys, each with a binding and a migration", () => {
+    const config = sandboxReleaseWranglerConfig(
+      readFileSync(SANDBOX_WRANGLER_SOURCE, "utf8"),
+      VERSION,
+    ) as {
+      containers: Array<Record<string, unknown>>;
+      durable_objects: { bindings: Array<{ name: string; class_name: string }> };
+      migrations: Array<{ tag: string; new_sqlite_classes?: string[] }>;
+    };
+    // The manager creates the container applications from SANDBOX_CONTAINERS,
+    // never from this config, so the two must say the same.
+    expect(
+      config.containers.map(({ name, class_name, instance_type, max_instances }) => ({
+        name,
+        class_name,
+        instance_type,
+        max_instances,
+      })),
+    ).toEqual(
+      SANDBOX_CONTAINERS.map(({ name, class_name, instance_type, max_instances }) => ({
+        name,
+        class_name,
+        instance_type,
+        max_instances,
+      })),
+    );
+    expect(SANDBOX_CONTAINER_CLASSES).toEqual(SANDBOX_CONTAINERS.map((c) => c.class_name));
+    expect(config.durable_objects.bindings).toEqual(
+      SANDBOX_CONTAINER_CLASSES.map((c) => ({ name: c, class_name: c })),
+    );
+    // Deployed sandbox Workers are at v1; migrations are only ever appended.
+    expect(config.migrations).toEqual([
+      { tag: "v1", new_sqlite_classes: ["Sandbox", "LargeSandbox"] },
+      { tag: "v2", new_sqlite_classes: ["SelfDeployingSandbox", "LargeSelfDeployingSandbox"] },
     ]);
   });
 
@@ -128,7 +173,10 @@ describe.skipIf(!schemaBuilt)("the packed sandbox Worker artifact", () => {
     const manifest = JSON.parse(manifestText);
     manifest.worker.bindings = manifest.worker.bindings
       .filter(
-        (b: { name: string }) => b.name !== "LargeSandbox" && b.name !== "CF_VERSION_METADATA",
+        (b: { name: string }) =>
+          b.name !== "LargeSandbox" &&
+          b.name !== "SelfDeployingSandbox" &&
+          b.name !== "CF_VERSION_METADATA",
       )
       .map((b: { type: string }) =>
         b.type === "r2_bucket" ? { ...b, bucket_name: "appflare-builds" } : b,
@@ -146,9 +194,11 @@ describe.skipIf(!schemaBuilt)("the packed sandbox Worker artifact", () => {
       expect.arrayContaining([
         'keyId is "unsigned", expected "appflare-2026-09"',
         "durable object binding LargeSandbox is missing",
+        "durable object binding SelfDeployingSandbox is missing",
         "version_metadata binding CF_VERSION_METADATA is missing",
         "binding BUILDS carries bucket_name",
         "no migration creates Sandbox as a SQLite class",
+        "no migration creates LargeSelfDeployingSandbox as a SQLite class",
         "zip entry wrangler.jsonc is not listed in manifest.json",
       ]),
     );

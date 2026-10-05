@@ -67,10 +67,11 @@ In this order, each step one call to the Cloudflare API:
    secrets it holds. That includes the token each self-deploying app's installer runs
    with: those apps keep running, but nothing can update or destroy them through their
    installer any more. Revoke their tokens in the Cloudflare dashboard if you no longer
-   need them. Then its two container applications, `appflare-sandbox-standard-1` and
-   `appflare-sandbox-standard-2`, which Cloudflare keeps when the Worker is deleted. This
-   needs Containers: Edit on Appflare's token; without it the review says so, and you
-   delete them yourself under **Workers**, **Containers**.
+   need them. Then its container applications, `appflare-sandbox-standard-1`,
+   `appflare-sandbox-standard-2`, `appflare-sandbox-self-deploying-standard-1` and
+   `appflare-sandbox-self-deploying-standard-2`, which Cloudflare keeps when the Worker is
+   deleted. This needs Containers: Edit on Appflare's token; without it the review says
+   so, and you delete them yourself under **Workers**, **Containers**.
 4. The manager's KV namespace. Then, for each app Appflare protects with Cloudflare
    Access, the service token Appflare's health checks used for it: taken out of the
    app's Access application, then deleted. One that cannot be is named on the page, left

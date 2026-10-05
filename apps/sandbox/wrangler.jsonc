@@ -21,9 +21,14 @@
   "observability": {
     "enabled": true
   },
-  // One container class per size. Builds run on `standard-1` unless the catalog
-  // entry asks for `standard-2`. The image tag is the sandbox Worker's own version and
-  // is never reused (the release config stamps it; this one is for local use).
+  // One container class per size and use. Runs go on `standard-1` unless the
+  // catalog entry asks for `standard-2`. Builds use Sandbox and LargeSandbox,
+  // which refuse requests addressed to api.cloudflare.com and never hold a
+  // Cloudflare credential; a self-deploying app's installer deploys through the
+  // API with the app's token, so its runs use classes of their own
+  // (src/sandbox.ts), up to two containers of each size at once. The image tag
+  // is the sandbox Worker's own version and is never reused (the release
+  // config stamps it; this one is for local use).
   "containers": [
     {
       "name": "appflare-sandbox-standard-1",
@@ -38,15 +43,35 @@
       "image": "docker.io/mendylanda/appflare-sandbox:0.1.8",
       "instance_type": "standard-2",
       "max_instances": 1
+    },
+    {
+      "name": "appflare-sandbox-self-deploying-standard-1",
+      "class_name": "SelfDeployingSandbox",
+      "image": "docker.io/mendylanda/appflare-sandbox:0.1.8",
+      "instance_type": "standard-1",
+      "max_instances": 2
+    },
+    {
+      "name": "appflare-sandbox-self-deploying-standard-2",
+      "class_name": "LargeSelfDeployingSandbox",
+      "image": "docker.io/mendylanda/appflare-sandbox:0.1.8",
+      "instance_type": "standard-2",
+      "max_instances": 2
     }
   ],
   "durable_objects": {
     "bindings": [
       { "name": "Sandbox", "class_name": "Sandbox" },
-      { "name": "LargeSandbox", "class_name": "LargeSandbox" }
+      { "name": "LargeSandbox", "class_name": "LargeSandbox" },
+      { "name": "SelfDeployingSandbox", "class_name": "SelfDeployingSandbox" },
+      { "name": "LargeSelfDeployingSandbox", "class_name": "LargeSelfDeployingSandbox" }
     ]
   },
-  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["Sandbox", "LargeSandbox"] }],
+  // Append only: a deployed sandbox Worker is at one of these tags.
+  "migrations": [
+    { "tag": "v1", "new_sqlite_classes": ["Sandbox", "LargeSandbox"] },
+    { "tag": "v2", "new_sqlite_classes": ["SelfDeployingSandbox", "LargeSelfDeployingSandbox"] }
+  ],
   // The id of the version answering, which info() reports: every secret the
   // manager stores here deploys a new version, and the manager waits for it to
   // answer before it starts a run.

@@ -107,21 +107,28 @@ describe("findRemovalTargets", () => {
         bucket: true,
         appTokens: 1,
         containerApps: [
-          { id: "app-1", name: "appflare-sandbox-standard-1" },
-          { id: "app-2", name: "appflare-sandbox-standard-2" },
+          { id: "app-standard-1", name: "appflare-sandbox-standard-1" },
+          { id: "app-standard-2", name: "appflare-sandbox-standard-2" },
+          {
+            id: "app-self-deploying-standard-1",
+            name: "appflare-sandbox-self-deploying-standard-1",
+          },
+          {
+            id: "app-self-deploying-standard-2",
+            name: "appflare-sandbox-self-deploying-standard-2",
+          },
         ],
       },
       accessAppIds: ["access-health", "access-app"],
       appAccessInstalls: [],
     });
-    // Six reads, nothing else.
+    // Reads only: one per container application, by name.
     expect(account.calls).toEqual([
       "GET /a",
       `GET /a/workers/scripts/${MANAGER_WORKER}/bindings`,
       "GET /a/workers/scripts/appflare-sandbox/bindings",
       "GET /a/r2/buckets",
-      "GET /a/containers/applications",
-      "GET /a/containers/applications",
+      ...Array(4).fill("GET /a/containers/applications"),
     ]);
   });
 
@@ -147,7 +154,8 @@ describe("runRemoval", () => {
     const before = w.account.calls.length;
     const { outcome, steps } = await run(w);
     expect(outcome).toEqual({ kind: "complete", accessLeft: [], pageLost: false });
-    const after = w.account.calls.slice(before + 6);
+    // After the eight reads that find the targets again.
+    const after = w.account.calls.slice(before + 8);
     expect(after).toEqual([
       "GET /a/r2/buckets/appflare-builds/objects",
       "DELETE /a/r2/buckets/appflare-builds/objects/builds/b0.zip",
@@ -161,8 +169,10 @@ describe("runRemoval", () => {
       `DELETE /zones/${GATEWAY_ZONE_ID}/dns_records/rec-1`,
       "DELETE /a/storage/kv/namespaces/kv-gateway",
       "DELETE /a/workers/scripts/appflare-sandbox",
-      "DELETE /a/containers/applications/app-1",
-      "DELETE /a/containers/applications/app-2",
+      "DELETE /a/containers/applications/app-standard-1",
+      "DELETE /a/containers/applications/app-standard-2",
+      "DELETE /a/containers/applications/app-self-deploying-standard-1",
+      "DELETE /a/containers/applications/app-self-deploying-standard-2",
       "DELETE /a/storage/kv/namespaces/kv-manager",
       "DELETE /a/d1/database/d1-manager",
       "DELETE /a/access/apps/access-health",
@@ -234,15 +244,23 @@ describe("runRemoval", () => {
         bucket: true,
         appTokens: 0,
         containerApps: [
-          { id: "app-1", name: "appflare-sandbox-standard-1" },
-          { id: "app-2", name: "appflare-sandbox-standard-2" },
+          { id: "app-standard-1", name: "appflare-sandbox-standard-1" },
+          { id: "app-standard-2", name: "appflare-sandbox-standard-2" },
+          {
+            id: "app-self-deploying-standard-1",
+            name: "appflare-sandbox-self-deploying-standard-1",
+          },
+          {
+            id: "app-self-deploying-standard-2",
+            name: "appflare-sandbox-self-deploying-standard-2",
+          },
         ],
       },
       accessAppIds: ["access-health", "access-app"],
     });
     expect(again.outcome.kind).toBe("complete");
     expect(again.steps.filter((s) => s.label.startsWith("Delete")).map((s) => s.status)).toEqual(
-      Array(12).fill("skipped"),
+      Array(14).fill("skipped"),
     );
   });
 

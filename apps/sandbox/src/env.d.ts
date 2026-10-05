@@ -19,10 +19,14 @@ interface Env {
    * deployed by an older CLI may lack the binding.
    */
   CF_VERSION_METADATA?: WorkerVersionMetadata;
-  /** Sandbox containers on `standard-1`. */
+  /** Build containers on `standard-1`. */
   Sandbox: DurableObjectNamespace<import("./sandbox").Sandbox>;
-  /** Sandbox containers on `standard-2`. */
+  /** Build containers on `standard-2`. */
   LargeSandbox: DurableObjectNamespace<import("./sandbox").LargeSandbox>;
+  /** Containers of self-deploying runs on `standard-1`. */
+  SelfDeployingSandbox: DurableObjectNamespace<import("./sandbox").SelfDeployingSandbox>;
+  /** Containers of self-deploying runs on `standard-2`. */
+  LargeSelfDeployingSandbox: DurableObjectNamespace<import("./sandbox").LargeSelfDeployingSandbox>;
 }
 
 declare namespace Cloudflare {
@@ -30,6 +34,10 @@ declare namespace Cloudflare {
   interface GlobalProps {
     /** Types `exports` from "cloudflare:workers" (the tests call the entrypoint through it). */
     mainModule: typeof import("./index");
-    durableNamespaces: "Sandbox" | "LargeSandbox";
+    durableNamespaces:
+      | "Sandbox"
+      | "LargeSandbox"
+      | "SelfDeployingSandbox"
+      | "LargeSelfDeployingSandbox";
   }
 }

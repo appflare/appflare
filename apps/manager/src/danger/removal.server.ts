@@ -33,8 +33,8 @@ import type { ManagerTargets, RemovalTargets } from "./removal-plan.server";
  * 2. the external domains gateway: its route, its Worker, the zone's fallback
  *    origin and the gateway's DNS record when Appflare set them, its routing
  *    table (the same pieces, in the same order, as turning it off);
- * 3. the sandbox Worker, then its two container applications (which
- *    Cloudflare keeps when the Worker goes) when the token has Containers;
+ * 3. the sandbox Worker, then its container applications (which Cloudflare
+ *    keeps when the Worker goes) when the token has Containers;
  * 4. the manager's KV namespace; then, for apps protected with Cloudflare
  *    Access, each app's own service token is taken out of its Access
  *    application and deleted (the `releaseAppAccess` job unit, a few apps
@@ -62,7 +62,7 @@ import type { ManagerTargets, RemovalTargets } from "./removal-plan.server";
  * This runs in one request, not a Workflow: the sandbox bucket's pages each
  * cost one subrequest (each page runs in its own invocation over `SELF`),
  * and so does each call releasing up to ten protected apps' tokens; the
- * rest is at most about 24 calls.
+ * rest is at most about 26 calls.
  */
 
 export type RemovalStepStatus = "done" | "skipped" | "failed";

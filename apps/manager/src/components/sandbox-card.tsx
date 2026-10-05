@@ -201,7 +201,7 @@ function EnableDialog({ status, disabled }: { status: SandboxCardState; disabled
         </Button>
       )}
       title="Enable sandbox builds"
-      description={`Appflare creates the sandbox Worker ${status.pinnedVersion} (${SANDBOX_WORKER}) in this account, with two container applications that run its image and the R2 bucket ${SANDBOX_BUCKET_NAME}, then connects to it.`}
+      description={`Appflare creates the sandbox Worker ${status.pinnedVersion} (${SANDBOX_WORKER}) in this account, with the container applications that run its image and the R2 bucket ${SANDBOX_BUCKET_NAME}, then connects to it.`}
       actionLabel="Enable"
       destructive={false}
       onConfirm={() => start("enable")}
@@ -221,7 +221,7 @@ function UpdateDialog({ status, disabled }: { status: SandboxCardState; disabled
         </Button>
       )}
       title="Update sandbox"
-      description={`Appflare uploads the sandbox Worker ${status.pinnedVersion} and rolls both container applications out to its image. Builds wait until it is done.`}
+      description={`Appflare uploads the sandbox Worker ${status.pinnedVersion} and rolls its container applications out to its image. Builds wait until it is done.`}
       actionLabel="Update"
       destructive={false}
       onConfirm={() => start("update")}
@@ -316,7 +316,7 @@ function Connected({ status, isAdmin }: { status: SandboxCardState; isAdmin: boo
         <Banner
           icon={<ArrowCircleUpIcon />}
           title={`Sandbox Worker ${status.pinnedVersion} is available`}
-          description="This Appflare version comes with a newer sandbox Worker. Updating uploads it and rolls both container applications to its image; builds wait until it is done."
+          description="This Appflare version comes with a newer sandbox Worker. Updating uploads it and rolls its container applications to its image; builds wait until it is done."
         />
       )}
       {isAdmin && (
@@ -365,7 +365,7 @@ function NotConnected({
     <div className="grid gap-3">
       <Text>
         Enabling deploys the sandbox Worker {status.pinnedVersion} to this account with its R2
-        bucket and two container applications, waits until Cloudflare has prepared them (a minute or
+        bucket and container applications, waits until Cloudflare has prepared them (a minute or
         two), then connects Appflare to it. No container runs until a build starts one, and it stops
         when the build ends; builds are billed as container time on Workers Paid.
       </Text>
@@ -485,7 +485,7 @@ function DisableDialog({ status, disabled }: { status: SandboxCardState; disable
         <Collapsible.DefaultPanel>
           <Text variant="secondary" size="sm">
             Deleted: the Worker <span className="font-mono text-[0.9em]">{SANDBOX_WORKER}</span>,
-            its two container applications, and the R2 bucket{" "}
+            its container applications, and the R2 bucket{" "}
             <span className="font-mono text-[0.9em]">appflare-builds</span>.
           </Text>
         </Collapsible.DefaultPanel>

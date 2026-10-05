@@ -203,7 +203,7 @@ export const TOKEN_PERMISSION_GROUPS = [
   // read which Workers plan it is on; nothing else of the billing data is read.
   // Key `billing` is in the template page's key table.
   { key: "billing", type: "read", label: "Billing", onlyFor: PLAN_DETECTION_FEATURE },
-  // Create, roll out and delete the sandbox Worker's two container
+  // Create, roll out and delete the sandbox Worker's container
   // applications ("Workers Containers Write" in the API's group list). The
   // template key is not in the template page's table and does not follow the
   // label rule above (that would give `workers_containers`): the dashboard's
