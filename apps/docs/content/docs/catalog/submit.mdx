@@ -195,6 +195,13 @@ Points that need care:
   included, asks for a sign-in, its own or one it checks from Cloudflare Access.
   Such an app can answer the check with an error of its own, and any answer from its
   Worker then counts as healthy. See [Health checks](/guides/health/#apps-behind-a-sign-in).
+- **`openPath`.** Optional. When the app's interface is not at its root, such as an
+  admin dashboard at `/dashboard`, set `"openPath": "/dashboard"` and the manager's
+  **Open** buttons go there. It is a path only: it starts with `/`, has no query or
+  fragment, and may end in `/`. Health checks, `{{appUrl}}` and the addresses the
+  app's page lists stay the root, so a `postInstall` note that links to the
+  dashboard writes `{{appUrl}}/dashboard`. A manager from before this field opens the
+  root.
 - **`install.buildCommand`.** One command, such as `pnpm --filter @scope/web build`,
   that the packer runs at the root of the repository after installing dependencies
   and before bundling, or a list of up to eight such commands run in order, such as
@@ -536,6 +543,14 @@ Points that need care:
   four options and a dropdown for more. `default`, when given, must be one of the
   values. For a var the app reads as JSON, each value is JSON text, such as `"true"`.
   `HOME_PAGE` in the example above is one.
+- **Where to get a value.** `help` is shown as plain text, so a link written in it is
+  not clickable. To point at the page where the admin gets the value, such as the
+  page that creates an API key, give the secret or var a `link`:
+  `"link": { "label": "Get a key", "url": "https://openrouter.ai/settings/keys" }`.
+  The install, update and settings forms show it beside the field and open it in a
+  new tab without sending the manager's address. `label` is one short line of at most
+  40 characters; `url` is an https:// URL of at most 500 characters, without a user
+  name or password. A manager from before this field leaves the link out.
 - **Placeholders.** The manager fills these in within `postInstall` text,
   `vars[].default`, and the values of the wrangler config's own `vars`, and fills
   vars in again on every update and settings change:
@@ -930,7 +945,8 @@ exceptions:
 - a change to `authors`, `tagline` or `licenseNote` alone, which `index.json` reads
   from the manifest;
 - a change to the form or copy only (`name`, `summary`, `homepage`, `license`,
-  `categories`, `maintainers`, `secrets`, `vars`, `postInstall`, `bump`), or to how
+  `categories`, `maintainers`, `secrets`, `vars` (their `link` included),
+  `postInstall`, `bump`, `openPath`), or to how
   the app goes with Cloudflare Access (the `access` block, and adding `"access"` to
   `requires`), together with `revision` raised by one (it starts at 1 when
   omitted). CI signs and publishes the revised manifest without building anything;

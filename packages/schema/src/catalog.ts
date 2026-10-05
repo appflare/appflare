@@ -10,6 +10,7 @@ import { buildEnvSchema } from "./build-env.ts";
 import { catalogCategoriesSchema, catalogCategoryProblems } from "./categories.ts";
 import { configPatchSchema } from "./config-patch.ts";
 import { catalogD1Schema } from "./d1.ts";
+import { catalogFieldLinkSchema } from "./field-link.ts";
 import { catalogHyperdriveBindingsSchema } from "./hyperdrive.ts";
 import { catalogInstallDirsSchema, packageManagerSchema } from "./install-dirs.ts";
 import {
@@ -19,6 +20,7 @@ import {
   licenseSchema,
 } from "./license.ts";
 import { CATALOG_SLUG_PATTERN } from "./links.ts";
+import { openPathSchema } from "./open-path.ts";
 import {
   appTokenPermissions,
   catalogPipelinesSchema,
@@ -504,6 +506,8 @@ export const catalogSecretSchema = z
         "A sentence or two shown under the field: what the value is for, or where to find it.",
       )
       .optional(),
+    /** Where to get the value, as a link beside the field; see {@link catalogFieldLinkSchema}. */
+    link: catalogFieldLinkSchema.optional(),
     generate: z
       .enum(SECRET_GENERATE_KINDS)
       .describe(
@@ -901,6 +905,8 @@ export const catalogVarSchema = z
         "A sentence or two shown under the field: what the setting changes, or which values work.",
       )
       .optional(),
+    /** A link beside the field; see {@link catalogFieldLinkSchema}. */
+    link: catalogFieldLinkSchema.optional(),
     default: z
       .string()
       .describe(
@@ -2068,7 +2074,7 @@ export const catalogRevisionSchema = z
     "Which edit of this entry's form and copy the catalog publishes for the build its `source` " +
       "already released, starting at 1 (the default when omitted). Raise it by one to publish a " +
       "change to `name`, `summary`, `homepage`, `license`, `categories`, `maintainers`, " +
-      '`secrets`, `vars`, `postInstall`, `bump` or `access`, or to add `"access"` to ' +
+      '`secrets`, `vars`, `postInstall`, `bump`, `access` or `openPath`, or to add `"access"` to ' +
       "`requires`, without moving `source`: the released artifact stays as it is, and managers " +
       "show the new form without an update. `tagline`, " +
       "`licenseNote` and `authors` need no revision: the catalog shows them from the current " +
@@ -2194,6 +2200,12 @@ export const catalogManifestSchema = z
      * before this field strips it, like any key it does not know.
      */
     access: catalogAccessSchema.optional(),
+    /**
+     * Where the manager's Open buttons take people in the app; see
+     * {@link openPathSchema}. A manager from before this field strips it and
+     * opens the root.
+     */
+    openPath: openPathSchema.optional(),
   })
   .superRefine((manifest, ctx) => {
     for (const problem of seedManifestProblems(manifest)) {
