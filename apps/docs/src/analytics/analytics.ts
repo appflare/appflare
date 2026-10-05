@@ -275,10 +275,15 @@ export function linkEvents(href: string, here: Here): EventCall[] {
   if (url.protocol !== "https:" && url.protocol !== "http:") return [];
   if (url.host === here.host) return [];
   const events: EventCall[] = [["outbound_click", { host: url.host }]];
-  if (url.host === "deploy.workers.cloudflare.com") {
+  if (url.host === "deploy.workers.cloudflare.com" || isDeployLink(url)) {
     events.push(["deploy_button_clicked", { path: here.pathname }]);
   }
   return events;
+}
+
+/** Appflare's own short link to the Deploy to Cloudflare button, which counts its clicks. */
+function isDeployLink(url: URL): boolean {
+  return url.host === "link.appflare.dev" && url.pathname.replace(/\/$/, "") === "/deploy";
 }
 
 const THEMES = new Set(["light", "dark", "system"] as const);

@@ -14,7 +14,7 @@
 Appflare is one Worker in your own Cloudflare account that installs apps from a
 catalog and keeps them updated.
 
-[![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/appflare/deploy)
+[![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://link.appflare.dev/deploy)
 
 The button copies a prebuilt Appflare into your Git account, deploys it to your
 Cloudflare account, and opens the setup wizard; afterwards Appflare updates itself

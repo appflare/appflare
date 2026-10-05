@@ -319,8 +319,15 @@ export function parseDeployRepository(value: string): string {
   return repository;
 }
 
-/** The Deploy to Cloudflare button's URL for a GitHub repository. */
+/** Appflare's short link to the button for `appflare/deploy`; it counts how many use it. */
+export const DEPLOY_SHORT_LINK = "https://link.appflare.dev/deploy";
+
+/**
+ * The Deploy to Cloudflare button's URL for a GitHub repository: the short
+ * link for `appflare/deploy`, Cloudflare's own URL for a trial copy elsewhere.
+ */
 export function deployButtonUrl(repository: string = DEPLOY_REPOSITORY): string {
+  if (repository === DEPLOY_REPOSITORY) return DEPLOY_SHORT_LINK;
   return `https://deploy.workers.cloudflare.com/?url=https://github.com/${repository}`;
 }
 
