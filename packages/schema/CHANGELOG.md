@@ -1,5 +1,22 @@
 # @appflare/schema
 
+## 0.3.0
+
+### Minor Changes
+
+- c900272: Catalog secrets and vars take an optional `link`, `{ "label", "url" }`, shown beside the field in the install, update and settings forms, such as `{ "label": "Get a key", "url": "https://openrouter.ai/settings/keys" }`. `label` is one line of at most 40 characters without leading or trailing spaces; `url` is an https:// URL of at most 500 characters without spaces, user name or password (`catalogFieldLinkSchema`, `CatalogFieldLink`). Help text stays plain text.
+  
+  A catalog manifest takes an optional top-level `openPath`, such as `"/dashboard"`: where the manager's Open buttons go within the app. It is a path only, at most 128 characters: it starts with `/`, has no query, fragment, empty, `.` or `..` segment, holds letters, digits and `- . _ ~ @ : + = ,`, and may end in `/`; `/` alone is refused (`openPathSchema`, `openPathProblem`, `OPEN_PATH_PATTERN`). `appOpenUrl(address, openPath)` puts it after an app's address. Health checks and `{{appUrl}}` stay the root.
+  
+  A catalog revision may add, change or remove both: `openPath` joins `REVISABLE_CATALOG_FIELDS`, and a `link` is part of `secrets` and `vars`, which a revision could already change. Managers from before this release strip both keys, as they strip any key they do not know, so an entry may use them without a new requirement: such a manager shows the field without its link and opens the app at its root. The packer and catalog checks refuse both keys until they run this release.
+
+### Patch Changes
+
+- afbe792: The descriptions of `bump` and `bump.autoMerge` follow the catalog's new rule. The catalog checks that each upstream release builds, matches its hashes and installs, and users decide whether to update, so the catalog's bump bot reads `autoMerge` from the manifest file itself: left out or `true`, a bump of an artifact tier entry that does not set `source.version` merges itself once the required checks pass; `"bump": { "autoMerge": false }` opts out. Sandbox and self-deploying entries are never merged by the bot and still may not set `true`. Parsing is unchanged: the parsed value still defaults to `false`, only so that released catalog manifests keep their bytes, and it does not mean the entry opts out.
+  
+  `codemod-manifest-v1` now keeps an explicit `"bump": { "autoMerge": false }` instead of dropping it as the default, since dropping it would now let the entry's bumps merge themselves.
+- 482eb0b: Correct the description of `definesWorkflow`: uploading a Worker does not create its Workflows; whoever deploys it creates them with a separate call.
+
 ## 0.2.0
 
 ### Minor Changes

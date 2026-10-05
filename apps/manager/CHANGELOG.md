@@ -1,5 +1,36 @@
 # @appflare/manager
 
+## 0.3.0
+
+### Minor Changes
+
+- de3d5b7: An install that did not finish can be installed again once its cause is fixed: **Install again** on the app's page, on its row under Needs attention on Home, and on the failed job's log opens the install form filled in from last time (Worker name, address and domain, Cloudflare Access, name, settings), and the automatic-update choice carries over. The Workers Paid, cost and requirements confirmations are asked again. Secret values and database connection strings are never stored, so the form asks for them again; generated secrets get new values. When the catalog has moved on, the form installs the current version and says what no longer applies. Installing again first uninstalls the failed install, deleting everything it left in the account and keeping nothing, and the new install waits for that removal before it creates anything, so nothing is created twice or left behind.
+- 64641dc: A redesigned install form, shorter and easier to scan.
+  
+  - **One address control.** The app's address reads as one field: `https://`, the name you type, and the domain, a dropdown at the right. The dropdown lists the account's workers.dev address, every domain on the account and "Another domain, managed elsewhere…", and it has a search box, so accounts with many domains find theirs by typing. Leaving the name empty on one of your domains gives the app the domain itself.
+  - **Status without layout shift.** A tray under the address always holds one line: "Checking the name…", "Available" with the final address, why a name cannot be used, or the address the app will have. Nothing below it moves while you type or switch domains. On a domain, the Worker name is one quiet line with "Change", and its own field shows its state inside it.
+  - **Grouped form.** The address and Cloudflare Access come first in their own panel, then "What the app needs" with a count of what is left to fill in, then "Optional settings", folded and naming what it holds. The fold opens by itself when it holds a value, such as on "Install again". Settings Appflare fills in itself are no longer asked; the app's page shows them. The footer says what is left before Install, or where the app will be installed.
+  - **Optional secrets are one field.** Leave it empty and the secret is not set; there is no "Set it now" switch any more. Help that only repeats "Optional." is shortened, and long help never folds down to a word or two.
+  - **Quieter generated values.** A generated secret carries a "Generated" badge with a small refresh button (tooltip "Regenerate") instead of a Regenerate link in its help.
+  - A paid app's plan is confirmed once: when the account's plan is not known, the "Before you install" box's tick also counts for the form, which no longer asks "This account is on Workers Paid" for it. "Remember this for the account" is not offered there; the box's "Choose plan" link records the plan.
+  - On "Install again", the form starts from the failed install's address (including a domain), Access, name and settings, and says once, next to the fields, that secrets are entered again.
+- c900272: A catalog secret's or var's `link` shows beside its field in the install form, the update form, a repository build's review and the app's settings, after the field's help: its label with the mark of a link that opens in a new tab, opened without a referrer. An app whose catalog entry sets `openPath` (such as `/dashboard`) opens there from its Open buttons on Home, the app's page and job pages, following a revision of its release's catalog manifest like the rest of the form; health checks, `{{appUrl}}` and the addresses the app's page lists stay the root.
+
+### Patch Changes
+
+- 3ba4d91: Protecting an app with Cloudflare Access now starts only after Appflare has read, live, that the account has a Zero Trust organization and that the token can read Access applications, policies and service tokens; a read the token is refused, or one Cloudflare does not answer, stops it before anything is created. Before, a read that got no answer counted as a pass (and an unreadable Zero Trust organization skipped the service token read altogether), installing a reviewed build was not checked at all, and the install made the "Appflare users" policy before it read service tokens. A token that can read service tokens but not create them still gets that far before it is refused. When Cloudflare cannot be asked, the refusal now says only that, and to try again in a minute.
+  
+  After Appflare is updated, it also checks what the account and its token can do again on its first request, instead of showing the answers an older version stored until the next day's check, and the catalog shows Cloudflare Access as not checked yet until the service token permission has been checked.
+- 482eb0b: Create the Workflows an app defines. Uploading a Worker never creates its Workflows, so apps that start one (OpenSEO's site audits, for example) failed with "Workflow does not exist". Installs now create each Workflow for the Worker that defines it right after that Worker's upload, updates create new ones and update kept ones once the new version serves, and rollbacks put them back on the old version's class. Apps installed by earlier versions get their missing Workflows created by the next scheduled check, and the app page marks a Workflow that is not set up yet.
+- 3ba4d91: A custom domain added a moment ago shows "Being set up" while Cloudflare still attaches it and issues its certificate, instead of "Unhealthy" with HTTP 530 (or another of Cloudflare's own error pages). The app page keeps checking it on its own until it answers, for up to 15 minutes after it was added. A domain that has served the app before still shows a 530 as unhealthy.
+- 3ba4d91: When an app's catalog entry changes how it is installed (from shipping its own installer to a release Appflare deploys, as OpenSEO did, or the other way round), the new version is offered as taking a reinstall: on the app's page, on Home, in its sidebar dot, in notifications and in automatic updates and "Update all", with no Update button that would only be refused. Starting such an update is still refused, with the same words.
+- Updated dependencies [afbe792]
+- Updated dependencies [c900272]
+- Updated dependencies [482eb0b]
+- Updated dependencies [482eb0b]
+  - @appflare/schema@0.3.0
+  - @appflare/cf-api@0.2.1
+
 ## 0.2.0
 
 ### Minor Changes

@@ -1,5 +1,16 @@
 # @appflare/sandbox-worker
 
+## 0.1.2
+
+### Patch Changes
+
+- Updated dependencies [afbe792]
+- Updated dependencies [c900272]
+- Updated dependencies [482eb0b]
+- Updated dependencies [482eb0b]
+  - @appflare/schema@0.3.0
+  - @appflare/cf-api@0.2.1
+
 ## 0.1.1
 
 ### Patch Changes
