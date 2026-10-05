@@ -9,7 +9,8 @@ import { domainHostnames, primaryDomain, workersDevBase } from "./workers-dev";
  * Where an install is reached now, for health checks and `{{appUrl}}`:
  * its workers.dev URL while that is on, else its primary custom or external
  * domain (see `primaryDomain`). Null when neither is known (workers.dev with
- * no known subdomain). The URL an "Open" button opens is `appAddress`.
+ * no known subdomain). The URL an "Open" button opens is `appAddress`, with
+ * the entry's `openPath`.
  */
 export async function readAppBaseUrl(
   db: Database,

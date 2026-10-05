@@ -1,4 +1,5 @@
 import { env } from "cloudflare:workers";
+import { appOpenUrl } from "@appflare/schema";
 import { createServerFn } from "@tanstack/react-start";
 import { eq } from "drizzle-orm";
 import { z } from "zod";
@@ -13,6 +14,7 @@ import { readAddressDomains } from "../installs/app-address.server";
 import { installLabel } from "../installs/display-name";
 import { installAgainHref, offersInstallAgain } from "../installs/install-again";
 import { namedInstall, readInstallLabels } from "../installs/install-names.server";
+import { readOpenPaths } from "../installs/open-path.server";
 import { isDeleteRetainedJob } from "../installs/removed-apps.server";
 import { sandboxBinding } from "../sandbox/binding";
 import {
@@ -80,7 +82,10 @@ export interface JobView {
     /** What the UI calls the install (`distinctLabels`). */
     label: string;
     status: string;
-    /** Where "Open" takes the app (`appAddress`); null until installed, or with no address. */
+    /**
+     * Where "Open" takes the app: its primary address (`appAddress`), with
+     * its entry's `openPath` after it; null until installed, or with no address.
+     */
     address: string | null;
   } | null;
   /**
@@ -228,17 +233,21 @@ export const getJob = createServerFn({ method: "GET" })
       const labels = await readInstallLabels(env.DB, [named]);
       let address: string | null = null;
       if (installRow.status === "installed") {
-        const [domains, settings] = await Promise.all([
+        const [domains, settings, openPaths] = await Promise.all([
           readAddressDomains(db, [installRow.id]),
           readSettings(db, [SETTING.accountSubdomain]),
+          readOpenPaths(env.DB, installRow.id),
         ]);
-        address = appAddress({
-          workerName: installRow.workerName,
-          workersDevEnabled,
-          servedDomain,
-          domains: domains.get(installRow.id) ?? [],
-          subdomain: settings.account_subdomain || null,
-        });
+        address = appOpenUrl(
+          appAddress({
+            workerName: installRow.workerName,
+            workersDevEnabled,
+            servedDomain,
+            domains: domains.get(installRow.id) ?? [],
+            subdomain: settings.account_subdomain || null,
+          }),
+          openPaths.get(installRow.id),
+        );
       }
       install = { ...rest, label: labels.get(named.id) ?? installLabel(named), address };
     }

@@ -2002,6 +2002,180 @@ describe("update job", () => {
   });
 });
 
+describe("update job, Workflows of an app of one Worker", () => {
+  const jobs = (className: string, binding = "JOBS") => ({
+    type: "workflow",
+    name: binding,
+    workflow_name: "jobs",
+    class_name: className,
+  });
+  const recorded: SeedResource = {
+    kind: "workflow",
+    binding: "JOBS",
+    name: "cut-jobs",
+    cfId: "wf-cut-jobs",
+  };
+  const existing = (): Partial<FakeAccount> => ({
+    workflows: ["cut-jobs"],
+    workflowDefs: { "cut-jobs": { script_name: "cut", class_name: "Jobs" } },
+  });
+
+  it("updates a kept Workflow to the version's class and creates a new one once it serves", async () => {
+    const r = await update(
+      {
+        ...NEW_APP,
+        bindings: [
+          ...(NEW_APP.bindings ?? []),
+          jobs("JobsV2"),
+          { type: "workflow", name: "MAIL", workflow_name: "mail", class_name: "Mail" },
+        ],
+      },
+      existing(),
+      { resources: [...RESOURCES, recorded] },
+    );
+    expect(r.error).toBeNull();
+    expect(r.job?.status).toBe("succeeded");
+    const order = r.step.names;
+    expect(order).not.toContain("check Workflow cut-jobs");
+    expect(order.indexOf("check Workflow cut-mail")).toBeLessThan(
+      order.indexOf("upload Worker version"),
+    );
+    expect(order.indexOf("promote version")).toBeLessThan(
+      order.indexOf("update Workflow cut-jobs"),
+    );
+    expect(order.indexOf("promote version")).toBeLessThan(
+      order.indexOf("create Workflow cut-mail"),
+    );
+    expect(r.fake.state.workflowDefs).toEqual({
+      "cut-jobs": { script_name: "cut", class_name: "JobsV2" },
+      "cut-mail": { script_name: "cut", class_name: "Mail" },
+    });
+    expect(
+      r.resources
+        .filter((row) => row.kind === "workflow")
+        .map((row) => [row.binding, row.name, row.cf_id, row.deleted_at]),
+    ).toEqual([
+      ["JOBS", "cut-jobs", "wf-cut-jobs", null],
+      ["MAIL", "cut-mail", "wf-cut-mail", null],
+    ]);
+  });
+
+  it("keeps the Workflow's name when the version renames its binding", async () => {
+    const r = await update(
+      { ...NEW_APP, bindings: [...(NEW_APP.bindings ?? []), jobs("Jobs", "TASKS")] },
+      existing(),
+      { resources: [...RESOURCES, recorded] },
+    );
+    expect(r.error).toBeNull();
+    expect(r.step.names).not.toContain("check Workflow cut-jobs");
+    expect(r.step.names).toContain("update Workflow cut-jobs");
+    const version = r.fake.state.versions[0]?.metadata.bindings as Array<Record<string, unknown>>;
+    expect(version.filter((b) => b.type === "workflow")).toEqual([
+      { type: "workflow", name: "TASKS", workflow_name: "cut-jobs", class_name: "Jobs" },
+    ]);
+    expect(r.fake.state.workflows).toEqual(["cut-jobs"]);
+  });
+
+  it("leaves alone a Workflow of another script that a row without an id names", async () => {
+    // Recorded by a manager up to 0.2.0 (no id); the name now runs someone else's script.
+    const r = await update(
+      { ...NEW_APP, bindings: [...(NEW_APP.bindings ?? []), jobs("Jobs")] },
+      { workflows: ["cut-jobs"] },
+      { resources: [...RESOURCES, { ...recorded, cfId: null }] },
+    );
+    expect(r.error).toBeNull();
+    expect(r.job?.status).toBe("succeeded");
+    expect(r.fake.state.calls).toContain("GET /workflows/cut-jobs");
+    expect(r.fake.state.calls).not.toContain("PUT /workflows/cut-jobs");
+    expect(r.fake.state.workflowDefs).toEqual({});
+    expect(
+      r.logs.some((l) => l.level === "warn" && l.message.includes('runs the Worker "someone"')),
+    ).toBe(true);
+    expect(r.resources.find((row) => row.kind === "workflow")?.cf_id).toBeNull();
+  });
+
+  it("creates a Workflow a row without an id names when it does not exist", async () => {
+    const r = await update(
+      { ...NEW_APP, bindings: [...(NEW_APP.bindings ?? []), jobs("Jobs")] },
+      {},
+      { resources: [...RESOURCES, { ...recorded, cfId: null }] },
+    );
+    expect(r.error).toBeNull();
+    expect(r.fake.state.workflowDefs).toEqual({
+      "cut-jobs": { script_name: "cut", class_name: "Jobs" },
+    });
+    expect(r.resources.find((row) => row.kind === "workflow")?.cf_id).toBe("wf-cut-jobs");
+  });
+
+  it("warns, and goes on, when Cloudflare refuses a Workflow once the version serves", async () => {
+    const r = await update(
+      {
+        ...NEW_APP,
+        bindings: [
+          ...(NEW_APP.bindings ?? []),
+          { type: "workflow", name: "MAIL", workflow_name: "mail", class_name: "Mail" },
+        ],
+      },
+      { failOnce: new Map([["PUT /workflows/cut-mail", 400]]) },
+    );
+    expect(r.error).toBeNull();
+    expect(r.job?.status).toBe("succeeded");
+    // The steps after it still ran.
+    expect(r.step.names.indexOf("create Workflow cut-mail")).toBeLessThan(
+      r.step.names.indexOf("finish"),
+    );
+    expect(
+      r.logs.some(
+        (l) =>
+          l.level === "warn" && l.message.includes('Cloudflare refused the Workflow "cut-mail"'),
+      ),
+    ).toBe(true);
+    // Kept without an id: the app page marks it and the cron's repair tries again.
+    expect(
+      r.resources
+        .filter((row) => row.kind === "workflow")
+        .map((row) => [row.name, row.cf_id, row.deleted_at]),
+    ).toEqual([["cut-mail", null, null]]);
+  });
+
+  it("drops a kept Workflow's id when Cloudflare refuses to update it, for the repair", async () => {
+    const r = await update(
+      { ...NEW_APP, bindings: [...(NEW_APP.bindings ?? []), jobs("JobsV2")] },
+      { ...existing(), failOnce: new Map([["PUT /workflows/cut-jobs", 400]]) },
+      { resources: [...RESOURCES, recorded] },
+    );
+    expect(r.error).toBeNull();
+    expect(r.job?.status).toBe("succeeded");
+    // Still on the old class in Cloudflare, so no longer marked as set up.
+    expect(r.fake.state.workflowDefs["cut-jobs"]?.class_name).toBe("Jobs");
+    expect(r.resources.find((row) => row.kind === "workflow")?.cf_id).toBeNull();
+  });
+
+  it("takes over a deleted row of a reused binding under the new Workflow's name", async () => {
+    const r = await update(
+      { ...NEW_APP, bindings: [...(NEW_APP.bindings ?? []), jobs("Jobs")] },
+      {},
+      {},
+      {},
+      "self",
+      async () => {
+        // An earlier version's Workflow of this binding, deleted since.
+        await env.DB.prepare(
+          `INSERT INTO resources (id, install_id, kind, binding, name, cf_id, created_at, deleted_at)
+           VALUES ('i1:workflow:JOBS', 'i1', 'workflow', 'JOBS', 'cut-old-jobs', 'wf-old', 1, 2)`,
+        ).run();
+      },
+    );
+    expect(r.error).toBeNull();
+    expect(r.step.names).toContain("create Workflow cut-jobs");
+    expect(
+      r.resources
+        .filter((row) => row.kind === "workflow")
+        .map((row) => [row.binding, row.name, row.cf_id, row.deleted_at]),
+    ).toEqual([["JOBS", "cut-jobs", "wf-cut-jobs", null]]);
+  });
+});
+
 describe("update job, an app of several Workers", () => {
   const JOBS_OLD = "11111111-2222-4333-8444-555555555555";
   const SECRET = "jobs-secret-DO-NOT-LEAK";
@@ -2200,24 +2374,36 @@ describe("update job, an app of several Workers", () => {
       expect(order.indexOf('promote version (Worker "cut-jobs")')).toBeLessThan(
         order.indexOf("promote version"),
       );
+      // Recorded without an id, as managers up to 0.2.0 left it: the update
+      // creates it for the Worker that defines it, once every Worker serves.
+      expect(order.indexOf("promote version")).toBeLessThan(
+        order.indexOf("update Workflow cut-site-audit"),
+      );
+      expect(r.fake.state.workflowDefs).toEqual({
+        "cut-site-audit": { script_name: "cut-jobs", class_name: "SiteAudit" },
+      });
       expect(r.resources.filter((row) => row.kind === "workflow")).toEqual([
         {
           kind: "workflow",
           binding: "SITE_AUDIT",
           name: "cut-site-audit",
-          cf_id: null,
+          cf_id: "wf-cut-site-audit",
           deleted_at: null,
         },
       ]);
     });
 
-    it("checks and records a Workflow this version brings, once", async () => {
+    it("checks, creates and records a Workflow this version brings, once", async () => {
       const r = await updateWithAudit(false, false);
       expect(r.error).toBeNull();
       expect(r.step.names).toContain("check Workflow cut-site-audit");
-      expect(r.resources.filter((row) => row.kind === "workflow").map((row) => row.name)).toEqual([
-        "cut-site-audit",
-      ]);
+      expect(r.step.names).toContain("create Workflow cut-site-audit");
+      expect(r.fake.state.workflowDefs).toEqual({
+        "cut-site-audit": { script_name: "cut-jobs", class_name: "SiteAudit" },
+      });
+      expect(
+        r.resources.filter((row) => row.kind === "workflow").map((row) => [row.name, row.cf_id]),
+      ).toEqual([["cut-site-audit", "wf-cut-site-audit"]]);
     });
   });
 

@@ -2,15 +2,13 @@ import { CloudflareApiError, type ScriptMetadata } from "@appflare/cf-api";
 import {
   type AccessPlaceholderValues,
   type ArtifactManifest,
-  definesWorkflow,
   type EntryWorkerPlaceholders,
   isOptionalSecret,
   isSeedOnly,
   sameDurableObjectExports,
   type WorkerExports,
 } from "@appflare/schema";
-import { and, eq, inArray, isNull } from "drizzle-orm";
-import type { Database } from "../../db/client";
+import { and, eq, isNull } from "drizzle-orm";
 import { resources } from "../../db/schema";
 import { OFF_WORKERS_DEV, workersDevSubdomain } from "../../installs/workers-dev";
 import { type EntryWorker, entryBindings, workerLabel } from "../entry-workers";
@@ -30,11 +28,12 @@ import {
   secretBindings,
   updateVersionMessage,
 } from "../update/plan";
-import type { ResourceBindingPlan, WorkflowPlan } from "./bindings";
+import type { ResourceBindingPlan } from "./bindings";
 import { CronLimitError, putSchedulesChecked } from "./cron-limit";
 import { buildScriptMetadata, type CreatedResource, installVars } from "./metadata";
 import { probeUntilHealthy, recordResource, resourceId, uploadAssetsPhase } from "./phases";
 import { type ConsumerPlan, planQueueConsumers } from "./queue-consumers";
+import { putWorkflowsPhase, type WorkflowTarget, workflowsOf } from "./workflows";
 
 /**
  * The phases that deploy, update, roll back and delete the Workers of an app
@@ -60,10 +59,10 @@ export interface EntryUploadContext {
   resources: readonly CreatedResource[];
   workflowNames: Readonly<Record<string, string>>;
   /**
-   * Install: every Workflow of the app. A Worker that defines one records it
-   * before its upload creates it ({@link recordWorkflows}).
+   * Install: every Workflow of the app. Each Worker's upload is followed by
+   * the calls that create the Workflows it defines (its upload creates none).
    */
-  workflows?: readonly WorkflowPlan[];
+  workflows?: readonly WorkflowTarget[];
   rateLimitIds: Readonly<Record<string, string>>;
   /** The vars the admin set (values for the catalog's vars). */
   userVars: Readonly<Record<string, string>>;
@@ -78,64 +77,6 @@ export interface EntryUploadContext {
   placeholders: EntryWorkerPlaceholders | undefined;
   /** Each Worker's name within the entry to its installed name. */
   entryNames: Readonly<Record<string, string>>;
-}
-
-/** The Workflows of `plans` that a Worker's own bindings define (`definesWorkflow`). */
-export function workflowsDefinedBy(
-  manifest: Pick<ArtifactManifest, "worker">,
-  plans: readonly WorkflowPlan[],
-): WorkflowPlan[] {
-  const defined = new Set(manifest.worker.bindings.filter(definesWorkflow).map((b) => b.name));
-  return plans.filter((wf) => defined.has(wf.binding));
-}
-
-/**
- * Records the Workflows a Worker defines, before its upload creates them,
- * as its Worker name is: an upload whose response is lost, or a job that
- * stops right after it, still leaves them for the uninstall, which deletes
- * them by name and counts one that was never created as gone. Each name was
- * checked free before anything was created.
- */
-export async function recordWorkflows(
-  orm: Database,
-  installId: string,
-  workflows: readonly WorkflowPlan[],
-  at: Date,
-): Promise<void> {
-  for (const wf of workflows) {
-    await recordResource(
-      orm,
-      installId,
-      { kind: "workflow", key: wf.binding, binding: wf.binding, name: wf.name, cfId: null },
-      at,
-    );
-  }
-}
-
-/**
- * Marks the Workflows recorded for a Worker whose upload Cloudflare refused
- * deleted: a refused upload created none, and an uninstall must never delete
- * a Workflow of that name made elsewhere later.
- */
-export async function releaseWorkflows(
-  orm: Database,
-  installId: string,
-  workflows: readonly WorkflowPlan[],
-  at: Date,
-): Promise<void> {
-  if (workflows.length === 0) return;
-  await orm
-    .update(resources)
-    .set({ deleted_at: at })
-    .where(
-      and(
-        inArray(
-          resources.id,
-          workflows.map((wf) => resourceId(installId, "workflow", wf.binding)),
-        ),
-        isNull(resources.deleted_at),
-      ),
-    );
 }
 
 /** The metadata of one Worker's upload, with its own vars and bindings. */
@@ -241,7 +182,6 @@ export async function deployOtherWorkerPhase(
     ctx.source.host,
     label,
   );
-  const workflows = workflowsDefinedBy(own, ctx.workflows ?? []);
   await run(`record Worker name${label}`, async ({ orm }) => {
     await recordResource(
       orm,
@@ -249,7 +189,6 @@ export async function deployOtherWorkerPhase(
       { kind: "worker", key: name, binding: null, name, cfId: null },
       new Date(now()),
     );
-    await recordWorkflows(orm, ctx.installId, workflows, new Date(now()));
     return {};
   });
   const upload = await run(`upload Worker script${label}`, async ({ log, orm }) => {
@@ -289,7 +228,6 @@ export async function deployOtherWorkerPhase(
               isNull(resources.cf_id),
             ),
           );
-        await releaseWorkflows(orm, ctx.installId, workflows, new Date(now()));
         log.warn(`Cloudflare refused the upload; no Worker "${name}" was created.`);
       }
       throw error;
@@ -302,6 +240,14 @@ export async function deployOtherWorkerPhase(
       .where(eq(resources.id, resourceId(ctx.installId, "worker", name)));
     return {};
   });
+  // The Workflows it defines, now that it runs their classes.
+  await putWorkflowsPhase(
+    steps,
+    ctx.installId,
+    workflowsOf(ctx.workflows ?? [], name),
+    () => true,
+    "install",
+  );
   // An uploaded script starts off workers.dev (the manager, unlike wrangler,
   // never turns it on); saying so explicitly guards a Worker kept private.
   if (!worker.workersDev) await otherWorkerRoutePhase(steps, ctx.installId, worker, ctx.subdomain);

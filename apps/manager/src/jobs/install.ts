@@ -79,9 +79,6 @@ import {
   type EntryUploadContext,
   otherWorkerRoutePhase,
   planEntryQueueConsumers,
-  recordWorkflows,
-  releaseWorkflows,
-  workflowsDefinedBy,
 } from "./install/entry-worker-phases";
 import { healthColumns, healthLabel } from "./install/health";
 import { buildScriptMetadata, type CreatedResource, installVars } from "./install/metadata";
@@ -108,6 +105,7 @@ import {
 import { attachQueueConsumersPhase } from "./install/queue-consumers";
 import { explainR2Refusal } from "./install/r2-enablement";
 import { assignRateLimitsPhase } from "./install/rate-limits";
+import { putWorkflowsPhase, workflowsOf, workflowTargets } from "./install/workflows";
 import type { JobContext } from "./run-job";
 import { awaitSandboxEnabledPhase, sandboxEnableJobField } from "./sandbox-enable-wait";
 import { runSelfDeployingInstall } from "./self-deploying/jobs";
@@ -653,6 +651,8 @@ export async function runInstall(ctx: JobContext): Promise<void> {
       plan.workflowRefs,
     );
     const placeholders = entryPlaceholders(manifest, params.workerName, subdomain);
+    // Each Workflow the app defines, created once the Worker that runs it is uploaded.
+    const workflows = workflowTargets(manifest, params.workerName, workflowNames);
     // The wildcard domain the form asked for, set up once the Worker serves:
     // `{{wildcardHostname}}` names it from the first upload on, and is
     // deployed again without it when the domain step does not set it up.
@@ -663,7 +663,7 @@ export async function runInstall(ctx: JobContext): Promise<void> {
       source: { zipUrl: source.zipUrl, host: source.host },
       resources: created,
       workflowNames,
-      workflows: plan.workflows,
+      workflows,
       rateLimitIds,
       userVars: params.vars,
       subdomain,
@@ -709,10 +709,6 @@ export async function runInstall(ctx: JobContext): Promise<void> {
     // recorded first, with no id yet (pending): an upload whose response is
     // lost has still created it, and an uninstall deletes a Worker only when
     // this install recorded it (the name was checked free just before).
-    // The Workflows the primary Worker defines are recorded with its name,
-    // before the upload creates them (those of the other Workers were
-    // recorded the same way, before theirs).
-    const primaryWorkflows = workflowsDefinedBy(primaryManifest, plan.workflows);
     await run("record Worker name", async ({ orm }) => {
       await recordResource(orm, {
         kind: "worker",
@@ -721,7 +717,6 @@ export async function runInstall(ctx: JobContext): Promise<void> {
         name: params.workerName,
         cfId: null,
       });
-      await recordWorkflows(orm, params.installId, primaryWorkflows, new Date(now()));
       return {};
     });
     const upload = await run("upload Worker script", async ({ log, orm }) => {
@@ -780,7 +775,6 @@ export async function runInstall(ctx: JobContext): Promise<void> {
                 isNull(resources.cf_id),
               ),
             );
-          await releaseWorkflows(orm, params.installId, primaryWorkflows, new Date(now()));
           log.warn(`Cloudflare refused the upload; no Worker "${params.workerName}" was created.`);
         }
         throw error;
@@ -805,6 +799,16 @@ export async function runInstall(ctx: JobContext): Promise<void> {
         .where(eq(resources.id, resourceId(params.installId, "worker", params.workerName)));
       return {};
     });
+
+    // The Workflows the primary Worker defines, now that it runs their classes
+    // (the upload created none; each other Worker's come after its own upload).
+    await putWorkflowsPhase(
+      steps,
+      params.installId,
+      workflowsOf(workflows, params.workerName),
+      () => true,
+      "install",
+    );
 
     // The other Workers that bind to the primary one, now that it exists.
     await deployOthers(others.after);

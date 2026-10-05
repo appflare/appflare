@@ -32,7 +32,8 @@ marked optional is one the app works without: it is left unset unless you turn o
 Fields show the app's own labels. The name the app reads each value under (its
 variable or secret name) shows when you hover over a label, or next to every label
 once you turn on **Show technical names** at the top of the form. Long help shows
-its first sentence; **More** shows the rest.
+its first sentence; **More** shows the rest. Some fields link to where you get the
+value, such as **Get a key** for an API key; the link opens in a new tab.
 
 **Settings.** Variables on the app's Worker, for example a home page URL. A setting
 starts with the app's default. Parts of it that Appflare fills in, such as the app's
@@ -273,7 +274,8 @@ first: a job that did not finish (**View log**), an app that is not responding
 in the sidebar counts these rows.
 
 Below it, **Your apps** shows a card for every install: its name, one line on how it is
-doing, **Open** (the app itself, in a new tab) and **Manage** (its page in Appflare).
+doing, **Open** (the app itself, in a new tab, at its dashboard when the app keeps
+one at another path, such as `/dashboard`) and **Manage** (its page in Appflare).
 The sidebar lists the same apps under **Your apps**, with a dot when one needs
 attention; the search icon beside the heading filters the list.
 

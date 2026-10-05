@@ -3,6 +3,7 @@ import type { RemovalRelease } from "../../access/install-access.server";
 import type { AccessUpkeepReport } from "../../access/upkeep-run.server";
 import type { EmailRoutingInspection } from "../../installs/email-routing.server";
 import type { DomainCheckReport } from "../../installs/external-domains-poll.server";
+import type { WorkflowRepairReport } from "../../installs/workflow-repair.server";
 import type { DeliveryReport } from "../../notifications/deliver.server";
 import type { HealthSweepReport } from "../../notifications/health-sweep.server";
 import { createNotificationUnits, type NotificationUnitResult } from "../../notifications/units";
@@ -142,5 +143,10 @@ export class JobUnits extends WorkerEntrypoint<Env> {
 
   resyncAccessApps(input: unknown): Promise<NotificationUnitResult<AccessUpkeepReport>> {
     return createNotificationUnits(this.env).resyncAccessApps(input);
+  }
+
+  // The scheduled repair of installed apps' missing Workflows.
+  repairWorkflows(input: unknown): Promise<NotificationUnitResult<WorkflowRepairReport>> {
+    return createNotificationUnits(this.env).repairWorkflows(input);
   }
 }

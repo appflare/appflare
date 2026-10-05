@@ -80,7 +80,15 @@ interface FakeState {
   healthUrls: string[];
   /** Called on each health request (a test's fake clock makes probes slow). */
   onHealthProbe?: () => void;
+  /**
+   * Workflows that exist in the account: those listed up front belong to
+   * another script ("appflare"). As on Cloudflare, uploading a Worker creates
+   * none; `PUT /workflows/{name}` does, and `workflowDefs` keeps what it set.
+   */
   workflows: string[];
+  workflowDefs: Record<string, { script_name: string; class_name: string }>;
+  /** When set, `PUT /workflows/<name>` is refused with `status`. */
+  workflowRefusal?: { name: string; status: number };
   /** Keys (`METHOD /path`) whose next call does its work and then answers 500. */
   failAfter: Set<string>;
   /** The query that applies this migration file answers `status`, without running, `times` times. */
@@ -173,6 +181,7 @@ function fakeWorld(fixture: ArtifactFixture, over: Partial<FakeState> = {}) {
     ],
     healthUrls: [],
     workflows: [],
+    workflowDefs: {},
     failAfter: new Set(),
     r2: [],
     r2Enabled: true,
@@ -516,13 +525,29 @@ function fakeWorld(fixture: ArtifactFixture, over: Partial<FakeState> = {}) {
         state.subdomainEnabled = await request.json();
         return ok({ enabled: true, previews_enabled: true });
     }
-    const workflow = /^GET \/workflows\/([^/]+)$/.exec(key);
-    if (workflow?.[1] !== undefined) {
-      const name = workflow[1];
+    const workflow = /^(GET|PUT) \/workflows\/([^/]+)$/.exec(key);
+    if (workflow?.[2] !== undefined) {
+      const name = workflow[2];
+      if (workflow[1] === "PUT") {
+        if (state.workflowRefusal?.name === name) {
+          return Response.json(
+            { success: false, errors: [{ code: 10001, message: "workflow refused" }] },
+            { status: state.workflowRefusal.status },
+          );
+        }
+        const body = (await request.json()) as { script_name: string; class_name: string };
+        if (!state.workflows.includes(name)) state.workflows.push(name);
+        state.workflowDefs[name] = body;
+        return ok({ id: `wf-${name}`, name, ...body });
+      }
+      const def = state.workflowDefs[name];
       return state.workflows.includes(name)
-        ? ok({ id: "wf", name, script_name: "appflare" })
+        ? ok({ id: `wf-${name}`, name, script_name: def?.script_name ?? "appflare" })
         : Response.json(
-            { success: false, errors: [{ code: 10200, message: "Workflow not found" }] },
+            {
+              success: false,
+              errors: [{ code: 10200, message: "workflows.api.error.workflow.not_found" }],
+            },
             { status: 404 },
           );
     }
@@ -1786,11 +1811,20 @@ describe("install job", () => {
       workflow_name: "cut-jobs",
       class_name: "JobWorkflow",
     });
+    // The upload creates no Workflow: the call after it does, for the Worker's class.
+    const calls = ok.fake.state.calls;
+    expect(calls.indexOf("PUT /workers/scripts/cut")).toBeLessThan(
+      calls.indexOf("PUT /workflows/cut-jobs"),
+    );
+    expect(ok.step.names).toContain("create Workflow cut-jobs");
+    expect(ok.fake.state.workflowDefs).toEqual({
+      "cut-jobs": { script_name: "cut", class_name: "JobWorkflow" },
+    });
     expect(ok.resources).toContainEqual({
       kind: "workflow",
       binding: "JOBS",
       name: "cut-jobs",
-      cf_id: null,
+      cf_id: "wf-cut-jobs",
     });
 
     await reset();
@@ -2960,10 +2994,35 @@ describe("install job, an app of several Workers", () => {
         },
         { type: "workflow", name: "RANK", workflow_name: "cut-rank", class_name: "Rank" },
       ]);
-      // Each Workflow is recorded once, for the uninstall to delete by name.
+      // Each Workflow is created once, by the Worker that defines it, once
+      // that Worker is uploaded (the primary one runs the audit Workflow
+      // only through its binding); and recorded once, for the uninstall to
+      // delete by name.
+      expect(r.fake.state.workflowDefs).toEqual({
+        "cut-site-audit": { script_name: "cut-audit", class_name: "SiteAudit" },
+        "cut-rank": { script_name: "cut", class_name: "Rank" },
+      });
+      expect(calls.filter((c) => c.startsWith("PUT /workflows/"))).toEqual([
+        "PUT /workflows/cut-site-audit",
+        "PUT /workflows/cut-rank",
+      ]);
+      expect(calls.indexOf("PUT /workers/scripts/cut-audit")).toBeLessThan(
+        calls.indexOf("PUT /workflows/cut-site-audit"),
+      );
+      expect(calls.indexOf("PUT /workflows/cut-site-audit")).toBeLessThan(
+        calls.indexOf("PUT /workers/scripts/cut"),
+      );
+      expect(calls.indexOf("PUT /workers/scripts/cut")).toBeLessThan(
+        calls.indexOf("PUT /workflows/cut-rank"),
+      );
       expect(r.resources.filter((row) => row.kind === "workflow")).toEqual([
-        { kind: "workflow", binding: "SITE_AUDIT", name: "cut-site-audit", cf_id: null },
-        { kind: "workflow", binding: "RANK", name: "cut-rank", cf_id: null },
+        {
+          kind: "workflow",
+          binding: "SITE_AUDIT",
+          name: "cut-site-audit",
+          cf_id: "wf-cut-site-audit",
+        },
+        { kind: "workflow", binding: "RANK", name: "cut-rank", cf_id: "wf-cut-rank" },
       ]);
     });
 
@@ -2991,45 +3050,54 @@ describe("install job, an app of several Workers", () => {
         ).all()
       ).results;
 
-    it("records each Workflow before the upload of the Worker that defines it", async () => {
+    it("creates each Workflow after the upload of the Worker that defines it", async () => {
       const r = await install(auditApp());
       expect(r.error).toBeNull();
       const order = r.step.names;
-      // Recorded with each Worker's name, before its upload.
-      expect(order.indexOf('record Worker name (Worker "cut-audit")')).toBeLessThan(
-        order.indexOf('upload Worker script (Worker "cut-audit")'),
+      expect(order.indexOf('upload Worker script (Worker "cut-audit")')).toBeLessThan(
+        order.indexOf("create Workflow cut-site-audit"),
       );
-      expect(order.indexOf("record Worker name")).toBeLessThan(
-        order.indexOf("upload Worker script"),
+      expect(order.indexOf("upload Worker script")).toBeLessThan(
+        order.indexOf("create Workflow cut-rank"),
       );
     });
 
-    it("keeps a Workflow recorded when its Worker's upload fails with a 5xx, which may have created it", async () => {
-      const r = await install(auditApp(), {
+    it("records no Workflow when the upload of the Worker that defines it fails", async () => {
+      const failed = await install(auditApp(), {
         otherUploadStatus: { name: "cut-audit", status: 500 },
       });
+      expect(failed.job?.status).toBe("failed");
+      expect(failed.fake.state.calls.some((c) => c.startsWith("PUT /workflows/"))).toBe(false);
+      expect(await workflowRows()).toEqual([]);
+    });
+
+    it("keeps the other Worker's Workflow when the primary Worker's upload is refused", async () => {
+      const r = await install(auditApp(), { uploadStatus: 400 });
       expect(r.job?.status).toBe("failed");
-      // The primary Worker was never reached; only the audit Worker's Workflow is recorded.
+      // The audit Worker was uploaded and its Workflow created; the primary's never was.
+      expect(r.fake.state.workflows).toEqual(["cut-site-audit"]);
       expect(await workflowRows()).toEqual([
         { binding: "SITE_AUDIT", name: "cut-site-audit", live: 1 },
       ]);
     });
 
-    it("releases the Workflows of a Worker whose upload Cloudflare refused, which created none", async () => {
-      const refused = await install(auditApp(), {
-        otherUploadStatus: { name: "cut-audit", status: 400 },
+    it("retries a create whose answer was lost, without a second Workflow", async () => {
+      const r = await install(auditApp(), {
+        failAfter: new Set(["PUT /workflows/cut-site-audit"]),
       });
-      expect(refused.job?.status).toBe("failed");
+      expect(r.error).toBeNull();
+      expect(r.step.retried["create Workflow cut-site-audit"]).toBe(2);
+      expect(r.fake.state.workflows).toEqual(["cut-site-audit", "cut-rank"]);
       expect(await workflowRows()).toEqual([
-        { binding: "SITE_AUDIT", name: "cut-site-audit", live: 0 },
+        { binding: "SITE_AUDIT", name: "cut-site-audit", live: 1 },
+        { binding: "RANK", name: "cut-rank", live: 1 },
       ]);
     });
 
-    it("releases only the primary's own Workflows when its upload is refused", async () => {
-      const r = await install(auditApp(), { uploadStatus: 400 });
+    it("releases a Workflow Cloudflare refused to create, which does not exist", async () => {
+      const r = await install(auditApp(), { workflowRefusal: { name: "cut-rank", status: 400 } });
       expect(r.job?.status).toBe("failed");
-      expect(r.fake.state.calls).toContain("PUT /workers/scripts/cut-audit");
-      // The audit Worker's upload created its Workflow; the primary's created none.
+      expect(r.job?.error).toContain("create Workflow cut-rank");
       expect(await workflowRows()).toEqual([
         { binding: "SITE_AUDIT", name: "cut-site-audit", live: 1 },
         { binding: "RANK", name: "cut-rank", live: 0 },

@@ -19,7 +19,8 @@ import { createJobUnits, type JobUnitsApi } from "./units";
  *     Email Routing check, the cron trigger count (for an app with cron
  *     triggers, unless the account is known to be on Workers Paid);
  *   - 1 per Cloudflare API step: token check, script list, each resource's
- *     check and create (2 or more), each Workflow name check, the R2 check,
+ *     check and create (2 or more), each Workflow name check and the call
+ *     that creates or updates each Workflow (install, update, rollback), the R2 check,
  *     the assets session, each secret, the cron triggers, each queue
  *     consumer, the subdomain lookup and route, snapshot reads and
  *     bookmarks and the promotion (updates); for an app that receives email,

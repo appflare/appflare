@@ -435,7 +435,17 @@ export function diffBindings(
   }
 
   for (const wf of plan.workflows) {
-    const row = (byBinding.get(wf.binding) ?? []).find((r) => r.kind === "workflow");
+    // A Workflow keeps its name under a renamed binding: the install already
+    // has a Workflow of the planned name, which the version runs on.
+    const row =
+      (byBinding.get(wf.binding) ?? []).find((r) => r.kind === "workflow") ??
+      recorded.find(
+        (r) =>
+          r.kind === "workflow" &&
+          r.name === wf.name &&
+          !used.has(r) &&
+          !plan.workflows.some((other) => other.binding === r.binding),
+      );
     if (row !== undefined) {
       used.add(row);
       diff.workflowNames[wf.binding] = row.name;

@@ -97,18 +97,19 @@ function assetParts(worker: EntryWorker): number {
  * its upload (a unit call), its workers.dev route, one step per secret it
  * gets, its cron triggers and one step per queue it consumes (a list and a
  * create each), and for each Workflow it defines a step that checks the name
- * is free (one call) and the record of it after its upload.
+ * is free and one that creates it after its upload (a call each).
  *
  * Update: the read of its deployment for the snapshot, its route taken off
  * workers.dev when the version keeps it private, its assets, its version
  * upload, previews and a canary of up to `canaryAttempts` probes with a sleep
  * after each, its promotion, its queue consumers, cron triggers and route,
  * and on failure its return to the snapshot's version with its route and
- * secrets put back; and for each Workflow it defines, at most a name check
- * and a record, when the version brings it.
+ * secrets put back; and for each Workflow it defines, a name check when the
+ * version brings it, and the step that creates or updates it once it serves
+ * (a call each).
  *
  * A Workflow binding that runs a Workflow another Worker defines costs
- * nothing of its own: it rides on its Worker's upload.
+ * nothing of its own: the Worker that defines it creates it.
  */
 export function otherWorkerCost(
   worker: EntryWorker,
@@ -123,15 +124,15 @@ export function otherWorkerCost(
   const consumers = worker.manifest.worker.queueConsumers?.length ?? 0;
   const workflows = worker.manifest.worker.bindings.filter(definesWorkflow).length;
   if (kind === "install") {
-    const steps = assets + 3 + 1 + secrets + crons + consumers + workflows;
-    // Each Workflow: the name check's call, and its record's D1 write.
+    const steps = assets + 3 + 1 + secrets + crons + consumers + 2 * workflows;
+    // Each Workflow: the name check's call and the call that creates it.
     const calls = assets + 1 + 1 + secrets + crons + 2 * consumers + 2 * workflows;
     return spend(steps, 0, calls, units);
   }
   const canary = 1 + canaryAttempts;
   const undo = 3;
-  const steps = 1 + 1 + assets + 1 + canary + 1 + consumers + crons + 1 + undo + workflows;
-  return spend(steps, canaryAttempts, steps + consumers + workflows, units);
+  const steps = 1 + 1 + assets + 1 + canary + 1 + consumers + crons + 1 + undo + 2 * workflows;
+  return spend(steps, canaryAttempts, steps + consumers, units);
 }
 
 /** The job's estimated total: {@link JOB_RESERVE} plus each Worker other than the primary one. */

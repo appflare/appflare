@@ -14,6 +14,7 @@ import {
   checkExternalDomains,
   type DomainCheckReport,
 } from "../installs/external-domains-poll.server";
+import { repairWorkflows, type WorkflowRepairReport } from "../installs/workflow-repair.server";
 import { type DeliveryReport, deliverDue } from "./deliver.server";
 import {
   checkInstallsHealth,
@@ -45,6 +46,8 @@ export interface NotificationUnitsApi {
   refreshAccessRevisions(input: unknown): Promise<NotificationUnitResult<AccessUpkeepReport>>;
   renewAccessTokens(input: unknown): Promise<NotificationUnitResult<AccessUpkeepReport>>;
   resyncAccessApps(input: unknown): Promise<NotificationUnitResult<AccessUpkeepReport>>;
+  /** Creates the missing Workflows of installed apps (installs/workflow-repair.server.ts). */
+  repairWorkflows(input: unknown): Promise<NotificationUnitResult<WorkflowRepairReport>>;
 }
 
 export interface NotificationUnitsEnv extends CfClientEnv {
@@ -69,6 +72,7 @@ const healthInput = z.object({
 });
 const domainsInput = z.object({});
 const accessUpkeepInput = z.object({});
+const workflowRepairInput = z.object({});
 
 async function settle<T>(run: () => Promise<T>): Promise<NotificationUnitResult<T>> {
   try {
@@ -131,6 +135,17 @@ export function createNotificationUnits(
     refreshAccessRevisions: (input) => accessPart(refreshAccessRevisions, input),
     renewAccessTokens: (input) => accessPart(renewAccessTokens, input),
     resyncAccessApps: (input) => accessPart(resyncAccessApps, input),
+    repairWorkflows: (input) =>
+      settle(async () => {
+        workflowRepairInput.parse(input);
+        const { now } = deps;
+        return repairWorkflows({
+          db: env.DB,
+          api: async () =>
+            deps.api ?? getCfClient(env, deps.fetch === undefined ? {} : { fetch: deps.fetch }),
+          ...(now === undefined ? {} : { now: () => new Date(now()) }),
+        });
+      }),
   };
 }
 

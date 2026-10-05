@@ -400,7 +400,11 @@ function ResourcesTab({ install }: { install: InstallDetail }) {
         <Section
           id="resources"
           title="Resources"
-          description="What the install created in this account."
+          description={
+            install.resources.some((r) => r.missing)
+              ? "What the install created in this account. A Workflow marked “Not set up” is missing in Cloudflare, or was not updated with the app, so the parts of the app that use it may not work. Appflare tries again on its next scheduled check."
+              : "What the install created in this account."
+          }
           className={FLUSH_RING_CLASS}
           action={!kept && install.resources.length > 0 ? namesSwitch : null}
           empty={
@@ -555,6 +559,7 @@ function ResourceTable({ rows, showBindings }: { rows: ResourceView[]; showBindi
               <span className={mono}>{r.name}</span>
             </Table.Cell>
             <Table.Cell>
+              {r.missing && <Badge variant="warning">Not set up</Badge>}
               {r.cfId !== null && (
                 <InlineCopyText
                   labels={{ copyAction: `Copy the ID of ${r.name}`, copied: "ID copied" }}
