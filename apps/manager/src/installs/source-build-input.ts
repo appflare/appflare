@@ -1,4 +1,4 @@
-import { buildCommandChoiceSchema } from "@appflare/schema";
+import { buildCommandChoiceSchema, MAX_CONNECTION_STRING_LENGTH } from "@appflare/schema";
 import { z } from "zod";
 import { startInstallInput } from "./install-input";
 
@@ -49,6 +49,10 @@ export const updateFromSourceBuildInput = z.object({
   buildId: z.string().min(1).max(64),
   /** Values of the secrets the rebuild introduces. */
   secrets: z.record(z.string().max(200), z.string().max(4096)).optional(),
+  /** Connection strings of the databases the rebuild adds. Never logged; binding names only in the job record. */
+  hyperdrive: z
+    .record(z.string().max(200), z.string().max(MAX_CONNECTION_STRING_LENGTH))
+    .optional(),
   confirmNoPreview: z.boolean().optional(),
   /** The admin saw how the rebuild changes the app's Email Routing. */
   confirmEmailRouting: z

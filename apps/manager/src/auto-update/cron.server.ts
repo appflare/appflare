@@ -103,6 +103,9 @@ export function describeNeeds(needs: UpdateNeeds): string {
   if (needs.needsSecrets.length > 0) {
     parts.push(`a value for ${needs.needsSecrets.map((s) => s.name).join(", ")}`);
   }
+  if (needs.needsDatabases !== undefined && needs.needsDatabases.length > 0) {
+    parts.push(`a connection string for ${needs.needsDatabases.map((d) => d.binding).join(", ")}`);
+  }
   if (needs.skipsPreview !== null) parts.push("a confirmation to update without a preview check");
   if (needs.build !== null) parts.push("approval of the build or installer run");
   if (needs.cronTriggers !== null) parts.push("a Workers Paid confirmation for its cron triggers");

@@ -106,7 +106,9 @@ database before it answers, and binds the resulting Hyperdrive configuration
 (`<worker name>-<binding>`) to the app's Worker. A database Cloudflare cannot reach
 ends the install before the Worker is uploaded, with Cloudflare's reason. Appflare
 never stores the connection string: it is not shown again, and it is not in the job's
-record or log. The API token needs the optional **Hyperdrive: Edit** permission.
+record or log. The API token needs the optional **Hyperdrive: Edit** permission. When a
+new version of an installed app adds a database, its
+[update](/guides/updates/#update-an-app) asks for that connection string the same way.
 
 To point the app at another database, or to change its password, open the app's
 **Settings**, choose **Replace connection string**, and save. Appflare creates a new
@@ -155,9 +157,9 @@ For each stream the app binds, the install job:
 
 The stream, sink and pipeline cannot be changed once created, so updates keep them.
 An update to a version that changes a stream's schema or the table it writes to is
-refused with a message, and so is one that adds a stream (its sink needs the token
-entered at install, which the manager cannot read back): such a version needs a fresh
-install. Uninstalling deletes the pipeline, the sink and the stream;
+refused with a message: such a version needs a fresh install. An update to a version
+that adds a stream creates it the same way, after asking for the token again (the
+manager cannot read a secret back). Uninstalling deletes the pipeline, the sink and the stream;
 the bucket is listed with the app's other data, and keeping it keeps its Data Catalog
 and the table. Appflare's token needs the optional **Pipelines: Edit** permission, and
 **Workers R2 Data Catalog: Edit** (added by hand) for an uninstall to remove the Data

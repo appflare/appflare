@@ -75,18 +75,30 @@ function saidBy(error: CloudflareApiError): string {
  * job naming the secret that holds the token and what it needs. The token's
  * value is never part of the sentence.
  */
-async function explainCatalogTokenRefusal<T>(secret: string, call: () => Promise<T>): Promise<T> {
+async function explainCatalogTokenRefusal<T>(
+  secret: string,
+  call: () => Promise<T>,
+  job: PipelineJob = "install",
+): Promise<T> {
   try {
     return await call();
   } catch (error) {
     if (error instanceof CloudflareApiError && (error.status === 401 || error.status === 403)) {
       throw new JobError(
-        `Cloudflare refused the R2 Data Catalog call made with the token in ${secret} (${saidBy(error)}). That token needs Workers R2 Data Catalog: Edit and Workers R2 Storage: Edit on this account (an R2 API token with Admin Read & Write has both); create one, then uninstall this failed install and install again with it`,
+        `Cloudflare refused the R2 Data Catalog call made with the token in ${secret} (${saidBy(error)}). That token needs Workers R2 Data Catalog: Edit and Workers R2 Storage: Edit on this account (an R2 API token with Admin Read & Write has both); create one, then ${AGAIN[job]} with it`,
       );
     }
     throw error;
   }
 }
+
+/** The job that sets a stream up: what its messages tell the admin to do once the cause is fixed. */
+export type PipelineJob = "install" | "update";
+
+const AGAIN: Record<PipelineJob, string> = {
+  install: "uninstall this failed install and install again",
+  update: "start the update again",
+};
 
 /** Step "check Pipelines": the cheapest Pipelines call, before anything is created. */
 export async function checkPipelinesPhase(
@@ -135,6 +147,65 @@ function streamSchema(fields: readonly StreamField[]) {
   };
 }
 
+/** A stream, sink or pipeline of a planned name that exists without Appflare's record of it. */
+export interface TakenPipelineObject {
+  what: "stream" | "sink" | "pipeline";
+  name: string;
+}
+
+/** What each is called in a message: the dashboard lists them under Pipelines. */
+const PIPELINE_OBJECT_LABEL: Record<TakenPipelineObject["what"], string> = {
+  stream: "Pipelines stream",
+  sink: "Pipelines sink",
+  pipeline: "pipeline",
+};
+
+/**
+ * wrangler 4's delete command for each (`pipelines streams|sinks delete
+ * <id or name>`, `pipelines delete <id or name>`), in the order they can be
+ * deleted: a pipeline reads its stream and writes to its sink.
+ */
+const DELETE_COMMAND: Record<TakenPipelineObject["what"], string> = {
+  pipeline: "wrangler pipelines delete",
+  sink: "wrangler pipelines sinks delete",
+  stream: "wrangler pipelines streams delete",
+};
+const DELETE_ORDER = Object.keys(DELETE_COMMAND) as Array<TakenPipelineObject["what"]>;
+
+/**
+ * Why a stream cannot be set up when names it needs are taken, naming each
+ * object to delete and how. A stream, sink or pipeline of the install's own
+ * names is most likely one an earlier attempt made without hearing
+ * Cloudflare's answer, so it can go; a bucket may hold someone's data, so it
+ * is named without being called safe to delete.
+ */
+export function takenNamesProblem(
+  taken: readonly TakenPipelineObject[],
+  bucket: string | null,
+  job: PipelineJob = "install",
+): string {
+  const sentences: string[] = [];
+  if (taken.length > 0) {
+    const ordered = [...taken].sort(
+      (a, b) => DELETE_ORDER.indexOf(a.what) - DELETE_ORDER.indexOf(b.what),
+    );
+    const named = ordered.map((t) => `the ${PIPELINE_OBJECT_LABEL[t.what]} "${t.name}"`);
+    const list =
+      named.length === 1 ? named.join("") : `${named.slice(0, -1).join(", ")} and ${named.at(-1)}`;
+    const one = taken.length === 1;
+    const commands = ordered.map((t) => `${DELETE_COMMAND[t.what]} ${t.name}`).join(", then ");
+    sentences.push(
+      `${list} already ${one ? "exists" : "exist"} in this account, but Appflare has no record of ${one ? "it" : "them"} and does not adopt what it has not recorded; an earlier attempt may have made ${one ? "it" : "them"} without hearing back from Cloudflare. Delete ${one ? "it" : "them"} in the Cloudflare dashboard under Pipelines (or run ${commands}), then ${AGAIN[job]}.`,
+    );
+  }
+  if (bucket !== null) {
+    sentences.push(
+      `An R2 bucket named ${bucket} already exists in this account; Appflare does not adopt existing resources. If nothing uses it, delete it in the Cloudflare dashboard under R2, then ${AGAIN[job]}.`,
+    );
+  }
+  return sentences.join(" ");
+}
+
 /** The pass-through SQL of a pipeline. Names are `[a-z0-9_]` and start with a letter. */
 export function passThroughSql(sink: string, stream: string): string {
   return `INSERT INTO ${sink} SELECT * FROM ${stream}`;
@@ -144,48 +215,62 @@ export function passThroughSql(sink: string, stream: string): string {
  * Creates and records everything of one Pipelines binding and returns the
  * stream as the upload binds it. `token` is the value of the secret the
  * sink's `tokenSecret` names, from the job's input: read inside the steps
- * that need it, never logged, returned, or recorded.
+ * that need it, never logged, returned, or recorded. For an update, the
+ * plan says what an earlier attempt made (`made`, skipped here) and whether
+ * the bucket was there before (`bucket.kept`: its Data Catalog is kept).
  */
 export async function provisionPipelinePhase(
   steps: JobSteps,
   installId: string,
   res: Extract<ResourceBindingPlan, { type: "pipelines" }>,
   token: string,
+  job: PipelineJob = "install",
 ): Promise<CreatedResource> {
   const { run } = steps;
   const plan = res.pipeline;
-  const { bucket, declared } = plan;
+  const { bucket, declared, made } = plan;
   const secret = declared.sink.tokenSecret;
   const at = () => new Date(steps.now());
 
   await run(`check Pipelines names for ${res.binding}`, async ({ log, cf }) => {
     const api = cf();
-    const taken: string[] = [];
+    /** Pipelines objects of these names that Appflare has no record of. */
+    const taken: TakenPipelineObject[] = [];
     await explainPipelinesRefusal(async () => {
-      if ((await api.pipelines.listStreams()).some((s) => s.name === plan.streamName)) {
-        taken.push(`a Pipelines stream named ${plan.streamName}`);
+      if (
+        made === undefined &&
+        (await api.pipelines.listStreams()).some((s) => s.name === plan.streamName)
+      ) {
+        taken.push({ what: "stream", name: plan.streamName });
       }
-      if ((await api.pipelines.listSinks()).some((s) => s.name === plan.sinkName)) {
-        taken.push(`a Pipelines sink named ${plan.sinkName}`);
+      if (
+        made?.sink !== true &&
+        (await api.pipelines.listSinks()).some((s) => s.name === plan.sinkName)
+      ) {
+        taken.push({ what: "sink", name: plan.sinkName });
       }
-      if ((await api.pipelines.listPipelines()).some((p) => p.name === plan.pipelineName)) {
-        taken.push(`a pipeline named ${plan.pipelineName}`);
+      if (
+        made?.pipeline !== true &&
+        (await api.pipelines.listPipelines()).some((p) => p.name === plan.pipelineName)
+      ) {
+        taken.push({ what: "pipeline", name: plan.pipelineName });
       }
     });
+    let bucketTaken = false;
     if (bucket.create) {
       const buckets = await explainR2Refusal(bucket.name, () =>
         api.r2.listBuckets({ nameContains: bucket.name }),
       );
-      if (buckets.some((b) => b.name === bucket.name)) {
-        taken.push(`an R2 bucket named ${bucket.name}`);
-      }
+      bucketTaken = buckets.some((b) => b.name === bucket.name);
     }
-    if (taken.length > 0) {
-      throw new JobError(
-        `${taken.join(", ")} already exists in this account; Appflare does not adopt existing resources`,
-      );
+    if (taken.length > 0 || bucketTaken) {
+      throw new JobError(takenNamesProblem(taken, bucketTaken ? bucket.name : null, job));
     }
-    log.info(`No stream, sink, or pipeline named after ${res.binding} exists yet.`);
+    log.info(
+      made === undefined
+        ? `No stream, sink, or pipeline named after ${res.binding} exists yet.`
+        : `An earlier update made the stream of ${res.binding}; making the rest of it.`,
+    );
     return {};
   });
 
@@ -221,29 +306,34 @@ export async function provisionPipelinePhase(
       `turn on R2 Data Catalog for ${bucket.name}`,
       async ({ log, cfAs, attempt }) => {
         const api = cfAs(token);
-        return explainCatalogTokenRefusal(secret, async () => {
-          let existing: { id: string; status?: string } | null = null;
-          try {
-            existing = await api.r2Catalog.get(bucket.name);
-          } catch (error) {
-            if (!isCatalogNotFound(error)) throw error;
-          }
-          if (existing !== null && attempt === 1) {
-            // The bucket is this install's and new, so a catalog under its
-            // name is what an earlier bucket of that name left behind; its
-            // table records would stop the sink from creating its table.
-            await api.r2Catalog.remove(bucket.name, { force: true });
-            log.info(`Removed a Data Catalog an earlier bucket named "${bucket.name}" left.`);
-            existing = null;
-          }
-          let id = existing?.id ?? null;
-          if (existing === null || existing.status !== "active") {
-            // `{ id, name }` (`r2-data-catalog_catalog-activation-response`).
-            id = (await api.r2Catalog.enable(bucket.name))?.id ?? id;
-          }
-          log.info(`R2 Data Catalog is on for "${bucket.name}".`, { id });
-          return { cfId: id ?? bucket.name };
-        });
+        return explainCatalogTokenRefusal(
+          secret,
+          async () => {
+            let existing: { id: string; status?: string } | null = null;
+            try {
+              existing = await api.r2Catalog.get(bucket.name);
+            } catch (error) {
+              if (!isCatalogNotFound(error)) throw error;
+            }
+            if (existing !== null && attempt === 1 && bucket.kept !== true) {
+              // The bucket is this install's and new, so a catalog under its
+              // name is what an earlier bucket of that name left behind; its
+              // table records would stop the sink from creating its table.
+              // A bucket the install had before holds data: its catalog stays.
+              await api.r2Catalog.remove(bucket.name, { force: true });
+              log.info(`Removed a Data Catalog an earlier bucket named "${bucket.name}" left.`);
+              existing = null;
+            }
+            let id = existing?.id ?? null;
+            if (existing === null || existing.status !== "active") {
+              // `{ id, name }` (`r2-data-catalog_catalog-activation-response`).
+              id = (await api.r2Catalog.enable(bucket.name))?.id ?? id;
+            }
+            log.info(`R2 Data Catalog is on for "${bucket.name}".`, { id });
+            return { cfId: id ?? bucket.name };
+          },
+          job,
+        );
       },
     );
     await run(`record R2 Data Catalog ${bucket.name}`, async ({ orm }) => {
@@ -311,87 +401,93 @@ export async function provisionPipelinePhase(
     }
   }
 
-  const stream = await createAndRecord(steps, installId, {
-    label: "Pipelines stream",
-    name: plan.streamName,
-    kind: PIPELINE_STREAM_KIND,
-    key: res.binding,
-    binding: res.binding,
-    find: async (api) =>
-      (await api.pipelines.listStreams()).find((s) => s.name === plan.streamName)?.id ?? null,
-    create: async (api) =>
-      (
-        await api.pipelines.createStream({
-          name: plan.streamName,
-          format: { type: "json" },
-          ...(declared.schema === undefined
-            ? {}
-            : { schema: streamSchema(declared.schema.fields) }),
-          // Events reach the stream through the Worker's binding only.
-          http: { enabled: false, authentication: false },
-          worker_binding: { enabled: true },
-        })
-      ).id,
-  });
-
-  await createAndRecord(steps, installId, {
-    label: "Pipelines sink",
-    name: plan.sinkName,
-    kind: PIPELINE_SINK_KIND,
-    key: res.binding,
-    binding: null,
-    find: async (api) =>
-      (await api.pipelines.listSinks()).find((s) => s.name === plan.sinkName)?.id ?? null,
-    create: async (api) => {
-      const { sink } = declared;
-      try {
-        return (
-          await api.pipelines.createSink({
-            name: plan.sinkName,
-            type: "r2_data_catalog",
-            format: {
-              type: "parquet",
-              ...(sink.compression === undefined ? {} : { compression: sink.compression }),
-            },
-            config: {
-              account_id: steps.accountId(),
-              bucket: bucket.name,
-              namespace: sink.namespace,
-              table_name: sink.table,
-              token,
-              ...(sink.rollIntervalSeconds === undefined
-                ? {}
-                : { rolling_policy: { interval_seconds: sink.rollIntervalSeconds } }),
-            },
+  const stream =
+    made?.streamId ??
+    (await createAndRecord(steps, installId, {
+      label: "Pipelines stream",
+      name: plan.streamName,
+      kind: PIPELINE_STREAM_KIND,
+      key: res.binding,
+      binding: res.binding,
+      find: async (api) =>
+        (await api.pipelines.listStreams()).find((s) => s.name === plan.streamName)?.id ?? null,
+      create: async (api) =>
+        (
+          await api.pipelines.createStream({
+            name: plan.streamName,
+            format: { type: "json" },
+            ...(declared.schema === undefined
+              ? {}
+              : { schema: streamSchema(declared.schema.fields) }),
+            // Events reach the stream through the Worker's binding only.
+            http: { enabled: false, authentication: false },
+            worker_binding: { enabled: true },
           })
-        ).id;
-      } catch (error) {
-        if (error instanceof CloudflareApiError && error.status < 500 && error.status !== 429) {
-          throw new JobError(
-            `Cloudflare could not create the sink of ${res.binding} (${saidBy(error)}). Check that the token in ${secret} has Workers R2 Data Catalog: Edit and Workers R2 Storage: Edit on this account, then uninstall this failed install and install again`,
-          );
-        }
-        throw error;
-      }
-    },
-  });
+        ).id,
+    }));
 
-  await createAndRecord(steps, installId, {
-    label: "pipeline",
-    name: plan.pipelineName,
-    kind: PIPELINE_KIND,
-    key: res.binding,
-    binding: null,
-    find: async (api) =>
-      (await api.pipelines.listPipelines()).find((p) => p.name === plan.pipelineName)?.id ?? null,
-    create: async (api) =>
-      (
-        await api.pipelines.createPipeline({
-          name: plan.pipelineName,
-          sql: passThroughSql(plan.sinkName, plan.streamName),
-        })
-      ).id,
-  });
+  if (made?.sink !== true) {
+    await createAndRecord(steps, installId, {
+      label: "Pipelines sink",
+      name: plan.sinkName,
+      kind: PIPELINE_SINK_KIND,
+      key: res.binding,
+      binding: null,
+      find: async (api) =>
+        (await api.pipelines.listSinks()).find((s) => s.name === plan.sinkName)?.id ?? null,
+      create: async (api) => {
+        const { sink } = declared;
+        try {
+          return (
+            await api.pipelines.createSink({
+              name: plan.sinkName,
+              type: "r2_data_catalog",
+              format: {
+                type: "parquet",
+                ...(sink.compression === undefined ? {} : { compression: sink.compression }),
+              },
+              config: {
+                account_id: steps.accountId(),
+                bucket: bucket.name,
+                namespace: sink.namespace,
+                table_name: sink.table,
+                token,
+                ...(sink.rollIntervalSeconds === undefined
+                  ? {}
+                  : { rolling_policy: { interval_seconds: sink.rollIntervalSeconds } }),
+              },
+            })
+          ).id;
+        } catch (error) {
+          if (error instanceof CloudflareApiError && error.status < 500 && error.status !== 429) {
+            throw new JobError(
+              `Cloudflare could not create the sink of ${res.binding} (${saidBy(error)}). Check that the token in ${secret} has Workers R2 Data Catalog: Edit and Workers R2 Storage: Edit on this account, then ${AGAIN[job]}`,
+            );
+          }
+          throw error;
+        }
+      },
+    });
+  }
+
+  if (made?.pipeline !== true) {
+    await createAndRecord(steps, installId, {
+      label: "pipeline",
+      name: plan.pipelineName,
+      kind: PIPELINE_KIND,
+      key: res.binding,
+      binding: null,
+      find: async (api) =>
+        (await api.pipelines.listPipelines()).find((p) => p.name === plan.pipelineName)?.id ?? null,
+      create: async (api) =>
+        (
+          await api.pipelines.createPipeline({
+            name: plan.pipelineName,
+            sql: passThroughSql(plan.sinkName, plan.streamName),
+          })
+        ).id,
+    });
+  }
 
   return { binding: res.binding, type: "pipelines", name: plan.streamName, cfId: stream };
 }

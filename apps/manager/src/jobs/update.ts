@@ -4,6 +4,7 @@ import {
   type AccessPlaceholderValues,
   type ArtifactManifest,
   accessBypassPaths,
+  connectionStringProblems,
   hyperdriveDeclarations,
   workerUploadProblem,
 } from "@appflare/schema";
@@ -76,6 +77,12 @@ import {
   uploadAssetsPhase,
 } from "./install/phases";
 import {
+  checkPipelinesPhase,
+  explainPipelinesRefusal,
+  pipelineTokenProblems,
+  provisionPipelinePhase,
+} from "./install/pipelines";
+import {
   consumerPlans,
   consumerPlansOf,
   diffConsumerQueues,
@@ -92,13 +99,20 @@ import {
   type WorkflowTarget,
   workflowTargets,
 } from "./install/workflows";
-import { deleteSupersededPhase, supersededConfigs } from "./reconfigure/hyperdrive";
+import {
+  type ConnectionReplacement,
+  createReplacementPhase,
+  deleteConfigPhase,
+  deleteSupersededPhase,
+  supersededConfigs,
+  switchConnectionRecords,
+} from "./reconfigure/hyperdrive";
 import { secretSlots, storedVarsJson } from "./reconfigure/plan";
 import { undoSecretChangesPhase } from "./reconfigure/secrets";
 import type { JobContext } from "./run-job";
 import { runSelfDeployingUpdate } from "./self-deploying/jobs";
 import { StepLog } from "./step-log";
-import { createJobSteps, errorMessage, JobError, type StepTools } from "./steps";
+import { createJobSteps, errorMessage, isNotFound, JobError, type StepTools } from "./steps";
 import { settleUnit } from "./units/result";
 import {
   type AppAddress,
@@ -117,12 +131,14 @@ import {
   droppedDurableObjectExportsProblem,
   EXPORTS_DEPLOY_REASON,
   FULL_DEPLOY_REASON,
+  type LiveStreamShape,
   lastDurableObjectTagOf,
   missingSecrets,
   pipelineShapesOf,
   previewUrl,
   type RecordedResource,
   secretBindings,
+  streamsToRead,
   updatePath,
   updateRefusal,
   updateSecretsUndoneMessage,
@@ -143,7 +159,10 @@ import { takeSnapshotPhase } from "./update/snapshot";
  *    after a successful update only the current and previous builds are kept.
  * 2. Snapshot: the version serving traffic and a D1 Time Travel bookmark per
  *    database, recorded with the install's catalog state.
- * 3. Create resources for bindings new in this version (never delete any).
+ * 3. Create resources for bindings new in this version (never delete any):
+ *    a database's Hyperdrive configuration from the connection string the
+ *    admin entered with the update, and a stream with its sink and pipeline
+ *    (./install/pipelines.ts) with the token the admin entered.
  *    A kept Vectorize index gets the metadata indexes this version declares
  *    that it lacks (./install/resource-settings.ts); none is deleted.
  * 4. Upload static assets.
@@ -199,6 +218,12 @@ export const updateJobParams = z.object({
    * their names.
    */
   secrets: z.record(z.string(), z.string()).default({}),
+  /**
+   * Connection strings by Hyperdrive binding, for the databases this version
+   * connects to that the install has no configuration for. Credentials, kept
+   * like the secret values above: only here, binding names in `input_json`.
+   */
+  hyperdrive: z.record(z.string(), z.string()).optional(),
   /**
    * Values of the derived vars computed from the secrets above (a VAPID
    * public key from its private key). Public settings: the job stores them
@@ -311,6 +336,9 @@ export async function runUpdate(ctx: JobContext): Promise<void> {
   let routeSubdomain: string | null = null;
   /** The catalog version installed before the job, for the annotation of a return. */
   let previousVersion = "the previous version";
+  /** Configurations made from connection strings given anew, and whether the records follow them yet. */
+  const replacements: ConnectionReplacement[] = [];
+  let replacementsRecorded = false;
   /**
    * Its other Workers' uploads that carry secrets this version introduces,
    * for a failure before their promotion to take them off again.
@@ -321,6 +349,8 @@ export async function runUpdate(ctx: JobContext): Promise<void> {
     versionId: string;
     servingVersionId: string;
     names: string[];
+    /** Those of `names` the install already had, put back rather than dropped. */
+    kept: string[];
     uploadMessage: string;
   }> = [];
   /**
@@ -448,6 +478,8 @@ export async function runUpdate(ctx: JobContext): Promise<void> {
           exports: w.manifest.worker.exports,
           crons: w.manifest.worker.crons,
           consumers: consumerPlans(w.manifest.worker.queueConsumers),
+          // The secrets it was given (absent in a step output recorded before they were read).
+          secrets: w.manifest.catalog.secrets.map((s) => s.name) as string[] | undefined,
         })),
         emailRouting: emailRoutingOfManifest(install.manifest_json),
         // Routes on record, which a version without email removes even when
@@ -533,6 +565,64 @@ export async function runUpdate(ctx: JobContext): Promise<void> {
       (p) => !others.some((w) => w.scriptName === p.scriptName),
     );
     const entryNames = entryScriptNamesOf(manifest, workerName);
+    // Streams the install records that the installed version does not
+    // describe (a failed update made them, or a rollback left them): read as
+    // Cloudflare has them, so a version that describes them otherwise is
+    // refused rather than bound to a stream of another shape.
+    const toRead = streamsToRead(
+      workerName,
+      manifest.catalog.resources?.pipelines,
+      started.resources,
+      started.pipelineShapes ?? {},
+    );
+    const liveStreams =
+      toRead.length === 0
+        ? {}
+        : await run("read Pipelines streams", async ({ log, cf }) => {
+            const api = cf();
+            const out: Record<string, LiveStreamShape> = {};
+            // A recorded stream or sink deleted outside Appflare: an update
+            // binds what the install records and never makes it again.
+            const gone =
+              (what: "stream" | "sink", binding: string, id: string) => (error: unknown) => {
+                if (isNotFound(error)) {
+                  throw new JobError(
+                    `The Pipelines ${what} of ${binding} (id ${id}), which an earlier update made, is gone from the account; uninstall the app and install this version instead`,
+                  );
+                }
+                throw error;
+              };
+            await explainPipelinesRefusal(async () => {
+              for (const s of toRead) {
+                const stream = await api.pipelines
+                  .getStream(s.streamId)
+                  .catch(gone("stream", s.binding, s.streamId));
+                const config =
+                  s.sinkId === null
+                    ? null
+                    : (
+                        await api.pipelines
+                          .getSink(s.sinkId)
+                          .catch(gone("sink", s.binding, s.sinkId))
+                      ).config;
+                out[s.binding] = {
+                  schema: stream.schema?.fields ?? null,
+                  sink:
+                    config === null
+                      ? null
+                      : {
+                          bucket: config?.bucket ?? "",
+                          namespace: config?.namespace ?? "",
+                          table: config?.table_name ?? "",
+                        },
+                };
+              }
+            }, started.accountPaid);
+            log.info(
+              `Read ${toRead.map((s) => s.binding).join(", ")} as Cloudflare has ${toRead.length === 1 ? "it" : "them"}: ${toRead.length === 1 ? "a stream" : "streams"} the installed version does not describe.`,
+            );
+            return out;
+          });
     const diff = diffBindings(
       workerName,
       entryBindings(manifest),
@@ -544,6 +634,7 @@ export async function runUpdate(ctx: JobContext): Promise<void> {
       started.pipelineShapes ?? {},
       // A step output recorded before bucket rules were compared has none.
       started.lifecycleBindings ?? [],
+      liveStreams,
     );
     const queuePlan = planEntryQueueConsumers(workerName, manifest, workers);
     const queueDiff = diffConsumerQueues(queuePlan.queues, started.resources);
@@ -552,15 +643,46 @@ export async function runUpdate(ctx: JobContext): Promise<void> {
     const path = updatePath(primaryManifest, started.appliedDoTag, started.servingExports);
     const fullDeploy = path.fullDeploy;
     const recordedSecrets = started.resources.filter((r) => r.kind === "secret").map((r) => r.name);
+    // Hyperdrive configurations first, as at install: Cloudflare connects to
+    // the database when one is made, so an unreachable one stops the update
+    // before anything else is created. Pipelines streams last: a sink writes
+    // to a bucket, which may be one of the app's R2 bindings made before it.
+    const newDatabaseBindings = diff.toCreate.filter((r) => r.type === "hyperdrive");
+    const newStreams = diff.toCreate.filter(
+      (r): r is Extract<typeof r, { type: "pipelines" }> => r.type === "pipelines",
+    );
+    // Those whose sink this update makes: only a sink (and its bucket's
+    // catalog, set up before it) needs the token.
+    const newSinks = newStreams.filter((s) => s.pipeline.made?.sink !== true);
+    // Databases the install already has a configuration for whose connection
+    // string the admin gave anew (one an earlier update connected): this
+    // update replaces their configuration, as a settings change would.
+    const replacingDatabases = hyperdriveDeclarations(
+      manifest.catalog.resources?.hyperdrive,
+    ).filter(
+      (d) =>
+        params.hyperdrive?.[d.binding] !== undefined &&
+        diff.existing.some((e) => e.type === "hyperdrive" && e.binding === d.binding),
+    );
+    const toCreate = [
+      ...newDatabaseBindings,
+      ...diff.toCreate.filter((r) => r.type !== "hyperdrive" && r.type !== "pipelines"),
+      ...queueDiff.toCreate,
+    ];
     // A derived secret the Worker lacks comes with its source, which the
     // update asked for again and set together with the value derived from it;
-    // so does the source of a derived var the update computed.
+    // so does the source of a derived var the update computed, and the token
+    // a new stream's sink writes with (asked for again when the Worker has
+    // it, since a secret cannot be read back; the Worker gets the value given).
     const newSecrets = secretsToSet(
       manifest.catalog.secrets,
       missingSecrets(manifest.catalog.secrets, recordedSecrets),
-      manifest.catalog.vars.flatMap((v) =>
-        v.derive !== undefined && params.vars?.[v.name] !== undefined ? [v.derive.from] : [],
-      ),
+      [
+        ...manifest.catalog.vars.flatMap((v) =>
+          v.derive !== undefined && params.vars?.[v.name] !== undefined ? [v.derive.from] : [],
+        ),
+        ...newSinks.map((s) => s.pipeline.declared.sink.tokenSecret),
+      ],
     );
     const secretValues: Record<string, string> = {};
     for (const secret of newSecrets) {
@@ -603,6 +725,27 @@ export async function runUpdate(ctx: JobContext): Promise<void> {
           );
         }
       }
+      // Each database new in this version needs the connection string the
+      // admin entered with the update. Messages name the binding and the
+      // part at fault, never the string.
+      const databases = hyperdriveDeclarations(manifest.catalog.resources?.hyperdrive).filter((d) =>
+        newDatabaseBindings.some((r) => r.binding === d.binding),
+      );
+      // A string for a database the install has a configuration for replaces it.
+      databases.push(...replacingDatabases);
+      const connections = params.hyperdrive ?? {};
+      for (const d of databases) {
+        if (connections[d.binding] === undefined) {
+          problems.push(
+            `This version connects ${d.binding} to a database elsewhere, and the update was started without its connection string; start the update again and enter it.`,
+          );
+        }
+      }
+      problems.push(
+        ...connectionStringProblems(databases, connections, { required: false }),
+        // Each new stream's sink needs the token its secret names.
+        ...pipelineTokenProblems(newSinks, secretValues),
+      );
       // The upload reads and sends every module in one invocation; refuse
       // before the snapshot rather than failing mid-upload.
       for (const w of workers) {
@@ -645,7 +788,19 @@ export async function runUpdate(ctx: JobContext): Promise<void> {
         );
       }
       for (const res of diff.toCreate) {
-        log.info(`New binding ${res.binding}: creating ${RESOURCE_LABEL[res.kind]} "${res.name}".`);
+        if (res.type === "pipelines" && res.pipeline.made !== undefined) {
+          log.info(
+            `Binding ${res.binding}: an earlier update made its Pipelines stream "${res.name}" but not all of its sink and pipeline; making the rest.`,
+          );
+        } else if (res.type === "pipelines") {
+          log.info(
+            `New binding ${res.binding}: creating ${RESOURCE_LABEL[res.kind]} "${res.name}" with its sink and pipeline.`,
+          );
+        } else {
+          log.info(
+            `New binding ${res.binding}: creating ${RESOURCE_LABEL[res.kind]} "${res.name}".`,
+          );
+        }
       }
       for (const res of queueDiff.toCreate) {
         log.info(`New queue for a consumer: creating ${RESOURCE_LABEL[res.kind]} "${res.name}".`);
@@ -655,13 +810,22 @@ export async function runUpdate(ctx: JobContext): Promise<void> {
           `The installed version's lifecycle rules for binding ${binding} cannot be read, so if this version drops any of them, this update cannot name them. Rules on the bucket stay as they are either way.`,
         );
       }
+      for (const d of replacingDatabases) {
+        log.info(
+          `Binding ${d.binding}: a new Hyperdrive configuration is made from the connection string given for this update and replaces the one an earlier update made.`,
+        );
+      }
       for (const row of diff.leftInPlace) {
         log.info(
           `Binding ${row.binding} is not in this version; its ${row.kind} "${row.name}" is left in place.`,
         );
       }
       for (const secret of newSecrets) {
-        log.info(`New secret ${secret.name}: set with the new version.`);
+        log.info(
+          recordedSecrets.includes(secret.name)
+            ? `Secret ${secret.name}: set again with the new version, to the value given for this update.`
+            : `New secret ${secret.name}: set with the new version.`,
+        );
       }
       // Email Routing follows the version once it serves (below).
       const emailChange = emailRoutingChangeNote(
@@ -718,6 +882,12 @@ export async function runUpdate(ctx: JobContext): Promise<void> {
       });
     }
 
+    // Pipelines, when this version makes a stream: a token without its
+    // permission, or an account without it, is refused before anything changes.
+    if (newStreams.length > 0) {
+      await checkPipelinesPhase(steps, { accountPaid: started.accountPaid });
+    }
+
     // 2. Snapshot, before anything changes.
     const snapshot = await takeSnapshotPhase(steps, {
       // What the serving version's Access values were filled in with, before this job.
@@ -739,9 +909,44 @@ export async function runUpdate(ctx: JobContext): Promise<void> {
     // class, once the version serves (below). A new one's name is checked
     // free here, before anything changes.
     for (const wf of diff.newWorkflows) await checkWorkflowNamePhase(steps, wf);
-    const bound = [...diff.existing, ...queueDiff.existing];
-    for (const res of [...diff.toCreate, ...queueDiff.toCreate]) {
-      bound.push(await provisionResourcePhase(steps, params.installId, res));
+    // A resource made here stays recorded if the update fails: the next
+    // attempt keeps it (a database needs no connection string again), and
+    // finishes a stream it left without its sink or pipeline. A database
+    // whose connection string the admin gave anew gets a configuration of
+    // this job's own, which the version binds; the one it replaces is kept,
+    // superseded, once the version serves (deleted if it never does).
+    for (const decl of replacingDatabases) {
+      const row = started.resources.find(
+        (r) => r.kind === "hyperdrive" && r.binding === decl.binding && r.cfId !== null,
+      );
+      if (row?.cfId == null) continue;
+      replacements.push(
+        await createReplacementPhase(steps, {
+          installId: params.installId,
+          jobId: params.jobId,
+          workerName,
+          binding: decl.binding,
+          protocol: decl.protocol,
+          current: { rowId: row.id, name: row.name, cfId: row.cfId },
+          connection: params.hyperdrive?.[decl.binding],
+        }),
+      );
+    }
+    const bound = [...diff.existing, ...queueDiff.existing].map((res) => {
+      const replaced = replacements.find((r) => r.binding === res.binding);
+      return res.type === "hyperdrive" && replaced !== undefined
+        ? { ...res, name: replaced.next.name, cfId: replaced.next.cfId }
+        : res;
+    });
+    for (const res of toCreate) {
+      bound.push(
+        await provisionResourcePhase(steps, params.installId, res, params.hyperdrive ?? {}),
+      );
+    }
+    for (const res of newStreams) {
+      // The plan step checked the token is there.
+      const token = secretValues[res.pipeline.declared.sink.tokenSecret] ?? "";
+      bound.push(await provisionPipelinePhase(steps, params.installId, res, token, "update"));
     }
     // Kept indexes get the metadata indexes this version declares, before its
     // code writes a vector; kept buckets get their rules once it serves.
@@ -951,6 +1156,14 @@ export async function runUpdate(ctx: JobContext): Promise<void> {
           versionId: update.versionId,
           servingVersionId: serving,
           names,
+          // Those the Worker had: its installed version declares them and
+          // the install has them (all recorded ones, from a step output
+          // recorded before the declared ones were read).
+          kept: names.filter(
+            (name) =>
+              recordedSecrets.includes(name) &&
+              (previousOf(w.scriptName)?.secrets ?? [name]).includes(name),
+          ),
           uploadMessage: updateVersionMessage(started.slug, params.version, params.jobId),
         });
       }
@@ -1121,6 +1334,16 @@ export async function runUpdate(ctx: JobContext): Promise<void> {
       await writeAcceptedBypass(orm, params.installId, accessBypassPaths(manifest.catalog));
       return {};
     });
+    if (replacements.length > 0) {
+      await run("record Hyperdrive configurations", async ({ log, orm }) => {
+        await switchConnectionRecords(orm, params.installId, replacements);
+        log.info(
+          `Recorded the new Hyperdrive configurations: ${replacements.map((r) => `${r.binding} uses "${r.next.name}"`).join(", ")}. The replaced ${replacements.map((r) => `"${r.old.name}"`).join(", ")} stay until the next update or settings change.`,
+        );
+        return {};
+      });
+      replacementsRecorded = true;
+    }
 
     // Every Workflow the version defines, now that its Workers run their
     // classes: a new one is created, a kept one updated (its class or
@@ -1345,7 +1568,10 @@ export async function runUpdate(ctx: JobContext): Promise<void> {
           uploadMessage: undoOther.uploadMessage,
           servingVersionId: undoOther.servingVersionId,
           changes: { set: {}, unset: undoOther.names },
-          slots: [],
+          // As for the primary Worker: a name the install already had (a
+          // sink token or a derived secret's source asked for again) gets its
+          // serving value back instead of being dropped.
+          slots: secretSlots([], undoOther.kept),
           carrier: "upload",
           undoneMessage: updateSecretsUndoneMessage(params.jobId),
           label: undoOther.label,
@@ -1418,6 +1644,28 @@ export async function runUpdate(ctx: JobContext): Promise<void> {
     if (!wasPromoted && narrowed && !scriptDeployStarted) {
       await publicPathsBackPhase(steps, params.installId);
     }
+    // Configurations made from connection strings given anew: deleted when
+    // no version of this update ever served (a full deploy that started may
+    // have, and so may another Worker that could not be put back), otherwise
+    // recorded as the bound ones, as on success.
+    const mayServe = scriptDeployStarted || othersPromoted.length > 0;
+    let unusedConfigs: "removed" | "left" | null = null;
+    if (!wasPromoted && !mayServe && replacements.length > 0) {
+      try {
+        for (const r of replacements) {
+          await deleteConfigPhase(steps, r.next, ", made for this update, which never served");
+        }
+        unusedConfigs = "removed";
+      } catch {
+        unusedConfigs = "left";
+      }
+    }
+    const switchRecords = wasPromoted && !replacementsRecorded ? [...replacements] : [];
+    const configsLeft = unusedConfigs === "left" ? replacements.map((r) => r.next.name) : [];
+    // A version that may serve with them (a full deploy that started, or
+    // another Worker still on the new version): neither deleted nor switched,
+    // they stay recorded with no binding.
+    const configsKept = !wasPromoted && mayServe ? replacements.map((r) => r.next.name) : [];
     const othersRecordJson = othersRecord === null ? null : JSON.stringify(othersRecord);
     await step.do("mark update failed", async () => {
       const orm = createDb(env.DB);
@@ -1437,7 +1685,20 @@ export async function runUpdate(ctx: JobContext): Promise<void> {
           updated_at: at,
         })
         .where(and(eq(installs.id, params.installId), eq(installs.status, "updating")));
+      if (switchRecords.length > 0) {
+        await switchConnectionRecords(orm, params.installId, switchRecords);
+      }
       const log = new StepLog(now);
+      if (configsLeft.length > 0) {
+        log.error(
+          `The Hyperdrive configurations made for this update (${configsLeft.join(", ")}) could not all be deleted; they are recorded, and uninstalling the app deletes them.`,
+        );
+      }
+      if (configsKept.length > 0) {
+        log.error(
+          `The Hyperdrive configurations made for this update (${configsKept.join(", ")}) stay in place, as the new version may be serving with them; the bindings keep the configurations they had, and uninstalling the app deletes these.`,
+        );
+      }
       if (aheadOfCode.length > 0) {
         log.error(
           `The D1 database${aheadOfCode.length === 1 ? "" : "s"} ${aheadOfCode.join(", ")} ${aheadOfCode.length === 1 ? "is" : "are"} already migrated to the new schema while the previous code still serves. Retry the update, or restore ${aheadOfCode.length === 1 ? "it" : "them"} from this update's snapshot under ${appPlace(params.installId, "versions", "the app's versions")}.`,

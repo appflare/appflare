@@ -1633,15 +1633,7 @@ describe("update job", () => {
     });
     const request = { paidConfirmed: true, secrets: { CATALOG_TOKEN: "r2-token" } };
 
-    it("refuses a version that adds a stream, before snapshotting", async () => {
-      const r = await update(withStream({ schema, sink }), {}, {}, request);
-      expect(r.job?.status).toBe("failed");
-      expect(r.job?.error).toMatch(
-        /^plan update: .*Binding EVENTS sends events to a Pipelines stream and is new in this version; its sink needs the API token entered at install, which an update cannot read back, so this version needs a fresh install\./,
-      );
-      expect(r.fake.state.calls).toEqual([]);
-      expect(r.snapshot).toBeNull();
-    });
+    // A version that adds a stream: see update-new-connections.test.ts.
 
     it("refuses a version that changes a kept stream's schema, before snapshotting", async () => {
       const r = await update(
@@ -2643,6 +2635,83 @@ describe("update job, an app of several Workers", () => {
     expect(r.jobs.state.deployments).toHaveLength(1);
     expect(r.fake.state.deployments).toHaveLength(1);
     expect(r.install?.catalog_version).toBe("1.0.0");
+  });
+
+  it("gives another Worker back the serving value of a secret it had and was given again", async () => {
+    // The new version derives a var from a secret the app has: the update
+    // asks for that secret again, and both Workers' uploads carry the value.
+    const vapid = (version: string, derived: boolean): ArtifactFixtureOptions => ({
+      ...NEW_APP,
+      version,
+      otherWorkers: [jobsWorker([])],
+      catalog: {
+        secrets: [
+          { name: "ADMIN_PASSWORD", label: "Admin password", generate: "password" },
+          { name: "VAPID_PRIVATE_KEY", label: "Push signing key", generate: "vapid-private-key" },
+        ],
+        vars: derived
+          ? [
+              {
+                name: "VAPID_PUBLIC_KEY",
+                label: "Push public key",
+                derive: { from: "VAPID_PRIVATE_KEY", method: "vapid-public-key" },
+              },
+            ]
+          : [],
+      },
+    });
+    const privateKey = generateVapidPrivateKey();
+    const old = await buildArtifactFixture(vapid("1.0.0", false));
+    const jobs = fakeAccount(null, {
+      worker: "cut-jobs",
+      deployments: [{ id: "dep-j", versions: [{ version_id: JOBS_OLD, percentage: 100 }] }],
+    });
+    const r = await update(
+      vapid("1.1.0", true),
+      // The primary Worker's canary fails: neither Worker is promoted.
+      { previews: [{ status: 500, body: "boom" }] },
+      {
+        manifestJson: JSON.stringify(old.manifest),
+        resources: [
+          ...RESOURCES,
+          { kind: "secret", binding: "VAPID_PRIVATE_KEY", name: "VAPID_PRIVATE_KEY" },
+          { kind: "worker", name: "cut-jobs", cfId: "cut-jobs" },
+          { kind: "subdomain", name: "cut-jobs.appflare-dev.workers.dev" },
+        ],
+      },
+      { secrets: { VAPID_PRIVATE_KEY: privateKey } },
+      "self",
+      undefined,
+      (fake) => async (input, init) => {
+        // The secrets patch goes to `/workers/workers/<name>/versions/latest`.
+        const target = /\/workers\/(scripts|workers)\/cut-jobs\/|-cut-jobs\./.test(input)
+          ? jobs
+          : fake;
+        return target.fetch(input, init);
+      },
+    );
+    expect(r.job?.status).toBe("failed");
+    expect(r.job?.error).toMatch(/^canary check \d+:/);
+    expect(jobs.state.versions[0]?.metadata.bindings).toContainEqual({
+      type: "secret_text",
+      name: "VAPID_PRIVATE_KEY",
+      text: privateKey,
+    });
+    // Each Worker's newest version inherits the key its serving version has,
+    // rather than dropping it.
+    expect(jobs.state.versionPatches).toEqual([
+      {
+        env: { VAPID_PRIVATE_KEY: { type: "inherit", version_id: JOBS_OLD } },
+        annotations: { "workers/message": "Appflare: update job1 undone" },
+      },
+    ]);
+    expect(r.fake.state.versionPatches).toEqual([
+      {
+        env: { VAPID_PRIVATE_KEY: { type: "inherit", version_id: OLD_VERSION } },
+        annotations: { "workers/message": "Appflare: update job1 undone" },
+      },
+    ]);
+    expect(JSON.stringify(r.logs)).not.toContain(privateKey);
   });
 
   it("takes a Worker the new version keeps private off workers.dev before uploading it", async () => {

@@ -1,4 +1,5 @@
-import type { ArtifactManifest, CatalogPipeline } from "@appflare/schema";
+import type { PipelineStream } from "@appflare/cf-api";
+import type { ArtifactManifest, CatalogPipeline, StreamField } from "@appflare/schema";
 import { describe, expect, it } from "vitest";
 import { classifyHealthProbe } from "../install/health";
 import {
@@ -17,8 +18,11 @@ import {
   FULL_DEPLOY_REASON,
   hyperdriveRollbackRefusal,
   lastDurableObjectTagOf,
+  liveStreamChange,
   missingSecrets,
   NO_PREVIEW_REASON,
+  newDatabases,
+  newStreamTokenSecrets,
   parseBookmarks,
   parseSnapshotHyperdrive,
   pendingDurableObjectMigrations,
@@ -261,7 +265,7 @@ describe("diffBindings", () => {
     ]);
   });
 
-  it("binds a recorded Hyperdrive configuration again, and refuses a new database", () => {
+  it("binds a recorded Hyperdrive configuration again, and creates one for a new database", () => {
     const databases = [
       { binding: "HD", protocol: "postgres" as const },
       { binding: "NEW_DB", protocol: "mysql" as const },
@@ -279,12 +283,30 @@ describe("diffBindings", () => {
     expect(diff.existing).toEqual([
       { binding: "HD", type: "hyperdrive", name: "cut-hd-r01h2x3y4", cfId: "hd-2" },
     ]);
-    expect(diff.toCreate).toEqual([]);
-    expect(diff.problems).toEqual([
-      expect.stringMatching(
-        /Binding NEW_DB connects to a database elsewhere and is new in this version/,
-      ),
+    expect(diff.toCreate).toEqual([
+      {
+        binding: "NEW_DB",
+        type: "hyperdrive",
+        kind: "hyperdrive",
+        name: "cut-new-db",
+        protocol: "mysql",
+      },
     ]);
+    expect(diff.problems).toEqual([]);
+  });
+
+  it("asks for a connection string only for databases the install has no configuration for", () => {
+    const databases = [
+      { binding: "HD", protocol: "postgres" as const },
+      { binding: "NEW_DB", protocol: "mysql" as const },
+    ];
+    const recorded = [
+      row({ kind: "hyperdrive", binding: "HD", name: "cut-hd", cfId: "hd-1" }),
+      // A configuration a settings change replaced keeps its binding's name.
+      row({ kind: "hyperdrive_superseded", binding: "NEW_DB", name: "x", cfId: "hd-0" }),
+    ];
+    expect(newDatabases(databases, recorded).map((d) => d.binding)).toEqual(["NEW_DB"]);
+    expect(newDatabases(databases, [])).toEqual(databases);
   });
 
   describe("Pipelines streams", () => {
@@ -296,9 +318,14 @@ describe("diffBindings", () => {
       tokenSecret: "CATALOG_TOKEN",
     };
     const schema = { fields: [{ name: "ts", type: "timestamp" as const, required: true }] };
-    const recorded = [
+    /** A stream an update that failed made with its sink, but without its pipeline. */
+    const unfinished = [
       row({ kind: "pipeline_stream", binding: "EVENTS", name: "cut_events_stream", cfId: "s1" }),
       row({ kind: "pipeline_sink", binding: null, name: "cut_events_sink", cfId: "k1" }),
+    ];
+    const recorded = [
+      ...unfinished,
+      row({ kind: "pipeline", binding: null, name: "cut_events_pipeline", cfId: "p1" }),
     ];
     const installed = pipelineShapesOf(
       JSON.stringify({ catalog: { resources: { pipelines: { EVENTS: { schema, sink } } } } }),
@@ -348,15 +375,207 @@ describe("diffBindings", () => {
       ]);
     });
 
-    it("refuses a stream new in this version", () => {
-      const diff = diffWith({ schema, sink }, { CLICKS: { sink: { ...sink, table: "clicks" } } });
-      expect(diff.toCreate).toEqual([]);
-      expect(diff.problems).toEqual([
-        expect.stringMatching(
-          /^Binding CLICKS sends events to a Pipelines stream and is new in this version; .* needs a fresh install\.$/,
-        ),
+    const complete = [
+      ...recorded,
+      row({ kind: "r2", binding: null, name: "cut-warehouse", cfId: "cut-warehouse" }),
+      row({ kind: "r2_catalog", binding: null, name: "cut-warehouse", cfId: "cat-1" }),
+    ];
+
+    it("creates a stream new in this version, on the bucket and catalog the install has", () => {
+      const diff = diffBindings(
+        "cut",
+        [
+          { type: "pipelines", name: "EVENTS" },
+          { type: "pipelines", name: "CLICKS" },
+        ],
+        complete,
+        {},
+        [],
+        { EVENTS: { schema, sink }, CLICKS: { sink: { ...sink, table: "clicks" } } },
+        installed,
+      );
+      expect(diff.problems).toEqual([]);
+      expect(diff.existing.map((r) => r.binding)).toEqual(["EVENTS"]);
+      expect(diff.toCreate).toEqual([
+        expect.objectContaining({
+          binding: "CLICKS",
+          type: "pipelines",
+          name: "cut_clicks_stream",
+          pipeline: expect.objectContaining({
+            sinkName: "cut_clicks_sink",
+            pipelineName: "cut_clicks_pipeline",
+            bucket: {
+              key: "WAREHOUSE",
+              name: "cut-warehouse",
+              create: false,
+              setUpCatalog: false,
+              kept: true,
+            },
+          }),
+        }),
+      ]);
+      expect(
+        (diff.toCreate[0] as { pipeline: { made?: unknown } } | undefined)?.pipeline.made,
+      ).toBeUndefined();
+    });
+
+    it("plans a new stream's own bucket and catalog as an install would when the install has neither", () => {
+      const diff = diffBindings("cut", [{ type: "pipelines", name: "EVENTS" }], [], {}, [], {
+        EVENTS: { schema, sink },
+      });
+      expect(diff.toCreate).toEqual([
+        expect.objectContaining({
+          pipeline: expect.objectContaining({
+            bucket: { key: "WAREHOUSE", name: "cut-warehouse", create: true, setUpCatalog: true },
+          }),
+        }),
       ]);
     });
+
+    it("finishes a stream an update that failed left without its pipeline", () => {
+      const diff = diffBindings(
+        "cut",
+        [{ type: "pipelines", name: "EVENTS" }],
+        unfinished,
+        {},
+        [],
+        { EVENTS: { schema, sink } },
+      );
+      expect(diff.problems).toEqual([]);
+      expect(diff.existing).toEqual([]);
+      expect(diff.toCreate).toEqual([
+        expect.objectContaining({
+          binding: "EVENTS",
+          pipeline: expect.objectContaining({
+            made: { streamId: "s1", sink: true, pipeline: false },
+          }),
+        }),
+      ]);
+      expect(diff.leftInPlace).toEqual([]);
+    });
+
+    it("asks for the token of each sink the update makes, not for a missing pipeline alone", () => {
+      const streams = {
+        EVENTS: { schema, sink },
+        CLICKS: { sink: { ...sink, table: "clicks", tokenSecret: "OTHER_TOKEN" } },
+      };
+      expect(newStreamTokenSecrets("cut", streams, complete)).toEqual(["OTHER_TOKEN"]);
+      // The stream and its sink are there; only the pipeline is missing.
+      expect(newStreamTokenSecrets("cut", streams, unfinished)).toEqual(["OTHER_TOKEN"]);
+      // The stream is there without its sink.
+      expect(newStreamTokenSecrets("cut", streams, unfinished.slice(0, 1))).toEqual([
+        "CATALOG_TOKEN",
+        "OTHER_TOKEN",
+      ]);
+      expect(newStreamTokenSecrets("cut", undefined, complete)).toEqual([]);
+    });
+
+    it("leaves a stream a later version drops in place", () => {
+      const diff = diffBindings("cut", [], complete, {}, [], {}, installed);
+      expect(diff.problems).toEqual([]);
+      expect(diff.leftInPlace.map((r) => [r.kind, r.name])).toEqual([
+        ["pipeline_stream", "cut_events_stream"],
+      ]);
+    });
+  });
+});
+
+describe("liveStreamChange", () => {
+  const sink = {
+    type: "r2_data_catalog" as const,
+    bucket: "WAREHOUSE",
+    namespace: "cut",
+    table: "events",
+    tokenSecret: "CATALOG_TOKEN",
+  };
+  const where = { bucket: "cut-warehouse", namespace: "cut", table: "events" };
+  /**
+   * Every field type and option the manifest allows, and the `schema` of
+   * `GET /pipelines/v1/streams/{id}` for a stream made with them, as
+   * Cloudflare answered on a live account (2026-10-06): the fields as sent,
+   * in order, with `required` and `unit` only where they were sent.
+   */
+  const fields: StreamField[] = [
+    { name: "i32", type: "int32" },
+    { name: "i64", type: "int64", required: true },
+    { name: "f32", type: "float32", required: false },
+    { name: "f64", type: "float64" },
+    { name: "flag", type: "bool", required: true },
+    { name: "url", type: "string" },
+    { name: "blob", type: "binary" },
+    { name: "at", type: "timestamp" },
+    { name: "at_req", type: "timestamp", required: true },
+    { name: "at_s", type: "timestamp", unit: "second" },
+    { name: "at_ms", type: "timestamp", unit: "millisecond", required: true },
+    { name: "at_us", type: "timestamp", unit: "microsecond", required: false },
+    { name: "at_ns", type: "timestamp", unit: "nanosecond" },
+    { name: "extra", type: "json" },
+  ];
+  /** `GET /pipelines/v1/streams/{id}` for that stream (id redacted). */
+  const liveStream: PipelineStream = {
+    id: "<stream id>",
+    name: "appflare_probe_373e3aff",
+    schema: {
+      fields: [
+        { name: "i32", type: "int32" },
+        { name: "i64", type: "int64", required: true },
+        { name: "f32", type: "float32", required: false },
+        { name: "f64", type: "float64" },
+        { name: "flag", type: "bool", required: true },
+        { name: "url", type: "string" },
+        { name: "blob", type: "binary" },
+        { name: "at", type: "timestamp" },
+        { name: "at_req", type: "timestamp", required: true },
+        { name: "at_s", type: "timestamp", unit: "second" },
+        { name: "at_ms", type: "timestamp", unit: "millisecond", required: true },
+        { name: "at_us", type: "timestamp", unit: "microsecond", required: false },
+        { name: "at_ns", type: "timestamp", unit: "nanosecond" },
+        { name: "extra", type: "json" },
+      ],
+    },
+  };
+  const liveSchema = { fields: liveStream.schema?.fields ?? [] };
+  /** The `schema` of the same call for a stream made without one. */
+  const liveUnstructured = { fields: [{ name: "value", type: "json", required: true }] };
+
+  it("finds no change in a stream made with the version's own schema", () => {
+    expect(
+      liveStreamChange(
+        { schema: liveSchema.fields, sink: where },
+        { declared: { schema: { fields }, sink } },
+        "cut-warehouse",
+      ),
+    ).toBeNull();
+  });
+
+  it("finds no change in a stream made without a schema, for a version without one", () => {
+    expect(
+      liveStreamChange(
+        { schema: liveUnstructured.fields, sink: null },
+        { declared: { sink } },
+        "cut-warehouse",
+      ),
+    ).toBeNull();
+  });
+
+  it("sees a field made optional, a unit, and a schema given or dropped", () => {
+    const declared = (f: StreamField[]) => ({ declared: { schema: { fields: f }, sink } });
+    const live = { schema: liveSchema.fields, sink: null };
+    expect(
+      liveStreamChange(live, declared(fields.map((f) => ({ ...f, required: false }))), "b"),
+    ).toBe("its schema");
+    expect(
+      liveStreamChange(
+        live,
+        declared(fields.map((f) => (f.name === "at" ? { ...f, unit: "second" as const } : f))),
+        "b",
+      ),
+    ).toBe("its schema");
+    expect(liveStreamChange(live, declared([...fields].reverse()), "b")).toBe("its schema");
+    expect(liveStreamChange(live, { declared: { sink } }, "b")).toBe("its schema");
+    expect(
+      liveStreamChange({ schema: liveUnstructured.fields, sink: null }, declared(fields), "b"),
+    ).toBe("its schema");
   });
 });
 

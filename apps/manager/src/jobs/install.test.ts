@@ -1683,8 +1683,8 @@ describe("install job", () => {
         input,
       );
       expect(r.job?.status).toBe("failed");
-      expect(r.job?.error).toMatch(
-        /^check Pipelines names for EVENTS: a Pipelines stream named cut_events_stream already exists/,
+      expect(r.job?.error).toBe(
+        'check Pipelines names for EVENTS: the Pipelines stream "cut_events_stream" already exists in this account, but Appflare has no record of it and does not adopt what it has not recorded; an earlier attempt may have made it without hearing back from Cloudflare. Delete it in the Cloudflare dashboard under Pipelines (or run wrangler pipelines streams delete cut_events_stream), then uninstall this failed install and install again.',
       );
       expect(r.fake.state.sinks).toEqual([]);
       expect(r.fake.state.r2).toEqual([]);

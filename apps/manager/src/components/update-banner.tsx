@@ -14,6 +14,7 @@ import type { UpdateNeeds } from "../installs/versions.server";
 import { appLink } from "./app-links";
 import { BusyButton, BusyMark, busyActionProps } from "./busy-button";
 import { CronTriggersField } from "./cron-triggers-field";
+import { connectionsComplete, DatabaseFields, optionalConnectionsValid } from "./database-fields";
 import { useJobStarted } from "./job-started";
 import { ErrorMessageBanner } from "./message-text";
 import { SandboxBuildConfirmation } from "./sandbox-build-confirmation";
@@ -30,7 +31,8 @@ import {
  * button for admins, or, when the catalog entry changed how the app is
  * installed, that the new version takes a reinstall, with no Update button
  * (tier-change.ts). The button starts the update job and opens its log; when
- * the new version introduces secrets, cannot be checked on a preview before
+ * the new version introduces secrets or databases elsewhere (whose
+ * connection strings it asks for), cannot be checked on a preview before
  * it serves traffic, or adds cron triggers, a dialog asks for the secrets and
  * the confirmations first (for cron triggers, unless Settings records the
  * account as on Workers Paid, an optional "This account is on Workers Paid",
@@ -119,6 +121,30 @@ export function UpdateBanner({ install, isAdmin }: { install: InstallDetail; isA
   );
 }
 
+/**
+ * The note under each secret field that holds a token a new event stream's
+ * sink writes with, by secret name (`SecretFields`' `fieldExtras`). Shared
+ * by the update dialog and the update from a reviewed build.
+ */
+export function streamTokenNotes(names: readonly string[]): Record<string, ReactNode> {
+  return Object.fromEntries(
+    names.map((name) => [
+      name,
+      <Text key={name} variant="secondary" size="sm">
+        This version sends events into a new table in R2. Cloudflare keeps this token as the
+        credential its event stream writes with.
+      </Text>,
+    ]),
+  );
+}
+
+/** The connection strings entered, without the fields left empty (an optional one keeps its connection). */
+export function filledConnections(
+  values: Readonly<Record<string, string>>,
+): Record<string, string> {
+  return Object.fromEntries(Object.entries(values).filter(([, v]) => v.trim().length > 0));
+}
+
 /** What starting an update needs to know about the install. */
 export type UpdateTarget = Pick<InstallDetail, "id" | "label">;
 
@@ -146,7 +172,8 @@ export function useStartUpdate(): StartUpdateHandle {
     setPendingId(install.id);
     setError(null);
     try {
-      const result = await startUpdate({ data: { installId: install.id } });
+      // The admin pressed Update: optional choices are offered too.
+      const result = await startUpdate({ data: { installId: install.id, offerChoices: true } });
       if ("jobId" in result) {
         await jobStarted(result.jobId, "Update started");
         return;
@@ -190,6 +217,11 @@ function UpdateDialog({
   const [secrets, setSecrets] = useState(() =>
     initialSecretValues(needs.needsSecrets, needs.heldSecrets),
   );
+  /** Connection strings of the databases this version adds; never stored by Appflare. */
+  const databases = needs.needsDatabases ?? [];
+  /** Databases an earlier update connected: a string replaces that connection, empty keeps it. */
+  const replaceable = needs.replaceableDatabases ?? [];
+  const [connections, setConnections] = useState<Record<string, string>>({});
   const [confirmed, setConfirmed] = useState(needs.skipsPreview === null);
   const [buildConfirmed, setBuildConfirmed] = useState(needs.build === null);
   /** A sandbox build may turn out to have no preview; the admin may accept that up front. */
@@ -198,7 +230,12 @@ function UpdateDialog({
   const [rememberPaid, setRememberPaid] = useState(false);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const ready = confirmed && buildConfirmed && secretsComplete(needs.needsSecrets, secrets);
+  const ready =
+    confirmed &&
+    buildConfirmed &&
+    secretsComplete(needs.needsSecrets, secrets) &&
+    connectionsComplete(databases, connections) &&
+    optionalConnectionsValid(replaceable, connections);
 
   async function onSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -210,6 +247,9 @@ function UpdateDialog({
         data: {
           installId: install.id,
           secrets,
+          ...(databases.length + replaceable.length === 0
+            ? {}
+            : { hyperdrive: filledConnections(connections) }),
           confirmNoPreview: needs.skipsPreview !== null || allowNoPreview,
           ...(needs.build === null ? {} : { buildConfirmed: true }),
           ...(needs.cronTriggers === null
@@ -311,8 +351,11 @@ function UpdateDialog({
                 <div className="grid gap-1.5">
                   <Text bold>New secrets</Text>
                   <Text variant="secondary" size="sm">
-                    This version needs secrets the app does not have yet. They are stored as
-                    encrypted secrets on the app's Worker; Appflare keeps only their names.
+                    {(needs.heldSecrets ?? []).length > 0
+                      ? "This version needs secrets the app does not have yet, or the value of one it has again."
+                      : "This version needs secrets the app does not have yet."}{" "}
+                    They are stored as encrypted secrets on the app's Worker; Appflare keeps only
+                    their names.
                   </Text>
                 </div>
                 <SecretFields
@@ -322,8 +365,27 @@ function UpdateDialog({
                   values={secrets}
                   onChange={(name, value) => setSecrets((s) => withSecretValue(s, name, value))}
                   after="the update"
+                  fieldExtras={streamTokenNotes(needs.streamTokens ?? [])}
+                  disabled={pending}
                 />
               </div>
+            )}
+            {databases.length > 0 && (
+              <DatabaseFields
+                databases={databases}
+                values={connections}
+                onChange={(binding, value) => setConnections((c) => ({ ...c, [binding]: value }))}
+                disabled={pending}
+              />
+            )}
+            {replaceable.length > 0 && (
+              <DatabaseFields
+                databases={replaceable}
+                values={connections}
+                onChange={(binding, value) => setConnections((c) => ({ ...c, [binding]: value }))}
+                replacing
+                disabled={pending}
+              />
             )}
             {error !== null && <ErrorMessageBanner message={error} newTab />}
           </form>

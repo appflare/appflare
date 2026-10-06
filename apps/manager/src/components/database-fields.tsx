@@ -34,6 +34,14 @@ export function connectionsComplete(
   );
 }
 
+/** Whether every optional connection string is left empty or usable. */
+export function optionalConnectionsValid(
+  databases: readonly HyperdriveDeclaration[],
+  values: Readonly<Record<string, string>>,
+): boolean {
+  return databases.every((d) => connectionFieldProblem(d, values[d.binding] ?? "") === null);
+}
+
 /** One database's connection string field. */
 export function DatabaseField({
   decl,
@@ -45,11 +53,16 @@ export function DatabaseField({
       name={decl.binding}
     />
   ),
+  required = true,
+  disabled = false,
 }: {
   decl: HyperdriveDeclaration;
   value: string;
   onChange(value: string): void;
   label?: ReactNode;
+  /** False: empty is allowed (and keeps what is there); marked "(optional)" by the label. */
+  required?: boolean;
+  disabled?: boolean;
 }) {
   const problem = connectionFieldProblem(decl, value);
   const help = [
@@ -65,7 +78,8 @@ export function DatabaseField({
       onValueChange={(next: string) => onChange(next)}
       autoComplete="off"
       spellCheck={false}
-      required
+      required={required}
+      disabled={disabled}
       description={<FieldHelp text={help} />}
       variant={problem === null ? "default" : "error"}
       error={problem === null ? undefined : { message: problem, match: true }}
@@ -79,6 +93,8 @@ export function DatabaseFields({
   values,
   onChange,
   withHeading = true,
+  replacing = false,
+  disabled = false,
 }: {
   databases: readonly HyperdriveDeclaration[];
   values: Readonly<Record<string, string>>;
@@ -88,25 +104,36 @@ export function DatabaseFields({
    * follow the group's other fields, and the note sits under them.
    */
   withHeading?: boolean;
+  /**
+   * The update's optional fields for databases an earlier update already
+   * connected: empty keeps that connection, a string replaces it.
+   */
+  replacing?: boolean;
+  /** While the form is being sent: nothing can be changed. */
+  disabled?: boolean;
 }) {
   if (databases.length === 0) return null;
   const note = (
     <Text variant="secondary" size="sm">
-      The app keeps its data in a database you run elsewhere. Appflare never stores the connection
-      string.
+      {replacing
+        ? "An earlier update of this app already connected these databases. Leave a field empty to keep that connection, or enter a connection string to replace it. Appflare never stores the connection string."
+        : "The app keeps its data in a database you run elsewhere. Appflare never stores the connection string."}
     </Text>
   );
+  const fields = databases.map((decl) => (
+    <DatabaseField
+      key={decl.binding}
+      decl={decl}
+      value={values[decl.binding] ?? ""}
+      onChange={(value) => onChange(decl.binding, value)}
+      required={!replacing}
+      disabled={disabled}
+    />
+  ));
   if (!withHeading) {
     return (
       <>
-        {databases.map((decl) => (
-          <DatabaseField
-            key={decl.binding}
-            decl={decl}
-            value={values[decl.binding] ?? ""}
-            onChange={(value) => onChange(decl.binding, value)}
-          />
-        ))}
+        {fields}
         {note}
       </>
     );
@@ -114,17 +141,10 @@ export function DatabaseFields({
   return (
     <div className="grid gap-4">
       <div className="grid gap-1.5">
-        <Text bold>Databases</Text>
+        <Text bold>{replacing ? "Databases already connected" : "Databases"}</Text>
         {note}
       </div>
-      {databases.map((decl) => (
-        <DatabaseField
-          key={decl.binding}
-          decl={decl}
-          value={values[decl.binding] ?? ""}
-          onChange={(value) => onChange(decl.binding, value)}
-        />
-      ))}
+      {fields}
     </div>
   );
 }

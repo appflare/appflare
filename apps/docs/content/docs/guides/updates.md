@@ -26,6 +26,20 @@ Admins select **Update**. A dialog opens first when:
   sets them before the new version serves traffic. An optional secret the new version
   adds is never asked for; set it in the app's [settings](/guides/settings/) if you
   want it.
+- the new version keeps data in a [database elsewhere](/guides/install-apps/#apps-with-a-database-elsewhere)
+  that the app did not use before. Enter its connection string, as you would at
+  install; the dialog checks it the same way, and Appflare never stores it.
+- the new version [streams events](/guides/install-apps/#apps-that-stream-events)
+  through a stream the app did not have before. Its sink writes with the R2 API token
+  the app keeps in a secret, and Cloudflare never hands a secret back, so the dialog
+  asks for that token, even when the app already has it. Enter its current value to
+  keep it, or a new one to replace it.
+- an earlier update connected a database that the version the app runs now does not
+  use (that update failed, or you rolled it back). The dialog offers to replace its
+  connection string. Leave the field empty to keep the connection, or enter a new
+  string: the update creates a new Hyperdrive configuration from it and binds that one.
+  The app's settings cannot do this, because they list only the databases of the
+  version that runs now.
 - the app defines Durable Objects, so the new version cannot be checked before it
   goes live. This covers every update of such an app, and it matters most when the
   new version changes its Durable Object classes (see
@@ -44,8 +58,11 @@ The update job:
 2. Takes a snapshot: the Worker version serving traffic now, and a D1 Time Travel
    bookmark for each of the app's databases. It refuses to start while a gradual
    deployment is in progress.
-3. Creates resources for bindings the new version adds. An update never deletes a
-   resource.
+3. Creates resources for bindings the new version adds: a Hyperdrive configuration for
+   a new database, from the connection string you entered, and a stream with its sink,
+   pipeline and, when needed, its bucket and Data Catalog. An update never deletes a
+   resource: one the new version no longer uses stays in the account, recorded with the
+   app, until you uninstall it.
 4. Uploads the new assets and the new Worker version, keeping the existing secrets.
    The current version keeps serving.
 5. Checks the new version at its preview URL before any traffic reaches it. A
@@ -64,7 +81,15 @@ The update job:
 
 The current version keeps serving until the new one has passed its checks. If the
 job fails before step 7, the app is unchanged, except for new resources and any D1
-migrations already applied.
+migrations already applied. New resources stay recorded, so the next attempt uses them:
+a database's configuration needs no connection string again, and a stream left without
+its sink or pipeline gets the rest (the dialog asks for the token again only when the
+sink is missing).
+
+An update cannot change a stream once it exists: a version that changes a stream's
+schema, or the table it writes to, needs a fresh install. This holds for a stream an
+earlier update made too, even when the version the app runs now does not use it: the
+update reads the stream and its sink from Cloudflare and compares them.
 
 An update keeps the app's settings, its secrets, its custom domains and the
 [**Serve on workers.dev**](/guides/custom-domains/#turn-off-the-workersdev-url) choice.
@@ -123,7 +148,8 @@ When automatic updates are on for an app, the cron checks every 30 minutes wheth
 catalog has a newer version. It starts the update on its own only when that version
 needs nothing from you:
 
-- no value for a secret the new version adds,
+- no value for a secret the new version adds, and no token for a new stream,
+- no connection string for a database the new version adds,
 - no confirmation that the new version cannot be checked before it goes live,
 - no Workers Paid confirmation for more cron triggers,
 - no build or installer run to approve (apps built in your account never update on
@@ -156,6 +182,11 @@ not changed.** If the newer version changed its data, the older code may not rea
 Restore a database separately if you need its data as it was. A rollback does not move
 an app's email back to another zone; see
 [What a rollback puts back](/guides/settings/#what-a-rollback-puts-back).
+
+Resources an update created stay too. Rolling back from a version that added a database
+or a stream leaves its Hyperdrive configuration, or its stream, sink and pipeline, in
+place; the older version simply does not use them, and updating again uses them as they
+are. A later version that describes the stream differently is refused, as above.
 
 Rollback is not offered across a change to the app's Durable Object classes:
 Cloudflare refuses to roll a Worker back across such a change.

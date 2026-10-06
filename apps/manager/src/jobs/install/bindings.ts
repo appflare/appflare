@@ -98,7 +98,18 @@ export interface PipelinePlan {
     create: boolean;
     /** True for the first stream that writes to this bucket: it turns the bucket's catalog on. */
     setUpCatalog: boolean;
+    /**
+     * True when the bucket existed before the job (an update's stream that
+     * writes to a bucket the install already has): a Data Catalog it has is
+     * used as it is, never removed.
+     */
+    kept?: boolean;
   };
+  /**
+   * What an earlier update that failed made and recorded of this stream:
+   * those parts are not made again. Install never sets it.
+   */
+  made?: { streamId: string; sink: boolean; pipeline: boolean };
 }
 
 /**

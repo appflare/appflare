@@ -29,8 +29,16 @@ import { isUpdateAvailable } from "../../catalog/versions";
 import { appPlace } from "../../components/app-links";
 import type { BuildKind, InstallOrigin, snapshots } from "../../db/schema";
 import {
+  PIPELINE_KIND,
+  PIPELINE_SINK_KIND,
+  PIPELINE_STREAM_KIND,
+  R2_CATALOG_KIND,
+} from "../../installs/resource-kinds";
+import {
   type BindingPlan,
   type DurableObjectPlan,
+  type PipelinePlan,
+  pipelineNames,
   planBindings,
   RESOURCE_BINDINGS,
   type ResourceBindingPlan,
@@ -118,7 +126,13 @@ export interface BindingDiff {
   plan: BindingPlan;
   /** Bindings whose resource is already recorded, with their ids. */
   existing: CreatedResource[];
-  /** Bindings new in this version: their resources are created before the upload. */
+  /**
+   * Bindings new in this version: their resources are created before the
+   * upload. A Hyperdrive configuration needs the connection string the admin
+   * entered with the update; a Pipelines stream (also one a failed update
+   * left without its sink or pipeline, `pipeline.made`) needs the token its
+   * sink's `tokenSecret` names.
+   */
   toCreate: ResourceBindingPlan[];
   /**
    * Kept Vectorize indexes and R2 buckets whose settings the job brings up to
@@ -309,6 +323,103 @@ export function pipelineShapeChange(was: PipelineShape, now: CatalogPipeline): s
 }
 
 /**
+ * A recorded stream as Cloudflare has it, read when the installed version
+ * does not describe it: one a failed update made, or one a version made
+ * before a rollback left the install on a version without it.
+ */
+export interface LiveStreamShape {
+  /** The stream's fields as Cloudflare lists them; null for an unstructured stream. */
+  schema: ReadonlyArray<{ name: string; type: string; required?: boolean; unit?: string }> | null;
+  /** Where its recorded sink writes, by bucket name; null when the install records no sink. */
+  sink: { bucket: string; namespace: string; table: string } | null;
+}
+
+/**
+ * Stream fields compared as Cloudflare stores them: `required` false and no
+ * unit when omitted. Cloudflare returns the fields as they were sent, in
+ * order, except for a stream made without a schema, which it returns with
+ * the one column such a stream has (`value`, required JSON): that schema
+ * and none compare the same.
+ */
+function comparableFields(
+  fields: ReadonlyArray<{ name: string; type: string; required?: boolean; unit?: string }> | null,
+): string {
+  const comparable =
+    fields?.map((f) => ({
+      name: f.name,
+      type: f.type,
+      required: f.required === true,
+      unit: f.unit ?? null,
+    })) ?? null;
+  const unstructured = JSON.stringify([
+    { name: "value", type: "json", required: true, unit: null },
+  ]);
+  return comparable === null || JSON.stringify(comparable) === unstructured
+    ? "null"
+    : JSON.stringify(comparable);
+}
+
+/**
+ * What a version's description of a stream changes from the stream as
+ * Cloudflare has it, as words for a message, or null. `bucket` is the
+ * bucket the version's sink would write to. A stream without a recorded
+ * sink is compared by its schema only: this update makes the sink.
+ */
+export function liveStreamChange(
+  live: LiveStreamShape,
+  plan: Pick<PipelinePlan, "declared">,
+  bucket: string,
+): string | null {
+  const changes: string[] = [];
+  if (comparableFields(live.schema) !== comparableFields(plan.declared.schema?.fields ?? null)) {
+    changes.push("its schema");
+  }
+  const { sink } = plan.declared;
+  if (
+    live.sink !== null &&
+    (live.sink.bucket !== bucket ||
+      live.sink.namespace !== sink.namespace ||
+      live.sink.table !== sink.table)
+  ) {
+    changes.push(
+      `the table its events land in (from ${live.sink.bucket} ${live.sink.namespace}.${live.sink.table} to ${bucket} ${sink.namespace}.${sink.table})`,
+    );
+  }
+  return changes.length === 0 ? null : changes.join(" and ");
+}
+
+/** A recorded stream whose shape the update reads from Cloudflare before it plans. */
+export interface StreamToRead {
+  binding: string;
+  streamId: string;
+  /** Its recorded sink's id; null when the install records none. */
+  sinkId: string | null;
+}
+
+/**
+ * The streams of `streams` the install records but the installed version
+ * does not describe (`installedStreams`): their shapes are read from
+ * Cloudflare, so a version that describes them otherwise is refused.
+ */
+export function streamsToRead(
+  workerName: string,
+  streams: CatalogPipelines | undefined,
+  recorded: ReadonlyArray<Pick<RecordedResource, "kind" | "binding" | "name" | "cfId">>,
+  installedStreams: PipelineShapes,
+): StreamToRead[] {
+  const out: StreamToRead[] = [];
+  for (const binding of Object.keys(streams ?? {})) {
+    if (Object.hasOwn(installedStreams, binding)) continue;
+    const stream = recorded.find((r) => r.kind === PIPELINE_STREAM_KIND && r.binding === binding);
+    if (stream?.cfId == null) continue;
+    const sinkName = pipelineNames(workerName, binding).sink;
+    const sink = recorded.find((r) => r.kind === PIPELINE_SINK_KIND && r.name === sinkName);
+    out.push({ binding, streamId: stream.cfId, sinkId: sink?.cfId ?? null });
+  }
+  return out;
+}
+
+/**
  * Compares the new version's bindings with the install's recorded resources.
  * A binding whose resource is recorded keeps it (same id, same name); a new
  * one gets a resource named as an install would name it. A binding that now
@@ -333,6 +444,11 @@ export function diffBindings(
   installedStreams: PipelineShapes = {},
   /** R2 bindings the installed version declares lifecycle rules for ({@link declaredLifecycleOf}). */
   installedLifecycle: readonly string[] = [],
+  /**
+   * The recorded streams the installed version does not describe, by
+   * binding, as Cloudflare has them ({@link streamsToRead} says which).
+   */
+  liveStreams: Readonly<Record<string, LiveStreamShape>> = {},
 ): BindingDiff {
   const plan = planBindings(workerName, bindings, databases, streams);
   const byBinding = new Map<string, RecordedResource[]>();
@@ -368,11 +484,30 @@ export function diffBindings(
         const was = Object.hasOwn(installedStreams, res.binding)
           ? installedStreams[res.binding]
           : undefined;
-        const change = was === undefined ? null : pipelineShapeChange(was, res.pipeline.declared);
+        // A stream the installed version does not describe (one a failed
+        // update made, or a version a rollback left) is compared as
+        // Cloudflare has it.
+        const live = Object.hasOwn(liveStreams, res.binding) ? liveStreams[res.binding] : undefined;
+        const change =
+          was !== undefined
+            ? pipelineShapeChange(was, res.pipeline.declared)
+            : live !== undefined
+              ? liveStreamChange(live, res.pipeline, bucketNameOf(res.pipeline, recorded))
+              : null;
         if (change !== null) {
           diff.problems.push(
-            `Binding ${res.binding} sends events to the Pipelines stream "${same.name}"; this version changes ${change}. Cloudflare cannot change a stream or a sink once created, nor point a new sink at an existing table, so this version needs a fresh install.`,
+            `Binding ${res.binding} sends events to the Pipelines stream "${same.name}"${was === undefined ? ", which an earlier update made" : ""}; this version changes ${change}. Cloudflare cannot change a stream or a sink once created, nor point a new sink at an existing table, so this version needs a fresh install.`,
           );
+          continue;
+        }
+        // A stream an update that failed made without its sink or pipeline:
+        // this update makes the rest, under the same names.
+        const parts = streamParts(recorded, res.pipeline);
+        if (!parts.sink || !parts.pipeline) {
+          diff.toCreate.push({
+            ...res,
+            pipeline: { ...res.pipeline, made: { streamId: same.cfId, ...parts } },
+          });
           continue;
         }
       }
@@ -412,27 +547,13 @@ export function diffBindings(
       );
       continue;
     }
-    if (res.type === "hyperdrive") {
-      // TODO: ask for the new database's connection string with the update,
-      // as the update form asks for a new secret; until then such a version
-      // is installed fresh.
-      diff.problems.push(
-        `Binding ${res.binding} connects to a database elsewhere and is new in this version; Appflare cannot ask for its connection string during an update yet, so this version needs a fresh install.`,
-      );
-      continue;
-    }
-    if (res.type === "pipelines") {
-      // TODO: create the stream, sink and pipeline during an update; the sink
-      // needs the token the admin entered at install, which Cloudflare keeps
-      // write-only as a secret, so the update form would have to ask for it
-      // again. Until then such a version is installed fresh.
-      diff.problems.push(
-        `Binding ${res.binding} sends events to a Pipelines stream and is new in this version; its sink needs the API token entered at install, which an update cannot read back, so this version needs a fresh install.`,
-      );
-      continue;
-    }
     diff.toCreate.push(res);
   }
+  diff.toCreate = diff.toCreate.map((res) =>
+    res.type === "pipelines"
+      ? { ...res, pipeline: withRecordedBucket(res.pipeline, recorded) }
+      : res,
+  );
 
   for (const wf of plan.workflows) {
     // A Workflow keeps its name under a renamed binding: the install already
@@ -469,6 +590,133 @@ export function diffBindings(
     for (const row of rows) if (!used.has(row)) diff.leftInPlace.push(row);
   }
   return diff;
+}
+
+/** Whether the install records a stream's sink and pipeline, by their planned names. */
+function streamParts(
+  recorded: ReadonlyArray<Pick<RecordedResource, "kind" | "name">>,
+  names: { sinkName: string; pipelineName: string },
+): { sink: boolean; pipeline: boolean } {
+  return {
+    sink: recorded.some((r) => r.kind === PIPELINE_SINK_KIND && r.name === names.sinkName),
+    pipeline: recorded.some((r) => r.kind === PIPELINE_KIND && r.name === names.pipelineName),
+  };
+}
+
+/** The install's record of the bucket a stream's sink writes to, if it has one. */
+function recordedBucket(
+  plan: Pick<PipelinePlan, "bucket">,
+  recorded: ReadonlyArray<Pick<RecordedResource, "kind" | "binding" | "name">>,
+) {
+  return recorded.find(
+    (r) => r.kind === "r2" && (r.binding === plan.bucket.key || r.name === plan.bucket.name),
+  );
+}
+
+/** The name of the bucket a stream's sink writes to: the recorded one, or as planned. */
+function bucketNameOf(
+  plan: Pick<PipelinePlan, "bucket">,
+  recorded: ReadonlyArray<Pick<RecordedResource, "kind" | "binding" | "name">>,
+): string {
+  return recordedBucket(plan, recorded)?.name ?? plan.bucket.name;
+}
+
+/**
+ * The bucket of a stream an update makes, as the install has it. A bucket
+ * the install records (an R2 binding's, or one an earlier stream or a failed
+ * update made) is not created again and keeps any Data Catalog it has, and a
+ * catalog the install records is not turned on again. A bucket this update
+ * makes (a new R2 binding's, or the stream's own) is planned as at install.
+ */
+function withRecordedBucket(
+  plan: PipelinePlan,
+  recorded: ReadonlyArray<Pick<RecordedResource, "kind" | "binding" | "name">>,
+): PipelinePlan {
+  const { bucket } = plan;
+  const row = recordedBucket(plan, recorded);
+  if (row === undefined) return plan;
+  const catalogRecorded = recorded.some((r) => r.kind === R2_CATALOG_KIND && r.name === row.name);
+  return {
+    ...plan,
+    bucket: {
+      ...bucket,
+      name: row.name,
+      create: false,
+      setUpCatalog: bucket.setUpCatalog && !catalogRecorded,
+      kept: true,
+    },
+  };
+}
+
+/**
+ * The databases a version connects to that the install has no Hyperdrive
+ * configuration for: an update creates one for each from the connection
+ * string the admin enters with it. The string is a credential: it goes only
+ * into the job's parameters, never into the manager's records or logs.
+ */
+export function newDatabases(
+  databases: readonly HyperdriveDeclaration[],
+  recorded: ReadonlyArray<Pick<RecordedResource, "kind" | "binding">>,
+): HyperdriveDeclaration[] {
+  return databases.filter(
+    (d) => !recorded.some((r) => r.kind === "hyperdrive" && r.binding === d.binding),
+  );
+}
+
+/** The Hyperdrive bindings a stored artifact manifest's catalog manifest declares. */
+export function hyperdriveBindingsOf(manifestJson: string | null): string[] {
+  if (manifestJson === null) return [];
+  try {
+    const declared = (
+      JSON.parse(manifestJson) as { catalog?: { resources?: { hyperdrive?: unknown } } }
+    ).catalog?.resources?.hyperdrive;
+    return typeof declared === "object" && declared !== null && !Array.isArray(declared)
+      ? Object.keys(declared)
+      : [];
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * The databases a version connects to whose Hyperdrive configuration the
+ * install records although the installed version does not declare them: an
+ * earlier update made it and failed, or a rollback left it. The app's
+ * settings offer no way to replace those (they list the installed version's
+ * databases), so the update offers it, optionally.
+ */
+export function replaceableDatabases(
+  databases: readonly HyperdriveDeclaration[],
+  recorded: ReadonlyArray<Pick<RecordedResource, "kind" | "binding">>,
+  installedBindings: readonly string[],
+): HyperdriveDeclaration[] {
+  return databases.filter(
+    (d) =>
+      !installedBindings.includes(d.binding) &&
+      recorded.some((r) => r.kind === "hyperdrive" && r.binding === d.binding),
+  );
+}
+
+/**
+ * The secrets holding the tokens of the sinks an update to this version
+ * makes: those of streams the install does not have, or has without their
+ * sink (an update that failed half way; a missing pipeline alone needs no
+ * token). Cloudflare keeps a secret write-only, so a token the Worker
+ * already has is asked for again.
+ */
+export function newStreamTokenSecrets(
+  workerName: string,
+  streams: CatalogPipelines | undefined,
+  recorded: ReadonlyArray<Pick<RecordedResource, "kind" | "binding" | "name">>,
+): string[] {
+  const out = new Set<string>();
+  for (const [binding, declared] of Object.entries(streams ?? {})) {
+    const names = pipelineNames(workerName, binding);
+    const stream = recorded.some((r) => r.kind === PIPELINE_STREAM_KIND && r.binding === binding);
+    const parts = streamParts(recorded, { sinkName: names.sink, pipelineName: names.pipeline });
+    if (!stream || !parts.sink) out.add(declared.sink.tokenSecret);
+  }
+  return [...out];
 }
 
 /** The tag of the last Durable Object migration, or null when there are none. */

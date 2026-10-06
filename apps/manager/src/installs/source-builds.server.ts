@@ -9,6 +9,7 @@ import {
   catalogWorkerName,
   githubRepositorySchema,
   gitRefSchema,
+  type HyperdriveDeclaration,
   type IndexApp,
   parseRepositoryInput,
   type RepositoryDetection,
@@ -86,6 +87,7 @@ import type { InstallDomainInput, StartInstallInput } from "./install-input";
 import { UNUSED_BUILD_MS } from "./source-builds-retention";
 import { repositoryAppSlug, reviewBuild } from "./source-review";
 import { resolveInstallInput, seedParams, withDerivedValues } from "./start-install.server";
+import { checkUpdateConnections, readUpdateConnections } from "./update-connections.server";
 import {
   claim,
   readInstall,
@@ -994,6 +996,10 @@ export interface SourceUpdateNeeds {
    * install was updated, or its email moved) does not match it.
    */
   emailRoutingKey?: string;
+  /** As the update dialog's (`UpdateNeeds`): databases to connect, sink tokens among the secrets. */
+  needsDatabases?: HyperdriveDeclaration[];
+  replaceableDatabases?: HyperdriveDeclaration[];
+  streamTokens?: string[];
 }
 
 /** The fingerprint of an email note that a confirmation carries. */
@@ -1017,15 +1023,23 @@ export async function sourceUpdateNeeds(
         isNull(resources.deleted_at),
       ),
     );
+  const { databases, replaceable, streamTokens } = await readUpdateConnections(
+    db,
+    install,
+    manifest.catalog,
+  );
   // A derived secret the Worker lacks, or a derived var the install has no
-  // value for, asks for its source.
+  // value for, asks for its source; a new stream, its sink's token.
   const needsSecrets = secretsToAskFor(
     manifest.catalog.secrets,
     missingSecrets(
       manifest.catalog.secrets,
       recorded.map((r) => r.name),
     ),
-    sourcesOfUnsetDerivedVars(manifest.catalog.vars, parseStoredVars(install.config_json)),
+    [
+      ...sourcesOfUnsetDerivedVars(manifest.catalog.vars, parseStoredVars(install.config_json)),
+      ...streamTokens,
+    ],
   );
   const held = heldSecrets(
     needsSecrets,
@@ -1045,6 +1059,9 @@ export async function sourceUpdateNeeds(
     ...(emailNote === null
       ? {}
       : { emailRouting: emailNote, emailRoutingKey: await emailNoteKey(emailNote) }),
+    ...(databases.length === 0 ? {} : { needsDatabases: databases }),
+    ...(replaceable.length === 0 ? {} : { replaceableDatabases: replaceable }),
+    ...(streamTokens.length === 0 ? {} : { streamTokens }),
     skipsPreview: updatePath(
       manifest,
       install.do_migration_tag ?? lastDurableObjectTagOf(install.manifest_json),
@@ -1064,6 +1081,8 @@ export async function updateFromSourceBuildCore(
   input: {
     buildId: string;
     secrets?: Record<string, string>;
+    /** Connection strings of the databases the build adds (`needsDatabases`). */
+    hyperdrive?: Record<string, string>;
     confirmNoPreview?: boolean;
     /**
      * The fingerprint (`emailRoutingKey`) of the note on how the rebuild
@@ -1106,6 +1125,13 @@ export async function updateFromSourceBuildCore(
     if (problem !== null) throw fail(problem);
     entered[secret.name] = value;
   }
+  const checked = checkUpdateConnections(
+    needs.needsDatabases ?? [],
+    input.hyperdrive ?? {},
+    needs.replaceableDatabases,
+  );
+  if (checked.problem !== null) throw fail(checked.problem);
+  const hyperdrive = checked.connections;
   const secrets = await withDerivedSecrets(manifest.catalog.secrets, entered);
   // A derived var follows its source's new value; the job stores it.
   const vars = await derivedVarValues(manifest.catalog.vars, entered);
@@ -1129,6 +1155,8 @@ export async function updateFromSourceBuildCore(
         fromVersion: install.catalog_version,
         version: prebuilt.version,
         secrets: Object.keys(secrets),
+        // Binding names only: connection strings hold database passwords.
+        ...(Object.keys(hyperdrive).length === 0 ? {} : { hyperdrive: Object.keys(hyperdrive) }),
         ...(Object.keys(vars).length === 0 ? {} : { vars: Object.keys(vars) }),
         origin: prebuilt.origin,
         buildId: prebuilt.buildId,
@@ -1139,6 +1167,7 @@ export async function updateFromSourceBuildCore(
         installId: install.id,
         version: prebuilt.version,
         secrets,
+        ...(Object.keys(hyperdrive).length === 0 ? {} : { hyperdrive }),
         ...(Object.keys(vars).length === 0 ? {} : { vars }),
         prebuilt,
         confirmNoPreview: input.confirmNoPreview === true,
