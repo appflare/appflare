@@ -8,13 +8,7 @@ import {
   Table,
   Text,
 } from "@cloudflare/kumo";
-import {
-  ArrowCounterClockwiseIcon,
-  CheckCircleIcon,
-  DatabaseIcon,
-  InfoIcon,
-  WarningIcon,
-} from "@phosphor-icons/react";
+import { ArrowCounterClockwiseIcon, DatabaseIcon, EnvelopeSimpleIcon } from "@phosphor-icons/react";
 import { useRouter } from "@tanstack/react-router";
 import { type FormEvent, useId, useState } from "react";
 import type { InstallDetail } from "../installs/installs.functions";
@@ -26,7 +20,13 @@ import { BusyMark, busyActionProps } from "./busy-button";
 import { ConfirmDialog } from "./confirm-dialog";
 import { FLUSH_RING_CLASS } from "./hash-target";
 import { useJobStarted } from "./job-started";
-import { ErrorMessageBanner, MessageText } from "./message-text";
+import {
+  BANNER_ICON,
+  ErrorMessageBanner,
+  MessageText,
+  StatusRegion,
+  SuccessBanner,
+} from "./message-text";
 import { Section, SectionBody, SectionRows, SectionTable } from "./section";
 import { StatusBadge } from "./status-badge";
 import { Timestamp } from "./timestamp";
@@ -221,7 +221,7 @@ function RollbackDialog({ install, snapshot }: { install: InstallDetail; snapsho
       {copy.warnData && (
         <Banner
           variant="alert"
-          icon={<WarningIcon weight="fill" />}
+          icon={BANNER_ICON.alert}
           title="Databases are not changed"
           description="If the newer version changed its data, the older code may not read it. Restore a database from this snapshot separately if you need its data as it was."
         />
@@ -229,7 +229,7 @@ function RollbackDialog({ install, snapshot }: { install: InstallDetail; snapsho
       {(snapshot.emailNote !== null || install.emailRoutes.length > 0) && (
         <Banner
           variant="secondary"
-          icon={<InfoIcon weight="fill" />}
+          icon={<EnvelopeSimpleIcon weight="fill" />}
           title={
             snapshot.emailNote !== null ? "Email changes with this version" : "Email stays as it is"
           }
@@ -326,11 +326,11 @@ function RestoreDatabaseDialog({
           .
         </LayerDialog.Description>
         <LayerDialog.Body>
-          {done === null ? (
+          {done === null && (
             <form id={formId} className="grid gap-5" onSubmit={onSubmit}>
               <Banner
                 variant="alert"
-                icon={<WarningIcon weight="fill" />}
+                icon={BANNER_ICON.alert}
                 title="Everything written since then is replaced"
                 description="The Worker is not changed. Cloudflare returns a bookmark of the database as it is now, so this restore can be undone by restoring to that bookmark."
               />
@@ -350,10 +350,16 @@ function RestoreDatabaseDialog({
               />
               {error !== null && <ErrorMessageBanner message={error} newTab />}
             </form>
-          ) : (
-            <div className="grid gap-5">
-              <Banner
-                icon={<CheckCircleIcon weight="fill" />}
+          )}
+          {/*
+           * On the page from the start, so a screen reader announces the
+           * result when it lands; the banner in it is not a live region of
+           * its own.
+           */}
+          <StatusRegion>
+            {done !== null && (
+              <SuccessBanner
+                live={false}
                 title={`Restored ${done.databaseName}`}
                 description={
                   done.previousBookmark === null
@@ -361,6 +367,10 @@ function RestoreDatabaseDialog({
                     : "To undo this restore, restore the database to the bookmark below, for example with wrangler."
                 }
               />
+            )}
+          </StatusRegion>
+          {done !== null && (
+            <div className="mt-5 grid gap-5">
               {done.previousBookmark !== null && (
                 <div className="grid gap-2">
                   <Text bold>Bookmark from just before the restore</Text>

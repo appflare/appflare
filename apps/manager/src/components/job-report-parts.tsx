@@ -1,5 +1,5 @@
 import { Banner, CodeBlock, Collapsible, InputArea, Text } from "@cloudflare/kumo";
-import { CheckCircleIcon, InfoIcon } from "@phosphor-icons/react";
+import { CheckCircleIcon } from "@phosphor-icons/react";
 import {
   FAILURE_REPORT_COPY,
   type FailureReportPreview,
@@ -8,6 +8,7 @@ import {
 } from "../telemetry/failure-report";
 import { DescriptionItem, DescriptionList } from "./description-list";
 import { jobKindLabel } from "./format";
+import { BANNER_ICON, SuccessBanner } from "./message-text";
 
 /**
  * The parts of the "Send a report" dialog that need no server call (the
@@ -56,19 +57,9 @@ export function FailureReportBody({
   const exact = JSON.stringify(withNote(preview.event, note, preview.accountNames), null, 2);
   return (
     <div className="grid gap-4">
-      {preview.reportedAt !== null && (
-        <Banner
-          variant="default"
-          icon={<CheckCircleIcon weight="fill" />}
-          title={FAILURE_REPORT_COPY.alreadySent}
-        />
-      )}
+      {preview.reportedAt !== null && <SuccessBanner title={FAILURE_REPORT_COPY.alreadySent} />}
       {preview.devBuild && (
-        <Banner
-          variant="alert"
-          icon={<InfoIcon weight="fill" />}
-          title={FAILURE_REPORT_COPY.devBuild}
-        />
+        <Banner variant="alert" icon={BANNER_ICON.alert} title={FAILURE_REPORT_COPY.devBuild} />
       )}
       <div className="grid gap-2">
         <Text bold>{FAILURE_REPORT_COPY.summaryTitle}</Text>
@@ -104,7 +95,7 @@ export function FailureReportBody({
       {preview.usageDataOff && (
         <Banner
           variant="default"
-          icon={<InfoIcon weight="fill" />}
+          icon={BANNER_ICON.default}
           title={FAILURE_REPORT_COPY.usageDataOff}
         />
       )}

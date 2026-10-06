@@ -34,7 +34,7 @@ import { CategoryCards } from "../../../components/category-cards";
 import { FeaturedCard } from "../../../components/featured-card";
 import { formatExactDateTime } from "../../../components/format";
 import { plainMessage } from "../../../components/message-links";
-import { MessageLinkButtons, MessageText } from "../../../components/message-text";
+import { BANNER_ICON, MessageLinkButtons, MessageText } from "../../../components/message-text";
 import { PageHeader } from "../../../components/page-header";
 import { settingsLink } from "../../../components/settings-links";
 import { Tooltip } from "../../../components/tooltip";
@@ -87,8 +87,8 @@ function CatalogPage() {
       />
       {prefill !== null && !catalog.repositoryBuilds && (
         <Banner
-          variant="secondary"
-          icon={<WarningCircleIcon weight="fill" />}
+          variant="alert"
+          icon={BANNER_ICON.alert}
           title={`Appflare cannot build ${prefill} on this account`}
           description={
             <MessageText
@@ -103,8 +103,8 @@ function CatalogPage() {
         catalog.failed.map(({ source, error }) => (
           <Banner
             key={source.id}
-            variant="secondary"
-            icon={<WarningCircleIcon weight="fill" />}
+            variant="alert"
+            icon={BANNER_ICON.alert}
             title={`${source.label} could not be loaded`}
             description={<MessageText message={`Its apps are not shown. ${error}`} />}
           />
@@ -112,16 +112,16 @@ function CatalogPage() {
       {catalog.unsigned.map(({ source, count }) => (
         <Banner
           key={`unsigned-${source.id}`}
-          variant="secondary"
-          icon={<WarningCircleIcon weight="fill" />}
+          variant="alert"
+          icon={BANNER_ICON.alert}
           title={`${count} ${count === 1 ? "app" : "apps"} from ${source.label} not shown`}
           description={UNSIGNED_INDEX_REFUSAL}
         />
       ))}
       {catalog.unreadable > 0 && (
         <Banner
-          variant="secondary"
-          icon={<WarningCircleIcon weight="fill" />}
+          variant="alert"
+          icon={BANNER_ICON.alert}
           title={`${catalog.unreadable} ${catalog.unreadable === 1 ? "app" : "apps"} could not be shown`}
           description={
             <>
