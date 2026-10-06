@@ -4,6 +4,8 @@ import {
   R2_CATALOG_NOT_FOUND_CODE,
 } from "@appflare/cf-api";
 import type { StreamField } from "@appflare/schema";
+import { and, inArray, isNull } from "drizzle-orm";
+import { resources } from "../../db/schema";
 import {
   PIPELINE_KIND,
   PIPELINE_SINK_KIND,
@@ -13,8 +15,20 @@ import {
 import { errorMessage, isNotFound, JobError, type JobSteps } from "../steps";
 import type { ResourceBindingPlan } from "./bindings";
 import type { CreatedResource } from "./metadata";
-import { recordResource } from "./phases";
+import {
+  createRefused,
+  type NameReservation,
+  type ReservedRow,
+  recordId,
+  recordName,
+  recordResource,
+  releaseName,
+  resourceId,
+  stoppedJobRefusal,
+  withArticle,
+} from "./phases";
 import { explainR2Refusal } from "./r2-enablement";
+import { unrecordedObjectNote } from "./resources";
 
 /**
  * Setting up and removing what a Pipelines binding needs: a stream the
@@ -31,10 +45,14 @@ import { explainR2Refusal } from "./r2-enablement";
  * and the catalog's maintenance credential, so the manager's token is never
  * handed to another service, and it needs no R2 Data Catalog permission.
  *
- * Every create is a step of its own, followed by a step that records it, so
- * a retried create picks up what its own failed attempt made (found by name)
- * and a failed record never creates twice. Names already in the account are
- * never adopted.
+ * Every create is a step of its own, between a step that records the name
+ * (with no Cloudflare id yet) and one that records the id, as for any other
+ * resource (`provisionResourcePhase`): a retried create picks up what its own
+ * failed attempt made (found by name), a failed record never creates twice,
+ * and a job that fails settles the names it recorded
+ * (`resolveReservedNamesPhase`). Names already in the account are never
+ * adopted, nor is a name recorded without its id taken as proof that what
+ * has that name is the app's.
  */
 
 /** The token permission the manager's Pipelines calls need, in the dashboard's words. */
@@ -206,6 +224,19 @@ export function takenNamesProblem(
   return sentences.join(" ");
 }
 
+/**
+ * Why names this install recorded without an id cannot be used while
+ * something has them: an earlier job stopped from outside after recording
+ * them, and nothing shows that what has them is what that job made.
+ */
+export function stoppedNamesProblem(named: ReadonlyArray<{ label: string; name: string }>): string {
+  const [first] = named;
+  if (named.length === 1 && first !== undefined) return stoppedJobRefusal(first.label, first.name);
+  const each = named.map((n) => `${withArticle(n.label)} named ${n.name}`);
+  const list = `${each.slice(0, -1).join(", ")} and ${each.at(-1)}`;
+  return `${list} already exist in this account; they may be ones an earlier, stopped job started making, but Appflare did not record their ids, so it cannot tell. Delete them in the Cloudflare dashboard if they are not in use, then try again`;
+}
+
 /** The pass-through SQL of a pipeline. Names are `[a-z0-9_]` and start with a letter. */
 export function passThroughSql(sink: string, stream: string): string {
   return `INSERT INTO ${sink} SELECT * FROM ${stream}`;
@@ -218,12 +249,15 @@ export function passThroughSql(sink: string, stream: string): string {
  * that need it, never logged, returned, or recorded. For an update, the
  * plan says what an earlier attempt made (`made`, skipped here) and whether
  * the bucket was there before (`bucket.kept`: its Data Catalog is kept).
+ * Each name is added to `reserved` as it is recorded (see
+ * `provisionResourcePhase`).
  */
 export async function provisionPipelinePhase(
   steps: JobSteps,
   installId: string,
   res: Extract<ResourceBindingPlan, { type: "pipelines" }>,
   token: string,
+  reserved: NameReservation[],
   job: PipelineJob = "install",
 ): Promise<CreatedResource> {
   const { run } = steps;
@@ -231,8 +265,20 @@ export async function provisionPipelinePhase(
   const { bucket, declared, made } = plan;
   const secret = declared.sink.tokenSecret;
   const at = () => new Date(steps.now());
+  const rowIds = {
+    bucket: resourceId(installId, "r2", bucket.key),
+    stream: resourceId(installId, PIPELINE_STREAM_KIND, res.binding),
+    sink: resourceId(installId, PIPELINE_SINK_KIND, res.binding),
+    pipeline: resourceId(installId, PIPELINE_KIND, res.binding),
+  };
+  const findBucket = async (api: CloudflareClient) =>
+    (
+      await explainR2Refusal(bucket.name, () => api.r2.listBuckets({ nameContains: bucket.name }))
+    ).some((b) => b.name === bucket.name)
+      ? bucket.name
+      : null;
 
-  await run(`check Pipelines names for ${res.binding}`, async ({ log, cf }) => {
+  await run(`check Pipelines names for ${res.binding}`, async ({ log, cf, orm }) => {
     const api = cf();
     /** Pipelines objects of these names that Appflare has no record of. */
     const taken: TakenPipelineObject[] = [];
@@ -256,15 +302,49 @@ export async function provisionPipelinePhase(
         taken.push({ what: "pipeline", name: plan.pipelineName });
       }
     });
-    let bucketTaken = false;
-    if (bucket.create) {
-      const buckets = await explainR2Refusal(bucket.name, () =>
-        api.r2.listBuckets({ nameContains: bucket.name }),
-      );
-      bucketTaken = buckets.some((b) => b.name === bucket.name);
-    }
+    let bucketTaken = bucket.create && (await findBucket(api)) !== null;
     if (taken.length > 0 || bucketTaken) {
-      throw new JobError(takenNamesProblem(taken, bucketTaken ? bucket.name : null, job));
+      // A name an earlier, stopped job recorded without its id: what has it
+      // may be what that job made, or not, so it is refused all the same,
+      // saying so.
+      const unrecorded = new Set(
+        (
+          await orm
+            .select({ id: resources.id })
+            .from(resources)
+            .where(
+              and(
+                inArray(resources.id, [
+                  ...taken.map((t) => rowIds[t.what]),
+                  ...(bucketTaken ? [rowIds.bucket] : []),
+                ]),
+                isNull(resources.cf_id),
+                isNull(resources.deleted_at),
+              ),
+            )
+        ).map((r) => r.id),
+      );
+      const stopped = [
+        ...(bucketTaken && unrecorded.has(rowIds.bucket)
+          ? [{ label: "R2 bucket", name: bucket.name }]
+          : []),
+        ...taken
+          .filter((t) => unrecorded.has(rowIds[t.what]))
+          .map((t) => ({ label: PIPELINE_OBJECT_LABEL[t.what], name: t.name })),
+      ];
+      if (unrecorded.has(rowIds.bucket)) bucketTaken = false;
+      const others = taken.filter((t) => !unrecorded.has(rowIds[t.what]));
+      const rest =
+        others.length > 0 || bucketTaken
+          ? takenNamesProblem(others, bucketTaken ? bucket.name : null, job)
+          : null;
+      throw new JobError(
+        stopped.length === 0
+          ? (rest ?? "")
+          : rest === null
+            ? stoppedNamesProblem(stopped)
+            : `${stoppedNamesProblem(stopped)}. ${rest}`,
+      );
     }
     log.info(
       made === undefined
@@ -275,29 +355,19 @@ export async function provisionPipelinePhase(
   });
 
   if (bucket.create) {
-    const made = await run(`create R2 bucket ${bucket.name}`, async ({ log, cf, attempt }) => {
-      const api = cf();
-      if (attempt > 1) {
-        const buckets = await explainR2Refusal(bucket.name, () =>
-          api.r2.listBuckets({ nameContains: bucket.name }),
-        );
-        if (buckets.some((b) => b.name === bucket.name)) {
-          log.info(`Found the R2 bucket "${bucket.name}" an earlier attempt created.`);
-          return { cfId: bucket.name };
-        }
-      }
-      await explainR2Refusal(bucket.name, () => api.r2.createBucket({ name: bucket.name }));
-      log.info(`Created R2 bucket "${bucket.name}" for the Pipelines sink of ${res.binding}.`);
-      return { cfId: bucket.name };
-    });
-    await run(`record R2 bucket ${bucket.name}`, async ({ orm }) => {
-      await recordResource(
-        orm,
-        installId,
-        { kind: "r2", key: bucket.key, binding: null, name: bucket.name, cfId: made.cfId },
-        at(),
-      );
-      return {};
+    await createAndRecord(steps, installId, reserved, {
+      label: "R2 bucket",
+      name: bucket.name,
+      kind: "r2",
+      key: bucket.key,
+      binding: null,
+      explain: (call) => explainR2Refusal(bucket.name, call),
+      find: findBucket,
+      create: async (api) => {
+        await api.r2.createBucket({ name: bucket.name });
+        return bucket.name;
+      },
+      created: `Created R2 bucket "${bucket.name}" for the Pipelines sink of ${res.binding}.`,
     });
   }
 
@@ -403,7 +473,7 @@ export async function provisionPipelinePhase(
 
   const stream =
     made?.streamId ??
-    (await createAndRecord(steps, installId, {
+    (await createAndRecord(steps, installId, reserved, {
       label: "Pipelines stream",
       name: plan.streamName,
       kind: PIPELINE_STREAM_KIND,
@@ -427,7 +497,7 @@ export async function provisionPipelinePhase(
     }));
 
   if (made?.sink !== true) {
-    await createAndRecord(steps, installId, {
+    await createAndRecord(steps, installId, reserved, {
       label: "Pipelines sink",
       name: plan.sinkName,
       kind: PIPELINE_SINK_KIND,
@@ -471,7 +541,7 @@ export async function provisionPipelinePhase(
   }
 
   if (made?.pipeline !== true) {
-    await createAndRecord(steps, installId, {
+    await createAndRecord(steps, installId, reserved, {
       label: "pipeline",
       name: plan.pipelineName,
       kind: PIPELINE_KIND,
@@ -537,51 +607,88 @@ export async function newSinkTokenPhase(
   });
 }
 
-/** A create step, retried by name, and the step that records what it made. Returns its id. */
+/**
+ * Three steps for one object: record its name, create it (retried by name),
+ * record its id. Returns the id. The name goes into `reserved` once
+ * recorded, so a job that fails settles it.
+ */
 async function createAndRecord(
   steps: JobSteps,
   installId: string,
+  reserved: NameReservation[],
   what: {
     label: string;
     name: string;
-    kind: typeof PIPELINE_STREAM_KIND | typeof PIPELINE_SINK_KIND | typeof PIPELINE_KIND;
+    kind: "r2" | typeof PIPELINE_STREAM_KIND | typeof PIPELINE_SINK_KIND | typeof PIPELINE_KIND;
     key: string;
     binding: string | null;
     find: (api: CloudflareClient) => Promise<string | null>;
     create: (api: CloudflareClient) => Promise<string>;
+    /** Says why a refusal happened (default: the Pipelines permission). */
+    explain?: <T>(call: () => Promise<T>) => Promise<T>;
+    /** The log line once created (default: `Created <label> "<name>".`). */
+    created?: string;
   },
 ): Promise<string> {
-  const made = await steps.run(
-    `create ${what.label} ${what.name}`,
-    async ({ log, cf, attempt }) => {
-      const api = cf();
-      return explainPipelinesRefusal(async () => {
-        // The check step saw no such name, so on a retry one is what this
-        // step's own earlier attempt created before it failed.
-        if (attempt > 1) {
-          const existing = await what.find(api);
-          if (existing !== null) {
-            log.info(`Found the ${what.label} "${what.name}" an earlier attempt created.`, {
-              id: existing,
-            });
-            return { cfId: existing };
-          }
-        }
-        const cfId = await what.create(api);
-        log.info(`Created ${what.label} "${what.name}".`, { id: cfId });
-        return { cfId };
-      });
-    },
-  );
-  await steps.run(`record ${what.label} ${what.name}`, async ({ orm }) => {
-    await recordResource(
-      orm,
-      installId,
-      { kind: what.kind, key: what.key, binding: what.binding, name: what.name, cfId: made.cfId },
-      new Date(steps.now()),
-    );
+  const explain = what.explain ?? ((call) => explainPipelinesRefusal(call));
+  const row: ReservedRow = {
+    id: resourceId(installId, what.kind, what.key),
+    installId,
+    kind: what.kind,
+    binding: what.binding,
+    name: what.name,
+  };
+  await steps.run(`record ${what.label} name ${what.name}`, async ({ orm }) => {
+    await recordName(orm, row, new Date(steps.now()));
     return {};
   });
+  const reservation: NameReservation = {
+    rowId: row.id,
+    label: what.label,
+    name: what.name,
+    find: what.find,
+    createdId: null,
+    recorded: false,
+  };
+  reserved.push(reservation);
+
+  const made = await steps.run(
+    `create ${what.label} ${what.name}`,
+    async ({ log, cf, orm, attempt }) => {
+      const api = cf();
+      // The check step saw no such name, so on a retry one is what this
+      // step's own earlier attempt created before it failed. Looked up before
+      // the create's own handling: a refused lookup must not release the name
+      // of something the earlier attempt may have made.
+      if (attempt > 1) {
+        const existing = await explain(() => what.find(api));
+        if (existing !== null) {
+          log.info(`Found the ${what.label} "${what.name}" an earlier attempt created.`, {
+            id: existing,
+          });
+          return { cfId: existing };
+        }
+      }
+      try {
+        return await explain(async () => {
+          const cfId = await what.create(api);
+          log.info(what.created ?? `Created ${what.label} "${what.name}".`, { id: cfId });
+          return { cfId };
+        });
+      } catch (error) {
+        // Refused (or never sent): nothing was created. Release the name so
+        // an uninstall never deletes a same-named object made elsewhere later.
+        if (createRefused(error)) await releaseName(orm, row.id, new Date(steps.now()));
+        throw error;
+      }
+    },
+  );
+  reservation.createdId = made.cfId;
+  await steps.run(`record ${what.label} ${what.name}`, async ({ orm }) => {
+    await recordId(orm, row, made.cfId, new Date(steps.now()));
+    return {};
+  });
+  reservation.recorded = true;
   return made.cfId;
 }
 
@@ -620,15 +727,17 @@ export function pipelineTargets<T extends PipelineTarget>(rows: readonly T[]): T
 
 /**
  * Deletes one stream, sink or pipeline with the manager's token; a 404 means
- * it is gone already. Returns the log line.
+ * it is gone already. One recorded without its id is not deleted. Returns
+ * the log line and its level.
  */
 export async function deletePipelineObject(
   api: CloudflareClient,
   target: PipelineTarget,
-): Promise<string> {
+): Promise<{ level: "info" | "warn"; message: string }> {
   const label = pipelineObjectLabel(target.kind);
+  // Recorded by name only: the name proves nothing (see `deleteResource`).
   if (target.cfId === null) {
-    return `No Cloudflare id is recorded for the ${label} "${target.name}", so it cannot be addressed; marked deleted without a call. Check the Cloudflare dashboard for it.`;
+    return { level: "warn", message: unrecordedObjectNote(label, target.name) };
   }
   const id = target.cfId;
   try {
@@ -639,11 +748,15 @@ export async function deletePipelineObject(
     });
   } catch (error) {
     if (!isNotFound(error)) throw error;
-    return `The ${label} "${target.name}" was already gone.`;
+    return { level: "info", message: `The ${label} "${target.name}" was already gone.` };
   }
-  return target.kind === PIPELINE_SINK_KIND
-    ? `Deleted the ${label} "${target.name}"; what it wrote stays in its bucket.`
-    : `Deleted the ${label} "${target.name}".`;
+  return {
+    level: "info",
+    message:
+      target.kind === PIPELINE_SINK_KIND
+        ? `Deleted the ${label} "${target.name}"; what it wrote stays in its bucket.`
+        : `Deleted the ${label} "${target.name}".`,
+  };
 }
 
 /**

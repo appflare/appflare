@@ -989,7 +989,9 @@ export async function runUpdate(ctx: JobContext): Promise<void> {
     for (const res of newStreams) {
       // The plan step checked the token is there.
       const token = secretValues[res.pipeline.declared.sink.tokenSecret] ?? "";
-      bound.push(await provisionPipelinePhase(steps, params.installId, res, token, "update"));
+      bound.push(
+        await provisionPipelinePhase(steps, params.installId, res, token, reserved, "update"),
+      );
     }
     // Kept indexes get the metadata indexes this version declares, before its
     // code writes a vector; kept buckets get their rules once it serves.

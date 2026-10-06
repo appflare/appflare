@@ -121,7 +121,7 @@ describe("ExternalDomainsSection", () => {
     expect(button("Add external domain")).toBeDefined();
   });
 
-  it("leads to the gateway's settings while there is no gateway", async () => {
+  it("leads to the gateway's settings while there is no gateway, without offering to add one", async () => {
     await show(install([], false));
     expect(container.textContent).toContain(
       "No external domains. An external domain needs the gateway, set up once in External domains settings.",
@@ -130,5 +130,20 @@ describe("ExternalDomainsSection", () => {
       (a) => a.textContent === "External domains settings",
     );
     expect(link?.getAttribute("href")).toBe("/settings/domains#external-domains");
+    expect(button("Add external domain")).toBeUndefined();
+  });
+
+  it("offers a member no Add external domain, gateway or not", async () => {
+    for (const ready of [true, false]) {
+      await act(async () => {
+        root.render(
+          <TooltipProvider>
+            <ExternalDomainsSection install={install([], ready)} isAdmin={false} />
+          </TooltipProvider>,
+        );
+      });
+      expect(button("Add external domain")).toBeUndefined();
+      expect(container.textContent).toContain("No external domains.");
+    }
   });
 });

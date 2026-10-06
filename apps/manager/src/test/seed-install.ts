@@ -19,6 +19,8 @@ export interface SeedResource {
   binding?: string | null;
   name: string;
   cfId?: string | null;
+  /** The key of the row's id when it is neither the binding nor the name (a stream's sink: its binding). */
+  key?: string;
 }
 
 export async function seedInstall(
@@ -52,7 +54,7 @@ export async function seedInstall(
     .run();
   for (const r of opts.resources ?? []) {
     // A secret's row is keyed by the secret's key, which its `name` holds.
-    const key = r.kind === "secret" ? r.name : (r.binding ?? r.name);
+    const key = r.key ?? (r.kind === "secret" ? r.name : (r.binding ?? r.name));
     await env.DB.prepare(
       `INSERT INTO resources (id, install_id, kind, binding, name, cf_id, created_at)
        VALUES (?1, ?2, ?3, ?4, ?5, ?6, 1)`,

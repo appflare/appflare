@@ -632,7 +632,7 @@ export async function runInstall(ctx: JobContext): Promise<void> {
     for (const res of streams) {
       // The preflight checked the token is there.
       const token = params.secrets[res.pipeline.declared.sink.tokenSecret] ?? "";
-      created.push(await provisionPipelinePhase(steps, params.installId, res, token));
+      created.push(await provisionPipelinePhase(steps, params.installId, res, token, reserved));
     }
 
     if (plan.durableObjects.length > 0) {

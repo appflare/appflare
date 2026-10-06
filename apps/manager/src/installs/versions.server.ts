@@ -398,7 +398,12 @@ export async function startUpdateCore(
   });
   if (accessRefusal !== null) throw new AccessRequiredUpdateError(accessRefusal);
   const recorded = await createDb(deps.db)
-    .select({ kind: resources.kind, binding: resources.binding, name: resources.name })
+    .select({
+      kind: resources.kind,
+      binding: resources.binding,
+      name: resources.name,
+      cfId: resources.cf_id,
+    })
     .from(resources)
     .where(
       and(

@@ -886,13 +886,17 @@ describe("uninstall job: Hyperdrive configurations", () => {
 });
 
 describe("uninstall job: Pipelines", () => {
-  /** A stream with its sink, pipeline, own bucket and that bucket's Data Catalog. */
-  async function seedPipelines(): Promise<void> {
+  /**
+   * A stream with its sink, pipeline, own bucket and that bucket's Data
+   * Catalog; with `byNameOnly`, everything but the catalog is recorded by
+   * name only (a job stopped from outside before recording each id).
+   */
+  async function seedPipelines(byNameOnly = false): Promise<void> {
     const r = (id: string, kind: string, name: string, cfId: string, binding: string | null) =>
       env.DB.prepare(
         `INSERT INTO resources (id, install_id, kind, binding, name, cf_id, created_at)
          VALUES (?1, 'i1', ?2, ?3, ?4, ?5, 1)`,
-      ).bind(id, kind, binding, name, cfId);
+      ).bind(id, kind, binding, name, byNameOnly && kind !== "r2_catalog" ? null : cfId);
     await env.DB.batch([
       r("wh", "r2", "cut-warehouse", "cut-warehouse", null),
       r("cat", "r2_catalog", "cut-warehouse", "cat-1", null),
@@ -975,6 +979,34 @@ describe("uninstall job: Pipelines", () => {
           /^Cloudflare refused to remove the R2 Data Catalog of "cut-warehouse" \(Forbidden\); the bucket is deleted anyway/,
         ),
       }),
+    );
+  });
+
+  it("makes no call for a stream, sink, pipeline or bucket recorded by name only, and warns", async () => {
+    await seedInstall();
+    await seedPipelines(true);
+    const fake = world();
+    const r = await uninstall({ installId: "i1", deleteResources: [...ALL_DATA, "wh"] }, fake);
+    expect(r.error).toBeNull();
+    expect(r.install?.status).toBe("uninstalled");
+    // Not deleted, emptied, or stripped of its catalog by name: what has
+    // that name may not be this app's.
+    expect(
+      fake.world.calls.filter((c) =>
+        /^\w+ \/(pipelines\/|r2-catalog\/cut-warehouse|r2\/buckets\/cut-warehouse)/.test(c),
+      ),
+    ).toEqual([]);
+    expect(fake.world.pipelines).toEqual(new Set(["streams/s1", "sinks/k1", "pipelines/p1"]));
+    expect(fake.world.catalogs).toEqual(new Set(["cut-warehouse"]));
+    expect(fake.world.r2.get("cut-warehouse")).toEqual(["__r2_data_catalog/x/data.parquet"]);
+    for (const id of ["stream", "sink", "pipe", "wh", "cat"]) expect(r.state(id)).toBe("deleted");
+    expect(r.logs.filter((l) => l.level === "warn").map((l) => l.message)).toEqual(
+      expect.arrayContaining([
+        unrecorded("pipeline", "cut_events_pipeline"),
+        unrecorded("Pipelines sink", "cut_events_sink"),
+        unrecorded("Pipelines stream", "cut_events_stream"),
+        unrecorded("R2 bucket", "cut-warehouse"),
+      ]),
     );
   });
 

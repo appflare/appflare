@@ -461,6 +461,64 @@ describe("diffBindings", () => {
       expect(diff.leftInPlace).toEqual([]);
     });
 
+    it("makes afresh what a stopped job recorded by name only, never counting it as made", () => {
+      const byNameOnly = [
+        row({ kind: "r2", name: "cut-warehouse" }),
+        row({ kind: "pipeline_stream", binding: "EVENTS", name: "cut_events_stream" }),
+      ];
+      const fresh = diffBindings(
+        "cut",
+        [{ type: "pipelines", name: "EVENTS" }],
+        byNameOnly,
+        {},
+        [],
+        { EVENTS: { schema, sink } },
+      );
+      expect(fresh.problems).toEqual([]);
+      expect(fresh.existing).toEqual([]);
+      expect(fresh.toCreate).toEqual([
+        expect.objectContaining({
+          binding: "EVENTS",
+          name: "cut_events_stream",
+          pipeline: expect.objectContaining({
+            streamName: "cut_events_stream",
+            // Not the bucket of that name: its check refuses one that exists.
+            bucket: { key: "WAREHOUSE", name: "cut-warehouse", create: true, setUpCatalog: true },
+          }),
+        }),
+      ]);
+      expect(
+        (fresh.toCreate[0] as { pipeline: { made?: unknown } } | undefined)?.pipeline.made,
+      ).toBeUndefined();
+      expect(newStreamTokenSecrets("cut", { EVENTS: { schema, sink } }, byNameOnly)).toEqual([
+        "CATALOG_TOKEN",
+      ]);
+
+      // A stream with its id, and its sink by name only: the sink is made again.
+      const sinkByName = [
+        ...unfinished.slice(0, 1),
+        row({ kind: "pipeline_sink", name: "cut_events_sink" }),
+      ];
+      const rest = diffBindings(
+        "cut",
+        [{ type: "pipelines", name: "EVENTS" }],
+        sinkByName,
+        {},
+        [],
+        { EVENTS: { schema, sink } },
+      );
+      expect(rest.toCreate).toEqual([
+        expect.objectContaining({
+          pipeline: expect.objectContaining({
+            made: { streamId: "s1", sink: false, pipeline: false },
+          }),
+        }),
+      ]);
+      expect(newStreamTokenSecrets("cut", { EVENTS: { schema, sink } }, sinkByName)).toEqual([
+        "CATALOG_TOKEN",
+      ]);
+    });
+
     it("asks for the token of each sink the update makes, not for a missing pipeline alone", () => {
       const streams = {
         EVENTS: { schema, sink },

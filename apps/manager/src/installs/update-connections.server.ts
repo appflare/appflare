@@ -52,7 +52,12 @@ export const UPDATE_CONNECTION_KINDS = [
 export function updateConnectionsOf(
   install: { worker_name: string; manifest_json: string | null },
   catalog: Pick<CatalogManifest, "resources">,
-  recorded: ReadonlyArray<{ kind: string; binding: string | null; name: string }>,
+  recorded: ReadonlyArray<{
+    kind: string;
+    binding: string | null;
+    name: string;
+    cfId: string | null;
+  }>,
 ): UpdateConnections {
   const declared = hyperdriveDeclarations(catalog.resources?.hyperdrive);
   return {
@@ -77,7 +82,12 @@ export async function readUpdateConnections(
   catalog: Pick<CatalogManifest, "resources">,
 ): Promise<UpdateConnections> {
   const recorded = await createDb(db)
-    .select({ kind: resources.kind, binding: resources.binding, name: resources.name })
+    .select({
+      kind: resources.kind,
+      binding: resources.binding,
+      name: resources.name,
+      cfId: resources.cf_id,
+    })
     .from(resources)
     .where(
       and(
