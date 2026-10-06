@@ -39,6 +39,8 @@ import {
   type HealthProbe,
   type HealthSettlement,
   type HealthVerdict,
+  isAccessChallenge,
+  liveHealthScheduledMs,
   lookupOnce,
   probeThroughAccess,
   versionMismatch,
@@ -785,6 +787,9 @@ export interface LiveHealthResult extends HealthSettlement {
  * instead (`verified`, `unverified`, `unhealthy`) and a warning is logged when
  * the Worker could not be verified. Cloudflare Access's sign-in redirect ends
  * the check at once as `unverified`: Access answers before the Worker does.
+ * Right after the job removed the app's protection (`access: "off"`), Access
+ * goes on answering for a few seconds, so its sign-in is retried through the
+ * same window until the removal takes effect.
  */
 export async function checkLiveHealthPhase(
   steps: JobSteps,
@@ -803,12 +808,24 @@ export async function checkLiveHealthPhase(
      * protected install's probe carries its own service token.
      */
     installId?: string;
+    /**
+     * The job just turned the app's Cloudflare Access protection on or off,
+     * which the warnings say instead of "Everything was created". Off also
+     * waits out Access's sign-in while the removal takes effect.
+     */
+    access?: "on" | "off";
   } = {},
 ): Promise<LiveHealthResult> {
   const checkAgain =
     opts.installId === undefined
       ? "check again from its page"
       : `check again from ${appPlace(opts.installId, "health", "its page")}`;
+  const done =
+    opts.access === "on"
+      ? "The app is protected now"
+      : opts.access === "off"
+        ? "The protection is removed"
+        : "Everything was created";
   let firstProbeAt: number | null = null;
   // The install's token for this URL, looked up once for the whole phase.
   let credentials: (() => Promise<Record<string, string> | undefined>) | undefined;
@@ -830,29 +847,41 @@ export async function checkLiveHealthPhase(
           {},
           direct,
         );
+        const elapsed = at - (firstProbeAt ?? at);
+        const accessRemoved = opts.access === "off";
         const decision = decideLiveHealth(
           probe,
           attempt,
-          at - (firstProbeAt ?? at),
+          elapsed,
           undefined,
           mode,
           opts.routeWasLive === true,
+          accessRemoved,
         );
         if (!decision.done) {
-          log.warn(`GET ${url}: ${decision.reason}; retrying in ${decision.delaySeconds} seconds.`);
+          log.warn(
+            accessRemoved && isAccessChallenge(probe)
+              ? `GET ${url}: Cloudflare Access still asks for a sign-in while the removal of the protection takes effect; retrying in ${decision.delaySeconds} seconds.`
+              : `GET ${url}: ${decision.reason}; retrying in ${decision.delaySeconds} seconds.`,
+          );
+        } else if (decision.access === true && accessRemoved) {
+          const seconds = Math.round(Math.max(elapsed, liveHealthScheduledMs(attempt)) / 1000);
+          log.warn(
+            `GET ${url}: Cloudflare Access still asked for a sign-in ${seconds} seconds after the protection was removed, so Appflare could not reach the app to check it. The removal can take a little longer to reach every Cloudflare location; open the app to check, or ${checkAgain}.`,
+          );
         } else if (decision.access === true) {
           log.warn(
-            `GET ${url}: ${decision.detail}, so Appflare could not reach the app to check it. Everything was created; open the app and sign in to check it.`,
+            `GET ${url}: ${decision.detail}, so Appflare could not reach the app to check it. ${done}; open the app and sign in to check it.`,
           );
         } else if (decision.status === "verified") {
           log.info(`GET ${url} -> ${decision.detail}; the Worker is serving.`);
         } else if (decision.status === "unhealthy") {
           log.warn(
-            `GET ${url} -> ${decision.detail}: the Worker answers with a server error. Everything was created; open the app to check, or ${checkAgain}.`,
+            `GET ${url} -> ${decision.detail}: the Worker answers with a server error. ${done}; open the app to check, or ${checkAgain}.`,
           );
         } else {
           log.warn(
-            `Could not verify ${url} after ${attempt} attempts (${decision.detail}). Everything was created; the route may still be going live. Open the app to check, or ${checkAgain}.`,
+            `Could not verify ${url} after ${attempt} attempts (${decision.detail}). ${done}; the route may still be going live. Open the app to check, or ${checkAgain}.`,
           );
         }
         return { at, decision, tokenAccepted };

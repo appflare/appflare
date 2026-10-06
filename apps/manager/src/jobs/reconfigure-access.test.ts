@@ -49,6 +49,24 @@ const PLAIN: ArtifactFixtureOptions = {
   catalog: { vars: [{ name: "TITLE", label: "Title", default: "Cut" }] },
 };
 
+/** {@link PLAIN}, checked at a health path of its own. */
+const WITH_HEALTH_PATH: ArtifactFixtureOptions = {
+  ...PLAIN,
+  tweak: (manifest) => {
+    manifest.catalog.install.health.path = "/api/health";
+  },
+};
+
+const HEALTH_URL = "https://cut.appflare-dev.workers.dev/api/health";
+
+/** Cloudflare Access's sign-in for the app's workers.dev host, as the edge answers it. */
+const ACCESS_SIGN_IN = {
+  status: 302,
+  body: "",
+  location:
+    "https://appflare-test.cloudflareaccess.com/cdn-cgi/access/login/cut.appflare-dev.workers.dev?kid=k&redirect_url=%2Fapi%2Fhealth",
+};
+
 interface World {
   fixture: ArtifactFixture;
   account: ReturnType<typeof fakeAccount>;
@@ -135,7 +153,29 @@ async function change(w: World, access: "on" | "off") {
     .bind(INSTALL_ID)
     .first<{ status: string }>();
   const at = (name: string) => step.names.indexOf(name);
-  return { params: params as ReconfigureJobParams, error, job, step, at, self, status };
+  const logs = (
+    await env.DB.prepare("SELECT level, message FROM job_logs WHERE job_id = ?1 ORDER BY id")
+      .bind(jobId)
+      .all<{ level: string; message: string }>()
+  ).results;
+  const health = await env.DB.prepare(
+    "SELECT health_status, health_access FROM installs WHERE id = ?1",
+  )
+    .bind(INSTALL_ID)
+    .first<{ health_status: string | null; health_access: number | null }>();
+  const checks = step.names.filter((n) => n.startsWith("health check"));
+  return {
+    params: params as ReconfigureJobParams,
+    error,
+    job,
+    step,
+    at,
+    self,
+    status,
+    logs,
+    health,
+    checks,
+  };
 }
 
 /** The vars of the newest version uploaded. */
@@ -191,6 +231,33 @@ describe("turning protection on", () => {
     expect(await readInstallProtection(env.DB, INSTALL_ID)).not.toBeNull();
   });
 
+  it("says the app is protected when Access answers the check at once, and names the app's address", async () => {
+    const w = await world(WITH_HEALTH_PATH);
+    w.account.state.health = [ACCESS_SIGN_IN];
+    const r = await change(w, "on");
+    expect(r.job?.status).toBe("succeeded");
+    // Access answering is the protection at work: the check ends at once.
+    expect(r.checks).toEqual(["health check 1"]);
+    expect(r.health).toEqual({ health_status: "unverified", health_access: 1 });
+    expect(r.logs).toContainEqual({
+      level: "warn",
+      message: `GET ${HEALTH_URL}: Cloudflare Access asked for a sign-in, so Appflare could not reach the app to check it. The app is protected now; open the app and sign in to check it.`,
+    });
+    expect(r.logs.at(-1)?.message).toBe(
+      "Turned Cloudflare Access protection of cut on at https://cut.appflare-dev.workers.dev/ (health: not verified yet (Cloudflare Access asked for a sign-in)).",
+    );
+  });
+
+  it("records the app as serving when it answers before Access takes effect", async () => {
+    const w = await world(WITH_HEALTH_PATH);
+    const r = await change(w, "on");
+    expect(r.job?.status).toBe("succeeded");
+    expect(r.health).toEqual({ health_status: "verified", health_access: 0 });
+    expect(r.logs.at(-1)?.message).toBe(
+      "Turned Cloudflare Access protection of cut on at https://cut.appflare-dev.workers.dev/ (health: verified (HTTP 200)).",
+    );
+  });
+
   it("covers the app's external domains too", async () => {
     const w = await world(PLAIN);
     await env.DB.prepare(
@@ -239,6 +306,43 @@ describe("turning protection off", () => {
     expect(w.access.apps.size).toBe(0);
     expect(w.access.tokens.size).toBe(0);
     expect(r.at("remove Cloudflare Access protection")).toBeLessThan(r.at("health check 1"));
+  });
+
+  it("waits for the removal to take effect while Access still asks for a sign-in, and names the app's address", async () => {
+    const w = await world(WITH_HEALTH_PATH);
+    await change(w, "on");
+    // Access goes on answering for a few seconds after its application is deleted.
+    w.account.state.health = [ACCESS_SIGN_IN, ACCESS_SIGN_IN, { status: 200, body: "ok" }];
+    const r = await change(w, "off");
+    expect(r.error).toBeNull();
+    expect(r.job?.status).toBe("succeeded");
+    expect(r.checks).toEqual(["health check 1", "health check 2", "health check 3"]);
+    expect(r.health).toEqual({ health_status: "verified", health_access: 0 });
+    expect(r.logs).toContainEqual({
+      level: "warn",
+      message: `GET ${HEALTH_URL}: Cloudflare Access still asks for a sign-in while the removal of the protection takes effect; retrying in 2 seconds.`,
+    });
+    expect(r.logs.at(-1)?.message).toBe(
+      "Turned Cloudflare Access protection of cut off at https://cut.appflare-dev.workers.dev/ (health: verified (HTTP 200)).",
+    );
+  });
+
+  it("says the removal has not reached the check yet when Access answers for the whole window", async () => {
+    const w = await world(WITH_HEALTH_PATH);
+    await change(w, "on");
+    w.account.state.health = [ACCESS_SIGN_IN];
+    const r = await change(w, "off");
+    expect(r.job?.status).toBe("succeeded");
+    expect(r.checks.length).toBeGreaterThan(5);
+    expect(r.health).toEqual({ health_status: "unverified", health_access: 1 });
+    const warning = r.logs.findLast((l) => l.level === "warn")?.message ?? "";
+    expect(warning).toMatch(
+      /^GET https:\/\/cut\.appflare-dev\.workers\.dev\/api\/health: Cloudflare Access still asked for a sign-in \d+ seconds after the protection was removed, so Appflare could not reach the app to check it\. The removal can take a little longer to reach every Cloudflare location; open the app to check, or check again from /,
+    );
+    expect(JSON.stringify(r.logs)).not.toContain("Everything was created");
+    expect(r.logs.at(-1)?.message).toBe(
+      "Turned Cloudflare Access protection of cut off at https://cut.appflare-dev.workers.dev/ (health: not verified yet (Cloudflare Access asked for a sign-in)).",
+    );
   });
 
   it("is refused for an app that is not protected, and for one whose entry requires protection", async () => {

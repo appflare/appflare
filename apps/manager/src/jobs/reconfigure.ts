@@ -1027,11 +1027,14 @@ export async function runReconfigure(ctx: JobContext): Promise<void> {
     // Recorded rather than fatal, as an update's: the new version serves. The
     // app's URL was serving before this job, so a plain 404 is the app's own
     // answer (a setting such as a 404 home page), not a route going live.
+    // After protection off, Access's sign-in is waited out while the removal
+    // takes effect.
     const health =
       redeploy || params.access !== undefined
         ? await checkLiveHealthPhase(steps, step, url, healthMode, {
             routeWasLive: true,
             installId: params.installId,
+            ...(params.access === undefined ? {} : { access: params.access }),
           })
         : null;
 
@@ -1055,8 +1058,8 @@ export async function runReconfigure(ctx: JobContext): Promise<void> {
         health === null
           ? `Changed where ${started.slug} receives email.`
           : params.access !== undefined
-            ? `Turned Cloudflare Access protection of ${started.slug} ${params.access} at ${url} (health: ${healthLabel(health)}).`
-            : `Changed the settings of ${started.slug} at ${url} (health: ${healthLabel(health)}).`,
+            ? `Turned Cloudflare Access protection of ${started.slug} ${params.access} at ${appBase}/ (health: ${healthLabel(health)}).`
+            : `Changed the settings of ${started.slug} at ${appBase}/ (health: ${healthLabel(health)}).`,
       );
       return {};
     });
