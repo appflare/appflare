@@ -38,5 +38,6 @@ export * from "./telemetry";
 export * from "./token-permissions";
 export * from "./vapid";
 export * from "./workers";
+export * from "./workflow-settings";
 export * from "./wrangler-config-inline";
 export * from "./wrangler-sections";

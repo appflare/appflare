@@ -16,10 +16,14 @@ import {
   UNSUPPORTED_WRANGLER_SECTIONS,
   type UnsupportedWranglerSection,
   WORKER_LOADER_BINDING_TYPE,
+  WORKFLOW_SETTING_KEYS,
   type WorkerBinding,
   type WorkerCacheOptions,
   type WorkerExports,
+  type WorkflowSettings,
+  type WorkflowSettingsByBinding,
 } from "@appflare/schema";
+import { listWords } from "@appflare/schema/catalog-display";
 
 /**
  * A structural view of the subset of wrangler's resolved config
@@ -65,12 +69,7 @@ export interface ResolvedWranglerConfig {
       environment?: string;
     }>;
   };
-  workflows?: Array<{
-    binding: string;
-    name: string;
-    class_name?: string;
-    script_name?: string;
-  }>;
+  workflows?: WranglerWorkflow[];
   services?: Array<{
     binding: string;
     service?: string;
@@ -124,6 +123,23 @@ export interface ResolvedWranglerConfig {
   cache?: { enabled: boolean; cross_version_cache?: boolean } | null;
 }
 
+/**
+ * One entry of wrangler's `workflows`: the binding, and the settings the
+ * Workflow is created with when this Worker defines it
+ * ({@link collectWorkflowSettings}).
+ */
+export interface WranglerWorkflow {
+  binding: string;
+  name: string;
+  class_name?: string;
+  script_name?: string;
+  limits?: { steps?: number };
+  concurrency?: { limit?: number };
+  /** One cron expression or several. */
+  schedules?: string | string[];
+  default_retention?: { success_retention?: number | string; error_retention?: number | string };
+}
+
 /** One entry of wrangler's `queues.consumers`. */
 export interface WranglerQueueConsumer {
   queue: string;
@@ -170,6 +186,15 @@ export class PipelineDeclarationError extends Error {
  */
 export class ServiceBindingError extends Error {
   override name = "ServiceBindingError";
+}
+
+/**
+ * The wrangler config gives settings (`limits`, `concurrency`, `schedules`,
+ * `default_retention`) to a Workflow binding that runs another Worker's
+ * Workflow. The message names the binding and where the settings belong.
+ */
+export class WorkflowSettingsError extends Error {
+  override name = "WorkflowSettingsError";
 }
 
 /**
@@ -816,14 +841,23 @@ export function collectBindings(
     // In an app of several Workers, a Workflow another of them defines is
     // named by that Worker's name within the entry: the manager creates the
     // Workflow with that Worker and points this binding at it. One naming
-    // this Worker defines its Workflow, as one naming no Worker does.
+    // this Worker defines its Workflow, as one naming no Worker does, in an
+    // app of one Worker too. Its settings are recorded apart
+    // (collectWorkflowSettings), since they are not part of the upload.
     const inEntry = wf.script_name === undefined ? undefined : entryWorkers?.get(wf.script_name);
-    const scriptName =
-      entryWorkers !== undefined && wf.script_name === config.name
-        ? undefined
-        : inEntry !== undefined
-          ? entryWorkerRef(inEntry)
-          : wf.script_name;
+    const scriptName = definesWorkflowHere(wf, config)
+      ? undefined
+      : inEntry !== undefined
+        ? entryWorkerRef(inEntry)
+        : wf.script_name;
+    const settings = WORKFLOW_SETTING_KEYS.filter((key) => wf[key] != null);
+    if (scriptName !== undefined && settings.length > 0) {
+      throw new WorkflowSettingsError(
+        `the Workflow binding ${wf.binding} sets ${listWords(settings)}, but it runs the Workflow "${wf.name}" ` +
+          `of the Worker "${String(wf.script_name)}"; a Workflow's settings belong in the config of the Worker ` +
+          "that defines it, and wrangler refuses them anywhere else",
+      );
+    }
     push("workflow", wf.binding, {
       workflow_name: wf.name,
       class_name: wf.class_name,
@@ -913,20 +947,27 @@ export function uploadPlacement(
 
 /**
  * The Worker settings beyond its bindings that the artifact records only when
- * the config sets them, as wrangler 4.136.2 uploads them:
+ * the config sets them, as wrangler 4.136.2 deploys them:
  *
  * - `exports`: the config's `exports` entries of type `durable-object` or
  *   `worker` (wrangler's `partitionExports` drops any other), uploaded as
  *   `exports`; omitted when there are none, as wrangler omits an empty block;
- * - `cacheOptions`: the config's `cache` block, uploaded as `cache_options`.
+ * - `cacheOptions`: the config's `cache` block, uploaded as `cache_options`;
+ * - `workflowSettings`: the settings of the Workflows the Worker defines
+ *   ({@link collectWorkflowSettings}), sent when each is created.
  *
- * Both are the app's own code and settings, not account ids.
+ * All are the app's own code and settings, not account ids.
  */
 export function collectWorkerSettings(config: ResolvedWranglerConfig): {
   exports?: WorkerExports;
   cacheOptions?: WorkerCacheOptions;
+  workflowSettings?: WorkflowSettingsByBinding;
 } {
-  const out: { exports?: WorkerExports; cacheOptions?: WorkerCacheOptions } = {};
+  const out: {
+    exports?: WorkerExports;
+    cacheOptions?: WorkerCacheOptions;
+    workflowSettings?: WorkflowSettingsByBinding;
+  } = {};
   const kept: WorkerExports = {};
   for (const [name, entry] of Object.entries(config.exports ?? {})) {
     if (typeof entry !== "object" || entry === null) continue;
@@ -936,6 +977,101 @@ export function collectWorkerSettings(config: ResolvedWranglerConfig): {
   }
   if (Object.keys(kept).length > 0) out.exports = kept;
   if (config.cache) out.cacheOptions = { ...config.cache };
+  const workflowSettings = collectWorkflowSettings(config);
+  if (workflowSettings !== undefined) out.workflowSettings = workflowSettings;
+  return out;
+}
+
+/**
+ * Whether the Worker of `config` defines the Workflow of a `workflows`
+ * entry: the entry names no Worker, or this one, as wrangler 4.136.2 tells
+ * (`isWorkflowDefinedInThisScript`).
+ */
+function definesWorkflowHere(wf: WranglerWorkflow, config: ResolvedWranglerConfig): boolean {
+  return wf.script_name === undefined || wf.script_name === config.name;
+}
+
+/**
+ * The fields wrangler 4.136.2 takes in each Workflow setting that is an
+ * object (`validateWorkflowBinding`). It only warns about any other field
+ * there and sends it on; the packer leaves it out
+ * ({@link unknownWorkflowSettingFields}).
+ */
+const WORKFLOW_SETTING_FIELDS = {
+  limits: ["steps"],
+  concurrency: ["limit"],
+  default_retention: ["success_retention", "error_retention"],
+} as const satisfies Record<string, readonly string[]>;
+
+/** The fields of `value` that `keys` names and it sets. */
+function knownFields<T extends object, K extends keyof T>(
+  value: T,
+  keys: readonly K[],
+): Pick<T, K> {
+  const out = {} as Pick<T, K>;
+  for (const key of keys) if (value[key] !== undefined) out[key] = value[key];
+  return out;
+}
+
+/**
+ * The settings the config gives each Workflow the Worker defines, by
+ * binding: each of `limits`, `concurrency`, `schedules` and
+ * `default_retention` an entry sets, which `wrangler deploy` sends in the
+ * `PUT /workflows/{name}` that creates or updates the Workflow after the
+ * upload (wrangler 4.136.2's `triggersDeploy`), with only the fields
+ * wrangler knows. `schedules` becomes a list when it is one cron
+ * expression. Undefined when no Workflow has any; a binding that runs
+ * another Worker's Workflow has none to give ({@link collectBindings}
+ * refuses them there).
+ */
+export function collectWorkflowSettings(
+  config: ResolvedWranglerConfig,
+): WorkflowSettingsByBinding | undefined {
+  const out: WorkflowSettingsByBinding = {};
+  for (const wf of config.workflows ?? []) {
+    if (!definesWorkflowHere(wf, config)) continue;
+    const settings: WorkflowSettings = {};
+    if (wf.limits != null) settings.limits = knownFields(wf.limits, WORKFLOW_SETTING_FIELDS.limits);
+    if (wf.concurrency != null) {
+      settings.concurrency = knownFields(wf.concurrency, WORKFLOW_SETTING_FIELDS.concurrency);
+    }
+    if (wf.schedules != null) {
+      settings.schedules = Array.isArray(wf.schedules) ? [...wf.schedules] : [wf.schedules];
+    }
+    if (wf.default_retention != null) {
+      settings.default_retention = knownFields(
+        wf.default_retention,
+        WORKFLOW_SETTING_FIELDS.default_retention,
+      );
+    }
+    if (Object.keys(settings).length > 0) out[wf.binding] = settings;
+  }
+  return Object.keys(out).length > 0 ? out : undefined;
+}
+
+/**
+ * The fields of the Workflow settings in the config that wrangler does not
+ * know, each with its binding (`limits.cpu_ms` of `JOBS`), for the packer
+ * to say it leaves them out: wrangler only warns about them and sends them
+ * on, where Cloudflare may refuse the Workflow, and the artifact's schema
+ * has no place for them.
+ */
+export function unknownWorkflowSettingFields(
+  config: ResolvedWranglerConfig,
+): Array<{ binding: string; field: string }> {
+  const out: Array<{ binding: string; field: string }> = [];
+  for (const wf of config.workflows ?? []) {
+    if (!definesWorkflowHere(wf, config)) continue;
+    for (const [setting, known] of Object.entries(WORKFLOW_SETTING_FIELDS)) {
+      const value: unknown = wf[setting as keyof typeof WORKFLOW_SETTING_FIELDS];
+      if (typeof value !== "object" || value === null) continue;
+      for (const key of Object.keys(value)) {
+        if (!(known as readonly string[]).includes(key)) {
+          out.push({ binding: wf.binding, field: `${setting}.${key}` });
+        }
+      }
+    }
+  }
   return out;
 }
 

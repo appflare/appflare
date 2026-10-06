@@ -34,6 +34,7 @@ import {
   installDirList,
   LATEST_ARTIFACT_FORMAT,
   PATCHED_WRANGLER_CONFIG,
+  scheduledWorkflowPlanProblem,
   secretTargets,
   strictArtifactManifestSchema,
   type WorkerModule,
@@ -76,9 +77,11 @@ import {
   collectBindings,
   collectQueueConsumers,
   collectWorkerSettings,
+  collectWorkflowSettings,
   mainModuleName,
   queueProducerBindings,
   type ResolvedWranglerConfig,
+  unknownWorkflowSettingFields,
   unsupportedWranglerSections,
   uploadPlacement,
   varPlaceholderProblems,
@@ -807,6 +810,11 @@ export async function pack(options: PackOptions): Promise<PackResult> {
       of,
     );
     if (seedOnly.length > 0) throw new Error(seedOnly.join("; "));
+    for (const { binding, field } of unknownWorkflowSettingFields(r.config)) {
+      logger(
+        `the Workflow binding ${binding}${of} sets ${field}, which wrangler does not know as a Workflow setting; left out`,
+      );
+    }
     const { bindings, dropped } = withoutSecretVars(all, secrets);
     for (const name of dropped) {
       logger(
@@ -884,11 +892,17 @@ export async function pack(options: PackOptions): Promise<PackResult> {
     if (problems.length > 0) throw new Error(problems.join(" "));
   }
 
-  // A Worker Loader makes the app a Workers Paid app; the catalog must say so.
-  const planProblem = workersPaidBindingProblem(
-    collected.flatMap((c) => c.bindings),
-    catalog.plan,
-  );
+  // A Worker Loader makes the app a Workers Paid app, and so does a Workflow
+  // on a schedule; the catalog must say so.
+  const planProblem =
+    workersPaidBindingProblem(
+      collected.flatMap((c) => c.bindings),
+      catalog.plan,
+    ) ??
+    scheduledWorkflowPlanProblem(
+      collected.map((c) => ({ workflowSettings: collectWorkflowSettings(c.config) })),
+      catalog.plan,
+    );
   if (planProblem !== null) throw new Error(planProblem);
 
   // (c2) The D1 SQL, before bundling so a refused schema file fails fast:

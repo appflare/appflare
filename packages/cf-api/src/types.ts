@@ -288,6 +288,11 @@ export interface WorkflowInfo {
   name: string;
   class_name?: string;
   script_name?: string;
+  /**
+   * The cron triggers that start an instance (`GET` only); absent when the
+   * Workflow has none. The other settings of a `PUT` are not returned.
+   */
+  schedules?: Array<{ cron: string; next_instance?: string }>;
 }
 
 /**
@@ -309,7 +314,10 @@ export interface WorkflowPutBody {
   class_name: string;
   limits?: { steps?: number };
   concurrency?: { limit?: number };
-  /** Cron triggers that start an instance; Workers Paid only. */
+  /**
+   * Cron triggers that start an instance; Workers Paid only, though an
+   * empty list, which says the Workflow has none, is taken on Workers Free.
+   */
   schedules?: Array<{ cron: string }>;
   default_retention?: WorkflowRetention;
 }

@@ -63,6 +63,20 @@ installing an app that would run without it. When the app works without that
 section, drop it with the config patch the message names, such as
 `{ "vpc_services": null }`.
 
+Each Workflow is created for the Worker that defines it with the settings its
+`workflows` entry gives it, `limits`, `concurrency`, `schedules` and
+`default_retention`, as `wrangler deploy` sends them. Updates and rollbacks send the
+settings of the version they deploy: Cloudflare puts a limit, concurrency or retention
+that version leaves out back to its default for instances started once the change
+takes effect, and a version without `schedules` is sent with an empty list of them. A
+Workflow the deployed version no longer defines stays until the app is uninstalled,
+but Appflare takes off the schedule an earlier version gave it, since each run would
+fail. A binding that runs another Worker's Workflow cannot set any of these; wrangler
+refuses that too. Cloudflare runs a Workflow on a schedule only on Workers Paid, so an
+app with `schedules` needs `"plan": "paid"`. On Workers Free it also takes at most
+1,024 steps and 100 running instances, and refuses the Workflow when the settings ask
+for more.
+
 An app that needs every name under one hostname, such as a tunnel that gives each
 session `<id>.<hostname>`, sets `install.wildcardHostname` with a one-sentence
 `reason` that the admin sees when assigning the hostname, such as

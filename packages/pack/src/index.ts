@@ -111,6 +111,7 @@ export {
   classifyModuleType,
   collectBindings,
   collectQueueConsumers,
+  collectWorkflowSettings,
   HyperdriveDeclarationError,
   IGNORED_WRANGLER_KEYS,
   mainModuleName,
@@ -124,12 +125,15 @@ export {
   ServiceBindingError,
   UnsafeBindingError,
   UnsupportedSectionError,
+  unknownWorkflowSettingFields,
   unsafeRateLimits,
   unsupportedWranglerSections,
   uploadPlacement,
   VectorizeDeclarationError,
   varPlaceholderProblems,
+  WorkflowSettingsError,
   type WranglerQueueConsumer,
+  type WranglerWorkflow,
   withoutSecretVars,
 } from "./wrangler-config.ts";
 export type { ZipEntryPlacement } from "./zip.ts";
