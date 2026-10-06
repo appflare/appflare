@@ -84,7 +84,7 @@ describe("the install form's notices", () => {
     });
     expect(bannerCount(html)).toBe(1);
     expect(html).toContain("Cut is already installed");
-    expect(html).not.toContain("Only admins can install apps.");
+    expect(html).not.toContain("Only admins can install apps");
     expect(bannerCount(render(baseCatalog()))).toBe(0);
     expect(bannerCount(render(baseCatalog(), { canInstall: false }))).toBe(1);
   });
@@ -117,7 +117,7 @@ describe("the install form's notices", () => {
 
   it("prefers the reason the app cannot be installed over the members' note", () => {
     expect(installFormNotice(true, null)).toBe(null);
-    expect(installFormNotice(false, null)?.title).toBe("Only admins can install apps.");
+    expect(installFormNotice(false, null)?.title).toBe("Only admins can install apps");
     expect(
       installFormNotice(false, "Blocked", { href: "/onboarding#sandbox", label: "Fix it" }),
     ).toEqual({ title: "Blocked", link: { href: "/onboarding#sandbox", label: "Fix it" } });

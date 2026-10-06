@@ -1,3 +1,4 @@
+import { Text } from "@cloudflare/kumo";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -141,5 +142,60 @@ describe("secrets of one name that different Workers read", () => {
     expect(labels).toContain("GitHub client ID");
     expect(labels).toContain("Google client ID");
     act(() => toggle.click());
+  });
+});
+
+describe("a generated secret's new value", () => {
+  const generated: InstallSettings = {
+    ...SETTINGS,
+    appToken: null,
+    databases: [],
+    secrets: [
+      {
+        name: "SESSION_SECRET",
+        label: "Session secret",
+        generate: "password",
+        declared: true,
+        optional: false,
+        present: true,
+      },
+    ],
+  };
+
+  it("is regenerated from its Generated badge, as in the install form", () => {
+    act(() => root.render(<AppSettingsSection install={INSTALL} settings={generated} isAdmin />));
+    click("Set new value");
+    const input = container.querySelector<HTMLInputElement>("[data-generated-field] input");
+    const first = input?.value;
+    expect(first).toHaveLength(32);
+    const badge = container.querySelector('[data-secret-badge="Generated"]');
+    const button = badge?.querySelector<HTMLButtonElement>("button");
+    expect(button?.getAttribute("aria-label")).toBe("Regenerate Session secret");
+    // No text button under the field any more, and the badge is beside the label, not in it.
+    expect(container.textContent).not.toMatch(/Regenerate/);
+    expect(button?.closest("label")).toBeNull();
+    act(() => button?.click());
+    const second = container.querySelector<HTMLInputElement>("[data-generated-field] input")?.value;
+    expect(second).toHaveLength(32);
+    expect(second).not.toBe(first);
+  });
+});
+
+describe("the settings form's groups", () => {
+  it("are headed like the install form's groups", () => {
+    const headings = [...container.querySelectorAll("h3")].map((h) => h.textContent);
+    expect(headings).toEqual(["Secrets", "Databases"]);
+    // Kumo's heading text, as the install form's groups use, not bold body text.
+    const reference = document.createElement("div");
+    const referenceRoot = createRoot(reference);
+    act(() =>
+      referenceRoot.render(
+        <Text variant="heading" as="h3">
+          Secrets
+        </Text>,
+      ),
+    );
+    expect(container.querySelector("h3")?.className).toBe(reference.querySelector("h3")?.className);
+    act(() => referenceRoot.unmount());
   });
 });
