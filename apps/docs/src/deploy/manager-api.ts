@@ -28,6 +28,12 @@ export interface HandoffRequest {
   accountId: string;
   /** Where Appflare reports, once its owner exists, so the installer forgets the record. */
   installer: { url: string; installationId: string; key: string };
+  /**
+   * The custom hostname the visitor reviewed (no scheme), sent only when the
+   * handoff goes to the workers.dev address because they chose not to wait
+   * for that domain. Appflare moves itself there once the domain answers.
+   */
+  intendedAddress?: string;
 }
 
 export type HandoffFailure =

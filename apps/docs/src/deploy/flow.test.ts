@@ -222,6 +222,8 @@ describe("the whole journey", () => {
       accountId: ACCOUNT_ID,
       installer: { url: ORIGIN, installationId: installation?.id, key: installation?.key },
     });
+    // Handed off at the chosen address itself: no address to move to.
+    expect(Object.keys(manager?.received ?? {})).not.toContain("intendedAddress");
     // The proof came first, then the only POST.
     const managerCalls = h.world.requests.filter((r) =>
       r.url.startsWith("https://appflare.example.com"),
@@ -314,6 +316,11 @@ describe("the whole journey", () => {
       hostname: null,
       address: "https://appflare.main-sub.workers.dev",
     });
+    // workers.dev was the choice, not a way around a domain: nothing to move to.
+    await h.flow.deploy();
+    const sent = world.managers.get("https://appflare.main-sub.workers.dev")?.received;
+    expect(sent).not.toBeNull();
+    expect(Object.keys(sent ?? {})).not.toContain("intendedAddress");
   });
 
   it("has nothing to offer an account without a domain or workers.dev, until it gets one", async () => {
@@ -452,6 +459,9 @@ describe("a domain that keeps Appflare waiting", () => {
       "https://appflare.main-sub.workers.dev/setup#claim=claim0123456789abcdef",
     ]);
     expect(world.managers.get("https://appflare.example.com")?.received).toBeNull();
+    // The domain goes along, without a scheme, so Appflare can move there once it works.
+    const sent = world.managers.get("https://appflare.main-sub.workers.dev")?.received;
+    expect(sent?.intendedAddress).toBe("appflare.example.com");
   });
 });
 

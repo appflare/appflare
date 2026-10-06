@@ -969,6 +969,12 @@ export class DeployFlow {
     const generation = this.move();
     this.set({ step: "handing-off", active, address });
     const secret = active.local.handoffSecret;
+    // Opened at workers.dev instead of the domain still being set up: tell
+    // Appflare the domain, so it moves there once the domain works.
+    const intendedAddress =
+      active.hostname !== null && address !== active.address && address === active.workersDevAddress
+        ? active.hostname
+        : null;
     const probe = await this.deps.manager.probe(address, secret);
     if (!this.current(generation)) return;
     if (probe.kind === "unverified") {
@@ -1003,6 +1009,7 @@ export class DeployFlow {
             installationId: active.local.installationId,
             key: active.local.key,
           },
+          ...(intendedAddress === null ? {} : { intendedAddress }),
         }),
       );
     } catch (error) {
