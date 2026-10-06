@@ -849,7 +849,7 @@ async function liveHealthLoop(
   step: StepRunner,
   url: string,
   mode: HealthMode,
-  opts: { routeWasLive?: boolean; installId?: string },
+  opts: { routeWasLive?: boolean; installId?: string; access?: "on" | "off" },
 ): Promise<LiveHealthResult> {
   const checkAgain =
     opts.installId === undefined
