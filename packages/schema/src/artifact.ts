@@ -11,8 +11,9 @@ import {
   vectorizeIndexConfigSchema,
   vectorizeMetadataIndexesSchema,
 } from "./catalog";
-import { SERVICE_PROPS_REQUIREMENT } from "./manager-features";
+import { EMAIL_PLACEHOLDERS_REQUIREMENT, SERVICE_PROPS_REQUIREMENT } from "./manager-features";
 import { PIPELINES_BINDING_TYPE } from "./pipelines";
+import { jsonTexts, placeholderInJsonKey, usesEmailPlaceholders } from "./placeholders";
 import { r2LifecycleRuleSchema } from "./r2-lifecycle";
 import { strictSchema } from "./strict";
 import {
@@ -887,6 +888,70 @@ export const artifactManifestSchema = z
             });
           }
         }
+      }
+    }
+    // A wrangler config var or binding props filled in with the email zone
+    // need a manager that fills it in (./manager-features.ts).
+    if (!manifest.catalog.requires.includes(EMAIL_PLACEHOLDERS_REQUIREMENT)) {
+      for (const worker of [manifest.worker, ...(manifest.workers ?? []).map((w) => w.worker)]) {
+        for (const binding of worker.bindings) {
+          const texts =
+            binding.type === "plain_text" && typeof binding.text === "string"
+              ? [binding.text]
+              : binding.type === "json"
+                ? jsonTexts(binding.json ?? null)
+                : binding.type === "service" && binding.props !== undefined
+                  ? jsonTexts(binding.props)
+                  : [];
+          if (texts.some(usesEmailPlaceholders)) {
+            ctx.addIssue({
+              code: "custom",
+              path: ["catalog", "requires"],
+              message: `the wrangler config's ${binding.type === "service" ? "service binding" : "var"} ${binding.name} uses {{emailDomain}} or {{emailZoneId}}, so the catalog manifest's requires must list "${EMAIL_PLACEHOLDERS_REQUIREMENT}"`,
+            });
+          }
+        }
+      }
+    }
+    // A placeholder in an object key of a JSON var (in the wrangler config,
+    // or in the default of a catalog var the wrangler config makes JSON) or
+    // of a service binding's props is filled in only by a manager that knows
+    // the email placeholders: an older one fills values only.
+    if (!manifest.catalog.requires.includes(EMAIL_PLACEHOLDERS_REQUIREMENT)) {
+      const keyed = new Set<string>();
+      for (const worker of [manifest.worker, ...(manifest.workers ?? []).map((w) => w.worker)]) {
+        const jsonVars = new Set<string>();
+        for (const binding of worker.bindings) {
+          if (binding.type === "json") jsonVars.add(binding.name);
+          const value =
+            binding.type === "json"
+              ? binding.json
+              : binding.type === "service"
+                ? binding.props
+                : undefined;
+          if (value !== undefined && placeholderInJsonKey(value)) {
+            keyed.add(
+              `the wrangler config's ${binding.type === "service" ? "service binding" : "var"} ${binding.name}`,
+            );
+          }
+        }
+        for (const v of manifest.catalog.vars) {
+          if (v.default === undefined || !jsonVars.has(v.name)) continue;
+          let parsed: unknown;
+          try {
+            parsed = JSON.parse(v.default);
+          } catch {
+            continue;
+          }
+          if (placeholderInJsonKey(parsed)) keyed.add(`the default of the JSON var ${v.name}`);
+        }
+      }
+      for (const where of keyed) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["catalog", "requires"],
+          message: `${where} has a placeholder in an object key, so the catalog manifest's requires must list "${EMAIL_PLACEHOLDERS_REQUIREMENT}": a manager that fills placeholders in values only would leave the key as written`,
+        });
       }
     }
     // Props on a service binding need a manager that sends them (./manager-features.ts).

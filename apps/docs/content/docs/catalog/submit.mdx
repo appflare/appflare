@@ -474,6 +474,25 @@ Points that need care:
   manifest does not declare, and a declaration the config does not bind. The
   database is the admin's: an uninstall deletes the Hyperdrive configuration, never
   the database. Self-deploying entries cannot declare databases.
+
+  Hyperdrive caches the results of read queries by default. For an app that must
+  read its own writes at once, set `"caching": false` on the binding, and list
+  `"hyperdrive-caching"` in `requires`:
+  `"HYPERDRIVE": { "protocol": "postgres", "caching": false }`. The manager makes the
+  configuration with caching off, and every update and settings change sets it back
+  to what the entry says if it changed. `"caching": true` turns it on the same way.
+  Without the field, the configuration keeps Cloudflare's default when it is made,
+  and updates leave the setting alone.
+- **Receiving email.** An app with an `email` handler that should receive mail at the
+  admin's domain sets `install.emailRouting`: the addresses it wants in `rules` (a
+  local part such as `inbox`, or a full address), and `"catchAll": true` for every
+  other address of the domain, for example
+  `"emailRouting": { "rules": ["inbox"], "catchAll": true }`. The install form asks
+  for a domain of the account and Appflare sets up Email Routing there; see
+  [Apps that receive email](/guides/email-apps/). An app of several Workers names
+  the one that receives the mail with `worker` (see
+  [Apps of several Workers](#apps-of-several-workers)). Not for the self-deploying
+  tier.
 - **Streams (Pipelines).** A stream's id in the wrangler config
   (`"pipelines": [{ "binding": "EVENTS", "stream": "<id>" }]`) belongs to the author's
   account, so describe the stream under `resources.pipelines`, keyed by the binding:
@@ -632,6 +651,15 @@ Points that need care:
   - `{{accountId}}` is the id of the account the app is installed in, for apps that
     query the Cloudflare API about their own account, such as the Analytics Engine
     SQL API.
+  - `{{emailDomain}}` and `{{emailZoneId}}` are, for an app with
+    `install.emailRouting`, the name of the domain the admin chose for its email
+    (`example.com`) and that zone's id, for a sender such as
+    `accounts@{{emailDomain}}` or a setting the app reads as JSON, such as
+    `{"{{emailDomain}}":"{{emailZoneId}}"}` (placeholders in a JSON var's keys are
+    filled in too; see JSON vars below). Both are empty while Appflare has no domain on record for the
+    app's email. Moving the app's email to another domain deploys the settings again
+    with the new one. An entry without `install.emailRouting` cannot use them, and
+    one that does lists `"email-placeholders"` in `requires`.
   - `{{wildcardHostname}}` is the hostname of the app's
     [wildcard domain](/guides/custom-domains/#wildcard-domains) (no scheme, such as
     `tunnels.example.com`) for an entry with `install.wildcardHostname`, and is empty
@@ -659,21 +687,30 @@ Points that need care:
 - **JSON vars.** A wrangler config var whose value is not a string (an array, object,
   number, or boolean) reaches the Worker as that JSON value, as with `wrangler
   deploy`. When `vars` lists such a var, its `default` must be JSON text, such as
-  `"[\"inbox@example.com\"]"`, and the install form asks for JSON.
+  `"[\"inbox@example.com\"]"`, and the install form asks for JSON. Placeholders are
+  filled in throughout the value, object keys included. Older versions of Appflare
+  fill in values only, so an entry that writes any placeholder in an object key
+  (`{"{{appUrl}}":true}` as much as `{"{{emailDomain}}":"..."}`), in a JSON var or in
+  the `props` of a service binding, lists `"email-placeholders"` in `requires`.
 - **`requires`.** List account features the app needs beyond Workers, such as `r2`
   or `workers-ai`. `access` means the app goes with Cloudflare Access: the account
   needs a Zero Trust organization only while the app is protected, which with
   `"mode": "required"` is always; see `access` below.
 
-  Three values name something Appflare must know how to do rather than something the
+  Some values name something Appflare must know how to do rather than something the
   account must have, and the catalog checks refuse an entry that needs one without
   it: `secret-keys` for a secret with a `key` other than its name,
-  `service-props` for `props` on a service binding, and `config-patch-values` for a
-  config patch that sets var text or adds a Workers AI binding. An Appflare that predates the
+  `service-props` for `props` on a service binding, `config-patch-values` for a
+  config patch that sets var text or adds a Workers AI binding, `email-worker` for
+  `install.emailRouting.worker`, `email-placeholders` for `{{emailDomain}}` or
+  `{{emailZoneId}}` anywhere in the entry or its wrangler config, or any
+  placeholder in an object key of a JSON var or of service binding `props`, and
+  `hyperdrive-caching` for `caching` on a Hyperdrive binding. An Appflare that predates the
   feature does not know the value and leaves the entry out of its catalog, instead
   of installing the app wrong; a newer one asks the admin nothing about it. A
   [revision](#after-merge) may add `secret-keys`, together with keys on the secrets it
-  adds; it may not change the key of a released secret.
+  adds (it may not change the key of a released secret), and `email-placeholders`,
+  together with a setting or note that uses them.
 - **`tokenPermissions`.** Only for apps that call the Cloudflare API with a token of
   their own, never Appflare's. Each entry names one permission group as the
   Cloudflare dashboard's token form shows it, where it applies, the access the app
@@ -955,6 +992,25 @@ as one app:
   and no Worker may get two of them. A new version may give a released secret a key
   (or a new one): when every Worker that gets it already has a value under that
   name, updates keep the value under the new key; otherwise they ask for it.
+- **The Worker that receives email.** An app that receives email
+  (`install.emailRouting`) has its primary Worker receive it unless `worker` names
+  another of its Workers, by its `name` within the entry:
+
+  ```jsonc
+  "requires": ["email-worker"],
+  "install": {
+    // ...
+    "emailRouting": { "rules": ["inbox"], "catchAll": true, "worker": "api" }
+  }
+  ```
+
+  That Worker exports the `email` handler, and the routing rules and catch-all
+  Appflare sets up deliver to it as installed (`notes-api` in the example). Email
+  Routing hands mail to a Worker by name, not over HTTP, so a Worker with
+  `"workersDev": false` can receive mail. A new version may name another Worker:
+  the update points the app's rules and catch-all at it, and a rollback points them
+  back. List `"email-worker"` in `requires`: an older Appflare would send the mail to
+  the primary Worker.
 - **A var a Worker needs for itself.** Set it in that Worker's `configPatch` (see
   `install.configPatch` above), with placeholders such as `{{appUrl}}`.
 - **Placeholders.** `{{appUrl:<name>}}`, `{{appHostname:<name>}}`,

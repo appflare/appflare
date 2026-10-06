@@ -8,6 +8,8 @@ import {
   accountRequirements,
   catalogWorkerName,
   connectionStringProblems,
+  type EmailPlaceholderValues,
+  emailScriptName,
   hyperdriveDeclarations,
   indexArtifactsSchema,
   isOptionalSecret,
@@ -585,14 +587,24 @@ export async function runInstall(ctx: JobContext): Promise<void> {
       steps.current = "check Email Routing";
       throw new InstallError("this app receives email; choose a zone for it and install again");
     }
+    // The Worker the mail goes to: the primary one, or the one the entry names.
+    const emailWorker = emailScriptName(manifest.catalog, params.workerName);
     const emailInspection =
       emailRouting === undefined || params.emailRouting === undefined
         ? null
         : await checkEmailRoutingPhase(steps, {
             zoneId: params.emailRouting.zoneId,
             config: emailRouting,
-            workerName: params.workerName,
+            workerName: emailWorker,
           });
+    // What `{{emailDomain}}` and `{{emailZoneId}}` become: the zone just checked.
+    const emailValues: EmailPlaceholderValues | null =
+      emailInspection === null
+        ? null
+        : {
+            zoneName: emailInspection.zoneName ?? "",
+            zoneId: emailInspection.zoneId,
+          };
 
     // Cloudflare Access, when the admin asked for it: the application comes
     // before anything of the app exists, covering each Worker's future
@@ -687,6 +699,7 @@ export async function runInstall(ctx: JobContext): Promise<void> {
       accountId: steps.accountId(),
       wildcardHostname,
       access: accessValues,
+      email: emailValues,
       placeholders,
       entryNames,
     };
@@ -743,6 +756,7 @@ export async function runInstall(ctx: JobContext): Promise<void> {
         accountId: steps.accountId(),
         wildcardHostname,
         access: accessValues,
+        email: emailValues,
         ...(placeholders === undefined ? {} : { entryWorkers: placeholders }),
       });
       for (const warning of vars.warnings) log.warn(warning);
@@ -869,6 +883,7 @@ export async function runInstall(ctx: JobContext): Promise<void> {
           accountId: steps.accountId(),
           wildcardHostname,
           access: accessValues,
+          email: emailValues,
           ...(placeholders === undefined ? {} : { entryWorkers: placeholders }),
         }).vars,
         secrets: params.secrets,
@@ -882,6 +897,7 @@ export async function runInstall(ctx: JobContext): Promise<void> {
           accountId: steps.accountId(),
           wildcardHostname,
           access: accessValues,
+          email: emailValues,
         },
       });
     for (const target of d1Databases) {
@@ -1008,7 +1024,7 @@ export async function runInstall(ctx: JobContext): Promise<void> {
 
     // Email Routing rules name the Worker, so they come after its upload.
     if (emailInspection !== null) {
-      await provisionEmailRoutingPhase(steps, params.installId, emailInspection, params.workerName);
+      await provisionEmailRoutingPhase(steps, params.installId, emailInspection, emailWorker);
     }
 
     // 9. Health check at the app's health path, through route propagation

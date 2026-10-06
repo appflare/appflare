@@ -18,6 +18,7 @@ import {
   varsNeedRefresh,
   varsUseAccess,
   varsUseAppUrl,
+  varsUseEmailZone,
   varsUseWildcardHostname,
   varsUseWorkerUrl,
   varValueProblem,
@@ -239,6 +240,32 @@ describe("{{wildcardHostname}}", () => {
     expect(varsUseWildcardHostname(plain, {})).toBe(false);
     expect(varsUseWildcardHostname(plain, { BASE: "https://{{ wildcardHostname }}" })).toBe(true);
     expect(varsUseWorkerUrl(m, {})).toBe(false);
+  });
+});
+
+describe("varsUseEmailZone", () => {
+  it("is found in a default, an entered value, or a JSON var's keys, not in a fixed one", () => {
+    const m = manifest(
+      [{ type: "json", name: "EMAIL_DOMAINS", json: { "{{emailDomain}}": "x" } }],
+      [v("AUTH_FROM")],
+    );
+    expect(varsUseEmailZone(m, {})).toBe(true);
+    const plain = manifest([], [v("AUTH_FROM")]);
+    expect(varsUseEmailZone(plain, {})).toBe(false);
+    expect(varsUseEmailZone(plain, { AUTH_FROM: "accounts@{{emailDomain}}" })).toBe(true);
+    expect(varsUseEmailZone(plain, { AUTH_FROM: "zone {{ emailZoneId }}" })).toBe(true);
+    expect(varsUseEmailZone(plain, { AUTH_FROM: "accounts@example.com" })).toBe(false);
+  });
+
+  it("fills the zone in, empty while none is on record", () => {
+    const m = manifest([], [{ ...v("AUTH_FROM"), default: "accounts@{{emailDomain}}" }]);
+    const values = { workerUrl: null, appUrl: null, workerName: "cut" };
+    expect(
+      resolveVars(m, {}, { ...values, email: { zoneName: "example.com", zoneId: "z" } }).vars,
+    ).toEqual([{ type: "plain_text", name: "AUTH_FROM", text: "accounts@example.com" }]);
+    expect(resolveVars(m, {}, { ...values, email: null }).vars).toEqual([
+      { type: "plain_text", name: "AUTH_FROM", text: "accounts@" },
+    ]);
   });
 });
 

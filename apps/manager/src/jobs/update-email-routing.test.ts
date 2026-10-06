@@ -20,7 +20,7 @@ import {
   type UpdateNeeds,
 } from "../installs/versions.server";
 import { type ArtifactFixture, baseCatalog, buildArtifactFixture } from "../test/artifact-fixture";
-import { ACC, fakeAccount, TOKEN } from "../test/fake-account";
+import { ACC, fakeAccount, NEW_VERSION, TOKEN } from "../test/fake-account";
 import { type EmailWorld, fakeEmailRouting, ZONE_ID } from "../test/fake-email-routing";
 import { fakeSelf } from "../test/fake-self";
 import { fakeStep } from "../test/fake-step";
@@ -64,14 +64,55 @@ const SALES_RULE = {
   actions: FORWARD,
 };
 
-function fixture(version: string, emailRouting: CatalogEmailRouting | undefined) {
+/**
+ * A version that receives `emailRouting`; with `settings`, a var filled in
+ * with the zone. With `mail` (an app of several Workers, `cut-mail` off
+ * workers.dev besides the primary one), the Worker its mail goes to: a name
+ * of `install.workers`, or null for the primary Worker.
+ */
+function fixture(
+  version: string,
+  emailRouting: CatalogEmailRouting | undefined,
+  settings = false,
+  mail?: string | null,
+) {
+  const named = mail !== undefined && mail !== null;
   return buildArtifactFixture({
     version,
+    ...(mail === undefined
+      ? {}
+      : {
+          otherWorkers: [
+            {
+              name: "mail",
+              workersDev: false,
+              bindings: [{ type: "kv_namespace", name: "CUT_KV" }],
+            },
+          ],
+        }),
     catalog: {
       install: {
         ...baseCatalog().install,
-        ...(emailRouting === undefined ? {} : { emailRouting }),
+        ...(emailRouting === undefined
+          ? {}
+          : { emailRouting: named ? { ...emailRouting, worker: mail } : emailRouting }),
       },
+      ...(settings || named
+        ? {
+            requires: [
+              ...(settings ? ["email-placeholders" as const] : []),
+              ...(named ? ["email-worker" as const] : []),
+            ],
+          }
+        : {}),
+      ...(settings
+        ? {
+            vars: [
+              { name: "HOME_PAGE", label: "Home page", optional: true },
+              { name: "AUTH_FROM", label: "Sender", default: "accounts@{{emailDomain}}" },
+            ],
+          }
+        : {}),
     },
   });
 }
@@ -123,15 +164,26 @@ async function logsOf(jobId: string) {
   ).results;
 }
 
-/** The account plus the zone's Email Routing, behind one fetch. */
+/** The version `cut-mail` serves before an update, in an app of several Workers. */
+const MAIL_OLD = "11111111-2222-4333-8444-555555555555";
+
+/**
+ * The account plus the zone's Email Routing, behind one fetch; `cut-mail`,
+ * the other Worker of an app of several, has an account fake of its own.
+ */
 function world(next: ArtifactFixture | null, emailOver: Partial<EmailWorld>) {
   const fake = fakeAccount(next, {
     deployments: [{ id: "dep-0", versions: [{ version_id: OLD_VERSION, percentage: 100 }] }],
   });
+  const mail = fakeAccount(null, {
+    worker: "cut-mail",
+    deployments: [{ id: "dep-m", versions: [{ version_id: MAIL_OLD, percentage: 100 }] }],
+  });
   const email = fakeEmailRouting(ACC, emailOver);
   const fetch: FetchLike = async (input, init) =>
-    (await email.handle(new Request(input, init))) ?? fake.fetch(input, init);
-  return { fake, email, fetch };
+    (await email.handle(new Request(input, init))) ??
+    (input.includes("/workers/scripts/cut-mail") ? mail : fake).fetch(input, init);
+  return { fake, mail, email, fetch };
 }
 
 /**
@@ -141,17 +193,29 @@ function world(next: ArtifactFixture | null, emailOver: Partial<EmailWorld>) {
 async function updateThenRollback(input: {
   installed: CatalogEmailRouting | undefined;
   next: CatalogEmailRouting | undefined;
+  /** Both versions fill a var in with the zone (`{{emailDomain}}`). */
+  settings?: boolean;
+  /**
+   * Both versions are apps of several Workers; the Worker each has receive
+   * its mail (`fixture`'s `mail`).
+   */
+  mail?: { installed: string | null; next: string | null };
   email: Partial<EmailWorld>;
   /** The routes the install recorded. */
   seed?: () => Promise<void>;
   /** Wraps the fetch (to fail a call). */
   wrap?: (fetch: FetchLike) => FetchLike;
 }) {
-  const installed = await fixture("1.0.0", input.installed);
-  const next = await fixture("1.1.0", input.next);
+  const installed = await fixture("1.0.0", input.installed, input.settings, input.mail?.installed);
+  const next = await fixture("1.1.0", input.next, input.settings, input.mail?.next);
   const w = world(next, input.email);
   await seedInstall({
-    resources: RESOURCES,
+    resources: [
+      ...RESOURCES,
+      ...(input.mail === undefined
+        ? []
+        : [{ kind: "worker" as const, name: "cut-mail", cfId: "cut-mail" }]),
+    ],
     manifestJson: new TextDecoder().decode(installed.manifestBytes),
   });
   await input.seed?.();
@@ -780,5 +844,336 @@ describe("planEmailRoutingChange", () => {
     ]);
     // No email and no records: nothing at all.
     expect(planEmailRoutingChange(null, [], "i1")).toMatchObject({ remove: [], refused: [] });
+  });
+});
+
+describe("an app of several Workers whose mail goes to another of them", () => {
+  const MAIL = [{ type: "worker", value: ["cut-mail"] }];
+  /** The rule and catch-all an install of a version whose primary Worker received the mail left. */
+  const primaryRoutes = (): Partial<EmailWorld> => ({
+    routingEnabled: true,
+    rules: [SALES_RULE, ourRule("inbox-rule", "inbox@example.com")],
+    catchAll: { enabled: true, matchers: [{ type: "all" }], actions: WORKER_ACTION },
+  });
+
+  async function seedRoutes(): Promise<void> {
+    await seedInbox();
+    await seedRoute({ kind: "catch_all", zoneId: ZONE_ID, previous: DEFAULT_CATCH_ALL });
+  }
+
+  /** The update's or rollback's email phase, moving the mail to `workerName`. */
+  async function change(
+    email: Partial<EmailWorld>,
+    request: { workerName: string; target: CatalogEmailRouting | null },
+  ) {
+    await seedInstall({ resources: RESOURCES });
+    await seedRoutes();
+    await env.DB.prepare(
+      "INSERT INTO jobs (id, install_id, kind, status, input_json) VALUES ('job1', ?1, 'update', 'running', '{}')",
+    )
+      .bind(INSTALL_ID)
+      .run();
+    const w = world(null, email);
+    const step = fakeStep();
+    const steps = createJobSteps(
+      {
+        params: { kind: "update", jobId: "job1" },
+        step,
+        env: { ...jobEnv(), SELF: fakeSelf(jobEnv(), { fetch: w.fetch }) },
+        deps: { fetch: w.fetch },
+      },
+      "job1",
+    );
+    steps.setAccountId(ACC);
+    await changeEmailRoutingPhase(steps, {
+      installId: INSTALL_ID,
+      ...request,
+      // The app's Workers, as the update and rollback jobs list them.
+      otherWorkers: ["cut", "cut-mail"],
+    });
+    return { ...w, step, logs: await logsOf("job1") };
+  }
+
+  it("points the rules and catch-all it keeps at the Worker that receives the version's mail", async () => {
+    const r = await change(primaryRoutes(), {
+      workerName: "cut-mail",
+      target: { rules: ["inbox"], catchAll: true },
+    });
+    const { world } = r.email;
+    // In place: the rule keeps its id, so the install's record stays true.
+    expect(world.rules).toEqual([
+      SALES_RULE,
+      {
+        id: "inbox-rule",
+        name: "cut-mail (installed by Appflare)",
+        enabled: true,
+        matchers: [{ type: "literal", field: "to", value: "inbox@example.com" }],
+        actions: MAIL,
+      },
+    ]);
+    expect(world.catchAll).toEqual({ enabled: true, matchers: [{ type: "all" }], actions: MAIL });
+    expect(r.step.names).toContain('point inbox@example.com at the Worker "cut-mail"');
+    // Nothing removed or recreated, and no rule is in the way of itself.
+    expect(world.calls.filter((c) => c.startsWith("DELETE") || c.startsWith("POST"))).toEqual([]);
+    expect((await routes()).every((x) => x.deleted_at === null)).toBe(true);
+    expect(r.logs.map((l) => l.message)).toContain(
+      'Mail to inbox@example.com now goes to the Worker "cut-mail", which receives this version\'s mail (it went to "cut").',
+    );
+  });
+
+  it("points them back on a rollback to a version whose primary Worker receives the mail", async () => {
+    const moved = primaryRoutes();
+    moved.rules = [SALES_RULE, { ...ourRule("inbox-rule", "inbox@example.com"), actions: MAIL }];
+    moved.catchAll = { enabled: true, matchers: [{ type: "all" }], actions: MAIL };
+    const r = await change(moved, {
+      workerName: "cut",
+      target: { rules: ["inbox"], catchAll: true },
+    });
+    const { world } = r.email;
+    expect(world.rules[1]?.actions).toEqual(WORKER_ACTION);
+    expect(world.rules[1]?.id).toBe("inbox-rule");
+    expect(world.catchAll.actions).toEqual(WORKER_ACTION);
+    expect(world.rules[0]).toEqual(SALES_RULE);
+  });
+
+  it("puts the catch-all back from another of the app's Workers when the version drops it", async () => {
+    const moved = primaryRoutes();
+    moved.rules = [SALES_RULE, { ...ourRule("inbox-rule", "inbox@example.com"), actions: MAIL }];
+    moved.catchAll = { enabled: true, matchers: [{ type: "all" }], actions: MAIL };
+    const r = await change(moved, {
+      workerName: "cut",
+      target: { rules: ["inbox"], catchAll: false },
+    });
+    expect(r.email.world.catchAll).toEqual({
+      enabled: false,
+      matchers: [{ type: "all" }],
+      actions: [{ type: "drop" }],
+    });
+    expect(r.email.world.rules[1]?.actions).toEqual(WORKER_ACTION);
+  });
+
+  it("sets a rule deleted by hand up again, and leaves one changed by hand alone", async () => {
+    const changed = primaryRoutes();
+    changed.rules = [SALES_RULE];
+    const gone = await change(changed, {
+      workerName: "cut-mail",
+      target: { rules: ["inbox"], catchAll: true },
+    });
+    expect(gone.email.world.rules.map((x) => [x.matchers[0]?.value, x.actions])).toEqual([
+      ["sales@example.com", FORWARD],
+      ["inbox@example.com", MAIL],
+    ]);
+
+    await reset();
+    await createMigrator(migrations).ensure(env.DB);
+    const forwarded = primaryRoutes();
+    forwarded.rules = [
+      SALES_RULE,
+      { ...ourRule("inbox-rule", "inbox@example.com"), actions: FORWARD },
+    ];
+    const r = await change(forwarded, {
+      workerName: "cut-mail",
+      target: { rules: ["inbox"], catchAll: true },
+    });
+    expect(r.email.world.rules[1]?.actions).toEqual(FORWARD);
+    expect(r.logs.map((l) => `${l.level} ${l.message}`)).toContain(
+      'warn The routing rule for inbox@example.com was changed since Appflare set it up (it is forwarding to me@example.net now), so it was left alone and mail to inbox@example.com does not reach the Worker "cut-mail".',
+    );
+  });
+});
+
+describe("an update and a rollback across a change of the Worker that receives the mail", () => {
+  const MAIL = [{ type: "worker", value: ["cut-mail"] }];
+  /** The rule and catch-all an install of 1.0.0 left, delivering to the primary Worker. */
+  const installedRoutes = (): Partial<EmailWorld> => ({
+    routingEnabled: true,
+    rules: [SALES_RULE, ourRule("inbox-rule", "inbox@example.com")],
+    catchAll: { enabled: true, matchers: [{ type: "all" }], actions: WORKER_ACTION },
+  });
+  const seed = async () => {
+    await seedInbox();
+    await seedRoute({ kind: "catch_all", zoneId: ZONE_ID, previous: DEFAULT_CATCH_ALL });
+  };
+  /** 1.0.0 has its primary Worker receive the mail; 1.1.0 names `mail`. */
+  const moveToMail = () =>
+    updateThenRollback({
+      installed: { rules: ["inbox"], catchAll: true },
+      next: { rules: ["inbox"], catchAll: true },
+      mail: { installed: null, next: "mail" },
+      email: installedRoutes(),
+      seed,
+    });
+
+  it("points the rule and catch-all at the Worker the new version names, on update", async () => {
+    const r = await moveToMail();
+    expect(r.error).toBeNull();
+    expect(r.job?.status).toBe("succeeded");
+    const { world } = r.email;
+    expect(world.rules).toEqual([
+      SALES_RULE,
+      {
+        id: "inbox-rule",
+        name: "cut-mail (installed by Appflare)",
+        enabled: true,
+        matchers: [{ type: "literal", field: "to", value: "inbox@example.com" }],
+        actions: MAIL,
+      },
+    ]);
+    expect(world.catchAll).toEqual({ enabled: true, matchers: [{ type: "all" }], actions: MAIL });
+    expect((await routes()).every((x) => x.deleted_at === null)).toBe(true);
+  });
+
+  it("points them back at the primary Worker on a rollback to the version before", async () => {
+    const r = await moveToMail();
+    expect(r.job?.status).toBe("succeeded");
+    const back = await rollback(r.fetch);
+    expect(back.error).toBeNull();
+    expect(back.job?.status).toBe("succeeded");
+    // Both Workers serve the snapshot's versions again.
+    expect(r.mail.state.deployments[0]?.versions).toEqual([
+      { version_id: MAIL_OLD, percentage: 100 },
+    ]);
+    const { world } = r.email;
+    expect(world.rules).toEqual([
+      SALES_RULE,
+      {
+        id: "inbox-rule",
+        name: "cut (installed by Appflare)",
+        enabled: true,
+        matchers: [{ type: "literal", field: "to", value: "inbox@example.com" }],
+        actions: WORKER_ACTION,
+      },
+    ]);
+    expect(world.catchAll).toEqual({
+      enabled: true,
+      matchers: [{ type: "all" }],
+      actions: WORKER_ACTION,
+    });
+    expect(back.step.names).toContain('point inbox@example.com at the Worker "cut"');
+  });
+});
+
+describe("an update of an app whose settings use its email zone", () => {
+  it("fills {{emailDomain}} in with the zone on record", async () => {
+    const r = await updateThenRollback({
+      installed: { rules: ["inbox"], catchAll: false },
+      next: { rules: ["inbox"], catchAll: false },
+      settings: true,
+      email: { routingEnabled: true, rules: [ourRule("inbox-rule", "inbox@example.com")] },
+      seed: seedInbox,
+    });
+    expect(r.error).toBeNull();
+    expect(r.job?.status).toBe("succeeded");
+    const uploaded = r.fake.state.versions.at(-1)?.metadata.bindings as unknown[];
+    expect(uploaded).toContainEqual({
+      type: "plain_text",
+      name: "AUTH_FROM",
+      text: "accounts@example.com",
+    });
+  });
+});
+
+describe("a rollback of an app whose settings use its email zone", () => {
+  /**
+   * 1.1.0 serves, its email on example.com (the records say so); the
+   * snapshot's 1.0.0 version was uploaded with `deployedWith` as the sender,
+   * filled in with the zone the email was on then. A rollback does not move
+   * the email back, so the old version's settings may name a zone the app
+   * no longer receives email for.
+   */
+  async function rollbackTo(deployedWith: string) {
+    const old = await fixture("1.0.0", { rules: ["inbox"], catchAll: false }, true);
+    const current = await fixture("1.1.0", { rules: ["inbox"], catchAll: false }, true);
+    await seedInstall({
+      version: "1.1.0",
+      currentVersionId: NEW_VERSION,
+      manifestJson: new TextDecoder().decode(current.manifestBytes),
+      resources: RESOURCES,
+    });
+    await seedInbox();
+    await env.DB.prepare(
+      "INSERT INTO jobs (id, install_id, kind, status, worker_version_id) VALUES ('job1', ?1, 'reconfigure', 'succeeded', ?2)",
+    )
+      .bind(INSTALL_ID, NEW_VERSION)
+      .run();
+    await env.DB.prepare(
+      `INSERT INTO snapshots (id, install_id, job_id, worker_version_id, d1_bookmarks_json, taken_at,
+         catalog_version, manifest_json, artifact_url, artifact_digest, pin_sha, do_migration_tag,
+         target_catalog_version, config_json)
+       VALUES ('job1', ?1, 'job1', ?2, '{}', 1000, '1.0.0', ?3,
+         'https://artifacts.test/cut/old.zip', ?4, 'oldsha', NULL, '1.1.0', '{}')`,
+    )
+      .bind(INSTALL_ID, OLD_VERSION, new TextDecoder().decode(old.manifestBytes), old.digest)
+      .run();
+    const fake = fakeAccount(null, {
+      deployments: [
+        { id: "dep-2", versions: [{ version_id: NEW_VERSION, percentage: 100 }] },
+        { id: "dep-1", versions: [{ version_id: OLD_VERSION, percentage: 100 }] },
+      ],
+      versionBindings: {
+        [OLD_VERSION]: [
+          { type: "kv_namespace", name: "CUT_KV", namespace_id: "kv-1" },
+          { type: "plain_text", name: "AUTH_FROM", text: deployedWith },
+        ],
+      },
+    });
+    const email = fakeEmailRouting(ACC, {
+      routingEnabled: true,
+      rules: [ourRule("inbox-rule", "inbox@example.com")],
+    });
+    const fetch: FetchLike = async (input, init) =>
+      (await email.handle(new Request(input, init))) ?? fake.fetch(input, init);
+    let params: RollbackJobParams | null = null;
+    await startRollbackCore(
+      {
+        db: env.DB,
+        createJob: async (_id, p) => {
+          params = p;
+          return { id: "rb1" };
+        },
+        newId: () => "rb1",
+      },
+      { installId: INSTALL_ID, snapshotId: "job1" },
+    );
+    if (params === null) throw new Error("no rollback params");
+    const created: Array<{ id: string; params: unknown }> = [];
+    const JOBS = {
+      create: async (o: { id: string; params: unknown }) => {
+        created.push(o);
+        return { id: o.id };
+      },
+    } as NonNullable<JobEnv["JOBS"]>;
+    let error: unknown = null;
+    try {
+      await runRollback({ params, step: fakeStep(), env: { ...jobEnv(), JOBS }, deps: { fetch } });
+    } catch (e) {
+      error = e;
+    }
+    const job = await env.DB.prepare("SELECT status FROM jobs WHERE id = 'rb1'").first<{
+      status: string;
+    }>();
+    return { error, job, created, logs: (await logsOf("rb1")).map((l) => l.message) };
+  }
+
+  it("deploys the settings again with the zone the app receives email for now", async () => {
+    const r = await rollbackTo("accounts@old-zone.example");
+    expect(r.error).toBeNull();
+    expect(r.job?.status).toBe("succeeded");
+    expect(r.created).toHaveLength(1);
+    expect(r.created[0]?.params).toMatchObject({
+      kind: "reconfigure",
+      installId: INSTALL_ID,
+      refreshVars: ["emailZone"],
+    });
+    expect(r.logs.at(-1)).toContain(
+      "This version's settings were filled in with another email domain ({{emailDomain}}) than the app has now, so a settings change (job ",
+    );
+  });
+
+  it("leaves the settings alone when the version names the zone on record", async () => {
+    const r = await rollbackTo("accounts@example.com");
+    expect(r.error).toBeNull();
+    expect(r.job?.status).toBe("succeeded");
+    expect(r.created).toEqual([]);
   });
 });

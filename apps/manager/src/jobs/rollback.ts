@@ -5,6 +5,9 @@ import {
   boundToWorker,
   type CatalogEmailRouting,
   DEFAULT_HEALTH_MODE,
+  emailScriptName,
+  hyperdriveDeclarations,
+  installedScriptNames,
   secretKey,
 } from "@appflare/schema";
 import { and, eq, inArray, isNull, type SQL } from "drizzle-orm";
@@ -63,6 +66,10 @@ import {
   workflowTargets,
 } from "./install/workflows";
 import {
+  type CachingTarget,
+  cachingOffPhase,
+  cachingOnPhase,
+  cachingTargets,
   liveHyperdriveIds,
   reconcileHyperdriveRecords,
   versionHyperdriveBindings,
@@ -77,7 +84,11 @@ import {
   settingsRefreshPhase,
   staleAddressValues,
 } from "./update/address-settings";
-import { changeEmailRoutingPhase, readEmailRouteRows } from "./update/email-routing";
+import {
+  changeEmailRoutingPhase,
+  emailZoneOnRecord,
+  readEmailRouteRows,
+} from "./update/email-routing";
 import {
   accessUpdateRefusal,
   declaredLifecycleOf,
@@ -94,7 +105,9 @@ import {
  * log names those the version it returns to does not declare. Email Routing
  * follows the version once it serves, as after an update
  * (./update/email-routing.ts), and settings uploaded with another address
- * than the app has now are deployed again (./update/address-settings.ts).
+ * or email zone than the app has now are deployed again
+ * (./update/address-settings.ts). Hyperdrive configurations get the query
+ * caching the version sets before it serves.
  * The install is `updating` while the job runs and returns to
  * `installed` whatever happens.
  */
@@ -392,10 +405,10 @@ async function readAddressSettingsPhase(
 
 /**
  * Once the rollback is done: the address values (`appUrl`,
- * `wildcardHostname`) the versions in `reads` were filled in with that
- * differ from the app's address now, compared with the vars the install's
- * settings render to now, and that address (`appUrl`, null when nothing
- * differs). Compared this late so a domain that went live or was removed
+ * `wildcardHostname`) and email zone (`emailZone`) the versions in `reads`
+ * were filled in with that differ from the app's address and email zone
+ * now, compared with the vars the install's settings render to now, and
+ * that address (`appUrl`, null when no address value differs). Compared this late so a domain that went live or was removed
  * while the rollback ran (whose own settings refresh is refused meanwhile)
  * is the address compared with. One step per version, reading D1 only and
  * logging nothing: the job's final line stays its last but for the
@@ -442,10 +455,13 @@ async function staleAddressPhase(
           subdomain,
           accountId: steps.accountId(),
           access: await readAccessPlaceholderValues(orm, installId),
+          // Rolling back does not move the email: the zone on record stays.
+          email: emailZoneOnRecord(await readEmailRouteRows(orm, installId)),
           address,
           deployed,
         });
-        return { stale, appUrl: stale.length > 0 ? address.appUrl : null };
+        const moved = stale.some((r) => r === "appUrl" || r === "wildcardHostname");
+        return { stale, appUrl: moved ? address.appUrl : null };
       })
       .catch(() => ({ stale: [] as VarsRefreshReason[], appUrl: null }));
     for (const reason of found.stale) reasons.add(reason);
@@ -588,16 +604,16 @@ export async function runRollback(ctx: JobContext): Promise<void> {
           ),
         );
       // Any Hyperdrive configuration, live or deleted: the version may bind one.
-      const [hyperdriveRow] = await orm
-        .select({ id: resources.id })
+      const hyperdriveRows = await orm
+        .select({ id: resources.id, name: resources.name, cfId: resources.cf_id })
         .from(resources)
         .where(
           and(
             eq(resources.install_id, params.installId),
             inArray(resources.kind, [...HYPERDRIVE_KINDS]),
           ),
-        )
-        .limit(1);
+        );
+      const hyperdriveRow = hyperdriveRows[0];
       const settings = await readSettings(orm, [SETTING.accountId]);
       if (!settings.account_id) throw new JobError("the Cloudflare account is not known yet");
       if (!env.CF_API_TOKEN) {
@@ -624,15 +640,22 @@ export async function runRollback(ctx: JobContext): Promise<void> {
         if (emailChange !== null) log.info(emailChange);
       }
       // Each Worker of the snapshot's version whose settings use the app's
-      // address, with the version it serves again: once it does, its
-      // settings are compared with the address the app has now.
+      // address or email zone, with the version it serves again: once it
+      // does, its settings are compared with the address and zone the app
+      // has now.
       const snapshotVars = parseStoredVars(snapshot.config_json ?? install.config_json);
       const snapshotOtherVersions = parseWorkerVersions(snapshot.worker_versions_json);
       const addressChecks =
         snapshotEffective === null
           ? []
           : entryWorkers(snapshotEffective, install.worker_name).flatMap((w) => {
-              if (!varsNeedRefresh(w.manifest, snapshotVars, ["appUrl", "wildcardHostname"])) {
+              if (
+                !varsNeedRefresh(w.manifest, snapshotVars, [
+                  "appUrl",
+                  "wildcardHostname",
+                  "emailZone",
+                ])
+              ) {
                 return [];
               }
               const versionId = w.primary
@@ -768,11 +791,21 @@ export async function runRollback(ctx: JobContext): Promise<void> {
               serving: servingEmail !== null,
               // Routes on record (absent in a step output recorded before).
               routes: (await readEmailRouteRows(orm, params.installId)).some((r) => !r.deleted),
+              // The Worker the snapshot's version has receive its mail, and
+              // the app's other Workers, then and now, whose routes it may
+              // take back (both absent in a step output recorded before).
+              worker: emailScriptName(snapshotEffective.catalog, install.worker_name),
+              otherWorkers: [
+                ...installedScriptNames(snapshotEffective.catalog, install.worker_name),
+                ...otherNow.map((w) => w.scriptName),
+              ],
             }) as
           | {
               target: CatalogEmailRouting | null;
               serving: boolean;
               routes?: boolean;
+              worker?: string;
+              otherWorkers?: string[];
             }
           | null
           | undefined,
@@ -788,6 +821,17 @@ export async function runRollback(ctx: JobContext): Promise<void> {
           workflowNames,
         ) as WorkflowTarget[] | undefined,
         usesHyperdrive: hyperdriveRow !== undefined,
+        // The query caching the snapshot's version sets for its databases,
+        // and the recorded configurations' names by id (both absent in a
+        // step output recorded before caching was followed).
+        hyperdriveCaching: (snapshotEffective === null
+          ? []
+          : hyperdriveDeclarations(snapshotEffective.catalog.resources?.hyperdrive).flatMap((d) =>
+              d.caching === undefined ? [] : [{ binding: d.binding, caching: d.caching }],
+            )) as Array<{ binding: string; caching: boolean }> | undefined,
+        hyperdriveNames: Object.fromEntries(
+          hyperdriveRows.flatMap((r) => (r.cfId === null ? [] : [[r.cfId, r.name]])),
+        ) as Record<string, string> | undefined,
         versionId: snapshot.worker_version_id,
         toVersion: snapshot.catalog_version,
         recordedCrons: crons.map((c) => c.name),
@@ -837,24 +881,44 @@ export async function runRollback(ctx: JobContext): Promise<void> {
     // the version itself, which also covers snapshots taken before their
     // configurations were recorded. A job started before this check has no
     // `usesHyperdrive` and skips it.
+    /** Configurations the version binds whose query caching it sets. */
+    let caching: CachingTarget[] = [];
     if (started.usesHyperdrive === true) {
-      await run("check the version's database connections", async ({ log, cf, orm }) => {
-        const bound = versionHyperdriveBindings(
-          await cf().versions.getVersion(workerName, started.versionId),
-        );
-        const refusal = hyperdriveRollbackRefusal(
-          params.installId,
-          Object.fromEntries(bound.map((b) => [b.binding, b.id])),
-          await liveHyperdriveIds(orm, params.installId),
-        );
-        if (refusal !== null) throw new JobError(refusal);
-        log.info(
-          bound.length === 0
-            ? `Version ${started.versionId} binds no Hyperdrive configuration.`
-            : `Every Hyperdrive configuration version ${started.versionId} binds still exists.`,
-        );
-        return {};
-      });
+      const checked = await run(
+        "check the version's database connections",
+        async ({ log, cf, orm }) => {
+          const bound = versionHyperdriveBindings(
+            await cf().versions.getVersion(workerName, started.versionId),
+          );
+          const refusal = hyperdriveRollbackRefusal(
+            params.installId,
+            Object.fromEntries(bound.map((b) => [b.binding, b.id])),
+            await liveHyperdriveIds(orm, params.installId),
+          );
+          if (refusal !== null) throw new JobError(refusal);
+          log.info(
+            bound.length === 0
+              ? `Version ${started.versionId} binds no Hyperdrive configuration.`
+              : `Every Hyperdrive configuration version ${started.versionId} binds still exists.`,
+          );
+          return { bound };
+        },
+      );
+      // The configurations the version binds get the query caching it sets
+      // (an update may have turned it the other way): off before it serves,
+      // on once it does (./reconfigure/hyperdrive.ts). A step output
+      // recorded before has no `bound`.
+      const names = started.hyperdriveNames ?? {};
+      caching = cachingTargets(
+        started.hyperdriveCaching ?? [],
+        ((checked as { bound?: Array<{ binding: string; id: string }> }).bound ?? []).map((b) => ({
+          type: "hyperdrive",
+          binding: b.binding,
+          name: names[b.id] ?? b.id,
+          cfId: b.id,
+        })),
+      );
+      await cachingOffPhase(steps, caching);
     }
 
     // A protected app's public paths the snapshot's version does not have
@@ -1145,10 +1209,14 @@ export async function runRollback(ctx: JobContext): Promise<void> {
     if (email != null && (email.target !== null || email.serving || email.routes === true)) {
       await changeEmailRoutingPhase(steps, {
         installId: params.installId,
-        workerName,
+        workerName: email.worker ?? workerName,
         target: email.target,
+        otherWorkers: email.otherWorkers ?? [],
       });
     }
+
+    // Query caching on only now that the snapshot's version serves. Never throws.
+    await cachingOnPhase(steps, caching);
 
     const subdomain = await subdomainOf();
     // The settings each version was deployed with, for the address check

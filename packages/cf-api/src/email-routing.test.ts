@@ -147,6 +147,22 @@ describe("email routing rules", () => {
     expect(await jsonBody(fake.last())).toEqual(body);
   });
 
+  it("updateRule -> PUT /rules/{id} with the whole rule", async () => {
+    const { fake, client } = make({ result: rule("r1") });
+    const body = {
+      name: "mailbox-api (installed by Appflare)",
+      enabled: true,
+      matchers: [{ type: "literal", field: "to", value: "inbox@example.com" }],
+      actions: [{ type: "worker", value: ["mailbox-api"] }],
+      priority: 3,
+    };
+    const updated = await client.emailRouting.updateRule("z1", "r1", body);
+    expect(updated.id).toBe("r1");
+    expect(fake.last().method).toBe("PUT");
+    expect(fake.last().url).toBe(`${Z}/rules/r1`);
+    expect(await jsonBody(fake.last())).toEqual(body);
+  });
+
   it("deleteRule -> DELETE /rules/{id}", async () => {
     const { fake, client } = make({ result: rule("r1") });
     await client.emailRouting.deleteRule("z1", "r1");

@@ -179,6 +179,18 @@ export interface CreateEmailRoutingRuleArgs {
   priority?: number;
 }
 
+/**
+ * Body of `PUT /zones/{zone_id}/email/routing/rules/{rule_id}`, which
+ * replaces the rule: the whole rule is sent, not a change.
+ */
+export interface UpdateEmailRoutingRuleArgs {
+  matchers: EmailRoutingMatcher[];
+  actions: EmailRoutingAction[];
+  name?: string;
+  enabled?: boolean;
+  priority?: number;
+}
+
 /** Body of `PUT /zones/{zone_id}/email/routing/rules/catch_all`. */
 export interface UpdateEmailRoutingCatchAllArgs {
   actions: EmailRoutingAction[];
@@ -291,6 +303,18 @@ export function createEmailRouting(http: HttpApi) {
     async createRule(zoneId: string, args: CreateEmailRoutingRuleArgs): Promise<EmailRoutingRule> {
       const result = await http.result("POST", zone(zoneId, "/rules"), { json: args });
       return parse(ruleSchema, result, "the new routing rule");
+    },
+
+    /** `PUT /zones/{zone_id}/email/routing/rules/{rule_id}`: replaces the rule, keeping its id. */
+    async updateRule(
+      zoneId: string,
+      ruleId: string,
+      args: UpdateEmailRoutingRuleArgs,
+    ): Promise<EmailRoutingRule> {
+      const result = await http.result("PUT", zone(zoneId, `/rules/${enc(ruleId)}`), {
+        json: args,
+      });
+      return parse(ruleSchema, result, "the updated routing rule");
     },
 
     /** `DELETE /zones/{zone_id}/email/routing/rules/{rule_id}`. */

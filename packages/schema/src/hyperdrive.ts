@@ -43,6 +43,22 @@ export const catalogHyperdriveSchema = z.object({
     .min(1)
     .describe("A sentence under the connection string field, for example which schema it needs.")
     .optional(),
+  /**
+   * Hyperdrive's query caching for this binding's configuration. Omitted
+   * keeps Cloudflare's default (on) when the configuration is created, and
+   * an update leaves it as it is; `false` turns it off and `true` on, at
+   * install and again on every update and settings change.
+   */
+  caching: z
+    .boolean()
+    .describe(
+      "Whether Hyperdrive caches the results of read queries for this database. Omitted keeps " +
+        "Cloudflare's default (on) when the configuration is created, and updates leave the " +
+        "setting as it is. `false` turns caching off, for an app that must read its own writes " +
+        "at once; `true` turns it on. Either value is applied at install and again on every " +
+        'update and settings change, and needs `"hyperdrive-caching"` in `requires`.',
+    )
+    .optional(),
 });
 export type CatalogHyperdrive = z.infer<typeof catalogHyperdriveSchema>;
 

@@ -466,8 +466,11 @@ export async function runUninstall(ctx: JobContext): Promise<void> {
       });
     }
 
-    // A job started before email routes existed carries no list.
-    await removeEmailRoutesPhase(steps, started.emailRoutes ?? [], workerName);
+    // A job started before email routes existed carries no list. An app of
+    // several Workers may receive mail with another of them.
+    await removeEmailRoutesPhase(steps, started.emailRoutes ?? [], workerName, {
+      otherWorkers: (started.otherWorkers ?? []).map((w) => w.name),
+    });
 
     // A run started before external domains existed carries none.
     for (const domain of started.externalDomains ?? []) {

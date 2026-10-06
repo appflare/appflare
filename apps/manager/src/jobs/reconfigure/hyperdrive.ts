@@ -14,7 +14,7 @@ import {
   resourceId,
 } from "../install/phases";
 import { deleteResource, RESOURCE_LABEL } from "../install/resources";
-import { isNotFound, type JobSteps } from "../steps";
+import { errorMessage, isNotFound, type JobSteps } from "../steps";
 import { replacementConfigName } from "./plan";
 
 /**
@@ -62,6 +62,8 @@ export async function createReplacementPhase(
     workerName: string;
     binding: string;
     protocol: HyperdriveProtocol;
+    /** Query caching as the catalog manifest sets it; absent keeps Cloudflare's default. */
+    caching?: boolean | undefined;
     current: RecordedConfig;
     connection: string | undefined;
   },
@@ -73,6 +75,7 @@ export async function createReplacementPhase(
     binding: input.binding,
     name,
     protocol: input.protocol,
+    ...(input.caching === undefined ? {} : { caching: input.caching }),
   };
   const made = await steps.run(`create ${LABEL} ${name}`, async ({ log, cf, attempt }) => {
     const api = cf();
@@ -105,6 +108,108 @@ export async function createReplacementPhase(
     return {};
   });
   return { binding: input.binding, old: input.current, next: { rowId, name, cfId: made.cfId } };
+}
+
+/** A recorded configuration whose query caching the catalog manifest sets. */
+export interface CachingTarget {
+  binding: string;
+  name: string;
+  cfId: string;
+  /** Whether Hyperdrive caches query results, as `resources.hyperdrive[binding].caching` says. */
+  caching: boolean;
+}
+
+/**
+ * The recorded configurations whose query caching the catalog manifest sets
+ * (`resources.hyperdrive[binding].caching`), from the resources a version
+ * binds; `skip` names bindings whose configuration this job made with it
+ * already. A binding the manifest leaves it out for keeps what it has.
+ */
+export function cachingTargets(
+  declared: ReadonlyArray<{ binding: string; caching?: boolean | undefined }>,
+  bound: ReadonlyArray<{ type: string; binding: string; name: string; cfId: string | null }>,
+  skip: ReadonlySet<string> = new Set(),
+): CachingTarget[] {
+  return declared.flatMap((d) => {
+    if (d.caching === undefined || skip.has(d.binding)) return [];
+    const res = bound.find((r) => r.type === "hyperdrive" && r.binding === d.binding);
+    return res === undefined || res.cfId === null
+      ? []
+      : [{ binding: d.binding, name: res.name, cfId: res.cfId, caching: d.caching }];
+  });
+}
+
+/**
+ * Reads one configuration and, when its query caching is not what `target`
+ * asks for, changes it (`PATCH`, caching alone: the origin and its password
+ * stay as they are). One or two requests.
+ */
+async function setCachingStep(steps: JobSteps, target: CachingTarget): Promise<void> {
+  const wanted = target.caching ? "on" : "off";
+  await steps.run(
+    `turn ${wanted} query caching of ${LABEL} ${target.name}`,
+    async ({ log, cf }) => {
+      const api = cf();
+      const config = await explainHyperdriveRefusal(() => api.hyperdrive.getConfig(target.cfId));
+      const disabled = config.caching?.disabled === true;
+      if (disabled === !target.caching) {
+        log.info(`Query caching of the ${LABEL} "${target.name}" is ${wanted}, as the app asks.`);
+        return {};
+      }
+      await explainHyperdriveRefusal(() =>
+        api.hyperdrive.patchConfig(target.cfId, { caching: { disabled: !target.caching } }),
+      );
+      log.info(
+        `Turned query caching ${wanted} for the ${LABEL} "${target.name}" (${target.binding}), as this version of the app asks.`,
+      );
+      return {};
+    },
+  );
+}
+
+/**
+ * The targets whose query caching goes off, before the version that wants
+ * it off serves: the version serving now uses the same configuration, and
+ * query caching off is always safe for it (it reads fresh results). A
+ * failure fails the job before anything else changed, and nothing needs
+ * putting back.
+ */
+export async function cachingOffPhase(
+  steps: JobSteps,
+  targets: readonly CachingTarget[],
+): Promise<void> {
+  for (const target of targets) {
+    if (!target.caching) await setCachingStep(steps, target);
+  }
+}
+
+/**
+ * The targets whose query caching goes on, only once the version that wants
+ * it serves: the version before may need it off (cached results could be
+ * stale for it), so turning it on earlier would reach that version too, and
+ * stay on if the job then failed. Never throws: the app serves correctly
+ * with caching off, so a failure is a warning, and the next update or
+ * settings change sets it again.
+ */
+export async function cachingOnPhase(
+  steps: JobSteps,
+  targets: readonly CachingTarget[],
+): Promise<void> {
+  const before = steps.current;
+  for (const target of targets) {
+    if (!target.caching) continue;
+    await setCachingStep(steps, target).catch(async (error: unknown) => {
+      await steps
+        .run(`query caching of ${LABEL} ${target.name} not turned on`, async ({ log }) => {
+          log.warn(
+            `Appflare could not turn query caching on for the ${LABEL} "${target.name}" (${errorMessage(error)}). The app serves all the same, reading its database without the cache; the next update or settings change turns it on.`,
+          );
+          return {};
+        })
+        .catch(() => {});
+    });
+  }
+  steps.current = before;
 }
 
 /**

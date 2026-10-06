@@ -21,9 +21,10 @@ import {
  * app's wrangler config gives it a value that is not a string; then it is
  * JSON (a `json` binding) and the form takes JSON text. The placeholders the
  * schema lists for vars (`PLACEHOLDER_FIELDS.varDefault`: `{{appUrl}}`,
- * `{{workerName}}`, `{{accountId}}` and the rest) are filled in wherever a
+ * `{{workerName}}`, `{{accountId}}`, `{{emailDomain}}` and the rest) are filled in wherever a
  * value comes from: the wrangler config, the catalog default, or what the
- * admin entered, on every install, update and settings change, and again
+ * admin entered, on every install, update and settings change (moving the
+ * app's email to another zone among them), and again
  * when the app's served address changes (the form, which does not know the
  * account id, shows `{{accountId}}` as written). Pure, so the form, the
  * server's input checks, and the jobs share it.
@@ -289,6 +290,7 @@ const MARKER_HOSTS = {
   appUrl: "app-url.appflare.invalid",
   wildcardHostname: "wildcard-hostname.appflare.invalid",
   access: "access.appflare.invalid",
+  emailZone: "email-zone.appflare.invalid",
 } as const;
 
 /**
@@ -314,6 +316,7 @@ function varsMention(
       marker === "access"
         ? { teamDomain: host, teamName: host, aud: host, certsUrl: `https://${host}/certs` }
         : null,
+    email: marker === "emailZone" ? { zoneName: host, zoneId: host } : null,
   };
   const { vars } = resolveVars(manifest, userVars, values);
   // The props of its service bindings are filled in the same way at every deploy.
@@ -407,12 +410,26 @@ export function varsUseAccess(
 }
 
 /**
+ * Whether any var the Worker gets, or the props of its service bindings, is
+ * filled in with the zone the app receives email for (`{{emailDomain}}`,
+ * `{{emailZoneId}}`), so moving its email to another zone deploys the
+ * settings again.
+ */
+export function varsUseEmailZone(
+  manifest: VarManifest,
+  userVars: Readonly<Record<string, string>>,
+): boolean {
+  return varsMention(manifest, userVars, "emailZone");
+}
+
+/**
  * The values an app's settings are filled in with that can change without a
  * settings change: the wildcard domain (`{{wildcardHostname}}`), the
- * address the app is served at (`{{appUrl}}`, `{{appHostname}}`), and its
- * Cloudflare Access protection (`{{accessAud}}` and the other two).
+ * address the app is served at (`{{appUrl}}`, `{{appHostname}}`), its
+ * Cloudflare Access protection (`{{accessAud}}` and the other two), and the
+ * zone it receives email for (`{{emailDomain}}`, `{{emailZoneId}}`).
  */
-export const VARS_REFRESH_REASONS = ["wildcardHostname", "appUrl", "access"] as const;
+export const VARS_REFRESH_REASONS = ["wildcardHostname", "appUrl", "access", "emailZone"] as const;
 export type VarsRefreshReason = (typeof VARS_REFRESH_REASONS)[number];
 
 /** Whether any var the Worker gets is filled in with one of the values in `changed`. */

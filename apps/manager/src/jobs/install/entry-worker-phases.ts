@@ -2,6 +2,7 @@ import { CloudflareApiError, type ScriptMetadata } from "@appflare/cf-api";
 import {
   type AccessPlaceholderValues,
   type ArtifactManifest,
+  type EmailPlaceholderValues,
   type EntryWorkerPlaceholders,
   isOptionalSecret,
   isSeedOnly,
@@ -82,6 +83,8 @@ export interface EntryUploadContext {
   wildcardHostname?: string | null;
   /** The install's Cloudflare Access protection, for the Access placeholders; null or absent without. */
   access?: AccessPlaceholderValues | null;
+  /** The zone the app receives email for, for the email placeholders; null or absent without one. */
+  email?: EmailPlaceholderValues | null;
   placeholders: EntryWorkerPlaceholders | undefined;
   /** Each Worker's name within the entry to its installed name. */
   entryNames: Readonly<Record<string, string>>;
@@ -100,6 +103,7 @@ function workerMetadata(
     ...(ctx.appUrl === undefined ? {} : { appUrl: ctx.appUrl }),
     wildcardHostname: ctx.wildcardHostname ?? null,
     access: ctx.access ?? null,
+    email: ctx.email ?? null,
     ...(ctx.placeholders === undefined ? {} : { entryWorkers: ctx.placeholders }),
   });
   const metadata = buildScriptMetadata({

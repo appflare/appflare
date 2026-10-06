@@ -55,6 +55,17 @@ The install then:
 
 These show on the app's page under **Email**.
 
+An app made of several Workers has one of them receive its mail: the one its catalog
+entry names, or else the Worker that serves the app. The rules and the catch-all
+deliver to that Worker, and the app's page says which one when it is not the main
+one. A Worker that is not reachable from the internet can still receive mail: Email
+Routing hands mail to a Worker by name, not over the web.
+
+Some apps also need to know the domain in their own settings, for example to send
+mail from `accounts@example.com`. Their catalog entry fills the setting in with the
+domain you chose, and with its zone ID where the app needs that. You can see the
+values on the app's **Settings** tab.
+
 Appflare checks the zone first and refuses, before creating anything, when:
 
 - the zone's mail goes to another provider (it has other MX records) and Email
@@ -108,7 +119,9 @@ If the install found Email Routing already on, the uninstall never turns it off.
 
 To receive email for another zone, change it on the **Settings** tab of the app's page; see
 [Move email to another zone](/guides/settings/#move-email-to-another-zone). The new
-zone is set up first, then the old one is cleaned up as described above.
+zone is set up first, then the old one is cleaned up as described above. When the
+app's settings use the domain, saving deploys them again with the new one; otherwise
+nothing is deployed.
 
 ## Updates and rollbacks
 
@@ -118,7 +131,9 @@ update for you. The update changes Email Routing to match once the new version s
 for: it adds the routing rules and catch-all the version asks for (with the same checks
 as an install), then removes the ones it no longer needs (the same way as an uninstall).
 A rollback does the same for the version it returns to, so it puts back what the update
-changed. A version that receives no email removes every route of the app, and turns
+changed. When a new version of an app of several Workers has another of its Workers
+receive the mail, the update points the app's routing rules and catch-all at that
+Worker in place, and a rollback points them back. A version that receives no email removes every route of the app, and turns
 Email Routing off again where the install turned it on and nothing else uses it.
 
 Appflare never changes a routing rule or catch-all it did not set up. If the new version

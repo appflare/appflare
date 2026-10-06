@@ -59,6 +59,7 @@ import {
   settingsVarFields,
   type VarsRefreshReason,
   varsNeedRefresh,
+  varsUseEmailZone,
   varValueProblem,
 } from "./install-vars";
 import type { StartEmailAgainInput, StartReconfigureInput } from "./reconfigure-input";
@@ -113,6 +114,13 @@ export interface InstallSettings {
     appUrl: string | null;
     /** The wildcard domain's base hostname; null (filled in empty) without one. */
     wildcardHostname: string | null;
+    /**
+     * For an app that receives email: the zone it receives for, for
+     * `{{emailDomain}}` and `{{emailZoneId}}`; null (filled in empty) while
+     * none is on record. Absent for an app that receives no email.
+     */
+    emailDomain?: string | null;
+    emailZoneId?: string | null;
     /** The Access placeholders' values; null (filled in empty) while the app is not protected. */
     accessTeamDomain?: string | null;
     accessTeamName?: string | null;
@@ -142,6 +150,12 @@ export interface InstallSettings {
     zoneName: string | null;
     leftover: string[];
     again: EmailAgainParts | null;
+    /**
+     * Whether the app's settings use the zone (`{{emailDomain}}`,
+     * `{{emailZoneId}}`), so moving its email deploys them again with the
+     * new one.
+     */
+    fillsSettings: boolean;
   } | null;
   /** Why the new settings cannot be checked on a preview before they serve; null when they can. */
   skipsPreview: string | null;
@@ -286,6 +300,9 @@ async function settingsContext(
             zoneId: zone?.zoneId ?? null,
             zoneName: zone?.zoneName ?? null,
             leftover: zones.leftover.map((z) => z.zoneName),
+            fillsSettings: entryWorkers(manifest, install.worker_name).some((w) =>
+              varsUseEmailZone(w.manifest, parseStoredVars(install.config_json)),
+            ),
             // Only between jobs: while one runs, its own steps change the records.
             again:
               install.status === "installed"
@@ -366,7 +383,10 @@ export async function readInstallSettingsCore(
     unavailable: ctx.problem ?? statusRefusal(install.status),
     fields: ctx.fields.map((f) => ({ ...f, stored: stored[f.name] ?? null })),
     fixedVars: patchedVars(ctx.catalog),
-    placeholders,
+    placeholders:
+      ctx.email === null
+        ? placeholders
+        : { ...placeholders, emailDomain: ctx.email.zoneName, emailZoneId: ctx.email.zoneId },
     // Derived secrets are never entered; their source's row says they follow it.
     secrets: ctx.slots.filter((slot) => slot.derivedFrom === undefined),
     databases: ctx.databases,
@@ -470,8 +490,12 @@ export async function startReconfigureCore(
   }
 
   const changedVars = changedVarNames(before, vars);
-  // Only a new version needs a preview check; moving email deploys nothing.
-  const redeploy = changedVars.length > 0 || changesSecrets(secrets) || replacesConnections;
+  // Only a new version needs a preview check; moving email deploys one only
+  // when the settings use the zone.
+  const refillsEmail =
+    zoneId !== null && zoneId !== ctx.email?.zoneId && ctx.email?.fillsSettings === true;
+  const redeploy =
+    changedVars.length > 0 || changesSecrets(secrets) || replacesConnections || refillsEmail;
   if (redeploy && ctx.skipsPreview !== null && request.confirmNoPreview !== true) {
     throw new VersionActionError(
       `${ctx.skipsPreview}. Confirm saving without that check to change the settings.`,

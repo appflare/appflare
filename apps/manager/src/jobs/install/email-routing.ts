@@ -338,14 +338,26 @@ export interface EmailRouteRecord {
  * `onlyDelivering` reads each rule first (one more request) and leaves one
  * that no longer delivers to the Worker, as the catch-all is left: setting
  * the app's email up again only removes what is still the app's.
+ * `otherWorkers` are the app's other Workers (an app of several): a route
+ * that delivers to one of them is the app's too, since a version may have had
+ * another Worker receive its mail.
  */
 export async function removeEmailRoutesPhase(
   steps: JobSteps,
   routes: readonly EmailRouteRecord[],
   workerName: string,
-  options: { retry?: string; keepInUseRouting?: boolean; onlyDelivering?: boolean } = {},
+  options: {
+    retry?: string;
+    keepInUseRouting?: boolean;
+    onlyDelivering?: boolean;
+    otherWorkers?: readonly string[];
+  } = {},
 ): Promise<void> {
   const retry = options.retry ?? "retry the uninstall";
+  /** Every Worker of the app a route may deliver to, the receiving one first. */
+  const workers = [...new Set([workerName, ...(options.otherWorkers ?? [])])];
+  const workerLabel =
+    workers.length === 1 ? `"${workerName}"` : `the app's Workers (${workers.join(", ")})`;
   const now = () => new Date(steps.now());
   const parsed = routes.map((r) => ({ ...r, target: parseEmailRouteCfId(r.cfId) }));
   const order: Record<EmailRouteTarget["kind"], number> = { rule: 0, catch_all: 1, routing: 2 };
@@ -377,7 +389,9 @@ export async function removeEmailRoutesPhase(
         try {
           const removal = await removeEmailRule(cf(), {
             ...target,
-            ...(options.onlyDelivering === true ? { workerName, address: route.name } : {}),
+            ...(options.onlyDelivering === true
+              ? { workerName: workers, address: route.name }
+              : {}),
           });
           if (removal.outcome === "not-ours") {
             log.warn(
@@ -401,13 +415,13 @@ export async function removeEmailRoutesPhase(
         try {
           const outcome = await resetEmailCatchAll(cf(), {
             zoneId: target.zoneId,
-            workerName,
+            workerName: workers,
             previous: target.previous,
           });
           log.info(
             outcome === "restored"
               ? `Put the catch-all (${route.name}) back as it was before the install: ${describeCatchAll(target.previous ?? DEFAULT_CATCH_ALL)}.`
-              : `The catch-all (${route.name}) no longer delivers to "${workerName}", so it was left alone.`,
+              : `The catch-all (${route.name}) no longer delivers to ${workerLabel}, so it was left alone.`,
           );
         } catch (error) {
           denied(error, `reset the catch-all ${route.name}`, EMAIL_ROUTING_PERMISSION.rules);

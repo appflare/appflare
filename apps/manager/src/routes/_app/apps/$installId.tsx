@@ -387,6 +387,11 @@ function DomainsTab({
                   </li>
                 ))}
               </ul>
+              {install.emailReceiver !== null && (
+                <Text variant="secondary" size="sm">
+                  Cloudflare delivers this mail to the app's Worker {install.emailReceiver}.
+                </Text>
+              )}
               <Text variant="secondary" size="sm">
                 To receive email for another domain, change{" "}
                 <Link href={appLink(install.id, "email-zone")}>Email in the app's settings</Link>.

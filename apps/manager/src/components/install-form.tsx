@@ -306,6 +306,7 @@ export function InstallForm({
   const chips: PlaceholderChips = {
     options: placeholderOptions({
       wildcard: needsWildcardHostname(catalog.install),
+      email: catalog.install.emailRouting !== undefined,
       workers: Object.keys(entryWorkers ?? {}),
     }),
     known: {

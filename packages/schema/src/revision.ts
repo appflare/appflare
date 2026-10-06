@@ -1,7 +1,7 @@
 import { ACCESS_REQUIREMENT } from "./access";
 import { type ArtifactManifest, catalogVarProblems } from "./artifact";
 import { type CatalogManifest, secretKey } from "./catalog";
-import { SECRET_KEYS_REQUIREMENT } from "./manager-features";
+import { EMAIL_PLACEHOLDERS_REQUIREMENT, SECRET_KEYS_REQUIREMENT } from "./manager-features";
 
 /**
  * Catalog manifest revisions: an edit of an entry's form or copy for a build
@@ -35,8 +35,8 @@ import { SECRET_KEYS_REQUIREMENT } from "./manager-features";
  * stays public. That is why the revised file is signed like the release, and
  * a manager accepts it only when the signature verifies with the release's
  * key id, everything outside {@link REVISABLE_CATALOG_FIELDS} equals the
- * signed copy (`requires` may only gain `"access"`, and `"secret-keys"` for
- * keys on the secrets it adds), and its revision is
+ * signed copy (`requires` may only gain `"access"`, `"secret-keys"` for
+ * keys on the secrets it adds, and `"email-placeholders"`), and its revision is
  * above the signed one ({@link revisedArtifactProblem}). An index can never
  * change what gets built or provisioned for the Worker, nor what the account
  * must offer it; the one thing it may ask more of is Cloudflare Access
@@ -55,7 +55,7 @@ import { SECRET_KEYS_REQUIREMENT } from "./manager-features";
  * `repo`, `source`, `install`, `plan`, `requires`, `tokenPermissions`,
  * `resources`) describes the build or what an install provisions, and
  * changes only with a new build, with one exception: a revision may add
- * `"access"` or `"secret-keys"` to `requires`
+ * `"access"`, `"secret-keys"` or `"email-placeholders"` to `requires`
  * ({@link requirementsRevisionProblem}).
  */
 export const REVISABLE_CATALOG_FIELDS: readonly string[] = [
@@ -79,14 +79,16 @@ export const REVISABLE_CATALOG_FIELDS: readonly string[] = [
 ];
 
 /**
- * What a revision may do to `requires`, or why it may not: add `"access"` or
- * `"secret-keys"` and nothing else. Adding one only narrows which managers
- * list the entry (one that does not know the requirement leaves the entry
- * out). A manager that knows `"access"` asks for nothing more unless the app
+ * What a revision may do to `requires`, or why it may not: add `"access"`,
+ * `"secret-keys"` or `"email-placeholders"` and nothing else. Adding one only
+ * narrows which managers list the entry (one that does not know the
+ * requirement leaves the entry out). A manager that knows `"access"` asks for nothing more unless the app
  * is protected, which the revision's `access` block and the admin decide;
  * `"secret-keys"` comes with keys on secrets the revision adds
- * ({@link secretKeysRevisionProblem}), which ask nothing of the account. Any other value
- * describes what the account must offer the build, and removing one (`"access"`
+ * ({@link secretKeysRevisionProblem}), which ask nothing of the account;
+ * `"email-placeholders"` comes with a var default or a note the revision
+ * fills in with the app's email zone. Any other value describes what the
+ * account must offer the build, and removing one (`"access"`
  * included: the signed Worker may read the Access placeholders) could let a
  * manager install the build where it does not work.
  */
@@ -100,7 +102,11 @@ export function requirementsRevisionProblem(
   if (removed.length > 0) {
     return `it removes ${removed.map((r) => `"${r}"`).join(", ")} from requires, which only a new build can change`;
   }
-  const revisable: readonly string[] = [ACCESS_REQUIREMENT, SECRET_KEYS_REQUIREMENT];
+  const revisable: readonly string[] = [
+    ACCESS_REQUIREMENT,
+    SECRET_KEYS_REQUIREMENT,
+    EMAIL_PLACEHOLDERS_REQUIREMENT,
+  ];
   const added = [...after].filter((r) => !before.has(r) && !revisable.includes(r));
   if (added.length > 0) {
     return `it adds ${added.map((r) => `"${r}"`).join(", ")} to requires; a revision may add only ${revisable.map((r) => `"${r}"`).join(" or ")}, and anything else needs a new build`;

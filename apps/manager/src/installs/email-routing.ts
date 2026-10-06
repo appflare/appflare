@@ -69,19 +69,25 @@ export function emailRuleName(workerName: string): string {
   return `${workerName} (installed by Appflare)`;
 }
 
-/** Whether a rule or catch-all delivers to exactly this Worker. */
+/**
+ * Whether a rule or catch-all delivers to exactly this Worker, or to one of
+ * these (an app of several Workers, whose mail may have gone to another of
+ * them before).
+ */
 export function deliversTo(
   actions: ReadonlyArray<{ type: string; value?: string[] | undefined }>,
-  workerName: string,
+  workers: string | readonly string[],
 ): boolean {
   const [first] = actions;
-  return first?.type === "worker" && first.value?.[0] === workerName;
+  const target = first?.type === "worker" ? first.value?.[0] : undefined;
+  if (target === undefined) return false;
+  return typeof workers === "string" ? target === workers : workers.includes(target);
 }
 
 /**
  * Whether a routing rule is one Appflare could have set up for `address`
  * (lowercase): on, matching that one address and nothing else, and
- * delivering to exactly this Worker. Only such a rule is taken as the
+ * delivering to exactly this Worker (or one of these). Only such a rule is taken as the
  * install's own; a rule that is off, or also matches on something else (a
  * sender), is someone else's even when it names the Worker.
  */
@@ -96,7 +102,7 @@ export function routesAddressTo(
     actions: ReadonlyArray<{ type: string; value?: string[] | undefined }>;
   },
   address: string,
-  workerName: string,
+  workers: string | readonly string[],
 ): boolean {
   const [matcher, ...others] = rule.matchers;
   return (
@@ -105,7 +111,7 @@ export function routesAddressTo(
     matcher?.type === "literal" &&
     matcher.field === "to" &&
     matcher.value?.toLowerCase() === address &&
-    deliversTo(rule.actions, workerName)
+    deliversTo(rule.actions, workers)
   );
 }
 

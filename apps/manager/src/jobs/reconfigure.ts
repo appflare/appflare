@@ -6,7 +6,10 @@ import {
   accessOfferOf,
   artifactManifestSchema,
   connectionStringProblems,
+  type EmailPlaceholderValues,
+  emailScriptName,
   hyperdriveDeclarations,
+  installedScriptNames,
   secretKey,
   withRevisedCatalog,
   workerUploadProblem,
@@ -24,7 +27,7 @@ import { createDb, type Database } from "../db/client";
 import { installs, jobs, resources } from "../db/schema";
 import { readSettings, SETTING } from "../db/settings";
 import { accessRequiredOffRefusal } from "../installs/access-offer";
-import { VARS_REFRESH_REASONS, varsNeedRefresh } from "../installs/install-vars";
+import { VARS_REFRESH_REASONS, varsNeedRefresh, varsUseEmailZone } from "../installs/install-vars";
 import { EMAIL_ROUTE_KIND, HYPERDRIVE_KIND } from "../installs/resource-kinds";
 import { wildcardHostnameOf } from "../installs/wildcard-domain-input";
 import { appBaseUrl, domainHostnames, workersDevSubdomain } from "../installs/workers-dev";
@@ -67,7 +70,11 @@ import { newSinkTokenPhase } from "./install/pipelines";
 import { assignRateLimitsPhase } from "./install/rate-limits";
 import { setUpEmailAgainPhase } from "./reconfigure/email-again";
 import {
+  type CachingTarget,
   type ConnectionReplacement,
+  cachingOffPhase,
+  cachingOnPhase,
+  cachingTargets,
   createReplacementPhase,
   deleteConfigPhase,
   deleteSupersededPhase,
@@ -78,6 +85,7 @@ import {
   changedVarNames,
   changesSecrets,
   connectionChangesSchema,
+  type EmailZone,
   emailRouteZoneId,
   emailZones,
   parseStoredVars,
@@ -97,6 +105,7 @@ import { createJobSteps, errorMessage, JobError } from "./steps";
 import { settleUnit } from "./units/result";
 import type { ArtifactHost } from "./units/units";
 import { CANARY_MAX_ATTEMPTS } from "./update";
+import { emailZoneOnRecord, readEmailRouteRows } from "./update/email-routing";
 import {
   canarySkipReason,
   diffBindings,
@@ -151,7 +160,9 @@ import { takeSnapshotPhase } from "./update/snapshot";
  * email steps of ./reconfigure/email-again.ts run, and nothing is deployed.
  *
  * Steps 2 to 6 run only when settings, secrets or connections change: Email Routing rules
- * name the Worker, not a version, so moving email alone deploys nothing. A
+ * name the Worker, not a version, so moving email alone deploys nothing,
+ * unless the app's settings use the zone (`{{emailDomain}}`,
+ * `{{emailZoneId}}`): they are then deployed again with the new one. A
  * move whose removal of the old routes failed is finished by asking for the
  * same zone again: the new zone is set up again (idempotent) and whatever
  * other zones still have records is removed. When the job fails after it
@@ -207,8 +218,9 @@ export const reconfigureJobParams = z.object({
    * Deploy the settings again although none changed: the values they are
    * filled in with that changed (`wildcardHostname`: the wildcard domain was
    * assigned or removed; `appUrl`: the address the app is served at moved
-   * between workers.dev and a domain). `vars` are the stored settings,
-   * unchanged.
+   * between workers.dev and a domain; `emailZone`: a rollback returned to
+   * a version filled in with another zone than the app receives email for).
+   * `vars` are the stored settings, unchanged.
    */
   refreshVars: z.array(z.enum(VARS_REFRESH_REASONS)).min(1).optional(),
   /**
@@ -351,6 +363,8 @@ export async function runReconfigure(ctx: JobContext): Promise<void> {
   const replacing = Object.keys(connections).sort();
   /** Configurations made from the new connection strings, as they are created. */
   const replacements: ConnectionReplacement[] = [];
+  /** Kept configurations whose query caching the installed version sets. */
+  let caching: CachingTarget[] = [];
   /** Set once the new version exists / serves traffic, for the failure report. */
   let uploadedVersionId: string | null = null;
   let servingVersionId: string | null = null;
@@ -487,6 +501,13 @@ export async function runReconfigure(ctx: JobContext): Promise<void> {
               cfId: r.cf_id,
             }),
           ),
+        // The zone the app receives email for, live or not, for
+        // `{{emailDomain}}` and `{{emailZoneId}}` (absent in a step output
+        // recorded before it was read).
+        emailZone: emailZoneOnRecord(await readEmailRouteRows(orm, params.installId)) as
+          | EmailZone
+          | null
+          | undefined,
         emailRoutes: rows
           .filter((r) => r.kind === EMAIL_ROUTE_KIND)
           .map((r): EmailRouteRecord & { createdAt: number } => ({
@@ -546,6 +567,10 @@ export async function runReconfigure(ctx: JobContext): Promise<void> {
     const secretRows = started.resources.filter((r) => r.kind === "secret");
     const slots = secretSlots(manifest.catalog.secrets, secretRows);
     const emailConfig = manifest.catalog.install.emailRouting;
+    // The Worker the app's mail goes to (an app of several Workers may name
+    // one other than the primary), and every Worker of the app.
+    const emailWorker = emailScriptName(manifest.catalog, workerName);
+    const appWorkers = installedScriptNames(manifest.catalog, workerName);
     const zones = emailZones(started.emailRoutes);
     const currentZone = zones.current;
     /** The zone the app should receive email for, when the change names one. */
@@ -572,7 +597,13 @@ export async function runReconfigure(ctx: JobContext): Promise<void> {
      */
     const refreshed = params.refreshVars ?? [];
     const refresh = refreshed.length > 0;
-    const redeploy = changedVars.length > 0 || secretsChange || replacing.length > 0 || refresh;
+    /** Email moves, and settings use its zone: they are filled in again with the new one. */
+    const refillsEmail =
+      movesEmail &&
+      emailConfig !== undefined &&
+      workers.some((w) => varsUseEmailZone(w.manifest, params.vars));
+    const redeploy =
+      changedVars.length > 0 || secretsChange || replacing.length > 0 || refresh || refillsEmail;
     // Each Worker gets the secret changes of the secrets that go to it, by
     // the names it reads them by; a secret the catalog no longer declares is
     // the primary Worker's.
@@ -604,6 +635,7 @@ export async function runReconfigure(ctx: JobContext): Promise<void> {
       (w) =>
         !w.primary &&
         (varsNeedRefresh(w.manifest, params.vars, refreshed) ||
+          (refillsEmail && varsUseEmailZone(w.manifest, params.vars)) ||
           changedVars.some((n) => w.manifest.catalog.vars.some((v) => v.name === n)) ||
           changedSecrets.some((n) => w.manifest.catalog.secrets.some((s) => secretKey(s) === n))),
     );
@@ -633,8 +665,9 @@ export async function runReconfigure(ctx: JobContext): Promise<void> {
       emailAgainStarted = true;
       const changed = await setUpEmailAgainPhase(steps, {
         installId: params.installId,
-        workerName,
+        workerName: emailWorker,
         target: emailConfig ?? null,
+        otherWorkers: appWorkers,
       });
       await run("finish", async ({ log, orm }) => {
         const at = new Date(now());
@@ -740,6 +773,11 @@ export async function runReconfigure(ctx: JobContext): Promise<void> {
           `Settings that use the app's address ({{appUrl}}) are filled in again with ${started.workersDev ? "its workers.dev URL, since workers.dev serves it now" : "the domain that serves it now"}.`,
         );
       }
+      if (refreshed.includes("emailZone") && !movesEmail) {
+        log.info(
+          `Settings that use the app's email domain ({{emailDomain}}, {{emailZoneId}}) are filled in again with ${started.emailZone?.zoneName ?? "nothing, since the app has no email zone on record"}.`,
+        );
+      }
       const set = Object.keys(params.secrets.set).sort();
       if (set.length > 0) log.info(`Secrets with a new value: ${set.join(", ")}.`);
       if (params.secrets.unset.length > 0) {
@@ -754,6 +792,11 @@ export async function runReconfigure(ctx: JobContext): Promise<void> {
         log.info(
           `Email moves from ${currentZone?.zoneName ?? "no zone"} to the zone ${newZoneId}; the new routes are set up before the old ones are removed.`,
         );
+        if (refillsEmail) {
+          log.info(
+            "Settings that use the app's email domain ({{emailDomain}}, {{emailZoneId}}) are filled in again with the new one.",
+          );
+        }
       } else if (oldRoutes.length > 0) {
         log.info(
           `Finishing a move of email to ${currentZone?.zoneName ?? targetZoneId}: removing the routes left on ${[...new Set(zones.leftover.map((z) => z.zoneName))].join(", ")}.`,
@@ -780,8 +823,15 @@ export async function runReconfigure(ctx: JobContext): Promise<void> {
         : await checkEmailRoutingPhase(steps, {
             zoneId: newZoneId,
             config: emailConfig,
-            workerName,
+            workerName: emailWorker,
           });
+
+    // What `{{emailDomain}}` and `{{emailZoneId}}` become: the zone the email
+    // moves to, else the one on record.
+    const emailNow: EmailPlaceholderValues | null =
+      emailInspection === null
+        ? (started.emailZone ?? null)
+        : { zoneName: emailInspection.zoneName ?? "", zoneId: emailInspection.zoneId };
 
     const subdomain = await lookupSubdomainPhase(steps);
     // Where the app is served, for `{{appUrl}}` and the health check.
@@ -836,6 +886,7 @@ export async function runReconfigure(ctx: JobContext): Promise<void> {
             workerName,
             binding,
             protocol: decl.protocol,
+            caching: decl.caching,
             current,
             connection: connections[binding],
           }),
@@ -847,6 +898,11 @@ export async function runReconfigure(ctx: JobContext): Promise<void> {
           ? { ...res, name: replaced.next.name, cfId: replaced.next.cfId }
           : res;
       });
+      // The other databases' query caching as the installed version sets it
+      // (an older Appflare, or the dashboard, may have left it otherwise):
+      // off now, on once the new version serves (./reconfigure/hyperdrive.ts).
+      caching = cachingTargets(databases, bound, new Set(replacements.map((r) => r.binding)));
+      await cachingOffPhase(steps, caching);
 
       const rateLimitIds = await assignRateLimitsPhase(
         steps,
@@ -871,6 +927,7 @@ export async function runReconfigure(ctx: JobContext): Promise<void> {
         appUrl: appBase,
         wildcardHostname: started.wildcardHostname ?? null,
         access: accessNow,
+        email: emailNow,
         ...(placeholders === undefined ? {} : { entryWorkers: placeholders }),
       });
 
@@ -888,6 +945,7 @@ export async function runReconfigure(ctx: JobContext): Promise<void> {
         appUrl: appBase,
         wildcardHostname: started.wildcardHostname ?? null,
         access: accessNow,
+        email: emailNow,
         placeholders,
         entryNames,
       };
@@ -1062,6 +1120,8 @@ export async function runReconfigure(ctx: JobContext): Promise<void> {
       // This change's snapshot is the latest now: configurations an earlier
       // change superseded are bound only by older versions.
       await deleteSupersededPhase(steps, supersededAtStart);
+      // Query caching on only now that the new version serves. Never throws.
+      await cachingOnPhase(steps, caching);
 
       // A new token for a Pipelines sink: the version that has it serves now.
       for (const res of diff.plan.resources) {
@@ -1100,11 +1160,11 @@ export async function runReconfigure(ctx: JobContext): Promise<void> {
         if (ids.length > 0) await orm.delete(resources).where(inArray(resources.id, ids));
         return {};
       });
-      await provisionEmailRoutingPhase(steps, params.installId, emailInspection, workerName);
+      await provisionEmailRoutingPhase(steps, params.installId, emailInspection, emailWorker);
     }
     if (oldRoutes.length > 0) {
       emailMoveStarted = true;
-      await removeEmailRoutesPhase(steps, oldRoutes, workerName);
+      await removeEmailRoutesPhase(steps, oldRoutes, emailWorker, { otherWorkers: appWorkers });
     }
 
     // Recorded rather than fatal, as an update's: the new version serves. The

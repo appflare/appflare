@@ -242,6 +242,20 @@ describe("the catalog manifest's configPatch", () => {
     expect(elsewhere.success).toBe(true);
   });
 
+  it('needs "email-placeholders" for a placeholder in an object key of patched props', () => {
+    const keyed = {
+      services: [{ binding: "CTX", service: "router", props: { "{{appUrl:router}}": true } }],
+    };
+    expect(
+      twoWorkers(keyed, { requires: ["service-props"] }).error?.issues.map((i) => i.message),
+    ).toEqual([
+      'install.workers[1].configPatch.services[0].props has a placeholder in an object key, so requires must list "email-placeholders": a manager that fills placeholders in values only would leave the key as written',
+    ]);
+    expect(twoWorkers(keyed, { requires: ["service-props", "email-placeholders"] }).success).toBe(
+      true,
+    );
+  });
+
   it('needs "service-props" for props on a patched service binding', () => {
     const props = {
       services: [{ binding: "CTX", service: "router", props: { sharingDomain: "{{appUrl}}" } }],

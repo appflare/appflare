@@ -6,6 +6,7 @@ import type {
 import {
   type AccessPlaceholderValues,
   type ArtifactManifest,
+  type EmailPlaceholderValues,
   type EntryWorkerPlaceholders,
   entryWorkerRefName,
   hasDurableObjectExports,
@@ -48,7 +49,8 @@ export interface CreatedResource {
  * while workers.dev is off, `appBaseUrl`; the workers.dev URL when absent),
  * `{{accountId}}` from the account the job works in, and
  * `{{wildcardHostname}}` from the install's wildcard domain (empty without
- * one), and `{{accessTeamDomain}}`, `{{accessTeamName}}`, `{{accessAud}}` and
+ * one), `{{emailDomain}}` and `{{emailZoneId}}` from the zone it receives
+ * email for (empty without), and `{{accessTeamDomain}}`, `{{accessTeamName}}`, `{{accessAud}}` and
  * `{{accessCertsUrl}}` from its Cloudflare Access protection (empty without).
  * The job logs the warnings: a stored value the app can no longer read
  * falls back to the default instead of failing the job.
@@ -82,6 +84,11 @@ export function installVars(
      */
     access?: AccessPlaceholderValues | null;
     /**
+     * The zone the app receives email for, for `{{emailDomain}}` and
+     * `{{emailZoneId}}`; null or absent when none is on record (filled in empty).
+     */
+    email?: EmailPlaceholderValues | null;
+    /**
      * For an app of several Workers: what the per-Worker placeholders
      * (`{{appUrl:<name>}}`, `{{workerName:<name>}}`) are filled in with
      * (`entryPlaceholders`).
@@ -97,6 +104,7 @@ export function installVars(
     accountId: worker.accountId,
     wildcardHostname: worker.wildcardHostname ?? null,
     access: worker.access ?? null,
+    email: worker.email ?? null,
   };
   const resolved = resolveVars(manifest, userVars, placeholders);
   const entry = worker.entryWorkers;

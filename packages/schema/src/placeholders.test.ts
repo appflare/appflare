@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   ACCESS_PLACEHOLDERS,
   accessTeamNameOf,
+  EMAIL_PLACEHOLDERS,
   ENTRY_WORKER_PLACEHOLDER_SOURCE,
   hasEntryWorkerPlaceholder,
   hasPlaceholder,
@@ -18,6 +19,7 @@ import {
   renderPlaceholders,
   STAGE_PLACEHOLDER,
   urlHostname,
+  usesEmailPlaceholders,
 } from "./placeholders";
 
 const values = {
@@ -35,6 +37,8 @@ describe("the placeholder list", () => {
       "workerHostname",
       "workerName",
       "accountId",
+      "emailDomain",
+      "emailZoneId",
       "wildcardHostname",
       "accessTeamDomain",
       "accessTeamName",
@@ -65,6 +69,11 @@ describe("the placeholder list", () => {
     for (const name of ACCESS_PLACEHOLDERS) {
       expect(PLACEHOLDER_FIELDS.varDefault).toContain(name);
       expect(PLACEHOLDER_FIELDS.postInstall).not.toContain(name);
+    }
+    // The email zone goes to a var and a note alike, as the account id does.
+    for (const name of EMAIL_PLACEHOLDERS) {
+      expect(PLACEHOLDER_FIELDS.varDefault).toContain(name);
+      expect(PLACEHOLDER_FIELDS.postInstall).toContain(name);
     }
     expect(PLACEHOLDER_FIELDS.selfDeployingWorkerName).toEqual(["stage"]);
     expect(INSTALL_PLACEHOLDERS).not.toContain("stage");
@@ -160,6 +169,19 @@ describe("renderPlaceholders", () => {
     );
   });
 
+  it("fills in the email zone, empty without one on record, kept while unknown", () => {
+    const email = { zoneName: "example.com", zoneId: "023e105f4ecef8ad9ca31a8372d0c353" };
+    expect(
+      renderPlaceholders("accounts@{{emailDomain}} {{ emailZoneId }}", { ...values, email }),
+    ).toBe("accounts@example.com 023e105f4ecef8ad9ca31a8372d0c353");
+    expect(renderPlaceholders("{{emailDomain}}|{{emailZoneId}}", { ...values, email: null })).toBe(
+      "|",
+    );
+    expect(renderPlaceholders("{{emailDomain}}", values)).toBe("{{emailDomain}}");
+    expect(usesEmailPlaceholders("a@{{ emailDomain }}")).toBe(true);
+    expect(usesEmailPlaceholders("a@{{emaildomain}} {{accountId}}")).toBe(false);
+  });
+
   it("leaves {{stage}} and per-Worker forms alone", () => {
     expect(renderPlaceholders("{{stage}} {{appUrl:api}}", values)).toBe("{{stage}} {{appUrl:api}}");
   });
@@ -171,16 +193,27 @@ describe("renderPlaceholders", () => {
 });
 
 describe("renderJsonPlaceholders", () => {
-  it("fills in strings inside JSON values, never keys", () => {
+  it("fills in strings inside JSON values, keys included", () => {
     expect(
       renderJsonPlaceholders(
         { "{{workerName}}": ["{{appUrl}}", 1, true, null, { u: "{{workerName}}" }] },
         values,
       ),
     ).toEqual({
-      "{{workerName}}": ["https://mail.example.com", 1, true, null, { u: "inbox" }],
+      inbox: ["https://mail.example.com", 1, true, null, { u: "inbox" }],
     });
     expect(renderJsonPlaceholders(3, values)).toBe(3);
+  });
+
+  it("fills in a JSON var keyed by the email zone, and the text form of it", () => {
+    const email = { zoneName: "example.com", zoneId: "z1" };
+    expect(
+      renderJsonPlaceholders({ "{{emailDomain}}": "{{emailZoneId}}" }, { ...values, email }),
+    ).toEqual({ "example.com": "z1" });
+    // A text var holding JSON, as an app that parses it itself reads it.
+    expect(renderPlaceholders('{"{{emailDomain}}":"{{emailZoneId}}"}', { ...values, email })).toBe(
+      '{"example.com":"z1"}',
+    );
   });
 
   it("keeps a __proto__ key as an own property", () => {
@@ -267,6 +300,24 @@ describe("placeholderProblems", () => {
     expect(placeholderProblems("{{accessAud:web}}", "varDefault", entry)[0]).toContain(
       "has no per-Worker form",
     );
+  });
+
+  it("takes the email placeholders only in an entry that receives email", () => {
+    for (const field of ["varDefault", "postInstall"] as const) {
+      expect(
+        placeholderProblems("accounts@{{emailDomain}} {{emailZoneId}}", field, {
+          emailRouting: true,
+        }),
+      ).toEqual([]);
+      const refused = placeholderProblems("accounts@{{emailDomain}} {{emailZoneId}}", field);
+      expect(refused).toHaveLength(2);
+      expect(refused[0]).toBe(
+        "{{emailDomain}} is filled in only for an app that receives email; this entry has no install.emailRouting",
+      );
+    }
+    expect(
+      placeholderProblems("{{emailDomain:web}}", "varDefault", { ...entry, emailRouting: true })[0],
+    ).toContain("has no per-Worker form");
   });
 
   it("refuses a known name in the wrong case, which would be left as written", () => {

@@ -487,6 +487,7 @@ describe("setting an app's email up again", () => {
         catchAll: false,
         remove: [],
       },
+      fillsSettings: false,
     });
     const params = await start();
     const r = await run(fixture, params, world({ rules: [SALES_RULE] }));

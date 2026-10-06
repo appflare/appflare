@@ -814,9 +814,13 @@ export async function pack(options: PackOptions): Promise<PackResult> {
         );
       }
     }
+    const placeholderEntry = {
+      workers: entry,
+      emailRouting: catalog.install.emailRouting !== undefined,
+    };
     const placeholders = [
-      ...varPlaceholderProblems(bindings, { workers: entry }),
-      ...servicePropsPlaceholderProblems(bindings, { workers: entry }),
+      ...varPlaceholderProblems(bindings, placeholderEntry),
+      ...servicePropsPlaceholderProblems(bindings, placeholderEntry),
     ];
     if (placeholders.length > 0) {
       throw new Error(

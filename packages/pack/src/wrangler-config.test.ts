@@ -533,6 +533,21 @@ describe("varPlaceholderProblems", () => {
     ]);
   });
 
+  it("takes the email zone only for an app that receives email, in values and JSON keys alike", () => {
+    const bindings = collectBindings({
+      vars: {
+        AUTH_FROM: "accounts@{{emailDomain}}",
+        EMAIL_DOMAINS: { "{{emailDomain}}": "{{emailZoneId}}" },
+      },
+    });
+    expect(varPlaceholderProblems(bindings, { emailRouting: true })).toEqual([]);
+    expect(varPlaceholderProblems(bindings, {})).toEqual([
+      "The wrangler config's var AUTH_FROM: {{emailDomain}} is filled in only for an app that receives email; this entry has no install.emailRouting.",
+      "The wrangler config's var EMAIL_DOMAINS: {{emailDomain}} is filled in only for an app that receives email; this entry has no install.emailRouting.",
+      "The wrangler config's var EMAIL_DOMAINS: {{emailZoneId}} is filled in only for an app that receives email; this entry has no install.emailRouting.",
+    ]);
+  });
+
   it("refuses a per-Worker placeholder naming a Worker without an address", () => {
     const bindings = collectBindings({ vars: { JOBS: "{{appUrl:jobs}}", WEB: "{{appUrl:web}}" } });
     const workers = [

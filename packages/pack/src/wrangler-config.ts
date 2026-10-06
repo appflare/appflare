@@ -4,6 +4,7 @@ import {
   entryWorkerRef,
   isUnsupportedWranglerSection,
   type JsonValue,
+  jsonTexts,
   PIPELINES_BINDING_TYPE,
   type PlaceholderWorkers,
   placeholderProblems,
@@ -563,18 +564,10 @@ export function withoutSecretVars(
   return { bindings: kept, dropped };
 }
 
-/** Every string inside a JSON value, keys excepted. */
-function jsonStrings(value: unknown): string[] {
-  if (typeof value === "string") return [value];
-  if (Array.isArray(value)) return value.flatMap(jsonStrings);
-  if (value !== null && typeof value === "object") return Object.values(value).flatMap(jsonStrings);
-  return [];
-}
-
 /**
  * What is wrong with the placeholders in the wrangler config's vars, one
  * sentence each; empty when nothing is. The manager fills them into a var's
- * value (a `plain_text` var's text, every string of a `json` var) as it
+ * value (a `plain_text` var's text, every string and key of a `json` var) as it
  * fills a catalog var's `default`, so they are held to the same list
  * (`placeholderProblems` for `varDefault`): a placeholder written in the
  * wrong case, or naming a Worker the entry does not have, would reach the
@@ -585,7 +578,7 @@ export function varPlaceholderProblems(
   entry: PlaceholderWorkers,
 ): string[] {
   return bindings.filter(isVarBinding).flatMap((b) => {
-    const texts = b.type === "json" ? jsonStrings(b.json) : jsonStrings(b.text);
+    const texts = b.type === "json" ? jsonTexts(b.json) : jsonTexts(b.text);
     return [
       ...new Set(texts.flatMap((text) => placeholderProblems(text, "varDefault", entry))),
     ].map((problem) => `The wrangler config's var ${b.name}: ${problem}.`);
@@ -605,7 +598,7 @@ export function servicePropsPlaceholderProblems(
     if (b.type !== "service" || b.props === undefined) return [];
     return [
       ...new Set(
-        jsonStrings(b.props).flatMap((text) => placeholderProblems(text, "varDefault", entry)),
+        jsonTexts(b.props).flatMap((text) => placeholderProblems(text, "varDefault", entry)),
       ),
     ].map((problem) => `The props of the service binding ${b.name}: ${problem}.`);
   });

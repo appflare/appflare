@@ -155,6 +155,23 @@ function sideServices() {
     const one = /^GET \/pipelines\/v1\/(streams|sinks)\/([^/]+)$/.exec(key);
     const hyperdrive = key === "GET /hyperdrive/configs" || key === "POST /hyperdrive/configs";
     const deleteConfig = /^DELETE \/hyperdrive\/configs\/([^/]+)$/.exec(key);
+    const oneConfig = /^(GET|PATCH) \/hyperdrive\/configs\/([^/]+)$/.exec(key);
+    if (oneConfig !== null) {
+      // Read, or changed by a patch of its query caching alone.
+      state.calls.push(key);
+      if (auth !== `Bearer ${TOKEN}`) return refuse(403, 10000, "auth");
+      const found = state.hyperdrive.find((c) => c.id === oneConfig[2]);
+      if (found === undefined) return refuse(404, 2000, "Not found");
+      if (oneConfig[1] === "PATCH") {
+        const patch = (await request.json()) as Record<string, unknown>;
+        found.body = { ...found.body, ...patch };
+      }
+      return ok({
+        id: found.id,
+        name: found.name,
+        caching: found.body.caching ?? { disabled: false },
+      });
+    }
     if (deleteConfig !== null) {
       state.calls.push(key);
       if (auth !== `Bearer ${TOKEN}`) return refuse(403, 10000, "auth");
@@ -1667,5 +1684,117 @@ describe("an update from a reviewed build", () => {
     const { params } = await startFromBuild({ secrets: { CATALOG_TOKEN: SINK_TOKEN } });
     expect(params?.secrets).toEqual({ CATALOG_TOKEN: SINK_TOKEN });
     expect(params?.hyperdrive).toBeUndefined();
+  });
+});
+
+describe("an update that sets a database's query caching", () => {
+  const caching = (value: boolean | undefined): ArtifactFixtureOptions => ({
+    ...WITH_DATABASE,
+    catalog: {
+      ...(value === undefined ? {} : { requires: ["hyperdrive-caching" as const] }),
+      resources: {
+        hyperdrive: {
+          HYPERDRIVE: {
+            protocol: "postgres",
+            label: "Main database",
+            ...(value === undefined ? {} : { caching: value }),
+          },
+        },
+      },
+    },
+  });
+  /** The configuration an install made, with caching on (Cloudflare's default). */
+  const KEPT: SeedResource = {
+    kind: "hyperdrive",
+    binding: "HYPERDRIVE",
+    name: "cut-hyperdrive",
+    cfId: "hd-1",
+  };
+
+  async function updateKeeping(
+    value: boolean | undefined,
+    disabled: boolean,
+    failing?: readonly string[],
+  ) {
+    const w = await world(caching(value), { resources: [...RESOURCES, KEPT] });
+    w.side.state.hyperdrive.push({
+      id: "hd-1",
+      name: "cut-hyperdrive",
+      body: disabled ? { caching: { disabled: true } } : {},
+    });
+    const { params } = await start(w);
+    if (params === null) throw new Error("the update did not start");
+    const r = await run(w, params, failing);
+    return { ...r, w };
+  }
+  const OFF = "turn off query caching of Hyperdrive configuration cut-hyperdrive";
+  const ON = "turn on query caching of Hyperdrive configuration cut-hyperdrive";
+
+  it("turns caching off on the configuration it keeps, before the version is uploaded", async () => {
+    const r = await updateKeeping(false, false);
+    expect(r.job?.status).toBe("succeeded");
+    expect(r.w.side.state.hyperdrive[0]?.body).toMatchObject({ caching: { disabled: true } });
+    expect(r.w.side.state.calls).toContain("PATCH /hyperdrive/configs/hd-1");
+    const names = r.step.names;
+    expect(names.indexOf(OFF)).toBeGreaterThan(-1);
+    expect(names.indexOf(OFF)).toBeLessThan(names.indexOf("upload Worker version"));
+    expect(names.indexOf(OFF)).toBeLessThan(names.indexOf("promote version"));
+  });
+
+  it("changes nothing when caching is as the version asks, or the version leaves it out", async () => {
+    const same = await updateKeeping(false, true);
+    expect(same.job?.status).toBe("succeeded");
+    expect(same.w.side.state.calls).toContain("GET /hyperdrive/configs/hd-1");
+    expect(same.w.side.state.calls).not.toContain("PATCH /hyperdrive/configs/hd-1");
+    await reset();
+    await createMigrator(migrations).ensure(env.DB);
+    const omitted = await updateKeeping(undefined, true);
+    expect(omitted.job?.status).toBe("succeeded");
+    // An entry that does not set it leaves the configuration as it is.
+    expect(
+      omitted.w.side.state.calls.filter((c) => c.includes("/hyperdrive/configs/hd-1")),
+    ).toEqual([]);
+    expect(omitted.w.side.state.hyperdrive[0]?.body).toEqual({ caching: { disabled: true } });
+  });
+
+  it("turns caching back on only once the version that asks for it serves", async () => {
+    const r = await updateKeeping(true, true);
+    expect(r.job?.status).toBe("succeeded");
+    expect(r.w.side.state.hyperdrive[0]?.body).toMatchObject({ caching: { disabled: false } });
+    // The version before may need it off: on only after the cutover.
+    const names = r.step.names;
+    expect(names.indexOf(ON)).toBeGreaterThan(names.indexOf("promote version"));
+    expect(names).not.toContain(OFF);
+  });
+
+  it("leaves caching off when the update fails before the new version serves", async () => {
+    const r = await updateKeeping(true, true, ["promote version"]);
+    expect(r.job?.status).toBe("failed");
+    expect(r.w.side.state.calls).not.toContain("PATCH /hyperdrive/configs/hd-1");
+    expect(r.w.side.state.hyperdrive[0]?.body).toEqual({ caching: { disabled: true } });
+  });
+
+  it("finishes with a warning when caching cannot be turned on after the cutover", async () => {
+    const r = await updateKeeping(true, true, [ON]);
+    expect(r.error).toBeNull();
+    expect(r.job?.status).toBe("succeeded");
+    expect(r.w.side.state.hyperdrive[0]?.body).toEqual({ caching: { disabled: true } });
+    expect(r.logs).toContainEqual({
+      level: "warn",
+      message: expect.stringContaining(
+        'Appflare could not turn query caching on for the Hyperdrive configuration "cut-hyperdrive"',
+      ),
+    });
+  });
+
+  it("makes a new configuration with caching off", async () => {
+    const w = await world(caching(false));
+    const { params } = await start(w, { hyperdrive: { HYPERDRIVE: CONNECTION } });
+    if (params === null) throw new Error("the update did not start");
+    const r = await run(w, params);
+    expect(r.job?.status).toBe("succeeded");
+    expect(w.side.state.hyperdrive[0]?.body).toMatchObject({ caching: { disabled: true } });
+    // Made with it: not read again.
+    expect(w.side.state.calls).not.toContain("GET /hyperdrive/configs/hd-1");
   });
 });
