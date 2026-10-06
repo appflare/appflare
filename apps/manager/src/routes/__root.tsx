@@ -1,6 +1,7 @@
 import { LinkProvider, Toasty, TooltipProvider } from "@cloudflare/kumo";
 import { createRootRoute, HeadContent, Outlet, Scripts } from "@tanstack/react-router";
 import type { ReactNode } from "react";
+import { AddressWatch } from "../components/address-watch";
 import { COLOR_MODE_SCRIPT } from "../components/color-mode";
 import { FAVICON_LINKS, FAVICON_META } from "../components/favicons";
 import { RouterAnchor } from "../components/router-anchor";
@@ -54,6 +55,8 @@ function RootComponent() {
         {/* One provider, so moving from one tooltip to the next skips the wait. */}
         <TooltipProvider>
           <Outlet />
+          {/* At workers.dev while Appflare waits to move: follows it to its domain. */}
+          <AddressWatch />
         </TooltipProvider>
       </Toasty>
     </LinkProvider>

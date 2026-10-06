@@ -288,6 +288,23 @@ describe("handleOAuthReturn", () => {
     expect(view.kind).toBe("oauth");
   });
 
+  it("exchanges with the callback the sign-in started with, even if the vars changed since", async () => {
+    // The docs preview's origin, assembled: only the files that describe the
+    // preview may name it (the docs site's link checks).
+    const preview = `https://${["appflare-docs", "appflare-dev", "workers", "dev"].join(".")}`;
+    const { url, state } = await start({ config: { APPFLARE_INSTALLER_ORIGIN: preview } });
+    expect(url.searchParams.get("redirect_uri")).toBe(`${preview}/deploy/callback`);
+    const w = world();
+    // The return runs without the installer's origin (a redeploy changed it).
+    const response = await handleOAuthReturn(
+      returnRequest({ code: CODE, state }),
+      { DB: env.DB },
+      returnDeps(w),
+    );
+    expect(outcomeOf(response)).toBe(at("connected"));
+    expect(w.exchanges[0]?.redirectUri).toBe(`${preview}/deploy/callback`);
+  });
+
   it("works once: the same state again is expired, and changes nothing", async () => {
     const { state } = await start();
     const w = world();

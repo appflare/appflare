@@ -56,6 +56,42 @@ export function movedHere(
   return Number.isFinite(at) && now.getTime() - at < MOVED_HERE_DAYS * 86_400_000;
 }
 
+/**
+ * Remembered in this browser, at this address, once someone signed in
+ * here: the line that Appflare moved here is for people who have not.
+ * Browser storage is per address, so the new address starts without it.
+ */
+export const SIGNED_IN_HERE_KEY = "appflare:signed-in-here";
+
+type Storage = Pick<globalThis.Storage, "getItem" | "setItem">;
+
+function browserStorage(): Storage | null {
+  try {
+    return typeof window === "undefined" ? null : window.localStorage;
+  } catch {
+    // Storage turned off: every visit counts as the first.
+    return null;
+  }
+}
+
+/** Whether someone signed in at this address in this browser before. */
+export function signedInHereBefore(storage: Storage | null = browserStorage()): boolean {
+  try {
+    return storage?.getItem(SIGNED_IN_HERE_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+
+/** Records a sign-in at this address in this browser. */
+export function rememberSignedInHere(storage: Storage | null = browserStorage()): void {
+  try {
+    storage?.setItem(SIGNED_IN_HERE_KEY, "1");
+  } catch {
+    // Not remembered: the line may show once more. Nothing else depends on it.
+  }
+}
+
 /** The passkey offered right after signing in at Appflare's new address. */
 export const PASSKEY_OFFER = {
   title: (host: string) => `Add a passkey for ${host}?`,

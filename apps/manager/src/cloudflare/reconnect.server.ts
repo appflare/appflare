@@ -33,7 +33,7 @@ import { withConnectionLock } from "./connection-lock.server";
 import { GrantStoreError, type GrantStoreReason, storeGrant } from "./grant.server";
 import { openValue, sealValue } from "./grant-seal";
 import { readGrant } from "./grant-store.server";
-import { oauthClientConfig } from "./oauth-client";
+import { type OAuthClientEnv, oauthClientConfig } from "./oauth-client";
 import { type ReconnectOutcome, reconnectOutcomeHref } from "./reconnect-outcome";
 
 /**
@@ -171,7 +171,7 @@ export interface StartReconnectDeps {
   /** This manager's origin as the browser uses it, where the sign-in comes back. */
   origin: string;
   /** The Worker's optional development client and callback (`oauthClientConfig`). */
-  config: { CF_OAUTH_CLIENT_ID?: string; CF_OAUTH_CALLBACK_URL?: string };
+  config: OAuthClientEnv;
   now?: () => number;
 }
 

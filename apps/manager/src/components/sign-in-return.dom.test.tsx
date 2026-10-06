@@ -46,8 +46,12 @@ vi.mock("../server/setup.functions", () => ({
 }));
 vi.mock("../server/version.functions", () => ({ loadAppflareVersion: async () => "1.0.0" }));
 /** The signed-in user's passkeys, as the sign-in page asks after a move. */
-const passkeys = vi.hoisted(() => ({ rows: [] as Array<{ id: string; worksAt: string | null }> }));
-vi.mock("../server/passkeys.functions", () => ({ listPasskeys: async () => passkeys.rows }));
+/** Whether the server says the passkey offer is due for this user, and its dismissals. */
+const offer = vi.hoisted(() => ({ due: true, dismiss: vi.fn(async () => {}) }));
+vi.mock("../server/passkeys.functions", () => ({
+  getPasskeyOffer: async () => offer.due,
+  dismissPasskeyOffer: offer.dismiss,
+}));
 vi.mock("../server/recovery.functions", () => ({
   getPasswordRecoveryOptions: async () => ({ emailReset: true }),
 }));
@@ -81,7 +85,9 @@ beforeEach(() => {
   auth.$fetch.mockClear();
   auth.addPasskey.mockClear();
   setup.needsSetup = false;
-  passkeys.rows = [];
+  offer.due = true;
+  offer.dismiss.mockClear();
+  localStorage.clear();
   page.context = { version: "1.0.0", emailReset: true };
   (globalThis as { PublicKeyCredential?: unknown }).PublicKeyCredential = () => {};
 });
@@ -172,9 +178,8 @@ describe("the sign-in page with a page to return to", () => {
 });
 
 describe("the sign-in page right after Appflare moved here", () => {
-  it("says why, then offers a passkey for this address before going on", async () => {
+  it("says why, then offers a passkey; adding one ends the offer for good", async () => {
     page.context = { version: "1.0.0", movedHere: true };
-    passkeys.rows = [{ id: "p1", worksAt: "appflare.ada.workers.dev" }];
     open(Login, { returnTo: "/catalog" });
     expect(container.textContent).toContain(MOVED_HERE_NOTE);
     await submit(document.querySelector("form"));
@@ -182,24 +187,39 @@ describe("the sign-in page right after Appflare moved here", () => {
     expect(container.textContent).toContain(PASSKEY_OFFER.description);
     await act(async () => button("Add a passkey").click());
     expect(auth.addPasskey).toHaveBeenCalledWith({ name: PASSKEY_OFFER.name });
+    expect(offer.dismiss).toHaveBeenCalledOnce();
     expect(page.navigate).toHaveBeenCalledWith({ href: "/catalog", replace: true });
   });
 
-  it("goes on with Not now", async () => {
+  it("ends the offer for good with Not now too", async () => {
     page.context = { version: "1.0.0", movedHere: true };
     open(Login, {});
     await submit(document.querySelector("form"));
     await act(async () => button("Not now").click());
     expect(auth.addPasskey).not.toHaveBeenCalled();
+    expect(offer.dismiss).toHaveBeenCalledOnce();
     expect(page.navigate).toHaveBeenCalledWith({ href: "/", replace: true });
   });
 
-  it("goes on at once when a passkey works here already", async () => {
+  it("goes on at once when the offer is not due for this user", async () => {
     page.context = { version: "1.0.0", movedHere: true };
-    passkeys.rows = [{ id: "p2", worksAt: null }];
+    offer.due = false;
     open(Login, {});
     await submit(document.querySelector("form"));
     expect(page.navigate).toHaveBeenCalledWith({ href: "/", replace: true });
+  });
+
+  it("says Appflare moved only until someone signed in here in this browser", async () => {
+    page.context = { version: "1.0.0", movedHere: true };
+    offer.due = false;
+    open(Login, {});
+    expect(container.textContent).toContain(MOVED_HERE_NOTE);
+    await submit(document.querySelector("form"));
+    // A later visit to the sign-in page, in the same browser.
+    act(() => root.unmount());
+    root = createRoot(container);
+    open(Login, {});
+    expect(container.textContent).not.toContain(MOVED_HERE_NOTE);
   });
 
   it("offers nothing when Appflare did not move", async () => {

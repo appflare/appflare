@@ -837,6 +837,8 @@ export function fixture(name: string, args: unknown[]): unknown {
         createdAt: "2026-09-03T10:00:00.000Z",
       },
     ],
+    // A page open at workers.dev asks whether Appflare moved (never at localhost).
+    getAddressStatus: () => ({ hostname: null, pending: variant === "address-pending" }),
     // At workers.dev while the chosen domain is pending, passkeys wait for the move.
     getPasskeyMoveNotice: () => (variant === "address-pending" ? "appflare.example.com" : null),
     listPasskeys: () => [

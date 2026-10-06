@@ -19,9 +19,11 @@ import {
   MOVED_HERE_NOTE,
   MOVED_SIGN_IN_NOTE,
   PASSKEY_OFFER,
+  rememberSignedInHere,
   showsMovedNote,
+  signedInHereBefore,
 } from "../domains/moved-note";
-import { listPasskeys } from "../server/passkeys.functions";
+import { dismissPasskeyOffer, getPasskeyOffer } from "../server/passkeys.functions";
 import { getSetupStatus } from "../server/setup.functions";
 import { loadAppflareVersion } from "../server/version.functions";
 
@@ -34,8 +36,10 @@ import { loadAppflareVersion } from "../server/version.functions";
  * Right after Appflare moved to this address (an admin's move, which sends
  * the browser here with `?moved=1`, or the move it made by itself to the
  * domain it was installed for), the page says why everyone signs in again,
- * and after a password sign-in offers a passkey for this address, unless the
- * user has one that works here already.
+ * only until someone has signed in here in this browser. After a password
+ * sign-in it offers a passkey for this address once per user: until they
+ * add one or choose Not now (stored for them on the server), and never when
+ * one of theirs works here already.
  */
 export const Route = createFileRoute("/login")({
   staticData: { title: "Sign in" },
@@ -52,11 +56,11 @@ export const Route = createFileRoute("/login")({
   component: LoginPage,
 });
 
-/** Whether to offer a passkey now: supported here, and none of the user's works at this address. */
+/** Whether to offer a passkey now: supported here, and due for this user (`getPasskeyOffer`). */
 async function offersPasskey(): Promise<boolean> {
   if (!passkeysSupported()) return false;
   try {
-    return !(await listPasskeys()).some((p) => p.worksAt === null || p.worksAt === undefined);
+    return await getPasskeyOffer();
   } catch {
     // Not knowing is no reason to hold the sign-in up.
     return false;
@@ -73,6 +77,8 @@ function LoginPage() {
   const [pending, setPending] = useState<"password" | "passkey" | null>(null);
   const [offer, setOffer] = useState(false);
   const moved = showsMovedNote(search) || movedHere;
+  // The line that Appflare moved is for people who have not signed in here yet.
+  const [movedLine] = useState(() => moved && !signedInHereBefore());
 
   async function onSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -88,6 +94,7 @@ function LoginPage() {
       setPending(null);
       return;
     }
+    rememberSignedInHere();
     if (moved && (await offersPasskey())) {
       setPending(null);
       setOffer(true);
@@ -109,6 +116,7 @@ function LoginPage() {
       setPending(null);
       return;
     }
+    rememberSignedInHere();
     await signedIn();
   }
 
@@ -131,7 +139,7 @@ function LoginPage() {
       version={version}
     >
       <div className="grid gap-5">
-        {moved && (
+        {movedLine && (
           <Banner
             variant="secondary"
             icon={<InfoIcon weight="fill" />}
@@ -173,7 +181,8 @@ function LoginPage() {
 
 /**
  * Signed in at Appflare's new address: add a passkey for it now (the
- * browser's prompt), or not now. Either way the page asked for opens next.
+ * browser's prompt), or not now. Either ends the offer for this user, and
+ * the page asked for opens next.
  */
 function PasskeyOffer({ onDone }: { onDone: () => Promise<unknown> }) {
   const [adding, setAdding] = useState(false);
@@ -188,6 +197,12 @@ function PasskeyOffer({ onDone }: { onDone: () => Promise<unknown> }) {
       setAdding(false);
       return;
     }
+    await end();
+  }
+
+  /** Ends the offer for good; a failure to record it only means it may come once more. */
+  async function end() {
+    await dismissPasskeyOffer().catch(() => undefined);
     await onDone();
   }
 
@@ -207,7 +222,7 @@ function PasskeyOffer({ onDone }: { onDone: () => Promise<unknown> }) {
         variant="secondary"
         className={FULL_WIDTH_ACTION}
         disabled={adding}
-        onClick={() => void onDone()}
+        onClick={() => void end()}
       >
         Not now
       </Button>
