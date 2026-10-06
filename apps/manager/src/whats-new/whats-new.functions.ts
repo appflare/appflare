@@ -3,6 +3,7 @@ import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 import { createDb } from "../db/client";
 import { requireSession } from "../server/auth.server";
+import { runningVersion } from "../server/build-version";
 import type { ReleaseNote } from "./release-notes";
 import { readReleaseNotes } from "./release-notes.server";
 import { markSeen, readSeenVersion } from "./seen.server";
@@ -10,7 +11,7 @@ import { markSeen, readSeenVersion } from "./seen.server";
 /** "What's new" in the account menu: Appflare's release notes and what the viewer has read. */
 
 export interface WhatsNew {
-  /** The running `APPFLARE_VERSION`. */
+  /** The running Appflare version (`runningVersion`). */
   current: string;
   /** Newest first; empty until the release check has run. */
   releases: ReleaseNote[];
@@ -26,7 +27,7 @@ export const getWhatsNew = createServerFn({ method: "GET" }).handler(
       readReleaseNotes(env.KV),
       readSeenVersion(createDb(env.DB), session.user.id),
     ]);
-    return { current: env.APPFLARE_VERSION, releases, seen };
+    return { current: runningVersion(env), releases, seen };
   },
 );
 

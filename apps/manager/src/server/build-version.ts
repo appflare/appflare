@@ -21,9 +21,15 @@ export const BUILD_VERSION: string | null =
  * The version of the code serving this request: the built-in one, else (in
  * the Worker tests, which run the source unbuilt) the `APPFLARE_VERSION` var.
  */
+export function runningVersion(env: { APPFLARE_VERSION: string }, build?: string | null): string;
+/** Undefined only in an unbuilt Worker whose env has no `APPFLARE_VERSION`. */
 export function runningVersion(
-  env: { APPFLARE_VERSION: string },
+  env: { APPFLARE_VERSION?: string },
+  build?: string | null,
+): string | undefined;
+export function runningVersion(
+  env: { APPFLARE_VERSION?: string },
   build: string | null = BUILD_VERSION,
-): string {
+): string | undefined {
   return build ?? env.APPFLARE_VERSION;
 }

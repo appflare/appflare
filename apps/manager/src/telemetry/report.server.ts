@@ -17,6 +17,7 @@ import { readSettings, SETTING, type SettingKey, writeSettings } from "../db/set
 import { githubTokenCount } from "../github/tokens.server";
 import { channelCounts } from "../notifications/channels.server";
 import { sandboxBinding } from "../sandbox/binding";
+import { runningVersion } from "../server/build-version";
 import { hasAnyUser } from "../server/users.server";
 import {
   EVENT,
@@ -189,7 +190,7 @@ async function heartbeatInput(
   const setupAt = setupTimes.length > 0 ? Math.min(...setupTimes) : Number.NaN;
   return {
     now,
-    managerVersion: env.APPFLARE_VERSION,
+    managerVersion: runningVersion(env),
     schemaVersion: num(schema?.[0]?.value),
     accountPlan: reportedAccountPlan(settings),
     officialCatalog: isOfficialCatalog(env),
@@ -200,7 +201,7 @@ async function heartbeatInput(
     passkeyUsers: num(passkeys?.[0]?.users),
     accessEnabled: settings.access_enabled_at !== undefined,
     sandboxConnected: sandboxBinding(env) !== undefined,
-    managerBehindLatest: managerUpdateView(env.APPFLARE_VERSION, latest).updateAvailable,
+    managerBehindLatest: managerUpdateView(runningVersion(env), latest).updateAvailable,
     managerSelfUpdateAuto: settings.auto_update_manager === "on",
     autoUpdateDefault: settings.auto_update_apps === "on",
     customCatalogs: num(catalogRows?.[0]?.custom),
@@ -258,7 +259,7 @@ export async function previewHeartbeat(
     ? settings.telemetry_install_id
     : null;
   const input = await heartbeatInput(env, results, settings, now, versions);
-  const event = await heartbeatEvent(installId ?? "", input, managerBase(env.APPFLARE_VERSION));
+  const event = await heartbeatEvent(installId ?? "", input, managerBase(runningVersion(env)));
   return { distinct_id: installId, ...event };
 }
 
@@ -313,7 +314,7 @@ export async function reportTelemetry(
   env: ReportEnv,
   opts: ReportOptions = {},
 ): Promise<ReportOutcome> {
-  if (isDevBuild(env.APPFLARE_VERSION)) return { status: "skipped", reason: "development build" };
+  if (isDevBuild(runningVersion(env))) return { status: "skipped", reason: "development build" };
   const lock = lockOf(env);
   if (lock !== null) return { status: "skipped", reason: `turned off by ${lock}` };
   try {
@@ -377,7 +378,7 @@ async function report(env: ReportEnv, opts: ReportOptions): Promise<ReportOutcom
   const [jobs, ...rest] = results;
   const firstAdmin = setupDue ? rest.shift() : undefined;
 
-  const base = managerBase(env.APPFLARE_VERSION);
+  const base = managerBase(runningVersion(env));
   const official = isOfficialCatalog(env);
   const events = await jobEvents(
     jobRows(jobs),

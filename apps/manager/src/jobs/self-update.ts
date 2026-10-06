@@ -16,6 +16,7 @@ import { jobs, snapshots } from "../db/schema";
 import { readSettings, SETTING } from "../db/settings";
 import { releaseTokenOptions, releaseTokenSecret } from "../github/release-access.server";
 import { MANAGER_SUBDOMAIN } from "../installs/workers-dev";
+import { runningVersion } from "../server/build-version";
 import { fetchWhole, sha256Hex } from "./install/artifact";
 import {
   loadVerifiedManifest,
@@ -103,7 +104,7 @@ export async function runSelfUpdate(ctx: JobContext): Promise<void> {
 
   // Running as the target version means the promotion already happened and
   // this instance resumed on the new code: only the last step may run.
-  if (env.APPFLARE_VERSION === params.version) {
+  if (runningVersion(env) === params.version) {
     await recordStep(step, env.DB, record, now);
     return;
   }
@@ -130,9 +131,9 @@ export async function runSelfUpdate(ctx: JobContext): Promise<void> {
         .update(jobs)
         .set({ status: "running", started_at: new Date(now()) })
         .where(eq(jobs.id, params.jobId));
-      if (env.APPFLARE_VERSION !== params.fromVersion) {
+      if (runningVersion(env) !== params.fromVersion) {
         throw new JobError(
-          `Appflare ${env.APPFLARE_VERSION ?? "(unknown version)"} is running, not ${params.fromVersion} as when this update was started`,
+          `Appflare ${runningVersion(env) ?? "(unknown version)"} is running, not ${params.fromVersion} as when this update was started`,
         );
       }
       const settings = await readSettings(orm, [SETTING.accountId, SETTING.workerName]);

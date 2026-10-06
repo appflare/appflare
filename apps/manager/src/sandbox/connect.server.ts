@@ -98,7 +98,7 @@ export interface SandboxBindingDeps {
   /** The account's workers.dev subdomain, when known; looked up (and reported) otherwise. */
   subdomain: string | null;
   onSubdomain?: (subdomain: string) => Promise<void>;
-  /** The running `APPFLARE_VERSION`: the new version must report the same. */
+  /** The running Appflare version (`runningVersion`): the new version must report the same. */
   currentVersion: string;
   /** For the preview probes. */
   fetch: FetchLike;
@@ -115,7 +115,7 @@ export interface SandboxBindingResult {
 export interface ConnectSandboxDeps {
   db: D1Database;
   client: CloudflareClient;
-  /** The running `APPFLARE_VERSION`: the new version must report the same. */
+  /** The running Appflare version (`runningVersion`): the new version must report the same. */
   currentVersion: string;
   /** For the preview probes. */
   fetch: FetchLike;

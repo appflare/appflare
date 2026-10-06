@@ -82,9 +82,7 @@ describe("AppTile", () => {
     const html = renderToStaticMarkup(
       createElement(AppTile, {
         app: tile({
-          instances: [
-            { installId: "01J", status: "installed", workerName: "cut", instanceName: "cut" },
-          ],
+          instances: [{ installId: "01J", status: "installed", workerName: "cut", label: "cut" }],
         }),
       }),
     );

@@ -2,6 +2,7 @@ import { env } from "cloudflare:workers";
 import { createServerFn } from "@tanstack/react-start";
 import { createDb } from "../db/client";
 import { requireRole, requireSession } from "../server/auth.server";
+import { runningVersion } from "../server/build-version";
 import {
   type AutoUpdateSettings,
   setAutoUpdateDefaultsInput,
@@ -20,7 +21,7 @@ import {
 export const getAutoUpdateSettings = createServerFn({ method: "GET" }).handler(
   async (): Promise<AutoUpdateSettings> => {
     await requireSession();
-    return readAutoUpdateSettings(createDb(env.DB), env.APPFLARE_VERSION);
+    return readAutoUpdateSettings(createDb(env.DB), runningVersion(env));
   },
 );
 
@@ -31,7 +32,7 @@ export const setAutoUpdateDefaults = createServerFn({ method: "POST" })
     await requireRole("admin");
     const db = createDb(env.DB);
     await writeAutoUpdateDefaults(db, data);
-    return readAutoUpdateSettings(db, env.APPFLARE_VERSION);
+    return readAutoUpdateSettings(db, runningVersion(env));
   });
 
 /** Admin only: an install follows the account default, or is always or never updated automatically. */

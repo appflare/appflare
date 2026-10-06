@@ -16,6 +16,7 @@ import { selfUnits } from "../jobs/units/client";
 import { recordSetupFinished } from "../telemetry/state.server";
 import { syncAppAccessAfterUserChange } from "./access.server";
 import { authSecretBound, currentAuth } from "./auth.server";
+import { runningVersion } from "./build-version";
 import { cfTokenInput, ownerInput } from "./schemas";
 import {
   connectCloudflareStep,
@@ -119,7 +120,7 @@ export const connectCloudflare = createServerFn({ method: "POST" })
       accountId: connected.accountId,
       token: data.token,
       onRequest: logCfRequest,
-      version: env.APPFLARE_VERSION,
+      version: runningVersion(env),
       ...apiBaseOption(env),
     });
     return {

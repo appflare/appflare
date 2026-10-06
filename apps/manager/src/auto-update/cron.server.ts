@@ -20,6 +20,7 @@ import type { SelfUpdateJobParams } from "../jobs/self-update";
 import { SelfUpdateError, startSelfUpdateCore } from "../jobs/self-update/start.server";
 import type { UpdateJobParams } from "../jobs/update";
 import { sandboxBinding } from "../sandbox/binding";
+import { runningVersion } from "../server/build-version";
 import { isDevBuild } from "../telemetry/state.server";
 import {
   type AppSkipReason,
@@ -297,8 +298,8 @@ export async function runScheduledUpdates(
     const [latest, failed] = await Promise.all([readManagerLatest(env.KV), failedTargets(env.DB)]);
     const decision = planSelfUpdate({
       enabled: true,
-      devBuild: isDevBuild(env.APPFLARE_VERSION),
-      updateAvailable: isManagerUpdateAvailable(env.APPFLARE_VERSION, latest?.version),
+      devBuild: isDevBuild(runningVersion(env)),
+      updateAvailable: isManagerUpdateAvailable(runningVersion(env), latest?.version),
       latestVersion: latest?.version ?? null,
       failedBefore: latest !== null && failed.has(latest.version),
     });
@@ -310,7 +311,7 @@ export async function runScheduledUpdates(
           {
             db: env.DB,
             latest,
-            currentVersion: env.APPFLARE_VERSION,
+            currentVersion: runningVersion(env),
             hasToken: true,
             workflows: env.JOBS,
             createJob: jobCreator(env.JOBS),

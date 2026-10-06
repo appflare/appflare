@@ -12,6 +12,7 @@ import { StepLog } from "../jobs/step-log";
 import { createJobSteps, errorMessage, isNotFound, JobError } from "../jobs/steps";
 import { R2_MAX_PAGES_PER_RUN, R2_OBJECTS_PER_STEP } from "../jobs/uninstall";
 import { settleUnit } from "../jobs/units/result";
+import { runningVersion } from "../server/build-version";
 import { installsNeedingSandbox, sandboxInUseMessage } from "./blockers";
 import { isSandboxWorker } from "./deploy-plan";
 import { requireSelf } from "./enable-job";
@@ -47,7 +48,7 @@ import { NO_CONTAINERS_PERMISSION_REASON } from "./preflight";
 export const sandboxDisableJobParams = z.object({
   kind: z.literal("sandbox_disable"),
   jobId: z.string().min(1),
-  /** The running `APPFLARE_VERSION` when the job started. */
+  /** The running Appflare version (`runningVersion`) when the job started. */
   managerVersion: z.string().min(1),
 });
 export type SandboxDisableJobParams = z.infer<typeof sandboxDisableJobParams>;
@@ -214,7 +215,7 @@ export async function runSandboxDisable(ctx: JobContext): Promise<void> {
           accountId: steps.accountId(),
           workerName: started.workerName,
           subdomain,
-          currentVersion: env.APPFLARE_VERSION ?? params.managerVersion,
+          currentVersion: runningVersion(env) ?? params.managerVersion,
           connect: false,
         }),
         log,

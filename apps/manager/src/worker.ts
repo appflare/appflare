@@ -26,6 +26,7 @@ import { workflowRepairLog, workflowRepairNeeded } from "./installs/workflow-rep
 import { finalizeSelfUpdates } from "./jobs/self-update/record";
 import { scheduledExternalDomainCheck, scheduledNotifications } from "./notifications/cron.server";
 import { createNotificationUnits, selfNotificationUnits } from "./notifications/units";
+import { runningVersion } from "./server/build-version";
 import { reportTelemetry } from "./telemetry/report.server";
 
 /**
@@ -66,11 +67,11 @@ function lookAtCapabilities(env: Env, ctx: ExecutionContext): void {
   capabilitiesNextLook = Number.POSITIVE_INFINITY;
   ctx.waitUntil(
     refreshCapabilitiesAfterVersionChange(env, createDb(env.DB), {
-      version: env.APPFLARE_VERSION,
+      version: runningVersion(env),
     }).then(
       (result) => {
         if (result === "checked") {
-          console.log(`account capabilities checked by version ${env.APPFLARE_VERSION}`);
+          console.log(`account capabilities checked by version ${runningVersion(env)}`);
         }
       },
       (error: unknown) => {
@@ -95,7 +96,7 @@ async function finalizeOnce(env: Env, host: string | undefined): Promise<void> {
   try {
     const result = await finalizeSelfUpdates(env, host === undefined ? {} : { host });
     if (result.completed > 0) {
-      console.log(`self-update completed by version ${env.APPFLARE_VERSION}`);
+      console.log(`self-update completed by version ${runningVersion(env)}`);
     }
     if (!result.previewHost) selfUpdatesFinalized = true;
   } catch (error) {
@@ -153,7 +154,7 @@ export default {
       // Appflare's address: page requests at workers.dev go to its custom domain.
       (await addressRedirect.check(request, env.DB)) ??
       // Cloudflare Access protection, when on: checked before any routing.
-      (await accessGate.check(request, env.DB, env.APPFLARE_VERSION)) ??
+      (await accessGate.check(request, env.DB, runningVersion(env))) ??
       // Pages and public files from the static assets (the SPA shell for any page).
       serveRequest(request, env.ASSETS, (r) => handler.fetch(r))
     );
@@ -201,7 +202,7 @@ export default {
     // and again when an older version stored them; one read call each.
     try {
       const capabilities = await refreshCapabilitiesIfStale(env, createDb(env.DB), {
-        version: env.APPFLARE_VERSION,
+        version: runningVersion(env),
       });
       if (capabilities === "checked") console.log("account capabilities checked");
     } catch (error) {

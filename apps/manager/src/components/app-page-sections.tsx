@@ -376,7 +376,7 @@ export function InstallsList({ instances }: { instances: readonly InstalledRef[]
             content={`Worker: ${instance.workerName}`}
             render={<Link href={`/apps/${instance.installId}`} />}
           >
-            {instance.instanceName}
+            {instance.label}
           </Tooltip>
           <StatusBadge status={instance.status} of="install" />
         </li>
