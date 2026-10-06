@@ -1711,7 +1711,11 @@ describe("an update that sets a database's query caching", () => {
     cfId: "hd-1",
   };
 
-  async function updateKeeping(value: boolean | undefined, disabled: boolean) {
+  async function updateKeeping(
+    value: boolean | undefined,
+    disabled: boolean,
+    failing?: readonly string[],
+  ) {
     const w = await world(caching(value), { resources: [...RESOURCES, KEPT] });
     w.side.state.hyperdrive.push({
       id: "hd-1",
@@ -1720,9 +1724,11 @@ describe("an update that sets a database's query caching", () => {
     });
     const { params } = await start(w);
     if (params === null) throw new Error("the update did not start");
-    const r = await run(w, params);
+    const r = await run(w, params, failing);
     return { ...r, w };
   }
+  const OFF = "turn off query caching of Hyperdrive configuration cut-hyperdrive";
+  const ON = "turn on query caching of Hyperdrive configuration cut-hyperdrive";
 
   it("turns caching off on the configuration it keeps, before the version is uploaded", async () => {
     const r = await updateKeeping(false, false);
@@ -1730,9 +1736,9 @@ describe("an update that sets a database's query caching", () => {
     expect(r.w.side.state.hyperdrive[0]?.body).toMatchObject({ caching: { disabled: true } });
     expect(r.w.side.state.calls).toContain("PATCH /hyperdrive/configs/hd-1");
     const names = r.step.names;
-    expect(
-      names.indexOf("set query caching of Hyperdrive configuration cut-hyperdrive"),
-    ).toBeLessThan(names.indexOf("upload Worker version"));
+    expect(names.indexOf(OFF)).toBeGreaterThan(-1);
+    expect(names.indexOf(OFF)).toBeLessThan(names.indexOf("upload Worker version"));
+    expect(names.indexOf(OFF)).toBeLessThan(names.indexOf("promote version"));
   });
 
   it("changes nothing when caching is as the version asks, or the version leaves it out", async () => {
@@ -1751,10 +1757,34 @@ describe("an update that sets a database's query caching", () => {
     expect(omitted.w.side.state.hyperdrive[0]?.body).toEqual({ caching: { disabled: true } });
   });
 
-  it("turns caching back on when the version asks for it", async () => {
+  it("turns caching back on only once the version that asks for it serves", async () => {
     const r = await updateKeeping(true, true);
     expect(r.job?.status).toBe("succeeded");
     expect(r.w.side.state.hyperdrive[0]?.body).toMatchObject({ caching: { disabled: false } });
+    // The version before may need it off: on only after the cutover.
+    const names = r.step.names;
+    expect(names.indexOf(ON)).toBeGreaterThan(names.indexOf("promote version"));
+    expect(names).not.toContain(OFF);
+  });
+
+  it("leaves caching off when the update fails before the new version serves", async () => {
+    const r = await updateKeeping(true, true, ["promote version"]);
+    expect(r.job?.status).toBe("failed");
+    expect(r.w.side.state.calls).not.toContain("PATCH /hyperdrive/configs/hd-1");
+    expect(r.w.side.state.hyperdrive[0]?.body).toEqual({ caching: { disabled: true } });
+  });
+
+  it("finishes with a warning when caching cannot be turned on after the cutover", async () => {
+    const r = await updateKeeping(true, true, [ON]);
+    expect(r.error).toBeNull();
+    expect(r.job?.status).toBe("succeeded");
+    expect(r.w.side.state.hyperdrive[0]?.body).toEqual({ caching: { disabled: true } });
+    expect(r.logs).toContainEqual({
+      level: "warn",
+      message: expect.stringContaining(
+        'Appflare could not turn query caching on for the Hyperdrive configuration "cut-hyperdrive"',
+      ),
+    });
   });
 
   it("makes a new configuration with caching off", async () => {

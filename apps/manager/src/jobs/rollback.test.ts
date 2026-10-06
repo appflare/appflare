@@ -661,7 +661,14 @@ describe("rollback job, a version that sets its database's query caching", () =>
    * configuration it binds has caching `disabled` now (an update turned it
    * the other way). Answers the configuration's read and patch itself.
    */
-  async function rollbackWithCaching(value: boolean | undefined, disabled: boolean) {
+  async function rollbackWithCaching(
+    value: boolean | undefined,
+    disabled: boolean,
+    /** Keys (`METHOD /path`) the account fake refuses once. */
+    failOnce: ReadonlyArray<[string, number]> = [],
+    /** Fails every PATCH of the configuration. */
+    patchFails = false,
+  ) {
     const before = await buildArtifactFixture({
       bindings: [
         { type: "kv_namespace", name: "CUT_KV" },
@@ -699,6 +706,7 @@ describe("rollback job, a version that sets its database's query caching", () =>
             { type: "hyperdrive", name: "HYPERDRIVE", id: "hd-1" },
           ],
         },
+        failOnce: new Map(failOnce),
       },
       (fake) => async (input, init) => {
         const request = new Request(input, init);
@@ -706,6 +714,12 @@ describe("rollback job, a version that sets its database's query caching", () =>
         if (!path.endsWith("/hyperdrive/configs/hd-1")) return fake.fetch(input, init);
         calls.push(`${request.method} hd-1`);
         if (request.method === "PATCH") {
+          if (patchFails) {
+            return Response.json(
+              { success: false, errors: [{ code: 10000, message: "refused" }], messages: [] },
+              { status: 500 },
+            );
+          }
           Object.assign(config, (await request.json()) as object);
         }
         return Response.json({
@@ -719,19 +733,54 @@ describe("rollback job, a version that sets its database's query caching", () =>
     return { ...r, config, calls };
   }
 
-  it("sets the caching the version asks for back before it serves", async () => {
+  const OFF = "turn off query caching of Hyperdrive configuration cut-hyperdrive";
+  const ON = "turn on query caching of Hyperdrive configuration cut-hyperdrive";
+
+  it("turns caching off before the version that wants it off serves", async () => {
     const r = await rollbackWithCaching(false, false);
     expect(r.error).toBeNull();
     expect(r.job?.status).toBe("succeeded");
     expect(r.calls).toEqual(["GET hd-1", "PATCH hd-1"]);
     expect(r.config).toEqual({ caching: { disabled: true } });
     const names = r.step.names;
-    expect(names.indexOf("set query caching of Hyperdrive configuration cut-hyperdrive")).toBe(
-      names.indexOf("check the version's database connections") + 1,
-    );
-    expect(
-      names.indexOf("set query caching of Hyperdrive configuration cut-hyperdrive"),
-    ).toBeLessThan(names.indexOf("deploy snapshot version"));
+    expect(names.indexOf(OFF)).toBe(names.indexOf("check the version's database connections") + 1);
+    expect(names.indexOf(OFF)).toBeLessThan(names.indexOf("deploy snapshot version"));
+  });
+
+  it("turns caching on only once the version that wants it serves", async () => {
+    const r = await rollbackWithCaching(true, true);
+    expect(r.error).toBeNull();
+    expect(r.job?.status).toBe("succeeded");
+    expect(r.config).toEqual({ caching: { disabled: false } });
+    const names = r.step.names;
+    expect(names.indexOf(ON)).toBeGreaterThan(names.indexOf("record rollback"));
+    expect(names).not.toContain(OFF);
+  });
+
+  it("leaves caching off when the rollback fails before the version serves", async () => {
+    const r = await rollbackWithCaching(true, true, [
+      ["POST /workers/scripts/cut/deployments", 400],
+    ]);
+    expect(r.job?.status).toBe("failed");
+    expect(r.calls).toEqual([]);
+    expect(r.config).toEqual({ caching: { disabled: true } });
+  });
+
+  it("finishes with a warning when caching cannot be turned on", async () => {
+    const r = await rollbackWithCaching(true, true, [], true);
+    expect(r.error).toBeNull();
+    expect(r.job?.status).toBe("succeeded");
+    expect(r.config).toEqual({ caching: { disabled: true } });
+    const logs = (
+      await env.DB.prepare("SELECT level, message FROM job_logs WHERE job_id = 'rb1'").all<{
+        level: string;
+        message: string;
+      }>()
+    ).results;
+    expect(logs).toContainEqual({
+      level: "warn",
+      message: expect.stringContaining("could not turn query caching on"),
+    });
   });
 
   it("changes nothing when caching is as the version asks, or the version leaves it out", async () => {

@@ -848,59 +848,67 @@ describe("replacing a database's connection string", () => {
     ).results;
   }
 
-  it("sets a kept database's query caching as the version asks, and makes a new one with it", async () => {
-    const CACHING_OFF: ArtifactFixtureOptions = {
-      ...DB_APP,
-      catalog: {
-        ...DB_APP.catalog,
-        requires: ["hyperdrive-caching"],
-        resources: {
-          hyperdrive: {
-            HYPERDRIVE: { protocol: "postgres", label: "Main database", caching: false },
-          },
-        },
+  /** The database app, with its configuration's query caching set to `caching`. */
+  const cachingApp = (caching: boolean): ArtifactFixtureOptions => ({
+    ...DB_APP,
+    catalog: {
+      ...DB_APP.catalog,
+      requires: ["hyperdrive-caching"],
+      resources: {
+        hyperdrive: { HYPERDRIVE: { protocol: "postgres", label: "Main database", caching } },
       },
+    },
+  });
+  const CACHING_OFF = cachingApp(false);
+  const OFF = "turn off query caching of Hyperdrive configuration cut-hyperdrive";
+  const ON = "turn on query caching of Hyperdrive configuration cut-hyperdrive";
+  /** Configurations by id with their caching, read and patched one at a time. */
+  function cachingFront(disabled = false, patchFails = false) {
+    const configs = new Map<string, { name: string; caching: Record<string, unknown> }>([
+      ["hd-old", { name: "cut-hyperdrive", caching: { disabled } }],
+    ]);
+    const calls: string[] = [];
+    const created: Array<Record<string, unknown>> = [];
+    const ok = (result: unknown, extra: Record<string, unknown> = {}) =>
+      Response.json({ success: true, errors: [], messages: [], result, ...extra });
+    const front = async (request: Request): Promise<Response | null> => {
+      const path = new URL(request.url).pathname.replace(`/client/v4/accounts/${ACC}`, "");
+      if (!path.startsWith("/hyperdrive/configs")) return null;
+      calls.push(`${request.method} ${path}`);
+      const id = path.split("/")[3];
+      if (id === undefined) {
+        if (request.method === "GET") {
+          return ok(
+            [...configs].map(([k, c]) => ({ id: k, name: c.name })),
+            { result_info: { total_count: configs.size } },
+          );
+        }
+        const body = (await request.json()) as {
+          name: string;
+          caching?: Record<string, unknown>;
+        };
+        created.push(body);
+        configs.set("hd-new", { name: body.name, caching: body.caching ?? { disabled: false } });
+        return ok({ id: "hd-new", name: body.name });
+      }
+      const found = configs.get(id);
+      if (found === undefined)
+        return Response.json({ success: false, errors: [] }, { status: 404 });
+      if (request.method === "PATCH") {
+        if (patchFails) {
+          return Response.json(
+            { success: false, errors: [{ code: 10000, message: "refused" }], messages: [] },
+            { status: 500 },
+          );
+        }
+        found.caching = ((await request.json()) as { caching: Record<string, unknown> }).caching;
+      }
+      return ok({ id, name: found.name, caching: found.caching });
     };
-    /** Configurations by id with their caching, read and patched one at a time. */
-    function cachingFront() {
-      const configs = new Map<string, { name: string; caching: Record<string, unknown> }>([
-        ["hd-old", { name: "cut-hyperdrive", caching: { disabled: false } }],
-      ]);
-      const calls: string[] = [];
-      const created: Array<Record<string, unknown>> = [];
-      const ok = (result: unknown, extra: Record<string, unknown> = {}) =>
-        Response.json({ success: true, errors: [], messages: [], result, ...extra });
-      const front = async (request: Request): Promise<Response | null> => {
-        const path = new URL(request.url).pathname.replace(`/client/v4/accounts/${ACC}`, "");
-        if (!path.startsWith("/hyperdrive/configs")) return null;
-        calls.push(`${request.method} ${path}`);
-        const id = path.split("/")[3];
-        if (id === undefined) {
-          if (request.method === "GET") {
-            return ok(
-              [...configs].map(([k, c]) => ({ id: k, name: c.name })),
-              { result_info: { total_count: configs.size } },
-            );
-          }
-          const body = (await request.json()) as {
-            name: string;
-            caching?: Record<string, unknown>;
-          };
-          created.push(body);
-          configs.set("hd-new", { name: body.name, caching: body.caching ?? { disabled: false } });
-          return ok({ id: "hd-new", name: body.name });
-        }
-        const found = configs.get(id);
-        if (found === undefined)
-          return Response.json({ success: false, errors: [] }, { status: 404 });
-        if (request.method === "PATCH") {
-          found.caching = ((await request.json()) as { caching: Record<string, unknown> }).caching;
-        }
-        return ok({ id, name: found.name, caching: found.caching });
-      };
-      return { front, configs, calls, created };
-    }
+    return { front, configs, calls, created };
+  }
 
+  it("sets a kept database's query caching as the version asks, and makes a new one with it", async () => {
     // A setting changes: the kept configuration's caching follows the version.
     const kept = cachingFront();
     const changed = await reconfigure({
@@ -915,9 +923,14 @@ describe("replacing a database's connection string", () => {
       "GET /hyperdrive/configs/hd-old",
       "PATCH /hyperdrive/configs/hd-old",
     ]);
-    expect(
-      changed.step.names.indexOf("set query caching of Hyperdrive configuration cut-hyperdrive"),
-    ).toBeLessThan(changed.step.names.indexOf("upload Worker version"));
+    // Off is safe for the version serving now: before the new one serves.
+    expect(changed.step.names.indexOf(OFF)).toBeGreaterThan(-1);
+    expect(changed.step.names.indexOf(OFF)).toBeLessThan(
+      changed.step.names.indexOf("upload Worker version"),
+    );
+    expect(changed.step.names.indexOf(OFF)).toBeLessThan(
+      changed.step.names.indexOf("promote version"),
+    );
 
     // A new connection string: the new configuration is made with caching off.
     await reset();
@@ -936,6 +949,57 @@ describe("replacing a database's connection string", () => {
     expect(r.job?.status).toBe("succeeded");
     expect(replaced.created[0]).toMatchObject({ caching: { disabled: true } });
     expect(replaced.calls).not.toContain("PATCH /hyperdrive/configs/hd-old");
+  });
+
+  it("turns a kept database's query caching on only once the new version serves", async () => {
+    const front = cachingFront(true);
+    const r = await reconfigure({
+      app: cachingApp(true),
+      resources: DB_RESOURCES,
+      front: front.front,
+      request: { vars: { HOME_PAGE: "404" }, secrets: { set: {}, unset: [] } },
+    });
+    expect(r.job?.status).toBe("succeeded");
+    expect(front.configs.get("hd-old")?.caching).toEqual({ disabled: false });
+    expect(r.step.names.indexOf(ON)).toBeGreaterThan(r.step.names.indexOf("promote version"));
+    expect(r.step.names).not.toContain(OFF);
+  });
+
+  it("leaves caching off when the settings change fails before the new version serves", async () => {
+    const front = cachingFront(true);
+    const r = await reconfigure({
+      app: cachingApp(true),
+      resources: DB_RESOURCES,
+      front: front.front,
+      request: { vars: { HOME_PAGE: "404" }, secrets: { set: {}, unset: [] } },
+      step: fakeStep({ failing: ["promote version"] }),
+    });
+    expect(r.job?.status).toBe("failed");
+    expect(front.calls).not.toContain("PATCH /hyperdrive/configs/hd-old");
+    expect(front.configs.get("hd-old")?.caching).toEqual({ disabled: true });
+  });
+
+  it("finishes the settings change with a warning when caching cannot be turned on", async () => {
+    const front = cachingFront(true, true);
+    const r = await reconfigure({
+      app: cachingApp(true),
+      resources: DB_RESOURCES,
+      front: front.front,
+      request: { vars: { HOME_PAGE: "404" }, secrets: { set: {}, unset: [] } },
+    });
+    expect(r.error).toBeNull();
+    expect(r.job?.status).toBe("succeeded");
+    expect(front.configs.get("hd-old")?.caching).toEqual({ disabled: true });
+    const logs = (
+      await env.DB.prepare("SELECT level, message FROM job_logs WHERE job_id = 'job1'").all<{
+        level: string;
+        message: string;
+      }>()
+    ).results;
+    expect(logs).toContainEqual({
+      level: "warn",
+      message: expect.stringContaining("could not turn query caching on"),
+    });
   });
 
   it("binds a new configuration, and keeps the old one superseded for a rollback", async () => {

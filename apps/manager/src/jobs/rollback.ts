@@ -66,9 +66,11 @@ import {
   workflowTargets,
 } from "./install/workflows";
 import {
+  type CachingTarget,
+  cachingOffPhase,
+  cachingOnPhase,
   cachingTargets,
   liveHyperdriveIds,
-  reconcileCachingPhase,
   reconcileHyperdriveRecords,
   versionHyperdriveBindings,
 } from "./reconfigure/hyperdrive";
@@ -879,6 +881,8 @@ export async function runRollback(ctx: JobContext): Promise<void> {
     // the version itself, which also covers snapshots taken before their
     // configurations were recorded. A job started before this check has no
     // `usesHyperdrive` and skips it.
+    /** Configurations the version binds whose query caching it sets. */
+    let caching: CachingTarget[] = [];
     if (started.usesHyperdrive === true) {
       const checked = await run(
         "check the version's database connections",
@@ -900,24 +904,21 @@ export async function runRollback(ctx: JobContext): Promise<void> {
           return { bound };
         },
       );
-      // The configurations the version binds get the query caching it sets,
-      // before it serves (an update may have turned it the other way). A
-      // step output recorded before has no `bound`.
+      // The configurations the version binds get the query caching it sets
+      // (an update may have turned it the other way): off before it serves,
+      // on once it does (./reconfigure/hyperdrive.ts). A step output
+      // recorded before has no `bound`.
       const names = started.hyperdriveNames ?? {};
-      await reconcileCachingPhase(
-        steps,
-        cachingTargets(
-          started.hyperdriveCaching ?? [],
-          ((checked as { bound?: Array<{ binding: string; id: string }> }).bound ?? []).map(
-            (b) => ({
-              type: "hyperdrive",
-              binding: b.binding,
-              name: names[b.id] ?? b.id,
-              cfId: b.id,
-            }),
-          ),
-        ),
+      caching = cachingTargets(
+        started.hyperdriveCaching ?? [],
+        ((checked as { bound?: Array<{ binding: string; id: string }> }).bound ?? []).map((b) => ({
+          type: "hyperdrive",
+          binding: b.binding,
+          name: names[b.id] ?? b.id,
+          cfId: b.id,
+        })),
       );
+      await cachingOffPhase(steps, caching);
     }
 
     // A protected app's public paths the snapshot's version does not have
@@ -1213,6 +1214,9 @@ export async function runRollback(ctx: JobContext): Promise<void> {
         otherWorkers: email.otherWorkers ?? [],
       });
     }
+
+    // Query caching on only now that the snapshot's version serves. Never throws.
+    await cachingOnPhase(steps, caching);
 
     const subdomain = await subdomainOf();
     // The settings each version was deployed with, for the address check

@@ -70,12 +70,14 @@ import { newSinkTokenPhase } from "./install/pipelines";
 import { assignRateLimitsPhase } from "./install/rate-limits";
 import { setUpEmailAgainPhase } from "./reconfigure/email-again";
 import {
+  type CachingTarget,
   type ConnectionReplacement,
+  cachingOffPhase,
+  cachingOnPhase,
   cachingTargets,
   createReplacementPhase,
   deleteConfigPhase,
   deleteSupersededPhase,
-  reconcileCachingPhase,
   supersededConfigs,
   switchConnectionRecords,
 } from "./reconfigure/hyperdrive";
@@ -361,6 +363,8 @@ export async function runReconfigure(ctx: JobContext): Promise<void> {
   const replacing = Object.keys(connections).sort();
   /** Configurations made from the new connection strings, as they are created. */
   const replacements: ConnectionReplacement[] = [];
+  /** Kept configurations whose query caching the installed version sets. */
+  let caching: CachingTarget[] = [];
   /** Set once the new version exists / serves traffic, for the failure report. */
   let uploadedVersionId: string | null = null;
   let servingVersionId: string | null = null;
@@ -895,11 +899,10 @@ export async function runReconfigure(ctx: JobContext): Promise<void> {
           : res;
       });
       // The other databases' query caching as the installed version sets it
-      // (an older Appflare, or the dashboard, may have left it otherwise).
-      await reconcileCachingPhase(
-        steps,
-        cachingTargets(databases, bound, new Set(replacements.map((r) => r.binding))),
-      );
+      // (an older Appflare, or the dashboard, may have left it otherwise):
+      // off now, on once the new version serves (./reconfigure/hyperdrive.ts).
+      caching = cachingTargets(databases, bound, new Set(replacements.map((r) => r.binding)));
+      await cachingOffPhase(steps, caching);
 
       const rateLimitIds = await assignRateLimitsPhase(
         steps,
@@ -1117,6 +1120,8 @@ export async function runReconfigure(ctx: JobContext): Promise<void> {
       // This change's snapshot is the latest now: configurations an earlier
       // change superseded are bound only by older versions.
       await deleteSupersededPhase(steps, supersededAtStart);
+      // Query caching on only now that the new version serves. Never throws.
+      await cachingOnPhase(steps, caching);
 
       // A new token for a Pipelines sink: the version that has it serves now.
       for (const res of diff.plan.resources) {

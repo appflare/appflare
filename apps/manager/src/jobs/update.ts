@@ -108,11 +108,12 @@ import {
 } from "./install/workflows";
 import {
   type ConnectionReplacement,
+  cachingOffPhase,
+  cachingOnPhase,
   cachingTargets,
   createReplacementPhase,
   deleteConfigPhase,
   deleteSupersededPhase,
-  reconcileCachingPhase,
   supersededConfigs,
   switchConnectionRecords,
 } from "./reconfigure/hyperdrive";
@@ -1008,16 +1009,15 @@ export async function runUpdate(ctx: JobContext): Promise<void> {
         await provisionPipelinePhase(steps, params.installId, res, token, reserved, "update"),
       );
     }
-    // Kept databases get the query caching this version sets, before it
-    // serves; the ones made above were made with it.
-    await reconcileCachingPhase(
-      steps,
-      cachingTargets(
-        hyperdriveDeclarations(manifest.catalog.resources?.hyperdrive),
-        bound,
-        new Set([...newDatabaseBindings, ...replacements].map((r) => r.binding)),
-      ),
+    // Kept databases get the query caching this version sets: off before
+    // it serves, on only once it does (./reconfigure/hyperdrive.ts). The
+    // ones made above were made with it.
+    const caching = cachingTargets(
+      hyperdriveDeclarations(manifest.catalog.resources?.hyperdrive),
+      bound,
+      new Set([...newDatabaseBindings, ...replacements].map((r) => r.binding)),
     );
+    await cachingOffPhase(steps, caching);
     // Kept indexes get the metadata indexes this version declares, before its
     // code writes a vector; kept buckets get their rules once it serves.
     for (const { res } of diff.toConfigure) {
@@ -1535,6 +1535,9 @@ export async function runUpdate(ctx: JobContext): Promise<void> {
     for (const { res, previouslyDeclared } of diff.toConfigure) {
       await applyLifecycleRulesPhase(steps, res, previouslyDeclared);
     }
+    // Query caching on only now that the version that wants it serves.
+    // Never throws.
+    await cachingOnPhase(steps, caching);
 
     // Hyperdrive configurations a settings change superseded are bound only
     // by versions before this update's snapshot, which is the latest now.
