@@ -8,6 +8,7 @@ import {
   EXPLAIN_WAIT_AFTER_MS,
   MIN_CHECK_MS,
   OFFER_WORKERS_DEV_AFTER_MS,
+  OPEN_TRY_FOR_MS,
 } from "./flow.ts";
 import { installerApi, type StepAnswer } from "./installer-api.ts";
 import { managerApi } from "./manager-api.ts";
@@ -228,7 +229,8 @@ describe("the whole journey", () => {
     const managerCalls = h.world.requests.filter((r) =>
       r.url.startsWith("https://appflare.example.com"),
     );
-    expect(managerCalls.map((r) => r.method)).toEqual(["GET", "POST"]);
+    // The proof, the only POST, then the proof again before owner setup is opened.
+    expect(managerCalls.map((r) => r.method)).toEqual(["GET", "POST", "GET"]);
     expect(managerCalls[0]?.url).toMatch(/\/api\/handoff\?challenge=[A-Za-z0-9_-]{32}$/);
     // The tab forgets the grant once Appflare has it.
     expect(h.tokens.grant()).toBeNull();
@@ -446,11 +448,11 @@ describe("a domain that keeps Appflare waiting", () => {
     expect(deploying.progress?.status).toBe("waiting");
     expect(deploying.wait).toBe("address");
     expect(h.now() - START).toBeGreaterThanOrEqual(OFFER_WORKERS_DEV_AFTER_MS);
-    // Explained from the first answer, but no way around it before 70 seconds.
+    // Explained from the first answer, but no way around it before 20 seconds.
     expect(seen.every((s) => s.wait === "address")).toBe(true);
     const firstWait = seen[0]?.at ?? START;
     for (const s of seen) expect(s.offer).toBe(s.at - firstWait >= OFFER_WORKERS_DEV_AFTER_MS);
-    expect(seen.some((s) => !s.offer && s.at - firstWait >= 60_000)).toBe(true);
+    expect(seen.some((s) => !s.offer && s.at - firstWait >= 10_000)).toBe(true);
     // Nothing went to either address yet but the installer's own checks.
     expect(world.requests.some((r) => r.url.includes("workers.dev"))).toBe(false);
 
@@ -644,6 +646,64 @@ describe("warnings from finished steps", () => {
     const notice = { id: "schedules", label: "Schedule regular checks", message: cron };
     expect(handingOff[0]?.active.notices).toEqual([notice]);
     expect(view(h.flow, "opening").notices).toEqual([notice]);
+  });
+});
+
+describe("opening owner setup", () => {
+  it("waits until the address answers as this Appflare, then opens it", async () => {
+    const world = new FakeWorld();
+    // Once handed off, the address does not answer for two waits (a route still spreading).
+    let missed: number | null = null;
+    const h = harness(world, {
+      onPause: () => {
+        if (missed === null) return;
+        missed++;
+        const manager = world.managers.get("https://appflare.example.com");
+        if (manager !== undefined && missed >= 2) manager.unreachable = false;
+      },
+    });
+    const views: Array<Extract<DeployView, { step: "opening" }>> = [];
+    h.flow.subscribe(() => {
+      const current = h.flow.state();
+      if (current.step === "opening") views.push(current);
+    });
+    await toReview(h);
+    world.afterHandoff = () => {
+      const manager = world.managers.get("https://appflare.example.com");
+      if (manager !== undefined) manager.unreachable = true;
+      missed = 0;
+    };
+    await h.flow.deploy();
+    expect(missed).toBe(2);
+    expect(views[0]?.answering).toBe("checking");
+    expect(views.at(-1)?.answering).toBe("yes");
+    expect(h.navigations).toEqual([
+      "https://appflare.example.com/setup#claim=claim0123456789abcdef",
+    ]);
+  });
+
+  it("does not open an address that never answers, and says so, with a way to try again", async () => {
+    const world = new FakeWorld();
+    const h = harness(world);
+    await toReview(h);
+    world.afterHandoff = () => {
+      const manager = world.managers.get("https://appflare.example.com");
+      if (manager !== undefined) manager.unreachable = true;
+    };
+    const start = h.now();
+    await h.flow.deploy();
+    expect(view(h.flow, "opening").answering).toBe("not-yet");
+    expect(h.navigations).toEqual([]);
+    expect(h.now() - start).toBeGreaterThanOrEqual(OPEN_TRY_FOR_MS);
+    expect(h.now() - start).toBeLessThan(OPEN_TRY_FOR_MS + 5_000);
+    // It answers now: Try again opens it.
+    const manager = world.managers.get("https://appflare.example.com");
+    if (manager !== undefined) manager.unreachable = false;
+    await h.flow.retry();
+    expect(view(h.flow, "opening").answering).toBe("yes");
+    expect(h.navigations).toEqual([
+      "https://appflare.example.com/setup#claim=claim0123456789abcdef",
+    ]);
   });
 });
 

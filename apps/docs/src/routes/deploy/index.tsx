@@ -1,7 +1,7 @@
 // The apps the permissions' reasons name, worked out from the catalog when the site is built.
 import examples from "virtual:appflare-scope-examples";
 import { createFileRoute } from "@tanstack/react-router";
-import { DeployPanel, NO_ACTIONS } from "../../components/deploy/deploy-panel.tsx";
+import { DeployPanel, NO_ACTIONS, showsIntro } from "../../components/deploy/deploy-panel.tsx";
 import { DeployLayout } from "../../components/deploy/deploy-shell.tsx";
 import { useDeployFlow } from "../../components/deploy/use-deploy-flow.ts";
 import { DEPLOY_PATH } from "../../deploy/config.ts";
@@ -35,7 +35,9 @@ export const Route = createFileRoute("/deploy/")({
 function DeployPage() {
   const { view, flow } = useDeployFlow();
   return (
-    <DeployLayout>
+    // What the installer keeps and the other ways to install matter before
+    // Cloudflare is connected; past that, the visitor has chosen this way.
+    <DeployLayout aside={showsIntro(view)}>
       {flow === null ? (
         <DeployPanel view={view} actions={NO_ACTIONS} canGoBack={false} examples={examples} />
       ) : (

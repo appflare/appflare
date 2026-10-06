@@ -40,10 +40,11 @@ const SUBDOMAIN =
 
 /**
  * How long the domain may keep Appflare waiting before the workers.dev
- * address is offered. A new address usually takes one to five minutes, so
- * offering a way around it sooner only distracts.
+ * address is offered. A new address usually takes one to five minutes;
+ * after this long the visitor has seen that it is a wait, and may rather
+ * start at workers.dev (Appflare moves to the domain by itself later).
  */
-export const OFFER_WORKERS_DEV_AFTER_MS = 70_000;
+export const OFFER_WORKERS_DEV_AFTER_MS = 20_000;
 /**
  * How long any other wait stays quiet (a loader on the step) before the page
  * says why in one line. The installer lets one request at a time work on an
@@ -53,8 +54,16 @@ export const OFFER_WORKERS_DEV_AFTER_MS = 70_000;
 export const EXPLAIN_WAIT_AFTER_MS = 90_000;
 /** The least time a Check now shows that it is checking, so a quick answer is still seen. */
 export const MIN_CHECK_MS = 700;
-/** How long the page shows where it is going before it opens owner setup. */
-export const OPEN_DELAY_MS = 1_500;
+/**
+ * How long the page keeps asking Appflare's address before it opens owner
+ * setup there. Right after the handoff a new address (a new workers.dev
+ * route especially) can still answer with Cloudflare's 404 in some places
+ * for a few seconds, so the page opens it only once it answers as this
+ * Appflare, or says so when it has not after this long.
+ */
+export const OPEN_TRY_FOR_MS = 10_000;
+/** The wait between two of those asks. */
+export const OPEN_RETRY_MS = 1_000;
 /** The wait between two progress requests when the installer names none. */
 export const DEFAULT_WAIT_MS = 3_000;
 /** The wait after the installer could not be reached. */
@@ -221,7 +230,17 @@ export type DeployView =
       /** For `elsewhere`: minutes until trying again can work. */
       minutes?: number;
     }
-  | { step: "opening"; address: string; ownerSetupUrl: string; notices: FinishedNote[] }
+  | {
+      step: "opening";
+      address: string;
+      ownerSetupUrl: string;
+      notices: FinishedNote[];
+      /**
+       * `checking`: asking the address before opening it; `yes`: it answered
+       * and the page is going there; `not-yet`: it did not answer in time.
+       */
+      answering: "checking" | "yes" | "not-yet";
+    }
   /** Appflare already has its owner: nothing more to do here. */
   | { step: "set-up"; address: string; notices: FinishedNote[] }
   | { step: "confirm-remove"; target: RemovalTarget; back: DeployView }
@@ -945,7 +964,9 @@ export class DeployFlow {
     const view = this.view;
     if (view.step === "deploy-failed") await this.runDeploy(view.active);
     else if (view.step === "handoff-failed") await this.handOff(view.active, view.address);
-    else if (view.step === "removing" && view.error !== null) await this.runRemoval(view.target);
+    else if (view.step === "opening" && view.answering === "not-yet") {
+      await this.openWhenAnswering(this.move());
+    } else if (view.step === "removing" && view.error !== null) await this.runRemoval(view.target);
     else if (view.step === "error" && view.retry === "accounts") await this.loadAccounts();
   }
 
@@ -1035,9 +1056,46 @@ export class DeployFlow {
     // Appflare refreshes the grant at once, so this tab's copy is spent.
     this.deps.tokens.forget();
     if (!this.current(generation)) return;
-    this.set({ step: "opening", address, ownerSetupUrl, notices: active.notices });
-    await this.deps.sleep(OPEN_DELAY_MS);
-    if (this.current(generation)) this.deps.navigate(ownerSetupUrl);
+    this.opening = { address, secret, ownerSetupUrl, notices: active.notices };
+    await this.openWhenAnswering(generation);
+  }
+
+  /** What owner setup is opened at, kept to ask the address again. */
+  private opening: {
+    address: string;
+    secret: string;
+    ownerSetupUrl: string;
+    notices: FinishedNote[];
+  } | null = null;
+
+  /**
+   * Opens owner setup once its address answers as this Appflare (the same
+   * proof the handoff checked), asking for up to {@link OPEN_TRY_FOR_MS};
+   * shows the loader meanwhile, and says so when it did not answer.
+   */
+  private async openWhenAnswering(generation: number): Promise<void> {
+    const opening = this.opening;
+    if (opening === null) return;
+    const { address, secret, ownerSetupUrl, notices } = opening;
+    const show = (answering: "checking" | "yes" | "not-yet") =>
+      this.set({ step: "opening", address, ownerSetupUrl, notices, answering });
+    show("checking");
+    const until = this.deps.now() + OPEN_TRY_FOR_MS;
+    for (;;) {
+      const probe = await this.deps.manager.probe(address, secret);
+      if (!this.current(generation)) return;
+      if (probe.kind === "verified") {
+        show("yes");
+        this.deps.navigate(ownerSetupUrl);
+        return;
+      }
+      if (this.deps.now() >= until) {
+        show("not-yet");
+        return;
+      }
+      await this.deps.sleep(OPEN_RETRY_MS);
+      if (!this.current(generation)) return;
+    }
   }
 
   // --- Removal ---------------------------------------------------------------

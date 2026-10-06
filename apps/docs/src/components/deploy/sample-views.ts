@@ -293,6 +293,15 @@ export const SAMPLE_VIEWS: Record<string, DeployView> = {
     address: active.address,
     ownerSetupUrl: `${active.address}/setup#claim=${SAMPLE_SECRETS.claim}`,
     notices: [],
+    answering: "checking",
+  },
+  /** The address did not answer in time: try again, or open it anyway. */
+  "opening-not-yet": {
+    step: "opening",
+    address: active.address,
+    ownerSetupUrl: `${active.address}/setup#claim=${SAMPLE_SECRETS.claim}`,
+    notices: [],
+    answering: "not-yet",
   },
   /** The account had no scheduled trigger left: said once more before owner setup. */
   "opening-notice": {
@@ -300,6 +309,7 @@ export const SAMPLE_VIEWS: Record<string, DeployView> = {
     address: active.address,
     ownerSetupUrl: `${active.address}/setup#claim=${SAMPLE_SECRETS.claim}`,
     notices: [cronNotice],
+    answering: "checking",
   },
   "set-up": { step: "set-up", address: active.address, notices: [] },
   "confirm-remove": { step: "confirm-remove", target, back: { step: "loading" } },

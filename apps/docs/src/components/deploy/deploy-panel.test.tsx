@@ -2,7 +2,14 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import type { DeployView } from "../../deploy/flow.ts";
 import { CallbackPanel } from "./callback-panel.tsx";
-import { createdItems, DeployPanel, meterOf, NO_ACTIONS, stageOf } from "./deploy-panel.tsx";
+import {
+  createdItems,
+  DeployPanel,
+  meterOf,
+  NO_ACTIONS,
+  showsIntro,
+  stageOf,
+} from "./deploy-panel.tsx";
 import { InstallerTerms, journeyPosition, OtherWays } from "./deploy-shell.tsx";
 import { SAMPLE_CALLBACK_VIEWS, SAMPLE_SECRETS, SAMPLE_VIEWS } from "./sample-views.ts";
 
@@ -36,10 +43,17 @@ describe("DeployPanel", () => {
     expect(html).not.toContain(SAMPLE_SECRETS.handoffSecret);
     // The owner claim appears only as the target of the Open link.
     const claims = html.split(SAMPLE_SECRETS.claim).length - 1;
-    expect(claims).toBe(view.step === "opening" ? 1 : 0);
+    expect(claims).toBe(view.step === "opening" && view.answering === "not-yet" ? 1 : 0);
     expect(text(html)).not.toContain(SAMPLE_SECRETS.claim);
     // Appflare's own loader, never a generic spinner.
     expect(html).not.toContain("animate-spin");
+  });
+
+  it("shows the installer's terms and the other ways to install only before Cloudflare", () => {
+    for (const [name, view] of Object.entries(SAMPLE_VIEWS)) {
+      const before = ["loading", "welcome", "welcome-resume"].includes(name);
+      expect(showsIntro(view), name).toBe(before);
+    }
   });
 
   it("counts no steps before Cloudflare is connected", () => {
@@ -240,7 +254,12 @@ describe("DeployPanel", () => {
   });
 
   it("opens owner setup on the chosen address, with no referrer", () => {
-    const html = render(sample("opening"));
+    // While it checks, the page shows "Opening…" and no link that could land on a 404.
+    expect(text(render(sample("opening")))).toContain("Opening…");
+    expect(render(sample("opening"))).not.toContain("/setup#claim=");
+    // When the address did not answer in time: Try again, or open it anyway.
+    const html = render(sample("opening-not-yet"));
+    expect(text(html)).toContain("Try again");
     expect(html).toContain(
       `href="https://appflare.acme.example/setup#claim=${SAMPLE_SECRETS.claim}"`,
     );

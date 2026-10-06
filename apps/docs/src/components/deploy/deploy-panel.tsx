@@ -208,6 +208,16 @@ export function stageOf(view: DeployView): Stage | null {
  * unfinished installation, and nothing from Deploy on, where the deploy's
  * own progress is the bar.
  */
+/**
+ * Whether the page shows what the installer receives and keeps and the
+ * other ways to install: on the first screen (welcome, or welcome to
+ * continue) and while the page starts, never once the visitor is back from
+ * Cloudflare, having already gone past them.
+ */
+export function showsIntro(view: DeployView): boolean {
+  return view.step === "loading" || view.step === "welcome";
+}
+
 export function meterOf(view: DeployView): JourneyStep | null {
   switch (view.step) {
     case "account":
@@ -1192,7 +1202,14 @@ function HandoffFailed({
   );
 }
 
-function Opening({ view }: { view: Extract<DeployView, { step: "opening" }> }) {
+function Opening({
+  view,
+  actions,
+}: {
+  view: Extract<DeployView, { step: "opening" }>;
+  actions: DeployActions;
+}) {
+  const host = hostOf(view.address);
   return (
     <DeployCard
       meter={meterOf(view)}
@@ -1204,20 +1221,42 @@ function Opening({ view }: { view: Extract<DeployView, { step: "opening" }> }) {
       }
       description={
         <>
-          Opening <Strong>{hostOf(view.address)}</Strong> to create your owner account.
+          At <Strong>{host}</Strong>, where you create your owner account.
         </>
       }
     >
-      <LinkButton
-        href={view.ownerSetupUrl}
-        variant="primary"
-        size="lg"
-        className={`${WIDE} ${TOUCH}`}
-        rel="noreferrer"
-        icon={ArrowSquareOutIcon}
-      >
-        Open Appflare
-      </LinkButton>
+      {view.answering === "not-yet" ? (
+        <>
+          <div role="status">
+            <Text variant="secondary">
+              {host} does not answer everywhere yet. A new address can take a minute to reach
+              everyone.
+            </Text>
+          </div>
+          <Actions>
+            <Button
+              variant="primary"
+              className={`${WIDE} ${TOUCH} sm:w-auto`}
+              onClick={() => actions.retry()}
+            >
+              Try again
+            </Button>
+            <LinkButton
+              href={view.ownerSetupUrl}
+              variant="secondary"
+              className={`${TOUCH} ${WIDE_ON_PHONE}`}
+              rel="noreferrer"
+              icon={ArrowSquareOutIcon}
+            >
+              Open Appflare anyway
+            </LinkButton>
+          </Actions>
+        </>
+      ) : (
+        // Opened only once the address answers as this Appflare, so the
+        // visitor never lands on Cloudflare's "not found" page meanwhile.
+        <Working label="Opening…" />
+      )}
       <Text variant="secondary" size="sm">
         The link works for 30 minutes.
       </Text>
@@ -1481,7 +1520,7 @@ function Step({ view, actions, canGoBack, examples = {} }: DeployPanelProps) {
     case "handoff-failed":
       return <HandoffFailed view={view} actions={actions} />;
     case "opening":
-      return <Opening view={view} />;
+      return <Opening view={view} actions={actions} />;
     case "set-up":
       return <SetUp view={view} />;
     case "confirm-remove":

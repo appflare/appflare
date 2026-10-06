@@ -98,6 +98,8 @@ export class FakeWorld {
   addressOverride: string | null = null;
   /** How many of the next `/step` requests get no answer at all (the connection drops). */
   stepsUnanswered = 0;
+  /** Runs after a manager accepts a handoff (to change how it answers next). */
+  afterHandoff: (() => void) | null = null;
   private counter = 0;
 
   fetch = async (input: string, init: RequestInit = {}): Promise<Response> => {
@@ -286,6 +288,7 @@ export class FakeWorld {
     }
     if (m.state === "waiting") m.received = body as Record<string, unknown>;
     m.state = "received";
+    this.afterHandoff?.();
     return Response.json({
       ok: true,
       ownerSetupUrl: `${url.origin}/setup#claim=claim0123456789abcdef`,
