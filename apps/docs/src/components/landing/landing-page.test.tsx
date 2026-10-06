@@ -32,7 +32,8 @@ describe("the front page", () => {
   });
 
   it("points at the button with a drawing that loads nothing and that screen readers skip", () => {
-    const svg = /<svg[^>]*viewBox="0 0 184 62"[^>]*>[\s\S]*?<\/svg>/.exec(html)?.[0] ?? "";
+    const svg = /<svg[^>]*viewBox="0 0 250 120"[^>]*>[\s\S]*?<\/svg>/.exec(html)?.[0] ?? "";
+    expect(svg).not.toBe("");
     expect(svg).toMatch(/aria-hidden="true"/);
     expect(svg).toContain('stroke="currentColor"');
     expect(svg).not.toMatch(/<text\b|<image\b|<style\b|font-family/);

@@ -27,3 +27,21 @@ html > body[data-scroll-locked] {
   /* biome-ignore lint/complexity/noImportantStyles: overrides an inline style */
   --removed-body-scroll-bar-size: 0px !important;
 }
+
+/* The front page's "click here" arrow draws itself once, then its tip appears. */
+@keyframes click-here-draw {
+  from {
+    stroke-dasharray: 1;
+    stroke-dashoffset: 1;
+  }
+  to {
+    stroke-dasharray: 1;
+    stroke-dashoffset: 0;
+  }
+}
+
+@keyframes click-here-tip {
+  from {
+    opacity: 0;
+  }
+}

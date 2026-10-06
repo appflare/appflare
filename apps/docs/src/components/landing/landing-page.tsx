@@ -13,6 +13,9 @@ import { DeployButton, GhostButton, Shot, Wordmark } from "./parts.tsx";
 const notAffiliated =
   "Appflare is an independent open-source project, not affiliated with, endorsed by, or sponsored by Cloudflare, Inc.";
 
+/** Two buttons side by side, or stacked at the same width on a phone. */
+const BUTTON_ROW = "flex w-full max-w-xs flex-col gap-3 sm:w-auto sm:max-w-none sm:flex-row";
+
 /** The front page, `/`: the site's top bar over {@link LandingContent}. */
 export function LandingPage({ data }: { data: LandingData }) {
   return (
@@ -57,7 +60,7 @@ export function LandingContent({ data }: { data: LandingData }) {
             The button deploys a prebuilt, signed Appflare and opens the setup wizard. It takes a
             few minutes and a Cloudflare API token.
           </p>
-          <div className="flex flex-wrap justify-center gap-3">
+          <div className={BUTTON_ROW}>
             <DeployButton size="lg" />
             <GhostButton href={DOCS_HOME} size="lg">
               Read the docs
@@ -93,11 +96,11 @@ function Hero({ data }: { data: LandingData }) {
           Appflare is one Worker in your account. Pick from {data.apps} apps built for Workers,
           install one in a click, and keep it updated, with a rollback when you need one.
         </p>
-        <div className="flex flex-wrap justify-center gap-3">
-          <span className="relative inline-flex">
-            <DeployButton size="lg" />
-            {/* The arrow's tip sits just before the button's left edge, level with its middle. A phone has no room beside the button. */}
-            <ClickHere className="pointer-events-none absolute top-1/2 right-full mr-2 hidden w-44 -translate-y-[60%] text-fd-foreground opacity-60 md:block" />
+        <div className={BUTTON_ROW}>
+          <span className="relative flex">
+            <DeployButton size="lg" className="grow" />
+            {/* The arrow's tip sits just before the button's left edge, level with its middle, and the words rise above it. A phone has no room beside the button. */}
+            <ClickHere className="pointer-events-none absolute top-1/2 right-full mr-1 hidden w-60 -translate-y-[18%] text-[#c75400] lg:block dark:text-[#ff8a3d]" />
           </span>
           <GhostButton href={appsPath} size="lg">
             Browse apps
