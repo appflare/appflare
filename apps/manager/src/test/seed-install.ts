@@ -51,7 +51,8 @@ export async function seedInstall(
     )
     .run();
   for (const r of opts.resources ?? []) {
-    const key = r.binding ?? r.name;
+    // A secret's row is keyed by the secret's key, which its `name` holds.
+    const key = r.kind === "secret" ? r.name : (r.binding ?? r.name);
     await env.DB.prepare(
       `INSERT INTO resources (id, install_id, kind, binding, name, cf_id, created_at)
        VALUES (?1, ?2, ?3, ?4, ?5, ?6, 1)`,

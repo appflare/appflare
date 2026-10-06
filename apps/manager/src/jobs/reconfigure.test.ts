@@ -1848,6 +1848,56 @@ describe("settings change job, an app of several Workers", () => {
     expect(new Set(promotions.map((s) => s.invocation)).size).toBe(1);
   });
 
+  it("sets a secret by its key on the one Worker that reads it under a shared name", async () => {
+    const jobs = fakeAccount(null, {
+      worker: "cut-jobs",
+      deployments: [{ id: "dep-j", versions: [{ version_id: JOBS_OLD, percentage: 100 }] }],
+    });
+    const r = await reconfigure({
+      app: {
+        ...TWO,
+        catalog: {
+          ...TWO.catalog,
+          requires: ["secret-keys"],
+          secrets: [
+            { name: "CLIENT_ID", key: "APP_CLIENT_ID", label: "App client", workers: ["app"] },
+            { name: "CLIENT_ID", key: "JOBS_CLIENT_ID", label: "Jobs client", workers: ["jobs"] },
+          ],
+        },
+      },
+      resources: [
+        ...RESOURCES,
+        { kind: "worker", name: "cut-jobs", cfId: "cut-jobs" },
+        { kind: "secret", binding: "CLIENT_ID", name: "APP_CLIENT_ID" },
+        { kind: "secret", binding: "CLIENT_ID", name: "JOBS_CLIENT_ID" },
+      ],
+      request: {
+        vars: { HOME_PAGE: "links", TITLE: "My links" },
+        secrets: { set: { JOBS_CLIENT_ID: JOBS_KEY }, unset: [] },
+      },
+      front: async (request) =>
+        /\/workers\/(scripts|workers)\/cut-jobs\b/.test(request.url) ||
+        request.url.includes("-cut-jobs.")
+          ? jobs.fetch(request.url, request)
+          : null,
+    });
+    expect(r.error).toBeNull();
+    expect(r.job?.status).toBe("succeeded");
+    expect(jobs.state.versionPatches).toEqual([
+      expect.objectContaining({ env: { CLIENT_ID: { type: "secret_text", text: JOBS_KEY } } }),
+    ]);
+    // The primary Worker's CLIENT_ID is another secret, left as it is.
+    expect(r.fake.state.versionPatches).toEqual([]);
+    const rows = await env.DB.prepare(
+      "SELECT name, binding FROM resources WHERE kind = 'secret' AND binding = 'CLIENT_ID' AND deleted_at IS NULL ORDER BY name",
+    ).all<{ name: string; binding: string }>();
+    expect(rows.results).toEqual([
+      { name: "APP_CLIENT_ID", binding: "CLIENT_ID" },
+      { name: "JOBS_CLIENT_ID", binding: "CLIENT_ID" },
+    ]);
+    expect(JSON.stringify(r.logs)).not.toContain(JOBS_KEY);
+  });
+
   it("sends both Workers the recorded name of a Workflow one runs and the other defines", async () => {
     const siteAudit = {
       type: "workflow",

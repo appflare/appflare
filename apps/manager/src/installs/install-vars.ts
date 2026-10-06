@@ -292,7 +292,7 @@ const MARKER_HOSTS = {
 } as const;
 
 /**
- * Whether any var the Worker gets holds `marker` once filled in, from the
+ * Whether any var the Worker gets, or the props of its service bindings, holds `marker` once filled in, from the
  * wrangler config, a catalog default, or what the admin entered. For an app
  * of several Workers the per-Worker forms that name the primary Worker count
  * too (`{{appUrl:web}}`): that Worker is the one the domains serve.
@@ -305,7 +305,7 @@ function varsMention(
   const host = MARKER_HOSTS[marker];
   const url = (key: keyof typeof MARKER_HOSTS) =>
     key === marker ? `https://${host}` : "https://other.appflare.invalid";
-  const { vars } = resolveVars(manifest, userVars, {
+  const values: PlaceholderValues = {
     workerName: "",
     workerUrl: url("workerUrl"),
     appUrl: url("appUrl"),
@@ -314,7 +314,14 @@ function varsMention(
       marker === "access"
         ? { teamDomain: host, teamName: host, aud: host, certsUrl: `https://${host}/certs` }
         : null,
-  });
+  };
+  const { vars } = resolveVars(manifest, userVars, values);
+  // The props of its service bindings are filled in the same way at every deploy.
+  const props = manifest.worker.bindings.flatMap((b) =>
+    b.type === "service" && b.props !== undefined
+      ? [JSON.stringify(renderJsonPlaceholders(b.props as JsonValue, values))]
+      : [],
+  );
   const declared = manifest.catalog.install.workers;
   const entry =
     declared === undefined
@@ -327,22 +334,38 @@ function varsMention(
               : { workerName: "", workerUrl: null, appUrl: null },
           ]),
         );
-  return vars.some((v) => {
-    const text = v.type === "json" ? JSON.stringify(v.json) : v.text;
-    return (entry === undefined ? text : renderEntryWorkerPlaceholders(text, entry)).includes(host);
-  });
+  const texts = [
+    ...vars.map((v) => (v.type === "json" ? JSON.stringify(v.json) : v.text)),
+    ...props,
+  ];
+  return texts.some((text) =>
+    (entry === undefined ? text : renderEntryWorkerPlaceholders(text, entry)).includes(host),
+  );
 }
 
 /**
- * Whether any var the Worker gets is filled in with its workers.dev address
- * (`{{workerUrl}}` or `{{workerHostname}}`), which stops answering once
- * workers.dev is turned off.
+ * Whether any var the Worker gets, or the props of one of its service
+ * bindings, is filled in with its workers.dev address (`{{workerUrl}}` or
+ * `{{workerHostname}}`), which stops answering once workers.dev is turned
+ * off. For an app of several Workers, any Worker's own vars and props count:
+ * `{{workerUrl}}` is the primary Worker's address in each of them, and a
+ * Worker's own config may set a var with it (a config patch).
  */
 export function varsUseWorkerUrl(
-  manifest: VarManifest,
+  manifest: VarManifest & {
+    workers?: ReadonlyArray<{ worker: Pick<ArtifactManifest["worker"], "bindings"> }>;
+  },
   userVars: Readonly<Record<string, string>>,
 ): boolean {
-  return varsMention(manifest, userVars, "workerUrl");
+  if (varsMention(manifest, userVars, "workerUrl")) return true;
+  // The other Workers' own vars; the catalog vars were counted above.
+  return (manifest.workers ?? []).some((w) =>
+    varsMention(
+      { catalog: { ...manifest.catalog, vars: [], secrets: [] }, worker: w.worker },
+      {},
+      "workerUrl",
+    ),
+  );
 }
 
 /**
@@ -399,4 +422,45 @@ export function varsNeedRefresh(
   changed: readonly VarsRefreshReason[],
 ): boolean {
   return changed.some((reason) => varsMention(manifest, userVars, reason));
+}
+
+/** A var a Worker's config patch sets (signed config, not a setting). */
+export interface PatchedVar {
+  /** The Worker's name within the entry; null for an app of one Worker. */
+  worker: string | null;
+  name: string;
+  /** As the catalog entry writes it, placeholders not filled in. */
+  value: string;
+}
+
+/**
+ * The vars the catalog entry's config patches set (`install.configPatch` and
+ * each Worker's `configPatch`), for the settings form to show read-only:
+ * they are part of the signed app, filled in at every deploy, and never
+ * the admin's to change.
+ */
+export function patchedVars(catalog: {
+  install: {
+    configPatch?: { vars?: Readonly<Record<string, string | null>> | null | undefined } | undefined;
+    workers?:
+      | ReadonlyArray<{
+          name: string;
+          configPatch?:
+            | { vars?: Readonly<Record<string, string | null>> | null | undefined }
+            | undefined;
+        }>
+      | undefined;
+  };
+}): PatchedVar[] {
+  const of = (
+    worker: string | null,
+    vars: Readonly<Record<string, string | null>> | null | undefined,
+  ): PatchedVar[] =>
+    Object.entries(vars ?? {}).flatMap(([name, value]) =>
+      value === null ? [] : [{ worker, name, value }],
+    );
+  return [
+    ...of(null, catalog.install.configPatch?.vars),
+    ...(catalog.install.workers ?? []).flatMap((w) => of(w.name, w.configPatch?.vars)),
+  ];
 }

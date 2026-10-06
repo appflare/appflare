@@ -906,6 +906,16 @@ describe("missingSecrets", () => {
     expect(missingSecrets(declared, ["A", "B", "C"])).toEqual([]);
   });
 
+  it("goes by key, so a recorded secret of the same name for another Worker does not count", () => {
+    const declared = [
+      { ...secret("CLIENT_ID"), key: "GITHUB_CLIENT_ID" },
+      { ...secret("CLIENT_ID"), key: "SLACK_CLIENT_ID" },
+    ];
+    expect(missingSecrets(declared, ["GITHUB_CLIENT_ID"]).map((s) => s.key)).toEqual([
+      "SLACK_CLIENT_ID",
+    ]);
+  });
+
   it("never asks for a seed-only secret, which only the install used", () => {
     const declared = [secret("A"), { ...secret("FIRST_ADMIN_PASSWORD"), seedOnly: true }];
     expect(missingSecrets(declared, [])).toEqual([secret("A")]);

@@ -8,6 +8,7 @@ import {
   isMultilineSecret,
   isOptionalSecret,
   isSeedOnly,
+  secretKey,
 } from "@appflare/schema";
 import { Badge, Button, Input, InputArea, Label, SensitiveInput } from "@cloudflare/kumo";
 import { ArrowsClockwiseIcon } from "@phosphor-icons/react";
@@ -30,8 +31,10 @@ import { Tooltip } from "./tooltip";
  * and one line of help under it.
  *
  * An optional secret (`optional: true`) is the same single field, marked
- * "(optional)": left empty, it is not set. Values are keyed by secret name,
- * and an optional secret has no key while its field is empty, so the form
+ * "(optional)": left empty, it is not set. Values are keyed by the secret's
+ * key (`secretKey`: its name unless the catalog gives it a key of its own,
+ * for two secrets of one name that go to different Workers), and an optional
+ * secret has no entry while its field is empty, so the form
  * sends nothing for it (the server would skip an empty value as well). An
  * optional generated secret starts empty, with a Generate button. A derived secret (the
  * catalog's `derive`) gets no field: the server computes it from its source,
@@ -73,8 +76,8 @@ export function initialSecretValues(
     enteredSecrets(secrets)
       .filter((s) => !isOptionalSecret(s))
       .map((s) => [
-        s.name,
-        s.generate && !held.includes(s.name) ? generatedSecret(s.generate) : "",
+        secretKey(s),
+        s.generate && !held.includes(secretKey(s)) ? generatedSecret(s.generate) : "",
       ]),
   );
 }
@@ -103,7 +106,7 @@ export function secretsComplete(
   values: Readonly<Record<string, string | undefined>>,
 ): boolean {
   return enteredSecrets(secrets).every((s) => {
-    const value = values[s.name];
+    const value = values[secretKey(s)];
     return isOptionalSecret(s) && value === undefined ? true : (value ?? "").length > 0;
   });
 }
@@ -121,22 +124,22 @@ export function SecretFields({
 }: {
   secrets: readonly CatalogSecret[];
   /**
-   * The names of the secrets to show, for a form that shows them in groups;
+   * The keys of the secrets to show, for a form that shows them in groups;
    * every secret the admin enters when left out. `secrets` stays the whole
    * list, which says what is derived from what.
    */
   only?: readonly string[];
-  /** Secrets the Worker already has, asked for again by an update; their fields start empty. */
+  /** Secrets the Worker already has (by key), asked for again by an update; their fields start empty. */
   held?: readonly string[];
   /** The catalog's vars, for the vars derived from a secret. */
   vars?: readonly (Pick<CatalogVar, "name" | "derive"> & { label?: string })[];
   values: Readonly<Record<string, string | undefined>>;
-  /** A new value; undefined leaves an optional secret unset. */
-  onChange(name: string, value: string | undefined): void;
+  /** A new value, by the secret's key; undefined leaves an optional secret unset. */
+  onChange(key: string, value: string | undefined): void;
   /** What ends the chance to copy a generated value ("the install", "the update"). */
   after: string;
   /**
-   * Shown right under a secret's field, by secret name: how to create the
+   * Shown right under a secret's field, by the secret's key: how to create the
    * Cloudflare token the app takes in that secret.
    */
   fieldExtras?: Readonly<Record<string, ReactNode>>;
@@ -144,21 +147,20 @@ export function SecretFields({
   disabled?: boolean;
 }) {
   return enteredSecrets(secrets)
-    .filter((secret) => only === undefined || only.includes(secret.name))
+    .filter((secret) => only === undefined || only.includes(secretKey(secret)))
     .map((secret) => {
-      const value = values[secret.name];
-      const derived = derivedNote(secrets, secret.name, vars);
-      const isHeld = held.includes(secret.name);
+      const key = secretKey(secret);
+      const value = values[key];
+      const derived = derivedNote(secrets, key, vars);
+      const isHeld = held.includes(key);
       const optional = isOptionalSecret(secret);
       return (
-        <div key={secret.name} className="grid gap-3">
+        <div key={key} className="grid gap-3">
           <SecretField
             secret={secret}
             value={value ?? ""}
             // An optional secret whose field is emptied is left unset.
-            onChange={(next) =>
-              onChange(secret.name, optional && next.length === 0 ? undefined : next)
-            }
+            onChange={(next) => onChange(key, optional && next.length === 0 ? undefined : next)}
             after={after}
             optional={optional}
             disabled={disabled}
@@ -172,24 +174,25 @@ export function SecretFields({
                 .join(" ") || undefined
             }
           />
-          {fieldExtras[secret.name]}
+          {fieldExtras[key]}
         </div>
       );
     });
 }
 
 /**
- * What the field of `name` says about the secrets and vars derived from it
- * (by label where the catalog gives one), or undefined when none is.
+ * What the field of the secret keyed `key` says about the secrets and vars
+ * derived from it (by label where the catalog gives one), or undefined when
+ * none is.
  */
 export function derivedNote(
   secrets: readonly CatalogSecret[],
-  name: string,
+  key: string,
   vars: readonly (Pick<CatalogVar, "name" | "derive"> & { label?: string })[] = [],
 ): string | undefined {
   const derived = [
-    ...secrets.filter((s) => isDerivedSecret(s) && s.derive?.from === name),
-    ...vars.filter((v) => v.derive?.from === name),
+    ...secrets.filter((s) => isDerivedSecret(s) && s.derive?.from === key),
+    ...vars.filter((v) => v.derive?.from === key),
   ];
   if (derived.length === 0) return undefined;
   return `Appflare also sets ${derived.map((s) => s.label ?? s.name).join(" and ")} from it.`;

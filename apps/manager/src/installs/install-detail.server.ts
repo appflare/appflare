@@ -156,6 +156,10 @@ export interface InstallDetail extends InstallRow {
   resources: ResourceView[];
   /** Resources an uninstall kept in the account; they remain until deleted by hand. */
   retained: ResourceView[];
+  /**
+   * The secrets the app has, by key, each with the name its Worker reads when
+   * that differs (`CLIENT_ID (GITHUB_CLIENT_ID)`), for the Secrets section.
+   */
   secretNames: string[];
   /**
    * Custom domains that serve the Worker, and its wildcard domain, in the
@@ -431,7 +435,12 @@ export async function readInstallDetail(installId: string): Promise<InstallDetai
     // Email routes are listed under Email; their ids carry encoded state.
     resources: live.filter((r) => r.kind !== "secret" && r.kind !== EMAIL_ROUTE_KIND).map(view),
     retained: resourceRows.filter((r) => r.retained_at !== null).map(view),
-    secretNames: live.filter((r) => r.kind === "secret").map((r) => r.name),
+    // By key; one whose Worker reads it under another name says so (`CLIENT_ID (GITHUB_CLIENT_ID)`).
+    secretNames: live
+      .filter((r) => r.kind === "secret")
+      .map((r) =>
+        r.binding === null || r.binding === r.name ? r.name : `${r.binding} (${r.name})`,
+      ),
     domains: live
       .filter((r) => r.kind === CUSTOM_DOMAIN_KIND || r.kind === WILDCARD_DOMAIN_KIND)
       .map(domainView),

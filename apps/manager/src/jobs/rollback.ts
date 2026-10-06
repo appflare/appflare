@@ -2,8 +2,10 @@ import { NonRetryableError } from "cloudflare:workflows";
 import {
   type ArtifactManifest,
   artifactManifestSchema,
+  boundToWorker,
   type CatalogEmailRouting,
   DEFAULT_HEALTH_MODE,
+  secretKey,
 } from "@appflare/schema";
 import { and, eq, inArray, isNull, type SQL } from "drizzle-orm";
 import { z } from "zod";
@@ -31,6 +33,7 @@ import {
   mergedWorkerVersions,
   parseWorkerVersions,
   storedOtherWorkers,
+  workerLabel,
 } from "./entry-workers";
 import { accessValuesRefreshPhase, publicPathsBackPhase, syncAccessPhase } from "./install/access";
 import {
@@ -160,50 +163,96 @@ function versionVarBindings(version: { resources?: Record<string, unknown> }): u
   });
 }
 
+/** One Worker's part in reconciling the install's secret records after a rollback. */
+export interface SecretReading {
+  primary: boolean;
+  /** The `secret_text` names of the version it serves now; null when they could not be read. */
+  names: readonly string[] | null;
+  /** The catalog secrets that go to it, by key, with the name it reads each by. */
+  secrets: ReadonlyArray<{ key: string; name: string }>;
+}
+
 /**
- * Makes the install's secret records name the secrets the version serving
- * now has: a version carries its own secrets, so rolling back brings back
- * one removed since and drops one added since. Records of secrets the version
- * has are live again (created when missing); the others are marked deleted.
+ * Makes the install's secret records name the secrets the versions serving
+ * now have: a version carries its own secrets, so rolling back brings back
+ * one removed since and drops one added since. Records go by key (`name`),
+ * holding the name the Worker reads (`binding`). Each catalog secret is
+ * checked against the Workers that get it (live when any of them has it); a
+ * record no Worker's secrets declare is the primary Worker's, by its name.
+ * Records of secrets only Workers whose version could not be read get are
+ * left as they are. Records of secrets a version has are live again (created
+ * when missing, under the key the catalog gives the secret); the others are
+ * marked deleted.
  */
 export async function reconcileSecretRecords(
   orm: Database,
   installId: string,
-  names: readonly string[],
+  readings: readonly SecretReading[],
   at: Date,
 ): Promise<{ restored: string[]; absent: string[] }> {
   const rows = await orm
-    .select({ id: resources.id, name: resources.name, deletedAt: resources.deleted_at })
+    .select({
+      id: resources.id,
+      name: resources.name,
+      binding: resources.binding,
+      deletedAt: resources.deleted_at,
+    })
     .from(resources)
     .where(and(eq(resources.install_id, installId), eq(resources.kind, "secret")));
-  const has = new Set(names);
+  /** Whether each declared key is on a Worker that gets it; absent when none was read. */
+  const live = new Map<string, boolean>();
+  const nameOf = new Map<string, string>();
+  for (const reading of readings) {
+    for (const secret of reading.secrets) {
+      nameOf.set(secret.key, secret.name);
+      if (reading.names === null) continue;
+      live.set(secret.key, (live.get(secret.key) ?? false) || reading.names.includes(secret.name));
+    }
+  }
+  const primary = readings.find((r) => r.primary);
+  const primaryNames = primary?.names ?? null;
+  const verdict = (key: string, read: string): boolean | undefined => {
+    if (nameOf.has(key)) return live.get(key);
+    return primaryNames === null ? undefined : primaryNames.includes(read);
+  };
   const restored: string[] = [];
   const absent: string[] = [];
   for (const row of rows) {
-    if (has.has(row.name) && row.deletedAt !== null) {
+    const has = verdict(row.name, row.binding ?? row.name);
+    if (has === true && row.deletedAt !== null) {
       await orm.update(resources).set({ deleted_at: null }).where(eq(resources.id, row.id));
       restored.push(row.name);
-    } else if (!has.has(row.name) && row.deletedAt === null) {
+    } else if (has === false && row.deletedAt === null) {
       await orm.update(resources).set({ deleted_at: at }).where(eq(resources.id, row.id));
       absent.push(row.name);
     }
   }
   const recorded = new Set(rows.map((r) => r.name));
-  for (const name of names) {
-    if (recorded.has(name)) continue;
+  const missing: Array<{ key: string; name: string }> = [...live]
+    .filter(([key, has]) => has && !recorded.has(key))
+    .map(([key]) => ({ key, name: nameOf.get(key) ?? key }));
+  // A secret the primary Worker's version has that no catalog secret or record names.
+  const known = new Set([
+    ...(primary?.secrets ?? []).map((s) => s.name),
+    ...rows.map((r) => r.binding ?? r.name),
+  ]);
+  for (const name of primaryNames ?? []) {
+    if (!known.has(name) && !recorded.has(name)) missing.push({ key: name, name });
+  }
+  for (const { key, name } of missing) {
     await orm
       .insert(resources)
       .values({
-        id: resourceId(installId, "secret", name),
+        id: resourceId(installId, "secret", key),
         install_id: installId,
         kind: "secret",
         binding: name,
-        name,
+        name: key,
         cf_id: null,
         created_at: at,
       })
       .onConflictDoNothing();
-    restored.push(name);
+    restored.push(key);
   }
   return { restored: restored.sort(), absent: absent.sort() };
 }
@@ -617,12 +666,41 @@ export async function runRollback(ctx: JobContext): Promise<void> {
         snapshotManifest === null
           ? []
           : workflowTargets(snapshotManifest, install.worker_name, workflowNames);
+      // Which secrets each Worker of the snapshot's version gets, by key,
+      // with the keys only the serving version declares added to the Worker
+      // that has them, so a rollback can tell which records each restored
+      // version's secrets settle.
+      const secretsOf = (json: string | null) => {
+        const parsed = parseManifest(json);
+        return parsed === null
+          ? []
+          : entryWorkers(parsed, install.worker_name).map((w) => ({
+              scriptName: w.scriptName,
+              secrets: boundToWorker(w.manifest.catalog.secrets).map((s) => ({
+                key: secretKey(s),
+                name: s.name,
+              })),
+            }));
+      };
+      const secretsThen = secretsOf(snapshot.manifest_json);
+      const declaredThen = new Set(secretsThen.flatMap((w) => w.secrets.map((s) => s.key)));
+      const secretsByWorker = secretsThen.map((w) => ({
+        ...w,
+        secrets: [
+          ...w.secrets,
+          ...(
+            secretsOf(install.manifest_json).find((n) => n.scriptName === w.scriptName)?.secrets ??
+            []
+          ).filter((s) => !declaredThen.has(s.key)),
+        ],
+      }));
       return {
         accountId: settings.account_id,
         // Absent in a step output recorded before it was read: not known to be paid.
         accountPaid: (await readAccountPlan(orm)) === "paid",
         workerName: install.worker_name,
         fromVersion: install.catalog_version,
+        secretsByWorker,
         otherWorkers: Object.entries(otherVersions).map(([scriptName, versionId]) => {
           const then = otherThen.find((w) => w.scriptName === scriptName);
           const now = otherNow.find((w) => w.scriptName === scriptName);
@@ -842,11 +920,67 @@ export async function runRollback(ctx: JobContext): Promise<void> {
         return { names: null };
       }
     });
+    // The other Workers' versions carry their own secrets too: one read each
+    // Worker that gets a catalog secret the primary Worker does not (the
+    // primary's version settles the ones they share). A step output recorded
+    // before secrets were placed per Worker has none.
+    const byWorker = started.secretsByWorker;
+    const otherReadings: SecretReading[] = [];
+    if (byWorker !== undefined) {
+      const primaryKeys = new Set(
+        (byWorker.find((w) => w.scriptName === workerName)?.secrets ?? []).map((s) => s.key),
+      );
+      for (const other of otherWorkers) {
+        const secrets = (
+          byWorker.find((w) => w.scriptName === other.scriptName)?.secrets ?? []
+        ).filter((s) => !primaryKeys.has(s.key));
+        if (secrets.length === 0) continue;
+        const read = await run(
+          `read the version's secrets${workerLabel({ primary: false, scriptName: other.scriptName })}`,
+          async ({ log, cf }) => {
+            try {
+              const names = versionSecretNames(
+                await cf().versions.getVersion(other.scriptName, other.versionId),
+              );
+              log.info(
+                names.length === 0
+                  ? `Version ${other.versionId} of "${other.scriptName}" has no secrets.`
+                  : `Version ${other.versionId} of "${other.scriptName}" has the secrets ${names.join(", ")}.`,
+              );
+              return { names };
+            } catch (error) {
+              log.warn(
+                `Could not read the secrets of version ${other.versionId} of "${other.scriptName}" (${errorMessage(error)}); its secrets stay listed as they were.`,
+              );
+              return { names: null };
+            }
+          },
+        );
+        otherReadings.push({ primary: false, names: read.names, secrets });
+      }
+    }
     await run("record rollback", async ({ log, orm }) => {
       const at = new Date(now());
       await recordServing(orm, at);
-      if (secretNames.names !== null) {
-        const changed = await reconcileSecretRecords(orm, params.installId, secretNames.names, at);
+      const readings: SecretReading[] = [
+        {
+          primary: true,
+          names: secretNames.names,
+          secrets: byWorker?.find((w) => w.scriptName === workerName)?.secrets ?? [],
+        },
+        ...otherReadings,
+        // The keys of Workers the rollback did not touch, so the primary's
+        // secrets never settle their records.
+        ...(byWorker ?? [])
+          .filter(
+            (w) =>
+              w.scriptName !== workerName &&
+              !otherWorkers.some((o) => o.scriptName === w.scriptName),
+          )
+          .map((w) => ({ primary: false, names: null, secrets: w.secrets })),
+      ];
+      if (readings.some((r) => r.names !== null)) {
+        const changed = await reconcileSecretRecords(orm, params.installId, readings, at);
         if (changed.restored.length > 0) {
           log.info(`Secrets back with this version: ${changed.restored.join(", ")}.`);
         }

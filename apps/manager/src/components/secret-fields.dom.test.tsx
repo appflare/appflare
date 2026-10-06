@@ -122,3 +122,26 @@ describe("a generated secret", () => {
     expect(onChange.mock.calls.at(-1)?.[1]).toHaveLength(32);
   });
 });
+
+describe("two secrets of one name for different Workers", () => {
+  const keyed: CatalogSecret[] = secretsOf([
+    { name: "CLIENT_ID", key: "GITHUB_CLIENT_ID", label: "GitHub client ID", workers: ["github"] },
+    { name: "CLIENT_ID", key: "GOOGLE_CLIENT_ID", label: "Google client ID", workers: ["google"] },
+  ]);
+
+  it("are two fields, each holding and sending its own value by key", () => {
+    const onChange = vi.fn();
+    const values = { GITHUB_CLIENT_ID: "gh", GOOGLE_CLIENT_ID: "goog" };
+    act(() =>
+      root.render(
+        <SecretFields secrets={keyed} values={values} onChange={onChange} after="the install" />,
+      ),
+    );
+    expect(inputOf("GitHub client ID").value).toBe("gh");
+    expect(inputOf("Google client ID").value).toBe("goog");
+    type(inputOf("Google client ID"), "goog-2");
+    expect(onChange).toHaveBeenLastCalledWith("GOOGLE_CLIENT_ID", "goog-2");
+    expect(secretsComplete(keyed, { GITHUB_CLIENT_ID: "gh" })).toBe(false);
+    expect(secretsComplete(keyed, values)).toBe(true);
+  });
+});

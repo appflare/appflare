@@ -9,6 +9,7 @@ import {
   QueueConsumerError,
   type ResolvedWranglerConfig,
   ServiceBindingError,
+  servicePropsPlaceholderProblems,
   UnsafeBindingError,
   unknownWorkflowSettingFields,
   VectorizeDeclarationError,
@@ -376,6 +377,35 @@ describe("collectBindings", () => {
     ]);
   });
 
+  it("keeps the props of a binding to the app's own Worker or another Worker of the entry", () => {
+    const config: ResolvedWranglerConfig = {
+      name: "workshop",
+      services: [
+        { binding: "SELF", service: "workshop", props: { admin: true } },
+        {
+          binding: "GATEKEEPER_CONTEXT",
+          service: "gatekeeper-context",
+          entrypoint: "GatekeeperVendor",
+          props: { sharingDomain: "{{appUrl}}" },
+        },
+      ],
+    };
+    expect(
+      collectBindings(config, undefined, {
+        entryWorkers: new Map([["gatekeeper-context", "context"]]),
+      }),
+    ).toEqual([
+      { type: "service", name: "SELF", service: "self", props: { admin: true } },
+      {
+        type: "service",
+        name: "GATEKEEPER_CONTEXT",
+        service: "{{workerName:context}}",
+        entrypoint: "GatekeeperVendor",
+        props: { sharingDomain: "{{appUrl}}" },
+      },
+    ]);
+  });
+
   it("refuses a service binding to any other Worker, naming the binding", () => {
     for (const [services, message] of [
       [
@@ -388,8 +418,8 @@ describe("collectBindings", () => {
         /service binding ENV to the app's own Worker sets environment/,
       ],
       [
-        [{ binding: "P", service: "cut", props: { admin: true } }],
-        /service binding P to the app's own Worker sets props/,
+        [{ binding: "P", service: "cut", props: ["admin"] }],
+        /service binding P sets props that are not a JSON object/,
       ],
     ] as const) {
       const config = { name: "cut", services } as unknown as ResolvedWranglerConfig;
@@ -511,6 +541,24 @@ describe("varPlaceholderProblems", () => {
     ];
     expect(varPlaceholderProblems(bindings, { workers })).toEqual([
       `The wrangler config's var JOBS: {{appUrl:jobs}} names the Worker "jobs", which sets workersDev to false and so has no address.`,
+    ]);
+  });
+});
+
+describe("servicePropsPlaceholderProblems", () => {
+  it("holds the strings in a service binding's props to a var's placeholders", () => {
+    const bindings = collectBindings({
+      name: "app",
+      services: [
+        { binding: "OK", service: "app", props: { at: "{{appUrl}}", n: 1 } },
+        { binding: "BAD", service: "app", props: { list: ["{{AppUrl}}", "{{stage}}"] } },
+      ],
+    } as ResolvedWranglerConfig);
+    expect(servicePropsPlaceholderProblems(bindings, {})).toEqual([
+      "The props of the service binding BAD: {{AppUrl}} is not a placeholder; placeholder names are case-sensitive, so write {{appUrl}}.",
+      expect.stringMatching(
+        /^The props of the service binding BAD: \{\{stage\}\} is not filled in here/,
+      ),
     ]);
   });
 });

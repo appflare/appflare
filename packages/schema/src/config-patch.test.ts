@@ -68,7 +68,7 @@ describe("configPatchSchema", () => {
     expect(issues({ name: "other" })).toEqual([
       "name: a config patch may not set name: the Worker's name comes from the install, not " +
         "the config; it may set only main, assets, build, services, kv_namespaces, r2_buckets, " +
-        "d1_databases, vars, migrations, ratelimits, or null to drop a section Appflare cannot install or a key wrangler does not know",
+        "d1_databases, vars, migrations, ratelimits, ai, or null to drop a section Appflare cannot install or a key wrangler does not know",
     ]);
     expect(issues({ durable_objects: { bindings: [] } })[0]).toContain(
       "rename new_classes to new_sqlite_classes in migrations",
@@ -89,13 +89,15 @@ describe("configPatchSchema", () => {
     expect(issues({ mtls_certificates: null })).toEqual([]);
   });
 
-  it("allows build only as null, vars only as removals, storage only as a list", () => {
+  it("allows build only as null, vars as text or removals, storage only as a list", () => {
     expect(issues({ build: { command: "make" } })).toEqual([
       "build: build may only be null, which removes the config's build",
     ]);
-    expect(issues({ vars: { DEBUG: "true" } })).toEqual([
-      "vars.DEBUG: a config patch may only remove vars, with null",
+    expect(issues({ vars: { BASE_URL: "{{appUrl}}/gatekeeper/github", DEBUG: null } })).toEqual([]);
+    expect(issues({ vars: { DEBUG: true } })).toEqual([
+      "vars.DEBUG: a config patch sets a var to text, or removes it with null",
     ]);
+    expect(issues({ vars: { LIST: ["a"] } })).toHaveLength(1);
     expect(issues({ kv_namespaces: null })).toHaveLength(1);
     expect(issues({ migrations: null })).toHaveLength(1);
     expect(issues({ assets: { directory: "x", serve_directly: true } })).toHaveLength(1);
@@ -105,7 +107,7 @@ describe("configPatchSchema", () => {
     expect(issues(JSON.parse('{"main":"dist/index.js","__proto__":{"name":"x"}}'))).toEqual([
       "__proto__: a config patch may not set __proto__: it is not a wrangler config key; it " +
         "may set only main, assets, build, services, kv_namespaces, r2_buckets, d1_databases, " +
-        "vars, migrations, ratelimits, or null to drop a section Appflare cannot install or a key wrangler does not know",
+        "vars, migrations, ratelimits, ai, or null to drop a section Appflare cannot install or a key wrangler does not know",
     ]);
   });
 
@@ -126,6 +128,23 @@ describe("configPatchSchema", () => {
       ]);
       expect(issues({ assets: { directory: bad } })).toHaveLength(1);
     }
+  });
+
+  it("takes an ai binding by its name alone", () => {
+    expect(issues({ ai: { binding: "WORKERS_AI" } })).toEqual([]);
+    expect(issues({ ai: { binding: "AI", remote: true } })).toHaveLength(1);
+    expect(issues({ ai: null })).toHaveLength(1);
+  });
+
+  it("takes props on a service binding only as an object", () => {
+    expect(
+      issues({
+        services: [{ binding: "CTX", service: "context", props: { sharingDomain: "{{appUrl}}" } }],
+      }),
+    ).toEqual([]);
+    expect(issues({ services: [{ binding: "CTX", service: "context", props: "x" }] })).toHaveLength(
+      1,
+    );
   });
 
   it("refuses an empty patch", () => {
@@ -183,6 +202,96 @@ describe("the catalog manifest's configPatch", () => {
         (i) => i.path.join(".") === "install.configPatch" && i.message.includes("self-deploying"),
       ),
     ).toBe(true);
+  });
+
+  const twoWorkers = (gatekeeper: Record<string, unknown>, extra: Record<string, unknown> = {}) =>
+    catalogManifestSchema.safeParse({
+      ...manifest,
+      plan: "paid",
+      requires: ["config-patch-values"],
+      ...extra,
+      install: {
+        ...manifest.install,
+        workers: [
+          { name: "router", wranglerConfig: "wrangler.jsonc", primary: true },
+          { name: "github", wranglerConfig: "github/wrangler.jsonc", configPatch: gatekeeper },
+        ],
+      },
+    });
+
+  it("lets a Worker's patch set a var of its own, with the placeholders a var default takes", () => {
+    const parsed = twoWorkers({ vars: { BASE_URL: "{{appUrl}}/gatekeeper/github" } });
+    expect(parsed.error?.issues).toBeUndefined();
+    const wrong = twoWorkers({ vars: { BASE_URL: "{{appurl}}/x", OTHER: "{{appUrl:nope}}" } });
+    expect(wrong.error?.issues.map((i) => i.path.join("."))).toEqual([
+      "install.workers.1.configPatch.vars.BASE_URL",
+      "install.workers.1.configPatch.vars.OTHER",
+    ]);
+  });
+
+  it("refuses a patched var with the name of a secret its Worker gets", () => {
+    const secret = { name: "BASE_URL", label: "Base", workers: ["github"] };
+    const clash = twoWorkers({ vars: { BASE_URL: "x" } }, { secrets: [secret] });
+    expect(clash.error?.issues.map((i) => i.message)).toEqual([
+      "the patch sets the var BASE_URL, which is also a secret this Worker gets; a Worker cannot have a secret and a var of one name",
+    ]);
+    const elsewhere = twoWorkers(
+      { vars: { BASE_URL: "x" } },
+      { secrets: [{ ...secret, workers: ["router"] }] },
+    );
+    expect(elsewhere.success).toBe(true);
+  });
+
+  it('needs "service-props" for props on a patched service binding', () => {
+    const props = {
+      services: [{ binding: "CTX", service: "router", props: { sharingDomain: "{{appUrl}}" } }],
+    };
+    expect(twoWorkers(props).error?.issues.map((i) => i.message)).toEqual([
+      'a config patch gives a service binding props, so requires must list "service-props": a manager that does not know props refuses the binding',
+    ]);
+    expect(twoWorkers(props, { requires: ["service-props"] }).success).toBe(true);
+    expect(twoWorkers(props, { requires: ["config-patch-values"] }).success).toBe(false);
+    const badPlaceholder = twoWorkers(
+      { services: [{ binding: "CTX", service: "router", props: { at: ["{{AppUrl}}"] } }] },
+      { requires: ["service-props"] },
+    );
+    expect(badPlaceholder.error?.issues[0]?.path).toEqual([
+      "install",
+      "workers",
+      1,
+      "configPatch",
+      "services",
+      0,
+      "props",
+    ]);
+  });
+
+  it('needs "config-patch-values" for var text or an ai binding, not for removals', () => {
+    const message =
+      'a config patch sets var text or a Workers AI binding (install.workers[1].configPatch.vars.BASE_URL), so requires must list "config-patch-values": a manager that predates them refuses the patch';
+    expect(
+      twoWorkers({ vars: { BASE_URL: "x" } }, { requires: [] }).error?.issues.map((i) => i.message),
+    ).toEqual([message]);
+    expect(
+      twoWorkers({ ai: { binding: "AI" } }, { requires: [] }).error?.issues[0]?.message,
+    ).toContain("install.workers[1].configPatch.ai");
+    expect(twoWorkers({ ai: { binding: "AI" } }).success).toBe(true);
+    expect(twoWorkers({ vars: { DEBUG: null } }, { requires: [] }).success).toBe(true);
+  });
+
+  it("refuses a patched var that a catalog var going to the same Worker would replace", () => {
+    const clash = twoWorkers(
+      { vars: { BASE_URL: "x" } },
+      { vars: [{ name: "BASE_URL", label: "Base", optional: true }] },
+    );
+    expect(clash.error?.issues.map((i) => i.message)).toEqual([
+      "the patch sets the var BASE_URL, which a catalog var of that name going to this Worker would replace; set it in one place, or give the catalog var workers that leave this Worker out",
+    ]);
+    const elsewhere = twoWorkers(
+      { vars: { BASE_URL: "x" } },
+      { vars: [{ name: "BASE_URL", label: "Base", optional: true, workers: ["router"] }] },
+    );
+    expect(elsewhere.success).toBe(true);
   });
 
   it("refuses a patch that sets a key outside the allowlist", () => {
@@ -421,7 +530,35 @@ describe("configPatchProblems", () => {
   });
 });
 
+describe("configPatchProblems: ai", () => {
+  it("adds a Workers AI binding only where the config has none, or the same one", () => {
+    const ai = patch({ ai: { binding: "WORKERS_AI" } });
+    expect(configPatchProblems({}, ai, new Set())).toEqual([]);
+    expect(configPatchProblems({ ai: { binding: "WORKERS_AI" } }, ai, new Set())).toEqual([]);
+    expect(configPatchProblems({ ai: { binding: "AI" } }, ai, new Set())).toEqual([
+      "ai changes the config's own Workers AI binding; a patch may only add one to a config that has none",
+    ]);
+  });
+});
+
 describe("patchWranglerConfig", () => {
+  it("sets a var over the config's own and adds new ones", () => {
+    const { config, diff } = patchWranglerConfig(
+      { name: "gk", vars: { BASE_URL: "http://localhost", KEEP: "x" } },
+      patch({ vars: { BASE_URL: "{{appUrl}}/gatekeeper/github", NEW: "y" } }),
+      new Set(),
+    );
+    expect(config.vars).toEqual({
+      BASE_URL: "{{appUrl}}/gatekeeper/github",
+      KEEP: "x",
+      NEW: "y",
+    });
+    expect(diff).toEqual([
+      'vars.BASE_URL: "http://localhost" -> "{{appUrl}}/gatekeeper/github"',
+      'vars.NEW: added "y"',
+    ]);
+  });
+
   it("returns the patched config and one diff line per changed path", () => {
     const raw = {
       name: "nodrix",

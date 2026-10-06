@@ -10,6 +10,7 @@ import {
   isMultilineSecret,
   isOptionalSecret,
   MAX_CONNECTION_STRING_LENGTH,
+  secretKey,
   secretValueProblem,
 } from "@appflare/schema";
 import { z } from "zod";
@@ -32,8 +33,12 @@ export const MAX_VALUE_LENGTH = 4096;
 const nameSchema = z.string().min(1).max(MAX_NAME_LENGTH);
 
 /**
- * Secret changes: new values by name (never logged; they live only in the
- * Workflow params) and names to remove.
+ * Secret changes: new values by key (never logged; they live only in the
+ * Workflow params) and keys to remove. A secret's key is its name unless the
+ * catalog gives it one of its own (`secretKey`); what reaches one Worker is
+ * translated to the names it reads (`workerSecretChanges` in
+ * ../secret-keys.ts), and the phases that patch a Worker's version take
+ * changes by those names.
  */
 export const secretChangesSchema = z.object({
   set: z.record(nameSchema, z.string().max(MAX_VALUE_LENGTH)).default({}),
@@ -53,7 +58,14 @@ export const connectionChangesSchema = z.record(
 
 /** One secret of an install, as the Settings section lists it. Values are never shown. */
 export interface SecretSlot {
+  /** The secret's key (`secretKey`), which the form and the job's changes go by. */
   name: string;
+  /**
+   * The name the Worker reads it by, when it is not the key (a catalog
+   * secret with a `key` of its own, or a recorded one the version no longer
+   * declares); shown as its technical name.
+   */
+  envName?: string;
   /** The catalog's label, or the name for a secret the version no longer declares. */
   label: string;
   help?: string;
@@ -103,18 +115,28 @@ export interface SecretSlot {
 export function secretSlots(
   declared: ReadonlyArray<
     Pick<CatalogSecret, "name" | "label" | "help" | "generate" | "derive"> &
-      Partial<Pick<CatalogSecret, "optional" | "multiline" | "seedOnly" | "link">>
+      Partial<Pick<CatalogSecret, "key" | "optional" | "multiline" | "seedOnly" | "link">>
   >,
-  recordedNames: readonly string[],
+  /**
+   * The install's recorded secrets: their keys, or the `resources` rows
+   * (`name` the key, `binding` the name the Worker has it under).
+   */
+  recorded: ReadonlyArray<string | { name: string; binding: string | null }>,
   vars: readonly (Pick<CatalogVar, "name" | "derive"> & { label?: string })[] = [],
 ): SecretSlot[] {
-  const recorded = new Set(recordedNames);
+  const rows = recorded.map((r) =>
+    typeof r === "string"
+      ? { name: r, binding: r }
+      : { name: r.name, binding: r.binding ?? r.name },
+  );
+  const present = new Set(rows.map((r) => r.name));
   // A seed-only secret was used once by the install and is kept nowhere, so
   // settings neither show nor take it.
   const slots: SecretSlot[] = boundToWorker(declared).map((s) => {
-    const derivedSecrets = declared.filter((d) => d.derive?.from === s.name);
-    const derivedVars = vars.filter((v) => v.derive?.from === s.name);
-    const derives = derivedSecrets.map((d) => d.name);
+    const key = secretKey(s);
+    const derivedSecrets = declared.filter((d) => d.derive?.from === key);
+    const derivedVars = vars.filter((v) => v.derive?.from === key);
+    const derives = derivedSecrets.map(secretKey);
     const derivesVars = derivedVars.map((v) => v.name);
     const derivesLabels = [
       ...derivedSecrets.map((d) => d.label),
@@ -123,26 +145,28 @@ export function secretSlots(
     return {
       ...(derivesVars.length > 0 ? { derivesVars } : {}),
       ...(derivesLabels.length > 0 ? { derivesLabels } : {}),
-      name: s.name,
+      name: key,
+      ...(key === s.name ? {} : { envName: s.name }),
       label: s.label,
       ...(s.help === undefined ? {} : { help: s.help }),
       ...(s.link === undefined ? {} : { link: s.link }),
       generate: s.generate,
       declared: true,
       optional: isOptionalSecret(s),
-      present: recorded.has(s.name),
+      present: present.has(key),
       ...(s.derive === undefined ? {} : { derivedFrom: s.derive.from }),
       ...(derives.length > 0 ? { derives } : {}),
       ...(isMultilineSecret(s) ? { multiline: true as const } : {}),
     };
   });
-  const names = new Set(declared.map((s) => s.name));
-  for (const name of recordedNames) {
-    if (names.has(name)) continue;
-    names.add(name);
+  const keys = new Set(declared.map(secretKey));
+  for (const row of rows) {
+    if (keys.has(row.name)) continue;
+    keys.add(row.name);
     slots.push({
-      name,
-      label: name,
+      name: row.name,
+      ...(row.binding === row.name ? {} : { envName: row.binding }),
+      label: row.binding,
       generate: undefined,
       declared: false,
       optional: true,

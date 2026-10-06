@@ -300,6 +300,25 @@ export function AppSettingsSection({
                 </Group>
               )}
 
+              {showNames && (settings.fixedVars ?? []).length > 0 && (
+                <Group
+                  title="Set by the catalog entry"
+                  description="Values the app's catalog entry gives its Workers. They are part of the app, so they cannot be changed here; placeholders are filled in at each deploy."
+                >
+                  <ul className="m-0 grid list-none gap-1.5 p-0" data-fixed-vars>
+                    {(settings.fixedVars ?? []).map((v) => (
+                      <li key={`${v.worker ?? ""}:${v.name}`} className="min-w-0 break-all">
+                        <Text size="sm">
+                          <span className="font-mono">{v.name}</span>
+                          {v.worker === null ? "" : ` (Worker "${v.worker}")`}:{" "}
+                          <span className="font-mono">{v.value}</span>
+                        </Text>
+                      </li>
+                    ))}
+                  </ul>
+                </Group>
+              )}
+
               {settings.secrets.length > 0 && (
                 <Group
                   id="secrets"
@@ -691,7 +710,7 @@ function SecretRow({
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="flex flex-wrap items-center gap-2">
           <Label showOptional={slot.declared && slot.optional}>
-            <FieldLabel label={slot.label} name={slot.name} />
+            <FieldLabel label={slot.label} name={slot.envName ?? slot.name} />
           </Label>
           {!slot.present && <Badge variant={slot.optional ? "outline" : "warning"}>Not set</Badge>}
           {!slot.declared && <Badge variant="outline">Not used by this version</Badge>}

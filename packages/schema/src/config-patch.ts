@@ -12,8 +12,10 @@ import {
  * install from its pinned commit when upstream has not taken them yet: an
  * entrypoint or assets directory its build moves, a build step the catalog
  * runs itself, a service binding to a Worker that is not part of the app,
- * storage bindings without ids so they are provisioned, or Durable Object
- * classes that must be SQLite-backed on the Free plan. It may also drop a
+ * storage bindings without ids so they are provisioned, Durable Object
+ * classes that must be SQLite-backed on the Free plan, a var one Worker of the
+ * entry needs a value of its own for, or a Workers AI binding or service
+ * binding `props` an upstream deploy script adds. It may also drop a
  * section the packer refuses (`"vpc_services": null`, see
  * {@link UNSUPPORTED_WRANGLER_SECTIONS}) from an app that works without it,
  * and a key the packer's wrangler does not know (`"email": null`), which the
@@ -54,6 +56,7 @@ export const CONFIG_PATCH_KEYS = [
   "vars",
   "migrations",
   "ratelimits",
+  "ai",
 ] as const;
 export type ConfigPatchKey = (typeof CONFIG_PATCH_KEYS)[number];
 
@@ -125,6 +128,15 @@ const serviceEntrySchema = z
   .object({
     binding: bindingNameSchema,
     service: z.string().min(1).describe("The name of the Worker the binding points at."),
+    props: z
+      .record(z.string(), jsonValue)
+      .describe(
+        "Values the Worker the binding points at reads as `ctx.props` on every call through " +
+          "it, as wrangler sends them: a JSON object whose strings may hold the placeholders a " +
+          "var's default takes (`{{appUrl}}` and the others), filled in at every deploy. Only on " +
+          'a binding to a Worker of this entry; needs "service-props" in `requires`.',
+      )
+      .optional(),
   })
   .catchall(jsonValue);
 
@@ -184,9 +196,21 @@ const configPatchShape = {
     )
     .optional(),
   vars: z
-    .record(z.string(), z.null({ error: "a config patch may only remove vars, with null" }))
+    .record(
+      z.string(),
+      z.union([z.string(), z.null()], {
+        error: "a config patch sets a var to text, or removes it with null",
+      }),
+    )
     .nullable()
-    .describe("Only removals: each var to remove as null, or null to remove them all.")
+    .describe(
+      "Vars to set or remove: text sets the var (added, or replacing the config's value), null " +
+        "removes it, and null for `vars` itself removes them all. Text may hold the " +
+        "placeholders a var's default takes (`{{appUrl}}`, `{{appUrl:<name>}}` and the " +
+        "others), filled in at every deploy. For a value only one Worker of the entry gets, " +
+        "such as the address it is reached at; a value the admin chooses is a catalog var. The " +
+        "admin does not see these in the app's settings.",
+    )
     .optional(),
   ratelimits: z
     .array(
@@ -209,6 +233,13 @@ const configPatchShape = {
     .describe(
       "The whole list: every rate limit of the config, unchanged, plus new ones, for a limit " +
         "an upstream deploy script adds.",
+    )
+    .optional(),
+  ai: z
+    .strictObject({ binding: bindingNameSchema })
+    .describe(
+      "Adds a Workers AI binding, for one an upstream deploy script adds: only `binding`, and " +
+        "only to a config without an `ai` binding of its own (or with this one).",
     )
     .optional(),
   migrations: z
@@ -520,6 +551,11 @@ export function configPatchProblems(
   }
   if (patch.migrations !== undefined) {
     problems.push(...migrationsProblems(raw.migrations, patch.migrations));
+  }
+  if (patch.ai !== undefined && raw.ai !== undefined && !jsonEqual(raw.ai, patch.ai)) {
+    problems.push(
+      "ai changes the config's own Workers AI binding; a patch may only add one to a config that has none",
+    );
   }
   return problems;
 }

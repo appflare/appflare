@@ -124,6 +124,7 @@ export {
   refuseUnknownWranglerKeys,
   SECTIONS_READ_WITH_CATALOG,
   ServiceBindingError,
+  servicePropsPlaceholderProblems,
   UnknownWranglerKeyError,
   UnsafeBindingError,
   UnsupportedSectionError,

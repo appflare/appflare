@@ -275,7 +275,7 @@ export function SettingsList({ items }: { items: readonly SettingItem[] }) {
   return (
     <ul className="m-0 grid list-none gap-x-6 gap-y-2 p-0 sm:grid-cols-2">
       {items.map((item) => (
-        <li key={item.name} className="flex min-w-0 flex-wrap items-baseline gap-x-2">
+        <li key={item.key} className="flex min-w-0 flex-wrap items-baseline gap-x-2">
           <Tooltip
             content={<span className="font-mono">{item.name}</span>}
             className="min-w-0 text-left font-medium text-kumo-default"

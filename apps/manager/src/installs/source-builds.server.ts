@@ -17,6 +17,7 @@ import {
   repositoryUrl,
   type SandboxInfo,
   sandboxObjectUrl,
+  secretKey,
   secretValueProblem,
 } from "@appflare/schema";
 import { and, desc, eq, inArray, isNull, lt, ne, sql } from "drizzle-orm";
@@ -31,11 +32,13 @@ import { createDb } from "../db/client";
 import { type InstallOrigin, installs, jobs, resources, source_builds } from "../db/schema";
 import { readSettings, SETTING } from "../db/settings";
 import type { UsedGithubToken } from "../github/access.server";
+import { parseStoredManifest } from "../jobs/entry-workers";
 import type { InstallJobParams } from "../jobs/install";
 import { sha256Hex } from "../jobs/install/artifact";
 import type { PrebuiltBuildParams } from "../jobs/install/artifact-source";
 import type { WorkflowLookup } from "../jobs/reconcile.server";
 import { parseStoredVars } from "../jobs/reconfigure/plan";
+import { adoptedSecretKeys, secretPlacements } from "../jobs/secret-keys";
 import { NO_ACTIVE_SELF_UPDATE_SQL, refuseDuringSelfUpdate } from "../jobs/self-update/guard";
 import { type SourceBuildJobParams, sourceBuildRunId } from "../jobs/source-build";
 import type { UninstallJobParams } from "../jobs/uninstall";
@@ -1014,7 +1017,7 @@ export async function sourceUpdateNeeds(
   manifest: ArtifactManifest,
 ): Promise<SourceUpdateNeeds> {
   const recorded = await createDb(db)
-    .select({ name: resources.name })
+    .select({ name: resources.name, binding: resources.binding })
     .from(resources)
     .where(
       and(
@@ -1028,14 +1031,18 @@ export async function sourceUpdateNeeds(
     install,
     manifest.catalog,
   );
+  // A secret the version knows under a new key the Workers already have is not asked for again.
+  const installed = parseStoredManifest(install.manifest_json);
+  const adopted = adoptedSecretKeys(
+    manifest.catalog,
+    installed === null ? null : secretPlacements(installed.catalog),
+    recorded,
+  );
   // A derived secret the Worker lacks, or a derived var the install has no
   // value for, asks for its source; a new stream, its sink's token.
   const needsSecrets = secretsToAskFor(
     manifest.catalog.secrets,
-    missingSecrets(
-      manifest.catalog.secrets,
-      recorded.map((r) => r.name),
-    ),
+    missingSecrets(manifest.catalog.secrets, [...recorded.map((r) => r.name), ...adopted.keys()]),
     [
       ...sourcesOfUnsetDerivedVars(manifest.catalog.vars, parseStoredVars(install.config_json)),
       ...streamTokens,
@@ -1115,15 +1122,17 @@ export async function updateFromSourceBuildCore(
     }
   }
   const given = input.secrets ?? {};
-  const unknown = Object.keys(given).filter((n) => !needs.needsSecrets.some((s) => s.name === n));
+  const unknown = Object.keys(given).filter(
+    (n) => !needs.needsSecrets.some((s) => secretKey(s) === n),
+  );
   if (unknown.length > 0) throw fail(`This update does not take: ${unknown.join(", ")}.`);
   const entered: Record<string, string> = {};
   for (const secret of needs.needsSecrets) {
-    const value = given[secret.name] ?? "";
-    if (value.length === 0) throw fail(`${secret.label} (${secret.name}) is required.`);
+    const value = given[secretKey(secret)] ?? "";
+    if (value.length === 0) throw fail(`${secret.label} (${secretKey(secret)}) is required.`);
     const problem = secretValueProblem(secret, value);
     if (problem !== null) throw fail(problem);
-    entered[secret.name] = value;
+    entered[secretKey(secret)] = value;
   }
   const checked = checkUpdateConnections(
     needs.needsDatabases ?? [],

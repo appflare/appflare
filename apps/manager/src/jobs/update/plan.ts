@@ -18,6 +18,7 @@ import {
   type R2LifecycleRule,
   r2LifecycleApiRule,
   sameDurableObjectExports,
+  secretKey,
   type VectorizeIndexConfig,
   vectorizeBindingSchema,
   type WorkerBinding,
@@ -973,11 +974,12 @@ export function updatePath(
  * optional secret is never asked for here; the app's settings can set it.
  */
 export function missingSecrets<
-  T extends Pick<CatalogSecret, "name"> & Partial<Pick<CatalogSecret, "optional" | "seedOnly">>,
->(declared: readonly T[], recordedNames: Iterable<string>): T[] {
-  const have = new Set(recordedNames);
+  T extends Pick<CatalogSecret, "name"> &
+    Partial<Pick<CatalogSecret, "key" | "optional" | "seedOnly">>,
+>(declared: readonly T[], recordedKeys: Iterable<string>): T[] {
+  const have = new Set(recordedKeys);
   // A seed-only secret is never on the Worker: the install used it once.
-  return declared.filter((s) => !isOptionalSecret(s) && !isSeedOnly(s) && !have.has(s.name));
+  return declared.filter((s) => !isOptionalSecret(s) && !isSeedOnly(s) && !have.has(secretKey(s)));
 }
 
 /**

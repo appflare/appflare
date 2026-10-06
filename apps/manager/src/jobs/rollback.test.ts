@@ -774,6 +774,82 @@ describe("rollback job, an app of several Workers", () => {
     expect(new Set(moves.map((s) => s.invocation)).size).toBe(1);
   });
 
+  it("settles each Worker's secret records by the secrets of the version it serves again", async () => {
+    const jobsWorker = { name: "jobs", bindings: [{ type: "kv_namespace", name: "CUT_KV" }] };
+    const appSecret = { name: "CLIENT_ID", key: "APP_CLIENT_ID", label: "App", workers: ["app"] };
+    const before = await buildArtifactFixture({
+      otherWorkers: [jobsWorker],
+      catalog: { requires: ["secret-keys"], secrets: [appSecret] },
+    });
+    // The newer version gives `jobs` a CLIENT_ID of its own.
+    const after = await buildArtifactFixture({
+      version: "1.1.0",
+      otherWorkers: [jobsWorker],
+      catalog: {
+        requires: ["secret-keys"],
+        secrets: [
+          appSecret,
+          { name: "CLIENT_ID", key: "JOBS_CLIENT_ID", label: "Jobs", workers: ["jobs"] },
+        ],
+      },
+    });
+    await env.DB.prepare(
+      "UPDATE installs SET manifest_json = ?1, worker_versions_json = ?2 WHERE id = ?3",
+    )
+      .bind(JSON.stringify(after.manifest), JSON.stringify({ "cut-jobs": JOBS_NEW }), INSTALL_ID)
+      .run();
+    await env.DB.prepare(
+      "UPDATE snapshots SET manifest_json = ?1, worker_versions_json = ?2 WHERE id = 'upd1'",
+    )
+      .bind(JSON.stringify(before.manifest), JSON.stringify({ "cut-jobs": JOBS_OLD }))
+      .run();
+    // The primary Worker's record went missing; the update recorded `jobs`'s new one.
+    await env.DB.prepare(
+      `INSERT INTO resources (id, install_id, kind, binding, name, created_at) VALUES
+         ('i1:secret:JOBS_CLIENT_ID', ?1, 'secret', 'CLIENT_ID', 'JOBS_CLIENT_ID', 6)`,
+    )
+      .bind(INSTALL_ID)
+      .run();
+    const jobs = fakeAccount(null, {
+      worker: "cut-jobs",
+      deployments: [
+        { id: "dep-j2", versions: [{ version_id: JOBS_NEW, percentage: 100 }] },
+        { id: "dep-j1", versions: [{ version_id: JOBS_OLD, percentage: 100 }] },
+      ],
+      versionSecrets: { [JOBS_OLD]: [] },
+    });
+    const r = await rollback(
+      { versionSecrets: { [OLD_VERSION]: ["CLIENT_ID"] } },
+      (fake) => async (input, init) =>
+        (input.includes("/workers/scripts/cut-jobs") ? jobs : fake).fetch(input, init),
+    );
+    expect(r.error).toBeNull();
+    expect(r.step.names).toContain('read the version\'s secrets (Worker "cut-jobs")');
+    const rows = (
+      await env.DB.prepare(
+        "SELECT id, name, binding, deleted_at FROM resources WHERE install_id = ?1 AND kind = 'secret' ORDER BY name",
+      )
+        .bind(INSTALL_ID)
+        .all()
+    ).results;
+    expect(rows).toEqual([
+      // Back under its key, with the name the primary Worker reads.
+      {
+        id: "i1:secret:APP_CLIENT_ID",
+        name: "APP_CLIENT_ID",
+        binding: "CLIENT_ID",
+        deleted_at: null,
+      },
+      // `jobs`'s version from before has no CLIENT_ID, whatever the primary Worker has.
+      {
+        id: "i1:secret:JOBS_CLIENT_ID",
+        name: "JOBS_CLIENT_ID",
+        binding: "CLIENT_ID",
+        deleted_at: expect.any(Number),
+      },
+    ]);
+  });
+
   /** Rolls back from a version with `jobs` on workers.dev as `now` says to one as `then` says. */
   async function rollbackAcross(
     then: boolean,

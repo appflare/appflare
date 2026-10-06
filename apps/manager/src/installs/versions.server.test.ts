@@ -210,6 +210,25 @@ describe("startUpdateCore: what an update needs first", () => {
     return { result, created };
   }
 
+  it("takes a new keyed secret by its key", async () => {
+    await seedInstall({
+      resources: [{ kind: "secret", binding: "ADMIN_PASSWORD", name: "ADMIN_PASSWORD" }],
+    });
+    const fixture = await buildArtifactFixture({
+      version: "1.1.0",
+      catalog: {
+        requires: ["secret-keys"],
+        secrets: [
+          { name: "ADMIN_PASSWORD", label: "Admin password", generate: "password" as const },
+          { key: "APP_API_KEY", name: "API_KEY", label: "API key" },
+        ],
+      },
+    });
+    const { result, created } = await start(fixture, { secrets: { APP_API_KEY: "value" } });
+    expect(result).toEqual({ jobId: "job1" });
+    expect(created).toEqual([expect.objectContaining({ secrets: { APP_API_KEY: "value" } })]);
+  });
+
   it("asks for the secrets a new version introduces, then carries them only in the params", async () => {
     await seedInstall({
       resources: [{ kind: "secret", binding: "ADMIN_PASSWORD", name: "ADMIN_PASSWORD" }],

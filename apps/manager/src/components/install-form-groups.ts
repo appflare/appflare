@@ -1,4 +1,10 @@
-import { type CatalogSecret, enteredSecrets, isOptionalSecret, isSeedOnly } from "@appflare/schema";
+import {
+  type CatalogSecret,
+  enteredSecrets,
+  isOptionalSecret,
+  isSeedOnly,
+  secretKey,
+} from "@appflare/schema";
 import type { InstallVarField } from "../installs/install-vars";
 
 /**
@@ -57,7 +63,10 @@ export function installFormGroups<
  * setting whose value cannot be used.
  */
 export function foldStartsOpen(
-  folded: { secrets: readonly { name: string }[]; vars: readonly InstallVarField[] },
+  folded: {
+    secrets: readonly { name: string; key?: string | undefined }[];
+    vars: readonly InstallVarField[];
+  },
   values: {
     secrets: Readonly<Record<string, string | undefined>>;
     vars: (field: InstallVarField) => string;
@@ -65,7 +74,7 @@ export function foldStartsOpen(
   },
 ): boolean {
   return (
-    folded.secrets.some((s) => (values.secrets[s.name] ?? "").length > 0) ||
+    folded.secrets.some((s) => (values.secrets[secretKey(s)] ?? "").length > 0) ||
     folded.vars.some((f) => {
       const value = values.vars(f);
       return value !== f.shownDefault || values.varProblem(f, value) !== null;

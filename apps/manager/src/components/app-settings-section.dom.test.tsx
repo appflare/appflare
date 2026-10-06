@@ -106,3 +106,40 @@ describe("the settings form's new-value fields", () => {
     expect(container.innerHTML).toContain("data-app-token-help");
   });
 });
+
+describe("secrets of one name that different Workers read", () => {
+  it("are listed apart by label, each showing the name its Worker reads", () => {
+    const keyed: InstallSettings = {
+      ...SETTINGS,
+      databases: [],
+      appToken: null,
+      fixedVars: [{ worker: "github", name: "BASE_URL", value: "{{appUrl}}/gatekeeper/github" }],
+      secrets: ["GitHub", "Google"].map((service) => ({
+        name: `${service.toUpperCase()}_CLIENT_ID`,
+        envName: "CLIENT_ID",
+        label: `${service} client ID`,
+        generate: undefined,
+        declared: true,
+        optional: false,
+        present: true,
+      })),
+    };
+    act(() => root.render(<AppSettingsSection install={INSTALL} settings={keyed} isAdmin />));
+    const toggle = container.querySelector('[role="switch"]');
+    if (!(toggle instanceof HTMLElement)) throw new Error("no technical names switch");
+    // The vars the catalog entry sets show only with the technical names, read-only.
+    expect(container.querySelector("[data-fixed-vars]")).toBeNull();
+    act(() => toggle.click());
+    const fixed = container.querySelector("[data-fixed-vars]");
+    expect(fixed?.textContent).toBe('BASE_URL (Worker "github"): {{appUrl}}/gatekeeper/github');
+    expect(fixed?.querySelector("input")).toBeNull();
+    const names = [...container.querySelectorAll("[data-technical-name]")].map(
+      (n) => n.textContent,
+    );
+    expect(names).toEqual(["CLIENT_ID", "CLIENT_ID"]);
+    const labels = labelsOfFields().join(" ");
+    expect(labels).toContain("GitHub client ID");
+    expect(labels).toContain("Google client ID");
+    act(() => toggle.click());
+  });
+});

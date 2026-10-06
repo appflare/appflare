@@ -14,6 +14,7 @@ import {
   unknownArtifactFormatProblem,
   workersPaidBindingProblem,
 } from "./artifact";
+import { accountRequirements, isManagerFeatureRequirement } from "./manager-features";
 
 const sha256 = "a".repeat(64);
 const assetBlake3 = "c".repeat(32);
@@ -532,5 +533,49 @@ describe('an Access placeholder in a wrangler config var needs requires "access"
       "the wrangler config's var POLICY_AUD uses an Access placeholder, so the catalog manifest's requires must list \"access\"",
     );
     expect(artifactManifestSchema.safeParse(withVar(["access"])).success).toBe(true);
+  });
+});
+
+describe('a service binding with props needs requires "service-props"', () => {
+  const withProps = (requires: string[], props: unknown = { sharingDomain: "{{appUrl}}" }) => ({
+    ...validArtifact,
+    worker: {
+      ...validArtifact.worker,
+      bindings: [
+        ...validArtifact.worker.bindings,
+        { type: "service", name: "SELF", service: "self", entrypoint: "Api", props },
+      ],
+    },
+    catalog: { ...validArtifact.catalog, requires },
+  });
+
+  it("is refused without it, and read as the app's own binding with it", () => {
+    const refused = artifactManifestSchema.safeParse(withProps([]));
+    expect(refused.error?.issues.map((i) => i.message)).toEqual([
+      'the service binding SELF carries props, so the catalog manifest\'s requires must list "service-props"',
+    ]);
+    const read = artifactManifestSchema.parse(withProps(["service-props"]));
+    const binding = read.worker.bindings.find((b) => b.name === "SELF");
+    expect(binding !== undefined && isSelfServiceBinding(binding)).toBe(true);
+    expect(binding === undefined ? "" : serviceBindingProblem(binding)).toBeNull();
+  });
+
+  it("are a JSON object, or the binding is not the app's own", () => {
+    const parsed = artifactManifestSchema.parse(withProps(["service-props"], ["x"]));
+    const binding = parsed.worker.bindings.find((b) => b.name === "SELF");
+    expect(binding === undefined ? null : serviceBindingProblem(binding)).toMatch(
+      /^Service binding SELF points at /,
+    );
+  });
+});
+
+describe("manager feature requirements", () => {
+  it("are left out of what the account must have", () => {
+    expect(accountRequirements(["r2", "secret-keys", "service-props", "access"])).toEqual([
+      "r2",
+      "access",
+    ]);
+    expect(isManagerFeatureRequirement("secret-keys")).toBe(true);
+    expect(isManagerFeatureRequirement("r2")).toBe(false);
   });
 });

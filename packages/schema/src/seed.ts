@@ -77,7 +77,8 @@ const secretNameRef = z.string().min(1).max(128);
 export const seedPbkdf2HashSchema = z
   .strictObject({
     from: secretNameRef.describe(
-      "The secret whose value is hashed: a secret of this manifest, neither optional nor derived.",
+      "The secret whose value is hashed, by its key (its name when it has none): a secret of " +
+        "this manifest, neither optional nor derived.",
     ),
     method: z.literal("pbkdf2-sha256"),
     iterations: z
@@ -110,7 +111,8 @@ export type SeedPbkdf2Hash = z.infer<typeof seedPbkdf2HashSchema>;
 export const seedBcryptHashSchema = z
   .strictObject({
     from: secretNameRef.describe(
-      "The secret whose value is hashed: a secret of this manifest, neither optional nor derived. " +
+      "The secret whose value is hashed, by its key (its name when it has none): a secret of " +
+        "this manifest, neither optional nor derived. " +
         `Values longer than ${BCRYPT_MAX_INPUT_BYTES} bytes are refused at install.`,
     ),
     method: z.literal("bcrypt"),
@@ -142,7 +144,11 @@ export function seedBcryptCost(hash: SeedBcryptHash): number {
  */
 export const seedParamSchema = z.union([
   z.strictObject({ var: z.string().min(1).max(128).describe("A var of this manifest.") }),
-  z.strictObject({ secret: secretNameRef.describe("A secret of this manifest, not optional.") }),
+  z.strictObject({
+    secret: secretNameRef.describe(
+      "A secret of this manifest, not optional, by its key (its name when it has none).",
+    ),
+  }),
   z.strictObject({ hash: seedHashIdSchema.describe("A hash of this seed's `hashes`.") }),
   z.strictObject({
     salt: seedHashIdSchema.describe("The salt of a `pbkdf2-sha256` hash of this seed's `hashes`."),
@@ -286,6 +292,8 @@ export type CatalogD1Seed = z.infer<typeof catalogD1SeedSchema>;
 /** What the seed checks read of a secret. */
 export interface SeedSecretFacts {
   name: string;
+  /** What seeds name the secret by; its name when absent (the catalog's `key`). */
+  key?: string | undefined;
   optional?: boolean | undefined;
   derive?: { from: string } | undefined;
   seedOnly?: boolean | undefined;
@@ -342,7 +350,8 @@ export function seedManifestProblems(manifest: {
     | undefined;
 }): SeedProblem[] {
   const problems: SeedProblem[] = [];
-  const secrets = new Map(manifest.secrets.map((s) => [s.name, s]));
+  // Seeds and derive blocks name a secret by its key, which is its name unless it has one.
+  const secrets = new Map(manifest.secrets.map((s) => [s.key ?? s.name, s]));
   const vars = new Map(manifest.vars.map((v) => [v.name, v]));
   const usedSecrets = new Set<string>();
   const usedVars = new Set<string>();
@@ -406,7 +415,8 @@ export function seedManifestProblems(manifest: {
     items.forEach((item, i) => {
       if (!isSeedOnly(item)) return;
       const path = [field, i, "seedOnly"];
-      if (!used.has(item.name)) {
+      const ref = "key" in item && item.key !== undefined ? item.key : item.name;
+      if (!used.has(ref)) {
         problems.push({
           path,
           message: `${item.name} is seed-only, but no seed statement or hash uses it; a seed-only value is asked for only to seed the database`,
@@ -539,7 +549,7 @@ export async function pbkdf2SeedHash(
 }
 
 /**
- * The secrets a bcrypt seed hash reads, by name: bcrypt reads only the
+ * The secrets a bcrypt seed hash reads, by key: bcrypt reads only the
  * first {@link BCRYPT_MAX_INPUT_BYTES} bytes, so a longer value is refused
  * rather than cut without a word.
  */

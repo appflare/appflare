@@ -117,7 +117,8 @@ export const catalogPipelineSinkSchema = z.object({
     .string()
     .min(1)
     .describe(
-      "The catalog secret that holds a Cloudflare API token with R2 Data Catalog and R2 " +
+      "The catalog secret, by its key (its name when it has none), that holds a Cloudflare API " +
+        "token with R2 Data Catalog and R2 " +
         "Storage write access (the dashboard's R2 token with Admin Read & Write). Cloudflare " +
         "keeps it as the sink's credential, and as the catalog's for table maintenance; " +
         "Appflare's own token never leaves the manager. The secret must be asked for (no " +
@@ -268,6 +269,7 @@ export function appTokenPermissions(catalog: {
 /** The parts of a catalog secret {@link pipelineManifestProblems} reads. */
 interface SecretFacts {
   name: string;
+  key?: string | undefined;
   generate?: string | undefined;
   optional?: boolean | undefined;
   derive?: unknown;
@@ -303,7 +305,8 @@ export function pipelineManifestProblems(manifest: {
         'an app with resources.pipelines needs "plan": "paid": Cloudflare offers Pipelines only on Workers Paid',
     });
   }
-  const secrets = new Map(manifest.secrets.map((s) => [s.name, s]));
+  // By key, which is the secret's name unless it has one.
+  const secrets = new Map(manifest.secrets.map((s) => [s.key ?? s.name, s]));
   for (const [binding, decl] of Object.entries(pipelines)) {
     const path = ["resources", "pipelines", binding, "sink", "tokenSecret"];
     const name = decl.sink.tokenSecret;

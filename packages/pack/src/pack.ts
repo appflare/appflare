@@ -82,6 +82,7 @@ import {
   queueProducerBindings,
   type ResolvedWranglerConfig,
   refuseUnknownWranglerKeys,
+  servicePropsPlaceholderProblems,
   unknownWorkflowSettingFields,
   unsupportedWranglerSections,
   uploadPlacement,
@@ -813,7 +814,10 @@ export async function pack(options: PackOptions): Promise<PackResult> {
         );
       }
     }
-    const placeholders = varPlaceholderProblems(bindings, { workers: entry });
+    const placeholders = [
+      ...varPlaceholderProblems(bindings, { workers: entry }),
+      ...servicePropsPlaceholderProblems(bindings, { workers: entry }),
+    ];
     if (placeholders.length > 0) {
       throw new Error(
         `${r.name === null ? "" : `The Worker "${r.name}": `}${placeholders.join(" ")}`,

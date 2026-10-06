@@ -1,4 +1,4 @@
-import { type CatalogSecret, isSeedOnly } from "@appflare/schema";
+import { type CatalogSecret, isSeedOnly, secretKey } from "@appflare/schema";
 
 /**
  * Generated seed-only secrets (a first admin's password) of installs this
@@ -19,11 +19,11 @@ const held = new Map<string, SeedCredential[]>();
 
 /** The seed-only secrets the install form generated, with the values it sent. */
 export function generatedSeedCredentials(
-  secrets: readonly Pick<CatalogSecret, "name" | "label" | "generate" | "seedOnly">[],
+  secrets: readonly Pick<CatalogSecret, "name" | "key" | "label" | "generate" | "seedOnly">[],
   values: Readonly<Record<string, string | undefined>>,
 ): SeedCredential[] {
   return secrets.flatMap((s) => {
-    const value = values[s.name];
+    const value = values[secretKey(s)];
     return isSeedOnly(s) && s.generate !== undefined && value !== undefined && value.length > 0
       ? [{ name: s.name, label: s.label, value }]
       : [];

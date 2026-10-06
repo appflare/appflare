@@ -278,21 +278,35 @@ describe("settings you will choose", () => {
     const none = { description: null };
     expect(items).toEqual([
       {
+        key: "secret:ADMIN_PASSWORD",
         label: "Admin password",
         name: "ADMIN_PASSWORD",
         hint: "Required",
         description: "Signs you in to the app.",
       },
-      { label: "Session key", name: "SESSION_KEY", hint: "Filled in for you", ...none },
-      { label: "Mail token", name: "SMTP_TOKEN", hint: "Optional", ...none },
-      { label: "Site name", name: "SITE_NAME", hint: "Required", ...none },
       {
+        key: "secret:SESSION_KEY",
+        label: "Session key",
+        name: "SESSION_KEY",
+        hint: "Filled in for you",
+        ...none,
+      },
+      {
+        key: "secret:SMTP_TOKEN",
+        label: "Mail token",
+        name: "SMTP_TOKEN",
+        hint: "Optional",
+        ...none,
+      },
+      { key: "var:SITE_NAME", label: "Site name", name: "SITE_NAME", hint: "Required", ...none },
+      {
+        key: "var:THEME",
         label: "Theme",
         name: "THEME",
         hint: "Suggested value filled in",
         description: "light or dark",
       },
-      { label: "Note", name: "NOTE", hint: "Optional", ...none },
+      { key: "var:NOTE", label: "Note", name: "NOTE", hint: "Optional", ...none },
     ]);
   });
 });

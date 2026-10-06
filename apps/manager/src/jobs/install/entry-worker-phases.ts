@@ -6,6 +6,7 @@ import {
   isOptionalSecret,
   isSeedOnly,
   sameDurableObjectExports,
+  secretKey,
   type WorkerExports,
 } from "@appflare/schema";
 import { and, eq, isNull } from "drizzle-orm";
@@ -15,6 +16,7 @@ import { type EntryWorker, entryBindings, workerLabel } from "../entry-workers";
 import type { SecretChanges } from "../reconfigure/plan";
 import { applySecretChangesPhase } from "../reconfigure/secrets";
 import type { StepRunner } from "../run-job";
+import { workerSecretValues } from "../secret-keys";
 import { isNotFound, JobError, type JobSteps } from "../steps";
 import { settleUnit } from "../units/result";
 import type { ArtifactHost } from "../units/units";
@@ -99,6 +101,7 @@ function workerMetadata(
     workerName: worker.scriptName,
     resources: ctx.resources,
     vars: vars.vars,
+    fill: vars.fill,
     assetsJwt,
     workflowNames: ctx.workflowNames,
     rateLimitIds: ctx.rateLimitIds,
@@ -155,6 +158,7 @@ export async function deployOtherWorkerPhase(
   ctx: EntryUploadContext,
   worker: EntryWorker,
   input: {
+    /** Every secret value of the install, by key. */
     secrets: Readonly<Record<string, string>>;
     consumers: readonly ConsumerPlan[];
     attachConsumers: (
@@ -254,17 +258,19 @@ export async function deployOtherWorkerPhase(
   for (const secret of own.catalog.secrets) {
     // A seed-only secret serves the install's seed statements, never a Worker.
     if (isSeedOnly(secret)) continue;
-    const value = input.secrets[secret.name];
+    // Values come by the secret's key; the Worker reads it by its name.
+    const key = secretKey(secret);
+    const value = input.secrets[key];
     if (isOptionalSecret(secret) && (value ?? "").length === 0) continue;
     await run(`set secret ${secret.name}${label}`, async ({ log, cf, orm }) => {
       if (value === undefined || value.length === 0) {
-        throw new JobError(`no value was provided for the secret ${secret.name}`);
+        throw new JobError(`no value was provided for the secret ${key}`);
       }
       await cf().workers.putSecret(name, { name: secret.name, text: value });
       await recordResource(
         orm,
         ctx.installId,
-        { kind: "secret", key: secret.name, binding: secret.name, name: secret.name, cfId: null },
+        { kind: "secret", key, binding: secret.name, name: key, cfId: null },
         new Date(now()),
       );
       log.info(`Set secret ${secret.name} on Worker "${name}".`);
@@ -362,7 +368,7 @@ export interface OtherWorkerUpdate {
   exportsChanged?: boolean;
   /** The uploaded version, not serving yet; null when `pending` or `exportsChanged` defers the upload. */
   versionId: string | null;
-  /** The secrets this version introduces that the upload carries. */
+  /** The secrets this version introduces that the upload carries, by the names the Worker reads. */
   introduced: Record<string, string>;
 }
 
@@ -408,7 +414,7 @@ export async function prepareOtherWorkerPhase(
     appliedDoTag: string | null;
     /** The `exports` of the installed version of this Worker. */
     servingExports: WorkerExports | undefined;
-    /** Values of the secrets this version introduces, by name. */
+    /** Values of the secrets this version introduces, by key. */
     newSecrets: Readonly<Record<string, string>>;
     /** Whether the installed version keeps this Worker on workers.dev. */
     wasOnWorkersDev: boolean;
@@ -432,11 +438,7 @@ export async function prepareOtherWorkerPhase(
     ctx.source.host,
     label,
   );
-  const introduced: Record<string, string> = {};
-  for (const s of own.catalog.secrets) {
-    const value = input.newSecrets[s.name];
-    if (value !== undefined) introduced[s.name] = value;
-  }
+  const introduced = workerSecretValues(own.catalog.secrets, input.newSecrets);
   const update: OtherWorkerUpdate = {
     worker,
     assetsJwt,
@@ -578,15 +580,6 @@ export async function promoteOtherWorkerPhase(
   return deployed.versionId;
 }
 
-/** The part of a settings change's secrets that goes to Workers that get `names`. */
-export function secretChangesFor(changes: SecretChanges, names: readonly string[]): SecretChanges {
-  const wanted = new Set(names);
-  return {
-    set: Object.fromEntries(Object.entries(changes.set).filter(([name]) => wanted.has(name))),
-    unset: changes.unset.filter((name) => wanted.has(name)),
-  };
-}
-
 /** Whether a settings change's secrets change anything. */
 function changesAny(changes: SecretChanges): boolean {
   return Object.keys(changes.set).length > 0 || changes.unset.length > 0;
@@ -607,6 +600,7 @@ export async function reconfigureOtherWorkerPhase(
   ctx: EntryUploadContext,
   worker: EntryWorker,
   input: {
+    /** Its part of the settings change's secrets, by the names it reads (`workerSecretChanges`). */
     changes: SecretChanges;
     slug: string;
     version: string;

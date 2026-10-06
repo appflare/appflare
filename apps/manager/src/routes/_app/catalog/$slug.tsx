@@ -1,4 +1,8 @@
-import { accessNeededOnlyIfProtected, indexAccessNeededOnlyIfProtected } from "@appflare/schema";
+import {
+  accessNeededOnlyIfProtected,
+  accountRequirements,
+  indexAccessNeededOnlyIfProtected,
+} from "@appflare/schema";
 import { Banner, Button, Empty } from "@cloudflare/kumo";
 import { PlusIcon, StorefrontIcon, WarningCircleIcon } from "@phosphor-icons/react";
 import { createFileRoute, useLocation } from "@tanstack/react-router";
@@ -176,7 +180,10 @@ function AppPage({
     if (revealRequest > 0) reveal(installRef.current);
   }, [revealRequest]);
 
-  const requires = [...new Set([...app.requires, ...(catalog?.requires ?? [])])];
+  // What the account must have: a manager feature it lists is this manager's own.
+  const requires = accountRequirements([
+    ...new Set([...app.requires, ...(catalog?.requires ?? [])]),
+  ]);
   const needsOf: AppNeedsOf = {
     plan: app.plan,
     requires,

@@ -4,6 +4,7 @@ import {
   type CatalogVar,
   isDerivedSecret,
   type SecretDeriveMethod,
+  secretKey,
   vapidPublicKey,
 } from "@appflare/schema";
 import bcrypt from "bcryptjs";
@@ -16,7 +17,8 @@ import bcrypt from "bcryptjs";
  * that start those jobs add the derived values to the job's secrets and
  * stored settings, so the jobs set them like any other. Secret values are
  * never logged, returned, or stored outside the Workflow params; a derived
- * var (a public key) is ordinary settings.
+ * var (a public key) is ordinary settings. Secrets go by key (`secretKey`),
+ * which `derive.from` names.
  */
 
 /**
@@ -53,15 +55,15 @@ export async function withDerivedSecrets(
 ): Promise<Record<string, string>> {
   const out: Record<string, string> = {};
   const derived = declared.filter(isDerivedSecret);
-  const derivedNames = new Set(derived.map((s) => s.name));
-  for (const [name, value] of Object.entries(values)) {
-    if (!derivedNames.has(name)) out[name] = value;
+  const derivedKeys = new Set(derived.map(secretKey));
+  for (const [key, value] of Object.entries(values)) {
+    if (!derivedKeys.has(key)) out[key] = value;
   }
   for (const secret of derived) {
     const derive = secret.derive;
     const source = derive === undefined ? undefined : values[derive.from];
     if (derive === undefined || source === undefined || source.length === 0) continue;
-    out[secret.name] = await deriveSecretValue(derive.method, source);
+    out[secretKey(secret)] = await deriveSecretValue(derive.method, source);
   }
   return out;
 }
@@ -101,16 +103,16 @@ export function sourcesOfUnsetDerivedVars(
 }
 
 /**
- * The names among `asked` the Worker already has: sources asked for again so
+ * The keys among `asked` the Worker already has: sources asked for again so
  * a derived value can be computed. Their current value cannot be read back,
  * so a form must not replace it with a generated one unasked.
  */
 export function heldSecrets(
-  asked: readonly Pick<CatalogSecret, "name">[],
-  recordedNames: readonly string[],
+  asked: readonly Pick<CatalogSecret, "name" | "key">[],
+  recordedKeys: readonly string[],
 ): string[] {
-  const recorded = new Set(recordedNames);
-  return asked.filter((s) => recorded.has(s.name)).map((s) => s.name);
+  const recorded = new Set(recordedKeys);
+  return asked.map(secretKey).filter((key) => recorded.has(key));
 }
 
 /**
@@ -125,8 +127,8 @@ export function secretsToAskFor(
   sources: readonly string[] = [],
 ): CatalogSecret[] {
   const wanted = new Set<string>(sources);
-  for (const secret of missing) wanted.add(secret.derive?.from ?? secret.name);
-  return declared.filter((s) => wanted.has(s.name) && !isDerivedSecret(s));
+  for (const secret of missing) wanted.add(secret.derive?.from ?? secretKey(secret));
+  return declared.filter((s) => wanted.has(secretKey(s)) && !isDerivedSecret(s));
 }
 
 /**
@@ -142,10 +144,10 @@ export function secretsToSet(
 ): CatalogSecret[] {
   const wanted = new Set<string>(sources);
   for (const secret of missing) {
-    wanted.add(secret.name);
+    wanted.add(secretKey(secret));
     if (secret.derive !== undefined) wanted.add(secret.derive.from);
   }
   return declared.filter(
-    (s) => wanted.has(s.name) || (s.derive !== undefined && sources.includes(s.derive.from)),
+    (s) => wanted.has(secretKey(s)) || (s.derive !== undefined && sources.includes(s.derive.from)),
   );
 }

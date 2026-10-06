@@ -1846,7 +1846,7 @@ describe("install job", () => {
     );
     expect(r.job?.status).toBe("failed");
     expect(r.job?.error).toMatch(
-      /it adds "r2" to requires; a revision may add only "access", and anything else needs a new build/,
+      /it adds "r2" to requires; a revision may add only "access" or "secret-keys", and anything else needs a new build/,
     );
   });
 
@@ -2999,6 +2999,70 @@ describe("install job, an app of several Workers", () => {
     ]);
     // Step names never repeat, so each Worker's steps are its own.
     expect(new Set(r.step.names).size).toBe(r.step.names.length);
+  });
+
+  it("gives each Worker its own secret under a shared name, its own vars, and binding props", async () => {
+    const gatekeeper = (name: string) => ({
+      name,
+      bindings: [
+        { type: "plain_text", name: "BASE_URL", text: `{{appUrl}}/gatekeeper/${name}` },
+      ] as ArtifactWorker["bindings"],
+    });
+    const r = await install(
+      {
+        bindings: [
+          {
+            type: "service",
+            name: "GATEKEEPER_GITHUB",
+            service: "{{workerName:github}}",
+            props: { sharingDomain: "{{appUrl}}", via: ["{{workerName:google}}"] },
+          },
+        ],
+        otherWorkers: [gatekeeper("github"), gatekeeper("google")],
+        catalog: {
+          plan: "paid",
+          requires: ["secret-keys", "service-props"],
+          secrets: [
+            { name: "CLIENT_ID", key: "GITHUB_CLIENT_ID", label: "GitHub", workers: ["github"] },
+            { name: "CLIENT_ID", key: "GOOGLE_CLIENT_ID", label: "Google", workers: ["google"] },
+          ],
+        },
+      },
+      {},
+      {
+        secrets: { GITHUB_CLIENT_ID: "gh-id", GOOGLE_CLIENT_ID: "goog-id" },
+        vars: {},
+        paidConfirmed: true,
+      },
+    );
+    expect(r.error).toBeNull();
+    expect(r.job?.status).toBe("succeeded");
+    const github = r.fake.state.others["cut-github"];
+    const google = r.fake.state.others["cut-google"];
+    expect(github?.secrets).toEqual({ CLIENT_ID: "gh-id" });
+    expect(google?.secrets).toEqual({ CLIENT_ID: "goog-id" });
+    expect(r.fake.state.secrets).toEqual({});
+    expect(github?.metadata?.bindings).toContainEqual({
+      type: "plain_text",
+      name: "BASE_URL",
+      text: "https://cut.appflare-dev.workers.dev/gatekeeper/github",
+    });
+    expect(google?.metadata?.bindings).toContainEqual({
+      type: "plain_text",
+      name: "BASE_URL",
+      text: "https://cut.appflare-dev.workers.dev/gatekeeper/google",
+    });
+    expect(r.fake.state.metadata?.bindings).toContainEqual({
+      type: "service",
+      name: "GATEKEEPER_GITHUB",
+      service: "cut-github",
+      props: { sharingDomain: "https://cut.appflare-dev.workers.dev", via: ["cut-google"] },
+    });
+    // Recorded by key, with the name each Worker reads it by.
+    expect(r.resources.filter((row) => row.kind === "secret")).toEqual([
+      { kind: "secret", binding: "CLIENT_ID", name: "GITHUB_CLIENT_ID", cf_id: null },
+      { kind: "secret", binding: "CLIENT_ID", name: "GOOGLE_CLIENT_ID", cf_id: null },
+    ]);
   });
 
   it("deploys a Worker that binds to the primary one after it", async () => {

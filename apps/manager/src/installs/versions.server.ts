@@ -9,6 +9,7 @@ import {
   type HyperdriveDeclaration,
   type IndexApp,
   type IndexBuild,
+  secretKey,
   secretValueProblem,
 } from "@appflare/schema";
 import { and, desc, eq, inArray, isNull } from "drizzle-orm";
@@ -25,12 +26,14 @@ import {
   durableObjectExportsDiffer,
   otherDoTagsDiffer,
   otherWorkersMatch,
+  parseStoredManifest,
   storedOtherWorkers,
 } from "../jobs/entry-workers";
 import type { WorkflowLookup } from "../jobs/reconcile.server";
 import { liveHyperdriveIds } from "../jobs/reconfigure/hyperdrive";
 import { parseStoredVars } from "../jobs/reconfigure/plan";
 import type { RollbackJobParams } from "../jobs/rollback";
+import { adoptedSecretKeys, secretPlacements } from "../jobs/secret-keys";
 import { installerRunId } from "../jobs/self-deploying/phases";
 import {
   activeSelfJob,
@@ -265,7 +268,7 @@ export interface UpdateNeeds {
   /** Secrets the new version introduces that the Worker does not have. */
   needsSecrets: CatalogSecret[];
   /**
-   * Names among `needsSecrets` the Worker already has, asked for again only so
+   * Keys among `needsSecrets` the Worker already has, asked for again only so
    * a value derived from them can be computed: the form leaves them empty, so
    * a generated key is never replaced without the admin choosing to.
    */
@@ -410,12 +413,17 @@ export async function startUpdateCore(
   const { databases, replaceable, streamTokens } = updateConnectionsOf(install, catalog, recorded);
   // A derived secret the Worker lacks, or a derived var the install has no
   // value for, asks for its source.
+  // A secret the version knows under a new key the Workers already have is not asked for again.
+  const secretRows = recorded.filter((r) => r.kind === "secret");
+  const installed = parseStoredManifest(install.manifest_json);
+  const adopted = adoptedSecretKeys(
+    catalog,
+    installed === null ? null : secretPlacements(installed.catalog),
+    secretRows,
+  );
   const needed = secretsToAskFor(
     catalog.secrets,
-    missingSecrets(
-      catalog.secrets,
-      recorded.filter((r) => r.kind === "secret").map((r) => r.name),
-    ),
+    missingSecrets(catalog.secrets, [...secretRows.map((r) => r.name), ...adopted.keys()]),
     [
       ...sourcesOfUnsetDerivedVars(catalog.vars, parseStoredVars(install.config_json)),
       ...streamTokens,
@@ -458,10 +466,10 @@ export async function startUpdateCore(
   ) {
     const held = heldSecrets(
       needed,
-      recorded.filter((r) => r.kind === "secret").map((r) => r.name),
+      secretRows.map((r) => r.name),
     );
     const derivedVars = catalog.vars
-      .filter((v) => v.derive !== undefined && needed.some((s) => s.name === v.derive?.from))
+      .filter((v) => v.derive !== undefined && needed.some((s) => secretKey(s) === v.derive?.from))
       .map((v) => ({ name: v.name, derive: v.derive }));
     return {
       version: app.version,
@@ -480,7 +488,7 @@ export async function startUpdateCore(
     };
   }
   const given = request.secrets ?? {};
-  const unknown = Object.keys(given).filter((name) => !needed.some((s) => s.name === name));
+  const unknown = Object.keys(given).filter((name) => !needed.some((s) => secretKey(s) === name));
   if (unknown.length > 0) {
     throw new VersionActionError(`This update does not take: ${unknown.join(", ")}.`);
   }
@@ -489,13 +497,13 @@ export async function startUpdateCore(
   const hyperdrive = checked.connections;
   const entered: Record<string, string> = {};
   for (const secret of needed) {
-    const value = given[secret.name] ?? "";
+    const value = given[secretKey(secret)] ?? "";
     if (value.length === 0) {
-      throw new VersionActionError(`${secret.label} (${secret.name}) is required.`);
+      throw new VersionActionError(`${secret.label} (${secretKey(secret)}) is required.`);
     }
     const problem = secretValueProblem(secret, value);
     if (problem !== null) throw new VersionActionError(problem);
-    entered[secret.name] = value;
+    entered[secretKey(secret)] = value;
   }
   const secrets = await withDerivedSecrets(catalog.secrets, entered);
   // A derived var follows its source's new value; the job stores it.
@@ -591,19 +599,19 @@ async function startSelfDeployingUpdate(
     };
   }
   const given = request.secrets ?? {};
-  const unknown = Object.keys(given).filter((name) => !needed.some((s) => s.name === name));
+  const unknown = Object.keys(given).filter((name) => !needed.some((s) => secretKey(s) === name));
   if (unknown.length > 0) {
     throw new VersionActionError(`This update does not take: ${unknown.join(", ")}.`);
   }
   const entered: Record<string, string> = {};
   for (const secret of needed) {
-    const value = given[secret.name] ?? "";
+    const value = given[secretKey(secret)] ?? "";
     if (value.length === 0) {
-      throw new VersionActionError(`${secret.label} (${secret.name}) is required.`);
+      throw new VersionActionError(`${secret.label} (${secretKey(secret)}) is required.`);
     }
     const problem = secretValueProblem(secret, value);
     if (problem !== null) throw new VersionActionError(problem);
-    entered[secret.name] = value;
+    entered[secretKey(secret)] = value;
   }
   const secrets = await withDerivedSecrets(catalog.secrets, entered);
   const appToken = request.appToken?.trim();

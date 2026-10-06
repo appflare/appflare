@@ -304,6 +304,15 @@ describe("service bindings in catalog apps", () => {
     }
   });
 
+  it("takes a binding to the app's own Worker or another of its Workers with props", () => {
+    expect(
+      planBindings("cut", [
+        { type: "service", name: "SELF", service: "self", props: { admin: true } },
+        { type: "service", name: "CTX", service: "{{workerName:context}}", props: { at: "x" } },
+      ]).problems,
+    ).toEqual([]);
+  });
+
   it("refuses every other target, even in an artifact edited by hand", () => {
     // The packer never records these; an edited artifact or a manifest from a
     // different packer could. The plan refuses them before anything is created.
@@ -313,7 +322,7 @@ describe("service bindings in catalog apps", () => {
       { type: "service", name: "NAMED", service: "cut" },
       { type: "service", name: "NONE" },
       { type: "service", name: "ENV", service: "self", environment: "staging" },
-      { type: "service", name: "PROPS", service: "self", props: { admin: true } },
+      { type: "service", name: "PROPS", service: "self", props: ["admin"] },
     ]) {
       expect(planBindings("cut", [binding]).problems).toEqual([
         expect.stringMatching(new RegExp(`^Service binding ${binding.name} points at `)),

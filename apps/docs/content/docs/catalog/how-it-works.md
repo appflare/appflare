@@ -88,7 +88,8 @@ its secrets, and `access` decides who reaches it. That is why the revised file i
 signed. A manager uses it only when its sha256 matches the index, its signature
 verifies with the keys built into the manager under the release's key id, and,
 compared with the signed `manifest.json`, it is for the same app and changes only
-those fields (`requires` may only gain `"access"`). The Worker, the resources an install
+those fields (`requires` may only gain `"access"`, or `"secret-keys"` with keys for
+secrets the revision adds). The Worker, the resources an install
 creates, and the permissions it asks for always come from the signed
 `manifest.json`. While a release lists a revision, installs and updates to it need
 that file: if it cannot be downloaded or does not verify, they fail instead of

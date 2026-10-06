@@ -126,6 +126,7 @@ describe("installVars", () => {
       },
     });
     expect(installVars(f.manifest, {}, worker)).toEqual({
+      fill: expect.any(Function),
       vars: [
         { type: "json", name: "EMAIL_ADDRESSES", json: ["cut-2@example.com"] },
         {
@@ -169,6 +170,7 @@ describe("installVars", () => {
       },
     });
     expect(installVars(withDefault.manifest, stored, worker)).toEqual({
+      fill: expect.any(Function),
       vars: [{ type: "json", name: "ADDRESSES", json: ["cut-2@example.com"] }],
       warnings: [
         "The stored value of ADDRESSES is not valid JSON, but this version of the app reads ADDRESSES as JSON; the Worker gets the catalog default instead.",
@@ -187,6 +189,7 @@ describe("installVars", () => {
     ]);
     // A value the admin edited into valid JSON is used as is, without a warning.
     expect(installVars(withDefault.manifest, { ADDRESSES: '["b@example.com"]' }, worker)).toEqual({
+      fill: expect.any(Function),
       vars: [{ type: "json", name: "ADDRESSES", json: ["b@example.com"] }],
       warnings: [],
     });
@@ -333,6 +336,48 @@ describe("buildScriptMetadata", () => {
     expect(() =>
       selfServiceUploadBinding({ type: "service", name: "X", service: "other" }, "cut"),
     ).toThrow(/does not point at the app's own Worker/);
+  });
+
+  it("sends a service binding's props with the placeholders filled in, as the vars get them", async () => {
+    const f = await buildArtifactFixture({
+      bindings: [
+        { type: "service", name: "SELF", service: "self", props: { at: "{{appUrl}}/x", n: 1 } },
+      ],
+    });
+    const vars = installVars(
+      f.manifest,
+      {},
+      {
+        workerName: "cut",
+        subdomain: "acct",
+        accountId: "a1",
+        appUrl: "https://links.example.com",
+      },
+    );
+    const metadata = buildScriptMetadata({
+      manifest: f.manifest,
+      workerName: "cut",
+      resources: [],
+      vars: vars.vars,
+      fill: vars.fill,
+      assetsJwt: null,
+    });
+    expect(metadata.bindings).toContainEqual({
+      type: "service",
+      name: "SELF",
+      service: "cut",
+      props: { at: "https://links.example.com/x", n: 1 },
+    });
+    // Never sent unfilled.
+    expect(() =>
+      buildScriptMetadata({
+        manifest: f.manifest,
+        workerName: "cut",
+        resources: [],
+        vars: [],
+        assetsJwt: null,
+      }),
+    ).toThrow("service binding SELF has props, but no placeholder values");
   });
 
   it("sends assets without a binding when the app has none, and nothing when there are no assets", async () => {

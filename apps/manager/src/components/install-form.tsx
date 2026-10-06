@@ -1,6 +1,7 @@
 import {
   accessBypassPaths,
   accessOfferOf,
+  accountRequirements,
   appTokenPermissions,
   type CatalogManifest,
   catalogWorkerName,
@@ -11,6 +12,7 @@ import {
   isSeedOnly,
   needsWildcardHostname,
   STAGE_PLACEHOLDER,
+  secretKey,
 } from "@appflare/schema";
 import { Banner, Collapsible, cn, Input, Link, Text } from "@cloudflare/kumo";
 import {
@@ -452,14 +454,14 @@ export function InstallForm({
       : {
           [tokenSecret]: <AppTokenHelp appName={catalog.name} permissions={tokenPermissions} />,
         };
-  const secretFields = (only: readonly { name: string }[]) =>
+  const secretFields = (only: readonly CatalogManifest["secrets"][number][]) =>
     only.length === 0 ? null : (
       <SecretFields
         secrets={catalog.secrets}
-        only={only.map((s) => s.name)}
+        only={only.map(secretKey)}
         vars={catalog.vars}
         values={secrets}
-        onChange={(name, value) => setSecrets((s) => withSecretValue(s, name, value))}
+        onChange={(key, value) => setSecrets((s) => withSecretValue(s, key, value))}
         after="the install"
         fieldExtras={fieldExtras}
       />
@@ -483,7 +485,7 @@ export function InstallForm({
         ]),
     ...groups.needed.secrets.map((s) => ({
       label: s.label,
-      filled: (secrets[s.name] ?? "").length > 0,
+      filled: (secrets[secretKey(s)] ?? "").length > 0,
     })),
     ...databases.map((d) => ({
       label: d.label ?? "the connection string",
@@ -519,7 +521,7 @@ export function InstallForm({
       (planAskedAbove
         ? "confirm the account's plan above"
         : "confirm the account is on Workers Paid"),
-    catalog.requires.length > 0 &&
+    accountRequirements(catalog.requires).length > 0 &&
       !requirementsConfirmed &&
       !planAskedAbove &&
       "confirm the account has what the app needs, above",
