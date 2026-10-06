@@ -13,6 +13,7 @@ import {
   writeSettings,
 } from "../db/settings";
 import { releaseSettingsLock, tryAcquireSettingsLock } from "../db/settings-lock";
+import { forgetHandedGrant } from "../handoff/handoff-state.server";
 import { type AttemptLimit, DEFAULT_ATTEMPT_LIMIT, takeAttempt } from "./attempt-limit.server";
 import { ensureSelfBinding, type SelfBindingOutcome } from "./self-binding.server";
 import { type SaveTokenResult, saveTokenStep, type TokenFlowDeps } from "./token.server";
@@ -418,7 +419,12 @@ export async function connectCloudflareStep(deps: ConnectDeps): Promise<ConnectR
         });
         return { ...result, api };
       },
-      finish: () => issueSetupClaim(t.db, deps.now),
+      finish: async () => {
+        // The pasted token is the connection now: an authorization the
+        // browser installer handed over and a failed try kept is not needed.
+        await forgetHandedGrant(t.db);
+        return issueSetupClaim(t.db, deps.now);
+      },
     },
   );
   const { api: _api, ...result } = saved;
@@ -556,6 +562,8 @@ export async function createOwnerStep(deps: {
     await makeFirstUserOwner(db, user.id);
     await deleteSettings(db, [SETTING.setupClaim]);
     await deps.d1.prepare("DELETE FROM settings WHERE key = ?1").bind(OWNER_CLAIM_KEY).run();
+    // A handoff left unfinished keeps no authorization once setup is done.
+    await forgetHandedGrant(deps.d1);
     return { userId: user.id };
   } finally {
     await releaseSettingsLock(deps.d1, OWNER_LOCK_KEY, owner);

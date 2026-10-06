@@ -985,9 +985,16 @@ function HandoffFailed({
       <Title>Appflare is deployed but not connected yet</Title>
       <Callout tone="error">{HANDOFF_PROBLEMS[view.problem](view.address, view.minutes)}</Callout>
       <Actions>
-        <button type="button" className={primary} onClick={() => actions.retry()}>
-          Try again
-        </button>
+        {view.problem === "declined" ? (
+          // The connection itself was refused: sending it again cannot help.
+          <button type="button" className={primary} onClick={() => actions.reconnect()}>
+            Connect Cloudflare again
+          </button>
+        ) : (
+          <button type="button" className={primary} onClick={() => actions.retry()}>
+            Try again
+          </button>
+        )}
         <button
           type="button"
           className={secondary}

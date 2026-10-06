@@ -10,6 +10,7 @@ import {
 } from "../cloudflare/grant.server";
 import { openValue, sealValue } from "../cloudflare/grant-seal";
 import { handedGrantKey } from "./handoff-proof";
+import { forgetHandedGrant, HANDED_GRANT_KEY } from "./handoff-state.server";
 
 /**
  * The grant the browser handed over, between its first refresh and the
@@ -22,11 +23,21 @@ import { handedGrantKey } from "./handoff-proof";
  * leaves it here, and the next try starts from it instead of the browser's
  * spent copy. A refusal that cannot change (another account, missing
  * permissions) revokes it and forgets it; once stored as the connection it
- * is forgotten.
+ * is forgotten. Creating the owner, or connecting with a pasted API token
+ * instead, forgets it too (handoff-state.server.ts).
+ *
+ * No authorization is left behind at Cloudflare: a fresh one the browser
+ * sent while a kept one is used is revoked, and so is a renewed one that
+ * could not be kept when storing it then fails.
  */
 
-/** `settings` row: JSON `{ clientId, scopes, salt, refreshToken }`, `refreshToken` sealed. */
-const HANDED_GRANT_KEY = "handoff_grant";
+/**
+ * `settings` row: JSON `{ clientId, scopes, salt, sealed }`. `sealed` holds,
+ * sealed, `{ refreshToken, handed }`: the kept refresh token, and the
+ * fingerprint of the browser's refresh token its chain of renewals started
+ * from (that one is spent; a different one the browser sends is a new
+ * authorization).
+ */
 const SEAL_CONTEXT = "appflare-handoff-grant";
 
 /** No usable grant: the browser's was spent and none is kept. It must sign in to Cloudflare again. */
@@ -43,6 +54,11 @@ export function isTemporaryGrantFailure(error: unknown): boolean {
   return error.reason === "busy" || error.reason === "unreachable";
 }
 
+interface KeptGrant extends GrantInput {
+  /** Fingerprint of the browser's refresh token this grant was renewed from. */
+  handed: string;
+}
+
 function toBase64url(bytes: Uint8Array): string {
   let binary = "";
   for (const b of bytes) binary += String.fromCharCode(b);
@@ -56,15 +72,20 @@ function fromBase64url(value: string): Uint8Array {
   );
 }
 
-async function keep(d1: D1Database, secret: string, grant: GrantInput, now: Date): Promise<void> {
+async function fingerprint(refreshToken: string): Promise<string> {
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(refreshToken));
+  return toBase64url(new Uint8Array(digest));
+}
+
+async function keep(d1: D1Database, secret: string, grant: KeptGrant, now: Date): Promise<void> {
   const salt = crypto.getRandomValues(new Uint8Array(16));
   const value = JSON.stringify({
     clientId: grant.clientId,
     scopes: grant.scopes,
     salt: toBase64url(salt),
-    refreshToken: await sealValue(
+    sealed: await sealValue(
       await handedGrantKey(secret, salt),
-      grant.refreshToken,
+      JSON.stringify({ refreshToken: grant.refreshToken, handed: grant.handed }),
       SEAL_CONTEXT,
     ),
   });
@@ -77,16 +98,12 @@ async function keep(d1: D1Database, secret: string, grant: GrantInput, now: Date
     .run();
 }
 
-async function forget(d1: D1Database): Promise<void> {
-  await d1.prepare("DELETE FROM settings WHERE key = ?1").bind(HANDED_GRANT_KEY).run();
-}
-
 /**
  * The kept grant, or null: none, or one this secret cannot open (the
  * browser started over with a new handoff secret, so nobody can open it
  * any more, nor revoke it), which is then forgotten.
  */
-async function readKept(d1: D1Database, secret: string): Promise<GrantInput | null> {
+async function readKept(d1: D1Database, secret: string): Promise<KeptGrant | null> {
   const row = await d1
     .prepare("SELECT value FROM settings WHERE key = ?1")
     .bind(HANDED_GRANT_KEY)
@@ -97,27 +114,34 @@ async function readKept(d1: D1Database, secret: string): Promise<GrantInput | nu
       clientId?: unknown;
       scopes?: unknown;
       salt?: unknown;
-      refreshToken?: unknown;
+      sealed?: unknown;
     };
     if (
       typeof parsed.clientId !== "string" ||
-      typeof parsed.refreshToken !== "string" ||
+      typeof parsed.sealed !== "string" ||
       typeof parsed.salt !== "string" ||
       !Array.isArray(parsed.scopes)
     ) {
       throw new Error("malformed");
     }
+    const opened = JSON.parse(
+      await openValue(
+        await handedGrantKey(secret, fromBase64url(parsed.salt)),
+        parsed.sealed,
+        SEAL_CONTEXT,
+      ),
+    ) as { refreshToken?: unknown; handed?: unknown };
+    if (typeof opened.refreshToken !== "string" || typeof opened.handed !== "string") {
+      throw new Error("malformed");
+    }
     return {
       clientId: parsed.clientId,
       scopes: parsed.scopes.filter((s): s is string => typeof s === "string"),
-      refreshToken: await openValue(
-        await handedGrantKey(secret, fromBase64url(parsed.salt)),
-        parsed.refreshToken,
-        SEAL_CONTEXT,
-      ),
+      refreshToken: opened.refreshToken,
+      handed: opened.handed,
     };
   } catch {
-    await forget(d1);
+    await forgetHandedGrant(d1);
     return null;
   }
 }
@@ -135,6 +159,12 @@ export async function storeHandedGrant(
   },
 ): Promise<StoredGrant> {
   const fetchImpl = deps.fetch ?? ((input, init) => fetch(input, init));
+  const revoke = (grant: GrantInput) =>
+    revokeGrant(
+      { clientId: grant.clientId, refreshToken: grant.refreshToken },
+      { fetch: fetchImpl },
+    );
+  const handed = await fingerprint(deps.grant.refreshToken);
   const kept = await readKept(deps.db, deps.secret);
   let source: GrantInput | null = null;
   let tokens: RefreshedTokens | null = null;
@@ -155,15 +185,23 @@ export async function storeHandedGrant(
         throw grantRefreshError(error);
       }
       // Spent or withdrawn: the next candidate, if any.
-      if (candidate === kept) await forget(deps.db);
+      if (candidate === kept) await forgetHandedGrant(deps.db);
     }
   }
   if (source === null || tokens === null) throw new AuthorizeAgain();
+  if (kept !== null && source === kept && kept.handed !== handed) {
+    // The kept grant carries on; the browser also sent a new authorization
+    // (it signed in again), which nobody will use: withdrawn, best effort.
+    // Not the browser's spent copy of the kept one: revoking that could end
+    // the kept one with it.
+    await revoke(deps.grant);
+  }
 
-  const rotated: GrantInput = {
+  const rotated: KeptGrant = {
     clientId: source.clientId,
     scopes: tokens.scopes ?? [...source.scopes],
     refreshToken: tokens.refreshToken,
+    handed: source === kept && kept !== null ? kept.handed : handed,
   };
   let held = true;
   try {
@@ -176,22 +214,24 @@ export async function storeHandedGrant(
     });
   }
   try {
+    // Revoking on failure is decided here, for every failure, including the
+    // ones `storeGrant` refuses before it uses the tokens (busy, another account).
     const stored = await storeGrant({
       ...deps,
       grant: rotated,
       refreshed: tokens,
-      revokeOnFailure: !held,
+      revokeOnFailure: false,
     });
     // Stored as the connection, with this same refresh token: no revoke.
-    await forget(deps.db).catch(() => undefined);
+    await forgetHandedGrant(deps.db).catch(() => undefined);
     return stored;
   } catch (error) {
-    if (held && !isTemporaryGrantFailure(error)) {
-      await revokeGrant(
-        { clientId: rotated.clientId, refreshToken: rotated.refreshToken },
-        { fetch: fetchImpl },
-      );
-      await forget(deps.db).catch(() => undefined);
+    if (!held) {
+      // Nobody holds it but this request: withdrawn, best effort.
+      await revoke(rotated);
+    } else if (!isTemporaryGrantFailure(error)) {
+      await revoke(rotated);
+      await forgetHandedGrant(deps.db).catch(() => undefined);
     }
     throw error;
   }

@@ -43,6 +43,19 @@ describe("DeployPanel", () => {
     expect(stageOf(SAMPLE_VIEWS["confirm-remove"] as DeployView)).toBeNull();
   });
 
+  it("offers to connect Cloudflare again, not to try again, when Appflare declined the connection", () => {
+    const failed = SAMPLE_VIEWS["handoff-failed"] as Extract<
+      DeployView,
+      { step: "handoff-failed" }
+    >;
+    const declined = render({ ...failed, problem: "declined" });
+    expect(declined).toContain(">Connect Cloudflare again<");
+    expect(declined).not.toContain(">Try again<");
+    const busy = render({ ...failed, problem: "busy" });
+    expect(busy).toContain(">Try again<");
+    expect(busy).not.toContain(">Connect Cloudflare again<");
+  });
+
   it("starts with Connect Cloudflare and lists every permission on demand", () => {
     const html = render(SAMPLE_VIEWS.welcome as DeployView);
     expect(html).toContain(">Connect Cloudflare<");

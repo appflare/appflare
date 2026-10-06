@@ -375,6 +375,17 @@ describe("creating the owner", () => {
   });
 });
 
+describe("an unfinished handoff from the browser installer", () => {
+  it("leaves nothing kept once a pasted token connects instead", async () => {
+    await env.DB.prepare(
+      `INSERT INTO settings (key, value, updated_at) VALUES ('handoff_grant', '{"sealed":"x"}', 0)`,
+    ).run();
+    await connect(fakeCloudflare(accountToken(ACC, true)));
+    const row = await env.DB.prepare("SELECT 1 FROM settings WHERE key = 'handoff_grant'").first();
+    expect(row).toBeNull();
+  });
+});
+
 describe("a manager deployed without secrets or SELF (the Deploy to Cloudflare button)", () => {
   const SELF_PATCH = `PATCH ${A}/workers/workers/appflare/versions/latest`;
   const DEPLOY = `POST ${A}/workers/scripts/appflare/deployments`;

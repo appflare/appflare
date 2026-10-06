@@ -500,6 +500,26 @@ describe("the handoff", () => {
     expect(manager?.received?.grant).toMatchObject({ refreshToken: "refresh-9" });
   });
 
+  it("goes straight to connecting Cloudflare again when Appflare declines the connection", async () => {
+    const world = new FakeWorld();
+    const original = world.addManager.bind(world);
+    world.addManager = (address, hash) => {
+      const created = original(address, hash);
+      created.postAnswers = [{ status: 400, body: { error: "refused", message: "…" } }];
+      return created;
+    };
+    const h = harness(world);
+    await toReview(h);
+    await h.flow.deploy();
+    expect(view(h.flow, "handoff-failed").problem).toBe("declined");
+    // The installation stays; the grant that was declined does not.
+    await h.flow.reconnect();
+    expect(h.tokens.grant()).toBeNull();
+    expect(h.storage.installation.read()).not.toBeNull();
+    const [target] = h.navigations;
+    expect(new URL(target ?? "").pathname).toBe("/oauth2/auth");
+  });
+
   it("says plainly that another browser is finishing setup, after sending", async () => {
     const world = new FakeWorld();
     const original = world.addManager.bind(world);

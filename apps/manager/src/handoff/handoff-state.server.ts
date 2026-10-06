@@ -21,3 +21,20 @@ export async function readHandoffState(d1: D1Database): Promise<HandoffState> {
   if (row?.has_user === 1) return "done";
   return row?.received ? "received" : "waiting";
 }
+
+/**
+ * `settings` row of the authorization the browser handed over, kept sealed
+ * between tries of the handoff (handed-grant.server.ts).
+ */
+export const HANDED_GRANT_KEY = "handoff_grant";
+
+/**
+ * Deletes that row once setup no longer needs it: the owner exists, or a
+ * pasted API token became the connection instead. It cannot be revoked
+ * here: only the raw handoff secret opens it, which only the installing
+ * browser holds and these callers never see. Sealed, its refresh token is
+ * useless to anyone, and Cloudflare expires it.
+ */
+export async function forgetHandedGrant(d1: D1Database): Promise<void> {
+  await d1.prepare("DELETE FROM settings WHERE key = ?1").bind(HANDED_GRANT_KEY).run();
+}

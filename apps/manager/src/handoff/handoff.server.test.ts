@@ -11,6 +11,7 @@ import { tryAcquireSettingsLock } from "../db/settings-lock";
 import { addressRedirectTarget } from "../domains/address-redirect";
 import {
   connectCloudflareStep,
+  createOwnerStep,
   issueSetupClaim,
   OWNER_CLAIM_TTL_MS,
   redeemOwnerClaim,
@@ -481,6 +482,8 @@ describe("the first handoff", () => {
       { clientId: CLIENT, refreshToken: HANDED },
       { clientId: CLIENT, refreshToken: "cf-refresh-SECRET-1" },
     ]);
+    // Its spent copy is not revoked: that could end the kept grant with it.
+    expect(w.oauth.revokes).toEqual([]);
     expect(await readGrant(env.DB)).toMatchObject({ status: "connected" });
     expect((await settingsRows()).get("handoff_grant")).toBeUndefined();
   });
@@ -493,7 +496,7 @@ describe("the first handoff", () => {
     ).toBe(502);
     const row = JSON.parse((await settingsRows()).get("handoff_grant") ?? "null") as {
       salt: string;
-      refreshToken: string;
+      sealed: string;
     };
     const salt = Uint8Array.from(atob(row.salt.replace(/-/g, "+").replace(/_/g, "/")), (c) =>
       c.charCodeAt(0),
@@ -505,12 +508,83 @@ describe("the first handoff", () => {
       await handedGrantKey(`v1.${HASH}`, salt),
       await handedGrantKey(HASH, salt),
     ]) {
-      await expect(openValue(key, row.refreshToken, context)).rejects.toThrow();
+      await expect(openValue(key, row.sealed, context)).rejects.toThrow();
     }
     // The browser's secret does.
-    expect(await openValue(await handedGrantKey(SECRET, salt), row.refreshToken, context)).toBe(
-      "cf-refresh-SECRET-1",
-    );
+    const opened = JSON.parse(
+      await openValue(await handedGrantKey(SECRET, salt), row.sealed, context),
+    ) as { refreshToken: string };
+    expect(opened.refreshToken).toBe("cf-refresh-SECRET-1");
+  });
+
+  it("withdraws a new authorization sent along while the kept one carries on", async () => {
+    const w = world();
+    const fetch = failingKeyWrite(w);
+    expect(
+      (await handoffResponse(post(handoffBody()), managerEnv(), { ...w.deps, fetch })).status,
+    ).toBe(502);
+    const fresh = handoffBody({
+      grant: { refreshToken: "cf-refresh-SECRET-fresh", clientId: CLIENT, scopes: [] },
+    });
+    await claimOf(await handoffResponse(post(fresh), managerEnv(), { ...w.deps, fetch }));
+    // The kept one was used, and the new one, never refreshed, was revoked.
+    expect(w.oauth.refreshes.map((r) => r.refreshToken)).toEqual([HANDED, "cf-refresh-SECRET-1"]);
+    expect(w.oauth.revokes).toEqual([
+      { clientId: CLIENT, refreshToken: "cf-refresh-SECRET-fresh" },
+    ]);
+  });
+
+  it("revokes a renewed authorization it could not keep when storing it then fails", async () => {
+    const w = world();
+    // Keeping it fails (D1 refuses that one write), and the connection is busy.
+    const db = new Proxy(env.DB, {
+      get(target, prop, receiver) {
+        if (prop !== "prepare") return Reflect.get(target, prop, receiver);
+        return (sql: string) => {
+          const statement = target.prepare(sql);
+          if (!sql.includes("INSERT INTO settings")) return statement;
+          return new Proxy(statement, {
+            get(s, p, r) {
+              if (p !== "bind") return Reflect.get(s, p, r);
+              return (...args: unknown[]) =>
+                args[0] === "handoff_grant"
+                  ? { run: () => Promise.reject(new Error("D1 is unavailable")) }
+                  : s.bind(...args);
+            },
+          });
+        };
+      },
+    });
+    expect(await tryAcquireSettingsLock(env.DB, "cf_token_lock", "other", 60_000)).toBe(true);
+    const response = await handoffResponse(post(handoffBody()), managerEnv({ DB: db }), w.deps);
+    expect(response.status).toBe(503);
+    expect(w.oauth.revokes).toEqual([{ clientId: CLIENT, refreshToken: "cf-refresh-SECRET-1" }]);
+    expect((await settingsRows()).get("handoff_grant")).toBeUndefined();
+  });
+
+  it("forgets a kept grant once the owner exists", async () => {
+    const w = world();
+    const fetch = failingKeyWrite(w);
+    expect(
+      (await handoffResponse(post(handoffBody()), managerEnv(), { ...w.deps, fetch })).status,
+    ).toBe(502);
+    // Setup finished some other way (an API token): the owner is created.
+    await env.DB.prepare(
+      `INSERT INTO settings (key, value, updated_at) VALUES ('cf_token_configured', '1', 0)`,
+    ).run();
+    const claim = await issueSetupClaim(env.DB, NOW);
+    await createOwnerStep({
+      d1: env.DB,
+      claimCookie: claim.value,
+      now: NOW,
+      authReady: true,
+      input: { email: "ada@example.com", name: "Ada", password: "a-long-password" },
+      createUser: async () => {
+        await addOwner();
+        return { id: "u1" };
+      },
+    });
+    expect((await settingsRows()).get("handoff_grant")).toBeUndefined();
   });
 
   it("forgets a kept grant that a new handoff secret cannot open, and goes on with the new grant", async () => {
