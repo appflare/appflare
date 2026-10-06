@@ -3,13 +3,22 @@ import { WarningCircleIcon } from "@phosphor-icons/react";
 import { type ComponentProps, Fragment, type ReactNode } from "react";
 import { messageSegments } from "./message-links";
 
+/** What ends an address: a space, a quote, an angle bracket, a backtick, a closing bracket. */
+const ADDRESS_END = "\\s\"'<>`)\\]}";
+
 /**
- * A Cloudflare dashboard address: the scheme and host exactly (lower case,
- * no port, no user), then everything up to a space, a quote, an angle
- * bracket, a backtick, or a closing parenthesis, bracket or brace. Greedy,
- * with nothing after it to backtrack into, so a long line costs one pass.
+ * A Cloudflare dashboard address: the scheme and host exactly (lower case),
+ * then a path up to `ADDRESS_END`, or nothing. The host must end there: next
+ * comes a slash, the end of the text, `ADDRESS_END`, or sentence punctuation
+ * followed by one of those, so `dash.cloudflare.com.example.com`,
+ * `dash.cloudflare.com:443` and `dash.cloudflare.com@example.com` stay text.
+ * Greedy, with nothing after it to backtrack into, so a long line costs one
+ * pass (the punctuation check only scans the run right after a host).
  */
-const DASHBOARD_ADDRESS = /https:\/\/(?:one\.)?dash\.cloudflare\.com\/[^\s"'<>`)\]}]*/g;
+const DASHBOARD_ADDRESS = new RegExp(
+  `https://(?:one\\.)?dash\\.cloudflare\\.com(?=/|$|[${ADDRESS_END}]|[.,;:!?]+(?:$|[${ADDRESS_END}]))(?:/[^${ADDRESS_END}]*)?`,
+  "g",
+);
 
 /** Punctuation that ends the sentence around an address rather than the address. */
 const TRAILING_PUNCTUATION = new Set([".", ",", ";", ":", "!", "?"]);

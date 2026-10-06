@@ -139,6 +139,59 @@ describe("dashboard addresses in messages", () => {
     expect(messageHasLinks(other)).toBe(false);
   });
 
+  it("link the bare dashboard host, ending at the sentence around it", () => {
+    for (const host of ["https://dash.cloudflare.com", "https://one.dash.cloudflare.com"]) {
+      for (const [before, after] of [
+        ["Open ", ""],
+        ["Open ", "."],
+        ["Open ", ", then retry."],
+        ["(", ")."],
+        ["[", "]"],
+        ['{"url":"', '"}'],
+        ["Open ", "... now"],
+        ["Open ", "?!"],
+      ]) {
+        const message = `${before}${host}${after}`;
+        act(() => root.render(<MessageText message={message} />));
+        expect(links(), message).toEqual([{ text: host, href: host, target: "_blank" }]);
+        expect(container.textContent).toBe(message);
+        expect(messageHasLinks(message)).toBe(true);
+      }
+    }
+  });
+
+  it("leave a host that only starts like the dashboard's as text", () => {
+    for (const host of ["https://dash.cloudflare.com", "https://one.dash.cloudflare.com"]) {
+      for (const lookAlike of [
+        `${host}.example.com`,
+        `${host}.example.com/x`,
+        `${host}.example`,
+        `${host}:443`,
+        `${host}:443/x`,
+        `${host}x`,
+        `${host}-x.example.com`,
+        `${host}@example.com`,
+        `${host}?to=/x`,
+        `${host}#x`,
+        `${host}...x`,
+      ]) {
+        const message = `Open ${lookAlike} now.`;
+        act(() => root.render(<MessageText message={message} />));
+        expect(links(), lookAlike).toEqual([]);
+        expect(messageHasLinks(message), lookAlike).toBe(false);
+      }
+    }
+  });
+
+  it("check a bare host's punctuation in one pass", () => {
+    const line = `https://dash.cloudflare.com${".".repeat(200_000)}x https://dash.cloudflare.com${".".repeat(1000)}`;
+    const started = performance.now();
+    act(() => root.render(<MessageText message={line} />));
+    expect(performance.now() - started).toBeLessThan(1500);
+    expect(links().map((l) => l.href)).toEqual(["https://dash.cloudflare.com"]);
+    expect(container.textContent).toBe(line);
+  });
+
   it("end before a quote, a bracket, a backtick or the punctuation that ends a sentence", () => {
     const address = "https://dash.cloudflare.com/x/y?z=1";
     for (const [before, after] of [
