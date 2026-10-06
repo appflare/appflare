@@ -326,7 +326,42 @@ describe("cron trigger limit", () => {
     world.cronLimit = true;
     const created = await createInstallation(call);
     const { answers } = await stepUntil(call, created, (a) => a.step.id === "secret");
-    expect(answers.at(-1)?.message).toMatch(/scheduled trigger/);
+    const moved = answers.at(-1);
+    // The warning is about the schedules, not about the step that comes next.
+    expect(moved?.message).toBeUndefined();
+    expect(moved?.completed).toEqual({
+      step: { id: "schedules", label: "Schedule regular checks" },
+      message: expect.stringMatching(/scheduled trigger/),
+    });
+  });
+});
+
+describe("step messages", () => {
+  it("pairs every message with its own step, and a finished step's only with `completed`", async () => {
+    const created = await createInstallation(call);
+    const { answers } = await stepUntil(call, created, deployed);
+    const byStep = new Map(answers.map((a) => [a.step.id, a]));
+    // Finishing the upload moves on to the Workflow; its message stays with the upload.
+    expect(byStep.get("workflow")?.message).toBeUndefined();
+    expect(byStep.get("workflow")?.completed).toEqual({
+      step: { id: "worker", label: "Upload Appflare" },
+      message: "Uploaded Appflare 0.4.0.",
+    });
+    expect(byStep.get("storage")?.completed?.message).toMatch(/D1 database/);
+    for (const answer of answers) {
+      if (answer.status === "running") expect(answer.message).toBeUndefined();
+      if (answer.completed !== undefined) {
+        expect(answer.completed.step.id).not.toBe(answer.step.id);
+      }
+    }
+    // The last step keeps its own message when the deploy is done.
+    expect(answers.at(-1)).toMatchObject({ status: "deployed", step: { id: "proof" } });
+    expect(answers.at(-1)?.message).toMatch(/answers at/);
+    // A later look at the record carries no stale message either.
+    const again = await call<StepAnswer>(`installations/${created.installationId}/step`, {
+      key: created.key,
+    });
+    expect(again.body.message).toMatch(/answers at/);
   });
 });
 

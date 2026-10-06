@@ -1,30 +1,41 @@
-import { buttonVariants } from "@fumadocs/base-ui/components/ui/button";
+import { AppflareLoader } from "@appflare/brand/loader";
+import { Badge } from "@cloudflare/kumo/components/badge";
+import { Banner } from "@cloudflare/kumo/components/banner";
+import { Button, LinkButton } from "@cloudflare/kumo/components/button";
+import { Input } from "@cloudflare/kumo/components/input";
+import { Meter } from "@cloudflare/kumo/components/meter";
+import { Radio } from "@cloudflare/kumo/components/radio";
+import { Select } from "@cloudflare/kumo/components/select";
+import { Text } from "@cloudflare/kumo/components/text";
 import {
   ArrowSquareOutIcon,
-  CheckIcon,
-  CircleNotchIcon,
-  ClockIcon,
+  CaretRightIcon,
+  CheckCircleIcon,
+  WarningCircleIcon,
   WarningIcon,
 } from "@phosphor-icons/react";
-import { type FormEvent, type ReactNode, useId } from "react";
+import { type FormEvent, type ReactNode, useEffect, useRef } from "react";
 import { REQUESTED_SCOPES } from "../../deploy/authorize.ts";
 import type {
-  Active,
   AddressChoice,
   DeployView,
+  FinishedNote,
   HandoffProblem,
   Notice,
   Plan,
   RemovalTarget,
 } from "../../deploy/flow.ts";
 import { hostnameFor, workersDevAddress } from "../../deploy/flow.ts";
-import type { Unfinished, Zone } from "../../deploy/installer-api.ts";
+import type { StepAnswer, Unfinished, Zone } from "../../deploy/installer-api.ts";
 import { DEPLOY_PATH } from "../../deploy/paths.ts";
 import { SITE_URL } from "../../lib/shared.ts";
+import { BusyButton } from "./busy-button.tsx";
+import { DeployCard, More, STEP_TITLE_ID } from "./deploy-shell.tsx";
 
 /**
  * One step of the deploy page, drawn from the state in `deploy/flow.ts`.
  * Nothing here decides anything: every click is a call on {@link DeployActions}.
+ * Each step says one short thing; the rest waits behind a "details" fold.
  */
 
 /** What the page can ask the flow to do. `DeployFlow` is one. */
@@ -75,97 +86,65 @@ export const NO_ACTIONS: DeployActions = {
   back: nothing,
 };
 
-/** The brand's orange, as on the front page's Deploy button. For the one action that moves forward. */
-const FLARE =
-  "inline-flex items-center justify-center gap-2 rounded-lg bg-[#fb6b00] px-4 py-2 font-semibold text-sm text-white shadow-sm transition-colors hover:bg-[#e46100] focus-visible:outline-2 focus-visible:outline-fd-ring focus-visible:outline-offset-2 disabled:cursor-not-allowed disabled:opacity-60 dark:hover:bg-[#ff7d1a]";
-const primary = buttonVariants({ variant: "primary", className: "px-4 py-2 text-sm" });
-const secondary = buttonVariants({ variant: "secondary", className: "px-4 py-2 text-sm" });
-const quiet = buttonVariants({ variant: "ghost", className: "px-3 py-2 text-sm" });
-const danger =
-  "inline-flex items-center justify-center gap-2 rounded-lg bg-red-600 px-4 py-2 font-semibold text-sm text-white transition-colors hover:bg-red-700 focus-visible:outline-2 focus-visible:outline-fd-ring focus-visible:outline-offset-2";
-const field =
-  "h-11 w-full rounded-lg border border-fd-border bg-fd-background px-3 text-base outline-none placeholder:text-fd-muted-foreground focus-visible:ring-2 focus-visible:ring-fd-ring aria-invalid:border-red-500";
+/** A primary action spans the card, as on Appflare's own setup screens. */
+const WIDE = "w-full justify-center";
+/** A secondary action spans the card only on a phone, where actions stack. */
+const WIDE_ON_PHONE = "max-sm:w-full max-sm:justify-center";
+/** Every button is at least 44 px tall on a phone. */
+const TOUCH = "max-sm:h-11";
+/** Fields are 44 px tall on a phone, with 16 px text so the browser does not zoom in on them. */
+const TOUCH_FIELD = "max-sm:h-11 pointer-coarse:text-[16px]";
 
-function Title({ children }: { children: ReactNode }) {
-  return <h2 className="font-semibold text-xl tracking-tight">{children}</h2>;
-}
-
-function Text({ children }: { children: ReactNode }) {
-  return <p className="text-fd-muted-foreground leading-relaxed">{children}</p>;
+/** A value to read whole: an address, a name. */
+function Strong({ children }: { children: ReactNode }) {
+  return <span className="font-medium text-kumo-default [overflow-wrap:anywhere]">{children}</span>;
 }
 
 function Actions({ children }: { children: ReactNode }) {
-  return <div className="flex flex-wrap items-center gap-2 pt-1">{children}</div>;
-}
-
-/** A value the visitor should read whole: an address, a name. */
-function Strong({ children }: { children: ReactNode }) {
-  return (
-    <strong className="font-semibold text-fd-foreground [overflow-wrap:anywhere]">
-      {children}
-    </strong>
-  );
-}
-
-function Spinner({ label }: { label: string }) {
-  return (
-    <p className="flex items-center gap-2 text-fd-muted-foreground">
-      <CircleNotchIcon
-        aria-hidden="true"
-        className="size-5 animate-spin motion-reduce:animate-none"
-      />
-      {label}
-    </p>
-  );
-}
-
-function Callout({
-  tone = "info",
-  children,
-}: {
-  tone?: "info" | "warning" | "error";
-  children: ReactNode;
-}) {
-  const tones = {
-    info: "border-fd-border bg-fd-secondary text-fd-muted-foreground",
-    warning:
-      "border-amber-300 bg-amber-50 text-amber-950 dark:border-amber-700/60 dark:bg-amber-950/40 dark:text-amber-100",
-    error:
-      "border-red-300 bg-red-50 text-red-900 dark:border-red-800/60 dark:bg-red-950/40 dark:text-red-100",
-  } as const;
-  return (
-    <div
-      role={tone === "error" ? "alert" : undefined}
-      className={`grid gap-2 rounded-lg border px-3 py-2.5 text-sm leading-relaxed ${tones[tone]}`}
-    >
-      {children}
-    </div>
-  );
-}
-
-function ErrorText({ id, children }: { id?: string; children: ReactNode }) {
-  return (
-    <p id={id} role="alert" className="text-red-600 text-sm dark:text-red-400">
-      {children}
-    </p>
-  );
-}
-
-function Details({ summary, children }: { summary: string; children: ReactNode }) {
-  return (
-    <details className="text-fd-muted-foreground text-sm">
-      <summary className="cursor-pointer select-none">{summary}</summary>
-      <div className="grid gap-2 pt-2">{children}</div>
-    </details>
-  );
+  return <div className="grid gap-2 sm:flex sm:flex-wrap sm:items-center">{children}</div>;
 }
 
 function BackButton({ actions, label = "Back" }: { actions: DeployActions; label?: string }) {
   return (
-    <button type="button" className={quiet} onClick={() => actions.back()}>
+    <Button variant="ghost" className={`${TOUCH} ${WIDE_ON_PHONE}`} onClick={() => actions.back()}>
       {label}
-    </button>
+    </Button>
   );
+}
+
+/** A loader and a line saying what is happening, announced politely. */
+function Working({ label }: { label: string }) {
+  return (
+    <div role="status" className="flex items-center gap-3">
+      <AppflareLoader size={20} aria-hidden />
+      <Text variant="secondary">{label}</Text>
+    </div>
+  );
+}
+
+function ErrorBanner({ title, children }: { title?: string; children?: ReactNode }) {
+  return (
+    <div role="alert">
+      <Banner
+        variant="error"
+        icon={<WarningCircleIcon weight="fill" />}
+        {...(title === undefined ? {} : { title })}
+        description={children}
+      />
+    </div>
+  );
+}
+
+function AlertBanner({ children }: { children: ReactNode }) {
+  return <Banner variant="alert" icon={<WarningIcon weight="fill" />} description={children} />;
+}
+
+function hostOf(address: string): string {
+  try {
+    return new URL(address).host;
+  } catch {
+    return address;
+  }
 }
 
 // --- The journey -------------------------------------------------------------
@@ -215,42 +194,63 @@ export function stageOf(view: DeployView): Stage | null {
   }
 }
 
-/** The stages as a short ordered list, the current one marked. */
-export function JourneyRail({ view }: { view: DeployView }) {
+/** The step meter's position for a view, or null outside the journey. */
+export function meterOf(view: DeployView): { step: number; count: number } | null {
   const stage = stageOf(view);
-  if (stage === null) return null;
-  const at = STAGES.indexOf(stage);
-  return (
-    <ol aria-label="Steps" className="flex flex-wrap gap-x-4 gap-y-1 text-sm">
-      {STAGES.map((name, i) => (
-        <li
-          key={name}
-          aria-current={i === at ? "step" : undefined}
-          className={
-            i === at
-              ? "font-semibold text-fd-foreground"
-              : i < at
-                ? "text-fd-muted-foreground"
-                : "text-fd-muted-foreground/60"
-          }
-        >
-          <span className="tabular-nums">{i + 1}.</span> {name}
-          {i < at && <span className="sr-only"> (done)</span>}
-        </li>
-      ))}
-    </ol>
-  );
+  return stage === null ? null : { step: STAGES.indexOf(stage) + 1, count: STAGES.length };
+}
+
+/**
+ * Whether the person at the page has pressed a key or pointed at something
+ * since it loaded. The steps the page takes by itself while it starts
+ * (loading, then welcome, or reading the accounts after a sign-in) are not
+ * theirs, and moving the focus then would pull it from where they put it.
+ */
+let acted = false;
+let listening = false;
+
+function listenForAction(): void {
+  if (listening) return;
+  listening = true;
+  const mark = () => {
+    acted = true;
+  };
+  document.addEventListener("pointerdown", mark, { capture: true, passive: true });
+  document.addEventListener("keydown", mark, { capture: true, passive: true });
+}
+
+/** For tests: back to a page nobody has touched. */
+export function resetStepFocus(): void {
+  acted = false;
+}
+
+/**
+ * Moves the focus to the step's title when the step changes after the
+ * person has acted on the page (not on the steps the page takes by itself
+ * while it starts, and not while one step only updates), so keyboard and
+ * screen reader users start reading at the new step.
+ */
+export function useFocusOnStepChange(step: string): void {
+  const previous = useRef(step);
+  useEffect(() => {
+    listenForAction();
+  }, []);
+  useEffect(() => {
+    if (previous.current === step) return;
+    previous.current = step;
+    if (!acted) return;
+    document.getElementById(STEP_TITLE_ID)?.focus({ preventScroll: false });
+  }, [step]);
 }
 
 // --- Steps -------------------------------------------------------------------
 
 const NOTICES: Record<Notice, string> = {
-  reconnect:
-    "Your Cloudflare connection ran out. Connect again to carry on where you left off. Nothing was lost.",
+  reconnect: "Your Cloudflare connection ran out. Connect again to carry on. Nothing was lost.",
   "finished-elsewhere":
     "The installation this browser remembered is finished or was removed, so there is nothing to continue.",
   "account-unreachable":
-    "This Cloudflare login does not reach the account where you started installing Appflare. Connect with that login to continue it, or choose an account below to start again.",
+    "This Cloudflare login does not reach the account where you started. Connect with that login, or choose an account to start again.",
 };
 
 function Welcome({
@@ -261,70 +261,67 @@ function Welcome({
   actions: DeployActions;
 }) {
   return (
-    <div className="grid gap-3">
-      <Title>
-        {view.unfinished ? "Continue installing Appflare" : "Connect your Cloudflare account"}
-      </Title>
-      {view.notice !== null && <Callout tone="warning">{NOTICES[view.notice]}</Callout>}
-      {view.unfinished ? (
-        <Text>
-          This browser started installing Appflare. Connect Cloudflare to continue it, or to remove
-          what it created.
+    <DeployCard
+      meter={meterOf(view)}
+      title={view.unfinished ? "Continue installing Appflare" : "Install Appflare"}
+      description={
+        view.unfinished
+          ? "Connect Cloudflare to pick up where this browser stopped."
+          : "Into your own Cloudflare account, in a few minutes, from this page."
+      }
+    >
+      {view.notice !== null && <AlertBanner>{NOTICES[view.notice]}</AlertBanner>}
+      {view.error !== null && <ErrorBanner>{view.error}</ErrorBanner>}
+      <BusyButton
+        variant="primary"
+        size="lg"
+        className={`${WIDE} ${TOUCH}`}
+        pending={view.busy}
+        onClick={() => actions.connect()}
+      >
+        {view.busy ? "Opening Cloudflare…" : "Connect Cloudflare"}
+      </BusyButton>
+      <More summary="What Appflare asks Cloudflare for">
+        <Text variant="secondary">
+          Every permission it uses, all at once, so it never has to ask again when you turn on a
+          feature later. Nothing is created until you check and press Deploy.
         </Text>
-      ) : (
-        <Text>
-          Cloudflare asks you to sign in and allow Appflare to manage your account. Then you choose
-          where Appflare goes and check everything before anything is created.
-        </Text>
-      )}
-      <Text>
-        Appflare asks for every permission it uses at once, so it never has to ask again when you
-        turn on a feature later. You cannot leave some out.
-      </Text>
-      <Details summary="The permissions Appflare asks for">
-        <ul className="grid list-disc gap-0.5 pl-5 font-mono text-xs">
+        <ul className="grid list-disc gap-0.5 pl-5 font-mono text-[0.9em]" translate="no">
           {REQUESTED_SCOPES.map((scope) => (
             <li key={scope}>{scope}</li>
           ))}
           <li>offline_access</li>
         </ul>
-        <p>
-          Billing is not among them, so Appflare cannot read your Workers plan this way. It works
-          the plan out from what your account can run, or asks you in its settings.
-        </p>
-      </Details>
-      {view.error !== null && <ErrorText>{view.error}</ErrorText>}
-      <Actions>
-        <button
-          type="button"
-          className={FLARE}
-          disabled={view.busy}
-          onClick={() => actions.connect()}
-        >
-          {view.busy ? "Opening Cloudflare…" : "Connect Cloudflare"}
-        </button>
-      </Actions>
-    </div>
+        <Text variant="secondary">
+          Billing is not among them, so Appflare works your Workers plan out from what the account
+          can run, or asks you in its settings.
+        </Text>
+      </More>
+    </DeployCard>
   );
 }
 
 function Unavailable({ view }: { view: Extract<DeployView, { step: "unavailable" }> }) {
   const site = new URL(SITE_URL).host;
   return (
-    <div className="grid gap-3">
-      <Title>Connecting Cloudflare does not work here</Title>
-      <Text>
-        {view.reason === "unregistered-origin"
-          ? `After you allow access, Cloudflare sends you back only to ${site}, so this copy of the page cannot sign in.`
-          : "This copy of the page is set up to finish signing in at another address, so it cannot sign in here."}
-      </Text>
-      <Actions>
-        <a href={`${SITE_URL}${DEPLOY_PATH}`} className={primary}>
-          Open {site}
-          {DEPLOY_PATH.replace(/\/$/, "")}
-        </a>
-      </Actions>
-    </div>
+    <DeployCard
+      meter={meterOf(view)}
+      title="Sign-in does not work on this copy of the page"
+      description={
+        view.reason === "unregistered-origin"
+          ? `Cloudflare sends you back only to ${site}.`
+          : "This copy finishes signing in at another address."
+      }
+    >
+      <LinkButton
+        href={`${SITE_URL}${DEPLOY_PATH}`}
+        variant="primary"
+        className={`${WIDE} ${TOUCH}`}
+      >
+        Open {site}
+        {DEPLOY_PATH.replace(/\/$/, "")}
+      </LinkButton>
+    </DeployCard>
   );
 }
 
@@ -336,45 +333,46 @@ function AccountPicker({
   actions: DeployActions;
 }) {
   return (
-    <div className="grid gap-3">
-      <Title>Choose an account</Title>
+    <DeployCard
+      meter={meterOf(view)}
+      title="Choose an account"
+      description="Your Cloudflare login reaches several. Appflare goes into one."
+    >
       {view.notice !== null && (
-        <Callout tone="warning">
-          <p>{NOTICES[view.notice]}</p>
+        <div className="grid gap-2">
+          <AlertBanner>{NOTICES[view.notice]}</AlertBanner>
           {view.notice === "account-unreachable" && (
-            <div>
-              <button type="button" className={secondary} onClick={() => actions.reconnect()}>
-                Connect with another login
-              </button>
-            </div>
+            <Button
+              variant="secondary"
+              className={`${WIDE} ${TOUCH}`}
+              onClick={() => actions.reconnect()}
+            >
+              Connect with another login
+            </Button>
           )}
-        </Callout>
+        </div>
       )}
-      <Text>
-        Your Cloudflare login reaches more than one account. Appflare goes into one of them.
-      </Text>
       <ul className="grid gap-2">
         {view.accounts.map((account) => (
           <li key={account.id}>
-            <button
-              type="button"
+            <Button
+              variant="secondary"
+              size="lg"
+              className="h-auto min-h-12 w-full justify-between py-2 text-left"
               onClick={() => actions.chooseAccount(account.id)}
-              className="flex w-full items-center justify-between gap-3 rounded-lg border border-fd-border bg-fd-background px-4 py-3 text-left transition-colors hover:bg-fd-accent focus-visible:outline-2 focus-visible:outline-fd-ring"
             >
-              <span className="font-medium [overflow-wrap:anywhere]">{account.name}</span>
-              <span aria-hidden="true" className="text-fd-muted-foreground text-sm">
-                Choose
-              </span>
-            </button>
+              <span className="min-w-0 [overflow-wrap:anywhere]">{account.name}</span>
+              <CaretRightIcon aria-hidden className="shrink-0 text-kumo-subtle" />
+            </Button>
           </li>
         ))}
       </ul>
-    </div>
+    </DeployCard>
   );
 }
 
 function progressLine(item: Pick<Unfinished, "done" | "total" | "step" | "status">): string {
-  if (item.status === "deployed") return "Deployed, waiting to be connected";
+  if (item.status === "deployed") return "Deployed, not connected yet";
   if (item.status === "removing") return "Being removed";
   return `Step ${Math.min(item.done + 1, item.total)} of ${item.total}: ${item.step.label}`;
 }
@@ -382,65 +380,79 @@ function progressLine(item: Pick<Unfinished, "done" | "total" | "step" | "status
 function UnfinishedList({
   view,
   actions,
+  canGoBack,
 }: {
   view: Extract<DeployView, { step: "unfinished" }>;
   actions: DeployActions;
+  canGoBack: boolean;
 }) {
   const { mine, others } = view;
+  const one = others.length === 1;
   return (
-    <div className="grid gap-3">
-      <Title>{mine !== null ? "Continue installing Appflare?" : "Unfinished installations"}</Title>
-      {view.notice !== null && <Callout>{NOTICES[view.notice]}</Callout>}
-      {view.error !== undefined && <Callout tone="error">{view.error}</Callout>}
+    <DeployCard
+      meter={meterOf(view)}
+      title={mine !== null ? "Continue installing Appflare?" : "Unfinished installations"}
+      description={
+        mine !== null
+          ? "This browser started one and it is not finished."
+          : `Started in another browser, in ${view.account.name}. Continue ${one ? "it" : "one"} there, or remove ${one ? "it" : "them"} here.`
+      }
+    >
+      {view.notice !== null && <AlertBanner>{NOTICES[view.notice]}</AlertBanner>}
+      {view.error !== undefined && <ErrorBanner>{view.error}</ErrorBanner>}
       {mine !== null && (
-        <div className="grid gap-2 rounded-lg border border-fd-border p-4">
-          <p>
-            <Strong>{mine.address}</Strong>
-          </p>
-          <p className="text-fd-muted-foreground text-sm">
-            {progressLine(mine)}. Named {mine.workerName}, in {view.account.name}.
-          </p>
-          {mine.message !== undefined && (
-            <p className="text-fd-muted-foreground text-sm">{mine.message}</p>
-          )}
+        <div className="grid gap-4 rounded-lg p-4 ring ring-kumo-hairline">
+          <div className="grid gap-1">
+            <Strong>{hostOf(mine.address)}</Strong>
+            <Text variant="secondary" size="sm">
+              {progressLine(mine)}
+            </Text>
+          </div>
           <Actions>
-            <button type="button" className={FLARE} onClick={() => actions.continueMine()}>
+            <Button
+              variant="primary"
+              className={`${TOUCH} ${WIDE_ON_PHONE}`}
+              onClick={() => actions.continueMine()}
+            >
               Continue
-            </button>
-            <button
-              type="button"
-              className={secondary}
+            </Button>
+            <Button
+              variant="secondary-destructive"
+              className={`${TOUCH} ${WIDE_ON_PHONE}`}
               onClick={() => actions.requestRemove(mine.id)}
             >
               Remove…
-            </button>
+            </Button>
           </Actions>
         </div>
       )}
       {others.length > 0 && (
         <div className="grid gap-2">
-          <Text>
-            {mine === null
-              ? `${view.account.name} has ${others.length === 1 ? "an installation" : "installations"} that started in another browser and did not finish. Continue ${others.length === 1 ? "it" : "one"} in that browser, or remove ${others.length === 1 ? "it" : "them"} here.`
-              : "Also started in another browser and not finished:"}
-          </Text>
+          {mine !== null && (
+            <Text variant="secondary" size="sm">
+              Also unfinished, started in another browser:
+            </Text>
+          )}
           <ul className="grid gap-2">
             {others.map((item) => (
               <li
                 key={item.id}
-                className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-fd-border px-4 py-3"
+                className="flex flex-wrap items-center justify-between gap-2 rounded-lg px-4 py-3 ring ring-kumo-hairline"
               >
-                <span className="grid gap-0.5">
-                  <Strong>{item.address}</Strong>
-                  <span className="text-fd-muted-foreground text-sm">{progressLine(item)}</span>
+                <span className="grid min-w-0 gap-0.5">
+                  <Strong>{hostOf(item.address)}</Strong>
+                  <Text variant="secondary" size="sm" as="span">
+                    {progressLine(item)}
+                  </Text>
                 </span>
-                <button
-                  type="button"
-                  className={quiet}
+                <Button
+                  variant="secondary-destructive"
+                  size="sm"
+                  className={TOUCH}
                   onClick={() => actions.requestRemove(item.id)}
                 >
                   Remove…
-                </button>
+                </Button>
               </li>
             ))}
           </ul>
@@ -448,12 +460,17 @@ function UnfinishedList({
       )}
       {mine === null && (
         <Actions>
-          <button type="button" className={primary} onClick={() => actions.startNew()}>
+          <Button
+            variant="primary"
+            className={`${WIDE} ${TOUCH} sm:w-auto`}
+            onClick={() => actions.startNew()}
+          >
             Start a new installation
-          </button>
+          </Button>
+          {canGoBack && <BackButton actions={actions} />}
         </Actions>
       )}
-    </div>
+    </DeployCard>
   );
 }
 
@@ -466,51 +483,45 @@ function NameStep({
   actions: DeployActions;
   canGoBack: boolean;
 }) {
-  const id = useId();
-  const hintId = `${id}-hint`;
-  const errorId = `${id}-error`;
   function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     actions.submitName();
   }
   return (
-    <form className="grid gap-3" onSubmit={submit} noValidate>
-      <Title>Name your Appflare</Title>
-      <Text>
-        In <Strong>{view.account.name}</Strong>, Appflare and the database and storage it keeps its
-        data in are called by this name. Keep the suggestion unless you install Appflare more than
-        once.
-      </Text>
-      <div className="grid gap-1.5">
-        <label htmlFor={id} className="font-medium text-sm">
-          Name
-        </label>
-        <input
-          id={id}
-          type="text"
+    <DeployCard
+      meter={meterOf(view)}
+      title="Name your Appflare"
+      description="Keep the suggestion unless you install Appflare more than once."
+    >
+      <form className="grid gap-5" onSubmit={submit} noValidate>
+        <Input
+          label="Name"
+          name="worker-name"
           autoComplete="off"
           autoCapitalize="none"
           spellCheck={false}
+          translate="no"
           value={view.value}
           maxLength={58}
           disabled={view.checking}
-          aria-invalid={view.error !== null}
-          aria-describedby={view.error === null ? hintId : `${errorId} ${hintId}`}
           onChange={(event) => actions.editName(event.target.value)}
-          className={field}
+          className={TOUCH_FIELD}
+          description={`Lowercase letters, digits and dashes. Its database and storage in ${view.account.name} get the same name.`}
+          {...(view.error === null ? {} : { error: view.error })}
         />
-        {view.error !== null && <ErrorText id={errorId}>{view.error}</ErrorText>}
-        <p id={hintId} className="text-fd-muted-foreground text-sm">
-          Lowercase letters, digits and dashes.
-        </p>
-      </div>
-      <Actions>
-        <button type="submit" className={primary} disabled={view.checking}>
-          {view.checking ? "Checking…" : "Continue"}
-        </button>
-        {canGoBack && <BackButton actions={actions} />}
-      </Actions>
-    </form>
+        <Actions>
+          <BusyButton
+            type="submit"
+            variant="primary"
+            className={`${WIDE} ${TOUCH} sm:w-auto`}
+            pending={view.checking}
+          >
+            {view.checking ? "Checking…" : "Continue"}
+          </BusyButton>
+          {canGoBack && <BackButton actions={actions} />}
+        </Actions>
+      </form>
+    </DeployCard>
   );
 }
 
@@ -523,169 +534,163 @@ function AddressStep({
   actions: DeployActions;
   canGoBack: boolean;
 }) {
-  const id = useId();
   const { account, workerName, zones, choice } = view;
+  const title = "Choose Appflare's address";
+  const description = "You open Appflare and sign in here. Pick the one you will keep.";
   function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     actions.submitAddress();
   }
   if (zones === null) {
     return (
-      <div className="grid gap-3">
-        <Title>Choose Appflare's address</Title>
-        <Spinner label={`Reading the domains of ${account.name}…`} />
-      </div>
+      <DeployCard meter={meterOf(view)} title={title} description={description}>
+        <Working label={`Reading the domains of ${account.name}…`} />
+      </DeployCard>
     );
   }
   const sub = account.workersDevSubdomain;
   const devAddress = sub === null ? null : workersDevAddress(workerName, sub);
   if (choice === null) {
     return (
-      <div className="grid gap-3">
-        <Title>Choose Appflare's address</Title>
-        <Callout tone="warning">
-          {account.name} has no domain on Cloudflare and no workers.dev address yet. Open Workers
-          &amp; Pages in the Cloudflare dashboard once to get a workers.dev address, or add a domain
-          to the account, then check again.
-        </Callout>
+      <DeployCard
+        meter={meterOf(view)}
+        title={title}
+        description={`${account.name} has no domain and no workers.dev address yet.`}
+      >
+        <Text variant="secondary">
+          Open Workers &amp; Pages in the Cloudflare dashboard once to get a workers.dev address, or
+          add a domain to the account. Then check again.
+        </Text>
         <Actions>
-          <button type="button" className={primary} onClick={() => actions.refreshAddress()}>
+          <Button
+            variant="primary"
+            className={`${WIDE} ${TOUCH} sm:w-auto`}
+            onClick={() => actions.refreshAddress()}
+          >
             Check again
-          </button>
+          </Button>
           {canGoBack && <BackButton actions={actions} />}
         </Actions>
-      </div>
+      </DeployCard>
     );
   }
   const domain = choice.kind === "domain" ? choice : null;
   const preview = domain !== null ? hostnameFor(domain) : null;
   const firstZone: Zone | undefined = zones[0];
+  const kind = choice.kind === "domain" ? "domain" : "workers-dev";
   return (
-    <form className="grid gap-4" onSubmit={submit} noValidate>
-      <Title>Choose Appflare's address</Title>
-      <Text>
-        You open Appflare and sign in at this address. Your passkeys belong to it, so choose the one
-        you want to keep.
-      </Text>
-      <fieldset className="grid gap-3" disabled={view.checking}>
-        <legend className="sr-only">Address</legend>
-        {firstZone !== undefined && (
-          <div className="grid gap-3 rounded-lg border border-fd-border p-4 has-[:checked]:border-fd-primary">
-            <label className="flex items-start gap-3">
-              <input
-                type="radio"
-                name={`${id}-kind`}
-                checked={domain !== null}
-                onChange={() =>
-                  actions.chooseAddress({
-                    kind: "domain",
-                    zone: firstZone.name,
-                    subdomain: "appflare",
-                  })
-                }
-                className="mt-1 size-4 accent-[#fb6b00]"
-              />
-              <span className="grid gap-0.5">
-                <span className="font-medium">On your domain</span>
-                <span className="text-fd-muted-foreground text-sm">
-                  Cloudflare creates the DNS record and the security certificate.
-                </span>
+    <DeployCard meter={meterOf(view)} title={title} description={description}>
+      <form className="grid gap-5" onSubmit={submit} noValidate>
+        <Radio.Group
+          appearance="card"
+          value={kind}
+          disabled={view.checking}
+          onValueChange={(next) => {
+            if (next === "workers-dev") actions.chooseAddress({ kind: "workers-dev" });
+            else if (next === "domain" && firstZone !== undefined && domain === null) {
+              actions.chooseAddress({
+                kind: "domain",
+                zone: firstZone.name,
+                subdomain: "appflare",
+              });
+            }
+          }}
+        >
+          <Radio.Legend className="sr-only">Address</Radio.Legend>
+          {firstZone !== undefined && (
+            <Radio.Item
+              value="domain"
+              label="On your domain"
+              description="Cloudflare adds the DNS record and the certificate."
+            />
+          )}
+          <Radio.Item
+            value="workers-dev"
+            label="Cloudflare's free address"
+            disabled={devAddress === null}
+            description={
+              <span className="[overflow-wrap:anywhere]">
+                {devAddress ?? "Not set up in this account yet."}
               </span>
-            </label>
-            {domain !== null && (
-              <div className="grid gap-2 pl-7">
-                <div className="grid grid-cols-[minmax(6rem,1fr)_auto_minmax(0,1.5fr)] items-center gap-1.5 sm:grid-cols-[12rem_auto_minmax(0,1fr)]">
-                  <label htmlFor={`${id}-sub`} className="sr-only">
-                    Subdomain
-                  </label>
-                  <input
-                    id={`${id}-sub`}
-                    type="text"
-                    autoComplete="off"
-                    autoCapitalize="none"
-                    spellCheck={false}
-                    value={domain.subdomain}
-                    onChange={(event) =>
-                      actions.chooseAddress({ ...domain, subdomain: event.target.value })
-                    }
-                    className={`${field}`}
-                    aria-describedby={`${id}-preview`}
+            }
+          />
+        </Radio.Group>
+        {domain !== null && (
+          <div className="grid gap-2">
+            <div className="grid items-end gap-3 sm:gap-2 sm:grid-cols-[minmax(0,1fr)_auto_minmax(0,1.3fr)]">
+              <Input
+                label="Subdomain"
+                name="subdomain"
+                autoComplete="off"
+                autoCapitalize="none"
+                spellCheck={false}
+                translate="no"
+                value={domain.subdomain}
+                disabled={view.checking}
+                onChange={(event) =>
+                  actions.chooseAddress({ ...domain, subdomain: event.target.value })
+                }
+                className={TOUCH_FIELD}
+              />
+              <span aria-hidden="true" className="pb-2 text-kumo-subtle max-sm:hidden">
+                .
+              </span>
+              <div className="min-w-0">
+                {zones.length > 1 ? (
+                  <Select
+                    label="Domain"
+                    hideLabel={false}
+                    value={domain.zone}
+                    disabled={view.checking}
+                    onValueChange={(zone) => {
+                      if (typeof zone === "string") actions.chooseAddress({ ...domain, zone });
+                    }}
+                    className={`w-full ${TOUCH_FIELD}`}
+                    items={Object.fromEntries(zones.map((zone) => [zone.name, zone.name]))}
                   />
-                  <span aria-hidden="true">.</span>
-                  {zones.length > 1 ? (
-                    <>
-                      <label htmlFor={`${id}-zone`} className="sr-only">
-                        Domain
-                      </label>
-                      <select
-                        id={`${id}-zone`}
-                        value={domain.zone}
-                        onChange={(event) =>
-                          actions.chooseAddress({ ...domain, zone: event.target.value })
-                        }
-                        className={`${field} min-w-0`}
-                      >
-                        {zones.map((zone) => (
-                          <option key={zone.id} value={zone.name}>
-                            {zone.name}
-                          </option>
-                        ))}
-                      </select>
-                    </>
-                  ) : (
-                    <span className="min-w-0 font-medium [overflow-wrap:anywhere]">
+                ) : (
+                  <div className="grid gap-1.5">
+                    <Text size="sm" bold as="span">
+                      Domain
+                    </Text>
+                    <span className="flex h-9 items-center font-medium [overflow-wrap:anywhere] max-sm:h-11">
                       {domain.zone}
                     </span>
-                  )}
-                </div>
-                <p id={`${id}-preview`} className="text-fd-muted-foreground text-sm">
-                  {preview === null ? (
-                    "Use letters, digits and dashes in front of the domain."
-                  ) : (
-                    <>
-                      Appflare will be at <Strong>https://{preview}</Strong>
-                    </>
-                  )}
-                </p>
+                  </div>
+                )}
               </div>
-            )}
+            </div>
+            <Text variant="secondary" size="sm">
+              {preview === null ? (
+                "Use letters, digits and dashes in front of the domain."
+              ) : (
+                <>
+                  Appflare will be at <Strong>https://{preview}</Strong>
+                </>
+              )}
+            </Text>
           </div>
         )}
-        <div className="grid gap-1 rounded-lg border border-fd-border p-4 has-[:checked]:border-fd-primary">
-          <label className="flex items-start gap-3">
-            <input
-              type="radio"
-              name={`${id}-kind`}
-              checked={choice.kind === "workers-dev"}
-              disabled={devAddress === null}
-              onChange={() => actions.chooseAddress({ kind: "workers-dev" })}
-              className="mt-1 size-4 accent-[#fb6b00]"
-            />
-            <span className="grid gap-0.5">
-              <span className="font-medium">Cloudflare's free address</span>
-              <span className="text-fd-muted-foreground text-sm [overflow-wrap:anywhere]">
-                {devAddress === null
-                  ? "This account has no workers.dev address yet. Open Workers & Pages in the Cloudflare dashboard once to get one."
-                  : devAddress}
-              </span>
-            </span>
-          </label>
-        </div>
         {firstZone === undefined && (
-          <p className="text-fd-muted-foreground text-sm">
+          <Text variant="secondary" size="sm">
             {account.name} has no domain on Cloudflare. You can move Appflare to one later in its
             settings.
-          </p>
+          </Text>
         )}
-      </fieldset>
-      {view.error !== null && <ErrorText>{view.error}</ErrorText>}
-      <Actions>
-        <button type="submit" className={primary} disabled={view.checking}>
-          {view.checking ? "Checking the address…" : "Continue"}
-        </button>
-        {canGoBack && <BackButton actions={actions} />}
-      </Actions>
-    </form>
+        {view.error !== null && <ErrorBanner>{view.error}</ErrorBanner>}
+        <Actions>
+          <BusyButton
+            type="submit"
+            variant="primary"
+            className={`${WIDE} ${TOUCH} sm:w-auto`}
+            pending={view.checking}
+          >
+            {view.checking ? "Checking the address…" : "Continue"}
+          </BusyButton>
+          {canGoBack && <BackButton actions={actions} />}
+        </Actions>
+      </form>
+    </DeployCard>
   );
 }
 
@@ -713,108 +718,191 @@ function Review({
 }) {
   const { plan } = view;
   const rows: Array<[string, ReactNode]> = [
-    ["Cloudflare account", plan.account.name],
-    ["Name", plan.workerName],
+    ["Account", plan.account.name],
+    [
+      "Name",
+      <span key="name" translate="no">
+        {plan.workerName}
+      </span>,
+    ],
     ["Address", <Strong key="address">{plan.address}</Strong>],
     [
       "Release",
       view.release !== null ? (
-        `Appflare ${view.release}, the newest release, its signature checked`
+        <span key="release" className="inline-flex flex-wrap items-center gap-2">
+          Appflare {view.release}
+          <Badge variant="success" icon={<CheckCircleIcon weight="fill" />}>
+            Signature checked
+          </Badge>
+        </span>
       ) : view.releaseError === null ? (
-        <span key="release" className="text-fd-muted-foreground">
+        <span key="release" className="inline-flex items-center gap-2 text-kumo-subtle">
+          <AppflareLoader size={14} aria-hidden />
           Looking it up…
         </span>
       ) : (
-        <span key="release" className="text-red-600 dark:text-red-400">
+        <span key="release" className="text-kumo-danger">
           Not available
         </span>
       ),
     ],
   ];
   return (
-    <div className="grid gap-4">
-      <Title>Check before you deploy</Title>
-      <dl className="grid gap-x-6 gap-y-2 sm:grid-cols-[max-content_1fr]">
+    <DeployCard
+      meter={meterOf(view)}
+      title="Check and deploy"
+      description="Nothing is created in your account until you press Deploy."
+    >
+      <dl className="grid gap-x-6 gap-y-3 sm:grid-cols-[max-content_1fr]">
         {rows.map(([term, value]) => (
-          <div key={term} className="contents">
-            <dt className="text-fd-muted-foreground text-sm sm:pt-0.5">{term}</dt>
+          <div key={term} className="grid gap-0.5 sm:contents">
+            <dt className="text-kumo-subtle text-sm">{term}</dt>
             <dd className="[overflow-wrap:anywhere]">{value}</dd>
           </div>
         ))}
       </dl>
-      <div className="grid gap-2">
-        <h3 className="font-medium">Created in {plan.account.name}</h3>
-        <ul className="grid list-disc gap-1 pl-5 text-fd-muted-foreground text-sm">
+      <More summary={`What gets created in ${plan.account.name}`}>
+        <ul className="grid list-disc gap-1 pl-5">
           {createdItems(plan).map((item) => (
             <li key={item} className="[overflow-wrap:anywhere]">
               {item}
             </li>
           ))}
         </ul>
-        <p className="text-fd-muted-foreground text-sm">
-          Nothing that is already in the account is changed. If you stop before the end, you can
-          remove exactly these again.
-        </p>
-      </div>
+        <Text variant="secondary">
+          Nothing already in the account changes. If you stop before the end, you can remove exactly
+          these again.
+        </Text>
+      </More>
       {view.releaseError !== null && (
-        <Callout tone="error">
-          <p>{view.releaseError}</p>
-          <div>
-            <button type="button" className={secondary} onClick={() => actions.retryRelease()}>
-              Try again
-            </button>
-          </div>
-        </Callout>
+        <div className="grid gap-2">
+          <ErrorBanner>{view.releaseError}</ErrorBanner>
+          <Button
+            variant="secondary"
+            className={`${TOUCH} ${WIDE_ON_PHONE} sm:justify-self-start`}
+            onClick={() => actions.retryRelease()}
+          >
+            Try again
+          </Button>
+        </div>
       )}
-      {view.error !== null && <ErrorText>{view.error}</ErrorText>}
+      {view.error !== null && <ErrorBanner>{view.error}</ErrorBanner>}
       <Actions>
-        <button
-          type="button"
-          className={FLARE}
-          disabled={view.release === null || view.starting}
+        <BusyButton
+          variant="primary"
+          size="lg"
+          className={`${WIDE} ${TOUCH} sm:w-auto`}
+          disabled={view.release === null}
+          pending={view.starting}
           onClick={() => actions.deploy()}
         >
           {view.starting ? "Starting…" : "Deploy Appflare"}
-        </button>
+        </BusyButton>
         {!view.starting && <BackButton actions={actions} />}
       </Actions>
-    </div>
+    </DeployCard>
   );
 }
 
-function ProgressBar({ done, total, label }: { done: number; total: number; label: string }) {
-  const value = total === 0 ? 0 : Math.min(done, total);
+/** One short line for each warning a finished step can give; the installer's words on demand. */
+const NOTICE_LINES: Record<string, string> = {
+  schedules: "Appflare's regular checks, such as looking for updates, will not run on their own.",
+};
+
+/**
+ * Warnings from finished steps, kept on screen from the step that gave them
+ * to owner setup: one line each, the full explanation folded away.
+ */
+function Notices({ notices }: { notices: FinishedNote[] }) {
+  if (notices.length === 0) return null;
   return (
-    <div className="grid gap-1.5">
-      <div
-        role="progressbar"
-        aria-label={label}
-        aria-valuemin={0}
-        aria-valuemax={total}
-        aria-valuenow={value}
-        className="h-2 overflow-hidden rounded-full bg-fd-secondary"
-      >
-        <div
-          className="h-full rounded-full bg-[#fb6b00] transition-[width] duration-500 motion-reduce:transition-none"
-          style={{ width: `${total === 0 ? 4 : Math.max(4, (value / total) * 100)}%` }}
+    <div className="grid gap-2">
+      {notices.map((notice) => (
+        <Banner
+          key={notice.id}
+          variant="alert"
+          icon={<WarningIcon weight="fill" />}
+          description={
+            <div className="grid gap-1">
+              <span>{NOTICE_LINES[notice.id] ?? `${notice.label}: needs your attention.`}</span>
+              <More summary="Why">
+                <span>{notice.message}</span>
+              </More>
+            </div>
+          }
         />
-      </div>
+      ))}
     </div>
   );
 }
 
-/** Why the deploy is waiting, in plain words, for the steps that wait on DNS and certificates. */
-export function waitingExplanation(active: Active, stepId: string): string | null {
-  if (stepId === "proof" && active.hostname !== null) {
-    return `Cloudflare is setting up ${active.hostname}: a DNS record, so browsers can find it, and a security certificate, so it opens over https. A new address usually needs one to five minutes, sometimes longer. This page keeps checking.`;
-  }
-  if (stepId === "proof") {
-    return "Cloudflare is putting Appflare live at its workers.dev address. That usually takes under a minute. This page keeps checking.";
-  }
-  if (stepId === "domain") {
-    return `Cloudflare is connecting ${active.hostname ?? "your domain"} to Appflare.`;
-  }
-  return null;
+/** "Step 6 of 11": the step under way. */
+function stepPosition(progress: Pick<StepAnswer, "done" | "total">): string {
+  return `Step ${Math.min(progress.done + 1, progress.total)} of ${progress.total}`;
+}
+
+/** "5 of 11 done": what the bar shows. */
+function stepsDone(progress: Pick<StepAnswer, "done" | "total">): string {
+  return `${Math.min(progress.done, progress.total)} of ${progress.total} done`;
+}
+
+/**
+ * The installer's steps as a bar of the steps finished, with the step under
+ * way named beside it, so the number next to the bar is the bar's own.
+ */
+function StepMeter({ progress }: { progress: Pick<StepAnswer, "done" | "total"> }) {
+  return (
+    <Meter
+      label={stepPosition(progress)}
+      customValue={stepsDone(progress)}
+      value={Math.min(progress.done, progress.total)}
+      max={Math.max(progress.total, 1)}
+      getAriaValueText={() => stepsDone(progress)}
+    />
+  );
+}
+
+const timeFormat = new Intl.DateTimeFormat(undefined, { hour: "numeric", minute: "2-digit" });
+
+/** Check now, busy while it checks, and what the last check found. */
+function CheckNow({
+  view,
+  actions,
+}: {
+  view: Extract<DeployView, { step: "deploying" }>;
+  actions: DeployActions;
+}) {
+  return (
+    <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+      <BusyButton
+        variant="secondary"
+        size="sm"
+        className={TOUCH}
+        pending={view.checking}
+        onClick={() => actions.checkNow()}
+      >
+        {view.checking ? "Checking…" : "Check now"}
+      </BusyButton>
+      <span role="status" className="text-kumo-subtle text-sm">
+        {view.checking ? (
+          // The button already shows it; this says it to screen readers.
+          <span className="sr-only">Checking…</span>
+        ) : view.checkedAt !== null ? (
+          `Still waiting (checked at ${timeFormat.format(view.checkedAt)}).`
+        ) : (
+          ""
+        )}
+      </span>
+    </div>
+  );
+}
+
+/** Why the deploy waits on the address, in one line. */
+export function addressWaitLine(view: Extract<DeployView, { step: "deploying" }>): string {
+  const { hostname } = view.active;
+  return hostname !== null
+    ? `Cloudflare is setting up ${hostname} and its certificate. This usually takes 1 to 5 minutes.`
+    : "Cloudflare is putting Appflare live at its workers.dev address. This usually takes under a minute.";
 }
 
 function Deploying({
@@ -824,79 +912,129 @@ function Deploying({
   view: Extract<DeployView, { step: "deploying" }>;
   actions: DeployActions;
 }) {
-  const { active, progress } = view;
-  const waiting = progress?.status === "waiting";
-  const explanation =
-    waiting && progress !== null ? waitingExplanation(active, progress.step.id) : null;
+  const { active, progress, reconnecting, wait } = view;
+  const label = reconnecting ? "Reconnecting…" : (progress?.step.label ?? "Starting…");
+  const announcement = reconnecting
+    ? "Reconnecting to Appflare's installer."
+    : progress === null
+      ? "Starting."
+      : `${stepPosition(progress)}: ${progress.step.label}. ${stepsDone(progress)}.`;
+  // A message about the step itself while it runs ("Uploaded 120 of 180 files").
+  const running = progress?.status === "running" && !reconnecting ? progress.message : undefined;
+  const details = [
+    ...view.notes.map((note) => ({ key: note.id, label: note.label, text: note.message })),
+    // What the installer's last look at the address found, for the curious.
+    ...(wait === "address" && progress?.message !== undefined
+      ? [{ key: "now", label: "Last check", text: progress.message }]
+      : []),
+  ];
   return (
-    <div className="grid gap-4">
-      <Title>Deploying Appflare</Title>
-      <Text>
-        To <Strong>{active.address}</Strong>, in {active.accountName}
-        {active.release !== null && <>, Appflare {active.release}</>}.
-      </Text>
-      {progress === null ? (
-        <Spinner label="Starting…" />
-      ) : (
-        <div className="grid gap-2">
-          <ProgressBar done={progress.done} total={progress.total} label="Deploy progress" />
-          <p className="flex items-center gap-2 font-medium">
-            {waiting ? (
-              <ClockIcon aria-hidden="true" className="size-5 shrink-0 text-amber-600" />
-            ) : (
-              <CircleNotchIcon
-                aria-hidden="true"
-                className="size-5 shrink-0 animate-spin motion-reduce:animate-none"
-              />
+    // The deploy's own meter is the one that moves here; the journey's would be a second bar.
+    <DeployCard
+      meter={null}
+      title="Installing Appflare"
+      description={
+        <>
+          To <Strong>{hostOf(active.address)}</Strong>, in {active.accountName}
+        </>
+      }
+    >
+      <div className="grid gap-3">
+        {/* Busy, and silent: the status line after it announces the progress. */}
+        <div aria-busy="true" className="flex items-start gap-3">
+          <span className="flex h-lh items-center">
+            <AppflareLoader size={22} aria-hidden />
+          </span>
+          <div className="grid min-w-0 gap-0.5">
+            <Text bold>{label}</Text>
+            {running !== undefined && (
+              <Text variant="secondary" size="sm">
+                {running}
+              </Text>
             )}
-            <span>
-              Step {Math.min(progress.done + 1, progress.total)} of {progress.total}:{" "}
-              {progress.step.label}
-            </span>
-          </p>
-          {progress.message !== undefined && !waiting && (
-            <p className="text-fd-muted-foreground text-sm">{progress.message}</p>
-          )}
+          </div>
+        </div>
+        {progress !== null && <StepMeter progress={progress} />}
+        <p role="status" className="sr-only">
+          {announcement}
+        </p>
+      </div>
+      <Notices notices={active.notices} />
+      {!reconnecting && wait === "address" && (
+        <div className="grid gap-2">
+          <Text variant="secondary">{addressWaitLine(view)}</Text>
+          <CheckNow view={view} actions={actions} />
         </div>
       )}
-      {waiting && (
-        <Callout>
-          <p>{explanation ?? progress?.message ?? "Waiting a moment before the next step."}</p>
-          {explanation !== null && progress?.message !== undefined && (
-            <p className="text-xs opacity-80">{progress.message}</p>
-          )}
-          <div>
-            <button type="button" className={secondary} onClick={() => actions.checkNow()}>
-              Check now
-            </button>
-          </div>
-        </Callout>
+      {!reconnecting && wait === "long" && (
+        <div className="grid gap-2">
+          <Text variant="secondary">
+            {progress?.message ?? "Appflare's installer asked this page to wait."} This page keeps
+            trying.
+          </Text>
+          <CheckNow view={view} actions={actions} />
+        </div>
       )}
-      {view.offerWorkersDev && active.workersDevAddress !== null && (
-        <Callout tone="warning">
-          <p>
-            Rather not wait? Appflare also has a workers.dev address,{" "}
-            <Strong>{active.workersDevAddress}</Strong>, which needs no new certificate. You can
-            open it there instead. Your sign-in and passkeys then belong to that address, and moving
-            to {active.hostname} later means signing in again there.
-          </p>
-          <div>
-            <button type="button" className={secondary} onClick={() => actions.openAtWorkersDev()}>
-              Open at workers.dev instead
-            </button>
-          </div>
-        </Callout>
+      {view.offerWorkersDev && active.workersDevAddress !== null && active.hostname !== null && (
+        <RatherNotWait
+          hostname={active.hostname}
+          workersDevAddress={active.workersDevAddress}
+          onOpen={() => actions.openAtWorkersDev()}
+        />
       )}
-      {view.offline && (
-        <Callout tone="warning">
-          This page lost contact with Appflare's installer. It tries again by itself.
-        </Callout>
-      )}
-      <p className="text-fd-muted-foreground text-sm">
+      <Text variant="secondary" size="sm">
         {active.remembered
-          ? "You can close this tab. The installation keeps its progress, and this page continues it when you come back in this browser."
-          : "This browser does not let the page remember the installation, so keep this tab open until it finishes."}
-      </p>
+          ? "You can close this tab. Come back to this page in this browser to continue."
+          : "Keep this tab open until it finishes: this browser does not let the page remember it."}
+      </Text>
+      {details.length > 0 && (
+        <More summary="Details">
+          <ul className="grid gap-1.5">
+            {details.map((item) => (
+              <li key={item.key}>
+                <span className="text-kumo-default">{item.label}:</span> {item.text}
+              </li>
+            ))}
+          </ul>
+        </More>
+      )}
+    </DeployCard>
+  );
+}
+
+/**
+ * The way around a slow certificate, offered only after a long wait: one
+ * line, the button, and the consequence on demand.
+ */
+function RatherNotWait({
+  hostname,
+  workersDevAddress,
+  onOpen,
+}: {
+  hostname: string;
+  workersDevAddress: string;
+  onOpen: () => void;
+}) {
+  return (
+    <div className="grid gap-2 border-kumo-hairline border-t pt-4">
+      <Text>
+        Rather not wait? Set up your owner account at workers.dev now; Appflare moves to {hostname}{" "}
+        once it is ready.
+      </Text>
+      <Button
+        variant="secondary"
+        size="sm"
+        className={`${TOUCH} ${WIDE_ON_PHONE} sm:justify-self-start`}
+        onClick={onOpen}
+      >
+        Open at workers.dev
+      </Button>
+      <More summary="What changes">
+        <Text variant="secondary">
+          Appflare opens at <Strong>{workersDevAddress}</Strong>, which needs no new certificate.
+          The installation and your Cloudflare connection are the same either way.
+        </Text>
+      </More>
     </div>
   );
 }
@@ -909,28 +1047,29 @@ function DeployFailed({
   actions: DeployActions;
 }) {
   return (
-    <div className="grid gap-4">
-      <Title>The deployment stopped</Title>
-      {view.progress !== null && (
-        <p className="flex items-center gap-2 font-medium">
-          <WarningIcon aria-hidden="true" className="size-5 shrink-0 text-red-600" />
-          {view.progress.step.label}
-        </p>
-      )}
-      <Callout tone="error">{view.message}</Callout>
+    <DeployCard
+      meter={meterOf(view)}
+      title="The installation stopped"
+      {...(view.progress === null ? {} : { description: `At: ${view.progress.step.label}` })}
+    >
+      <ErrorBanner>{view.message}</ErrorBanner>
       <Actions>
-        <button type="button" className={primary} onClick={() => actions.retry()}>
+        <Button
+          variant="primary"
+          className={`${WIDE} ${TOUCH} sm:w-auto`}
+          onClick={() => actions.retry()}
+        >
           Try again
-        </button>
-        <button
-          type="button"
-          className={secondary}
+        </Button>
+        <Button
+          variant="secondary-destructive"
+          className={`${TOUCH} ${WIDE_ON_PHONE}`}
           onClick={() => actions.requestRemove(view.active.local.installationId)}
         >
           Remove this installation…
-        </button>
+        </Button>
       </Actions>
-    </div>
+    </DeployCard>
   );
 }
 
@@ -962,14 +1101,24 @@ const HANDOFF_PROBLEMS: Record<HandoffProblem, (address: string, minutes?: numbe
 
 function HandingOff({ view }: { view: Extract<DeployView, { step: "handing-off" }> }) {
   return (
-    <div className="grid gap-3">
-      <Title>Connecting your new Appflare</Title>
-      <Spinner label={`Checking that ${view.address} is your new Appflare…`} />
-      <Text>
-        Then this page gives it its Cloudflare connection, straight from your browser. The installer
-        never sees it.
-      </Text>
-    </div>
+    <DeployCard
+      meter={meterOf(view)}
+      title="Connecting your new Appflare"
+      description={
+        <>
+          At <Strong>{hostOf(view.address)}</Strong>
+        </>
+      }
+    >
+      <Working label="Checking that this is your new Appflare…" />
+      <Notices notices={view.active.notices} />
+      <More summary="What happens here">
+        <Text variant="secondary">
+          Once the address proves it is this installation, this page gives it its Cloudflare
+          connection, straight from your browser. The installer never sees it.
+        </Text>
+      </More>
+    </DeployCard>
   );
 }
 
@@ -981,67 +1130,103 @@ function HandoffFailed({
   actions: DeployActions;
 }) {
   return (
-    <div className="grid gap-4">
-      <Title>Appflare is deployed but not connected yet</Title>
-      <Callout tone="error">{HANDOFF_PROBLEMS[view.problem](view.address, view.minutes)}</Callout>
+    <DeployCard
+      meter={meterOf(view)}
+      title="Appflare is installed but not connected yet"
+      description={
+        <>
+          At <Strong>{hostOf(view.address)}</Strong>
+        </>
+      }
+    >
+      <ErrorBanner>{HANDOFF_PROBLEMS[view.problem](view.address, view.minutes)}</ErrorBanner>
+      <Notices notices={view.active.notices} />
       <Actions>
         {view.problem === "declined" ? (
           // The connection itself was refused: sending it again cannot help.
-          <button type="button" className={primary} onClick={() => actions.reconnect()}>
+          <Button
+            variant="primary"
+            className={`${WIDE} ${TOUCH} sm:w-auto`}
+            onClick={() => actions.reconnect()}
+          >
             Connect Cloudflare again
-          </button>
+          </Button>
         ) : (
-          <button type="button" className={primary} onClick={() => actions.retry()}>
+          <Button
+            variant="primary"
+            className={`${WIDE} ${TOUCH} sm:w-auto`}
+            onClick={() => actions.retry()}
+          >
             Try again
-          </button>
+          </Button>
         )}
-        <button
-          type="button"
-          className={secondary}
+        <Button
+          variant="secondary-destructive"
+          className={`${TOUCH} ${WIDE_ON_PHONE}`}
           onClick={() => actions.requestRemove(view.active.local.installationId)}
         >
           Remove this installation…
-        </button>
+        </Button>
       </Actions>
-    </div>
+    </DeployCard>
   );
 }
 
 function Opening({ view }: { view: Extract<DeployView, { step: "opening" }> }) {
   return (
-    <div className="grid gap-3">
-      <h2 className="flex items-center gap-2 font-semibold text-xl tracking-tight">
-        <CheckIcon aria-hidden="true" className="size-6 text-green-600" />
-        Appflare is ready
-      </h2>
-      <Text>
-        Opening <Strong>{view.address}</Strong>, where you create your owner account. The link works
-        for 30 minutes.
+    <DeployCard
+      meter={meterOf(view)}
+      title={
+        <span className="inline-flex items-center gap-2">
+          <CheckCircleIcon aria-hidden weight="fill" className="shrink-0 text-kumo-success" />
+          Appflare is ready
+        </span>
+      }
+      description={
+        <>
+          Opening <Strong>{hostOf(view.address)}</Strong> to create your owner account.
+        </>
+      }
+    >
+      <LinkButton
+        href={view.ownerSetupUrl}
+        variant="primary"
+        size="lg"
+        className={`${WIDE} ${TOUCH}`}
+        rel="noreferrer"
+        icon={ArrowSquareOutIcon}
+      >
+        Open Appflare
+      </LinkButton>
+      <Text variant="secondary" size="sm">
+        The link works for 30 minutes.
       </Text>
-      <Actions>
-        <a href={view.ownerSetupUrl} className={FLARE} rel="noreferrer">
-          Open Appflare
-          <ArrowSquareOutIcon aria-hidden="true" className="size-4" />
-        </a>
-      </Actions>
-    </div>
+      <Notices notices={view.notices} />
+    </DeployCard>
   );
 }
 
 function SetUp({ view }: { view: Extract<DeployView, { step: "set-up" }> }) {
   return (
-    <div className="grid gap-3">
-      <Title>This Appflare is set up</Title>
-      <Text>
-        It already has its owner, so there is nothing left to do here. Sign in at{" "}
-        <Strong>{view.address}</Strong>.
-      </Text>
-      <Actions>
-        <a href={view.address} className={primary} rel="noreferrer">
-          Open Appflare
-        </a>
-      </Actions>
-    </div>
+    <DeployCard
+      meter={meterOf(view)}
+      title="This Appflare is already set up"
+      description={
+        <>
+          It has its owner. Sign in at <Strong>{hostOf(view.address)}</Strong>.
+        </>
+      }
+    >
+      <LinkButton
+        href={view.address}
+        variant="primary"
+        className={`${WIDE} ${TOUCH}`}
+        rel="noreferrer"
+      >
+        Open Appflare
+      </LinkButton>
+      <Notices notices={view.notices} />
+    </DeployCard>
   );
 }
 
@@ -1062,30 +1247,39 @@ function ConfirmRemove({
 }) {
   const { target } = view;
   return (
-    <div className="grid gap-4">
-      <Title>Remove this installation?</Title>
-      <Text>
-        This deletes, from {target.account.name}, what the installation of{" "}
-        <Strong>{target.address}</Strong> created, as far as it got:
-      </Text>
-      <ul className="grid list-disc gap-1 pl-5 text-sm">
-        {removalItems(target).map((item) => (
-          <li key={item} className="[overflow-wrap:anywhere]">
-            {item}
-          </li>
-        ))}
-      </ul>
-      <Text>
-        Anything that was in the account before is left alone. Appflare's data goes with its
-        database, and this cannot be undone.
-      </Text>
+    <DeployCard
+      meter={null}
+      title="Remove this installation?"
+      description={
+        <>
+          Everything the installation of <Strong>{hostOf(target.address)}</Strong> created, as far
+          as it got. This cannot be undone.
+        </>
+      }
+    >
+      <More summary={`What goes from ${target.account.name}`}>
+        <ul className="grid list-disc gap-1 pl-5">
+          {removalItems(target).map((item) => (
+            <li key={item} className="[overflow-wrap:anywhere]">
+              {item}
+            </li>
+          ))}
+        </ul>
+        <Text variant="secondary">
+          Anything that was in the account before stays. Appflare's data goes with its database.
+        </Text>
+      </More>
       <Actions>
-        <button type="button" className={danger} onClick={() => actions.confirmRemove()}>
+        <Button
+          variant="destructive"
+          className={`${WIDE} ${TOUCH} sm:w-auto`}
+          onClick={() => actions.confirmRemove()}
+        >
           Remove
-        </button>
+        </Button>
         <BackButton actions={actions} label="Cancel" />
       </Actions>
-    </div>
+    </DeployCard>
   );
 }
 
@@ -1098,27 +1292,34 @@ function Removing({
 }) {
   const { progress } = view;
   return (
-    <div className="grid gap-4">
-      <Title>Removing the installation</Title>
-      {progress === null ? (
-        <Spinner label="Starting…" />
-      ) : (
-        <div className="grid gap-2">
-          <ProgressBar done={progress.done} total={progress.total} label="Removal progress" />
-          <p className="text-fd-muted-foreground text-sm">{progress.step.label}</p>
+    <DeployCard
+      meter={null}
+      title="Removing the installation"
+      description={
+        <>
+          Of <Strong>{hostOf(view.target.address)}</Strong>
+        </>
+      }
+    >
+      {view.error === null && (
+        <div className="grid gap-3">
+          <Working label={progress === null ? "Starting…" : progress.step.label} />
+          {progress !== null && <StepMeter progress={progress} />}
         </div>
       )}
       {view.error !== null && (
-        <Callout tone="error">
-          <p>{view.error}</p>
-          <div>
-            <button type="button" className={secondary} onClick={() => actions.retry()}>
-              Try again
-            </button>
-          </div>
-        </Callout>
+        <div className="grid gap-2">
+          <ErrorBanner>{view.error}</ErrorBanner>
+          <Button
+            variant="primary"
+            className={`${WIDE} ${TOUCH} sm:w-auto sm:justify-self-start`}
+            onClick={() => actions.retry()}
+          >
+            Try again
+          </Button>
+        </div>
       )}
-    </div>
+    </DeployCard>
   );
 }
 
@@ -1130,18 +1331,24 @@ function Removed({
   actions: DeployActions;
 }) {
   return (
-    <div className="grid gap-3">
-      <Title>Removed</Title>
-      <Text>
-        The installation of <Strong>{view.target.address}</Strong> and everything it created are
-        gone, and the installer no longer keeps a record of it.
-      </Text>
-      <Actions>
-        <button type="button" className={primary} onClick={() => actions.afterRemoval()}>
-          Start a new installation
-        </button>
-      </Actions>
-    </div>
+    <DeployCard
+      meter={null}
+      title="Removed"
+      description={
+        <>
+          The installation of <Strong>{hostOf(view.target.address)}</Strong> and everything it
+          created are gone. The installer keeps no record of it.
+        </>
+      }
+    >
+      <Button
+        variant="primary"
+        className={`${WIDE} ${TOUCH}`}
+        onClick={() => actions.afterRemoval()}
+      >
+        Start a new installation
+      </Button>
+    </DeployCard>
   );
 }
 
@@ -1153,20 +1360,42 @@ function ErrorStep({
   actions: DeployActions;
 }) {
   return (
-    <div className="grid gap-3">
-      <Title>That did not work</Title>
-      <Callout tone="error">{view.message}</Callout>
+    <DeployCard meter={meterOf(view)} title="That did not work">
+      <ErrorBanner>{view.message}</ErrorBanner>
       <Actions>
         {view.retry !== null && (
-          <button type="button" className={primary} onClick={() => actions.retry()}>
+          <Button
+            variant="primary"
+            className={`${WIDE} ${TOUCH} sm:w-auto`}
+            onClick={() => actions.retry()}
+          >
             Try again
-          </button>
+          </Button>
         )}
-        <button type="button" className={secondary} onClick={() => actions.reconnect()}>
+        <Button
+          variant="secondary"
+          className={`${TOUCH} ${WIDE_ON_PHONE}`}
+          onClick={() => actions.reconnect()}
+        >
           Connect Cloudflare again
-        </button>
+        </Button>
       </Actions>
-    </div>
+    </DeployCard>
+  );
+}
+
+function Loading({ view }: { view: Extract<DeployView, { step: "loading" }> }) {
+  return (
+    <DeployCard
+      meter={meterOf(view)}
+      title="Install Appflare"
+      description="Into your own Cloudflare account, in a few minutes, from this page."
+    >
+      <Working label="Getting ready…" />
+      <noscript>
+        <Text variant="secondary">This page needs JavaScript to install Appflare.</Text>
+      </noscript>
+    </DeployCard>
   );
 }
 
@@ -1176,30 +1405,30 @@ export interface DeployPanelProps {
   canGoBack: boolean;
 }
 
-/** The current step. */
+/** The current step, in its card. */
 export function DeployPanel({ view, actions, canGoBack }: DeployPanelProps) {
+  useFocusOnStepChange(view.step);
+  return <Step view={view} actions={actions} canGoBack={canGoBack} />;
+}
+
+function Step({ view, actions, canGoBack }: DeployPanelProps) {
   switch (view.step) {
     case "loading":
-      return (
-        <div className="grid gap-3">
-          <Spinner label="Getting ready…" />
-          <noscript>
-            <p className="text-fd-muted-foreground">
-              This page needs JavaScript to install Appflare.
-            </p>
-          </noscript>
-        </div>
-      );
+      return <Loading view={view} />;
     case "unavailable":
       return <Unavailable view={view} />;
     case "welcome":
       return <Welcome view={view} actions={actions} />;
     case "working":
-      return <Spinner label={view.label} />;
+      return (
+        <DeployCard meter={meterOf(view)} title="Connected to Cloudflare">
+          <Working label={view.label} />
+        </DeployCard>
+      );
     case "account":
       return <AccountPicker view={view} actions={actions} />;
     case "unfinished":
-      return <UnfinishedList view={view} actions={actions} />;
+      return <UnfinishedList view={view} actions={actions} canGoBack={canGoBack} />;
     case "name":
       return <NameStep view={view} actions={actions} canGoBack={canGoBack} />;
     case "address":

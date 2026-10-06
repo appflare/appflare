@@ -1,7 +1,8 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 import { CallbackPanel } from "../../components/deploy/callback-panel.tsx";
-import { DeployShell } from "../../components/deploy/deploy-shell.tsx";
+import { useFocusOnStepChange } from "../../components/deploy/deploy-panel.tsx";
+import { DeployLayout } from "../../components/deploy/deploy-shell.tsx";
 import { arrivedCallbackParams, forgetCallbackParams } from "../../deploy/arrival.ts";
 import { type CallbackView, runCallback, submitReturn } from "../../deploy/callback.ts";
 import { CALLBACK_PATH } from "../../deploy/config.ts";
@@ -10,6 +11,7 @@ import { browserDeployStorage } from "../../deploy/storage.ts";
 import { TokenKeeper } from "../../deploy/tokens.ts";
 import { noindexPageHead } from "../../lib/meta.ts";
 import { ogImagePath, SITE_URL, siteName } from "../../lib/shared.ts";
+import deployCss from "../../styles/deploy.css?url";
 
 /**
  * `/deploy/callback`: where Cloudflare sends the browser back after
@@ -21,13 +23,15 @@ import { ogImagePath, SITE_URL, siteName } from "../../lib/shared.ts";
  */
 export const Route = createFileRoute("/deploy/callback")({
   beforeLoad: () => requireDeployDocument("/deploy/callback/"),
-  head: () =>
-    noindexPageHead({
+  head: () => {
+    const head = noindexPageHead({
       title: `Connecting Cloudflare | ${siteName}`,
       description: "Finishing the Cloudflare sign-in for Appflare.",
       url: `${SITE_URL}${CALLBACK_PATH}`,
       image: `${SITE_URL}${ogImagePath([])}`,
-    }),
+    });
+    return { ...head, links: [...head.links, { rel: "stylesheet", href: deployCss }] };
+  },
   component: CallbackPage,
 });
 
@@ -74,9 +78,10 @@ function CallbackPage() {
   };
   // Forgets the code: nothing is sent without the visitor's confirmation.
   const cancel = () => setView({ step: "cancelled" });
+  useFocusOnStepChange(view.step);
   return (
-    <DeployShell aside={false}>
+    <DeployLayout aside={false}>
       <CallbackPanel view={view} onConfirm={confirm} onCancel={cancel} />
-    </DeployShell>
+    </DeployLayout>
   );
 }

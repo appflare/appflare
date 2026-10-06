@@ -101,6 +101,7 @@ export interface StepAnswer {
   total: number;
   retryAfterMs?: number;
   message?: string;
+  completed?: { step: { id: string; label: string }; message: string };
 }
 
 /** Calls `/step` until `until` holds for the answer (or `max` calls), checking every call's budget. */

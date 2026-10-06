@@ -18,7 +18,13 @@ export interface StepResponse {
   done: number;
   total: number;
   retryAfterMs?: number;
+  /** About `step`: why it waits or failed, or how far it got. Never about another step. */
   message?: string;
+  /**
+   * The step this request finished, when it said something about it (a
+   * warning, or what it created). Only on the answer that moves on from it.
+   */
+  completed?: { step: { id: StepId; label: string }; message: string };
 }
 
 export const REMOVING = new InstallerError(409, "removing", "This installation is being removed.");
@@ -106,11 +112,19 @@ export async function runStep(record: InstallationRow, deps: RunDeps): Promise<S
   const next = steps[steps.indexOf(stepId) + 1];
   const message = result.message ?? null;
   if (next === undefined) {
+    // The last step stays the record's step, so its message still pairs with it.
     await save({ status: "deployed", message });
-  } else {
-    await save({ status: "running", step: next, message });
+    return stepResponse(current);
   }
-  return stepResponse(current);
+  // The finished step's message goes back once, as `completed`; the record
+  // keeps none, so nothing reads it later as news about the next step.
+  await save({ status: "running", step: next, message: null });
+  return stepResponse(
+    current,
+    message === null
+      ? {}
+      : { completed: { step: { id: stepId, label: STEP_LABELS[stepId] }, message } },
+  );
 }
 
 async function failed(

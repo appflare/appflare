@@ -96,6 +96,8 @@ export class FakeWorld {
   installerDown: { status: number; code: string } | null = null;
   /** An installer that answers a new installation with this address instead of its own. */
   addressOverride: string | null = null;
+  /** How many of the next `/step` requests get no answer at all (the connection drops). */
+  stepsUnanswered = 0;
   private counter = 0;
 
   fetch = async (input: string, init: RequestInit = {}): Promise<Response> => {
@@ -109,6 +111,10 @@ export class FakeWorld {
     const url = new URL(input, ORIGIN);
     if (url.href === "https://dash.cloudflare.com/oauth2/token") return this.token(body);
     if (url.origin === ORIGIN && url.pathname.startsWith("/api/install/")) {
+      if (url.pathname.endsWith("/step") && this.stepsUnanswered > 0) {
+        this.stepsUnanswered--;
+        throw new TypeError("fetch failed");
+      }
       return this.installer(url.pathname.slice("/api/install/".length), headers, body);
     }
     const manager = this.managers.get(url.origin);

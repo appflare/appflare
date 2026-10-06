@@ -38,8 +38,21 @@ export const WORKER_NAME = /^[a-z0-9](?:[a-z0-9-]{0,56}[a-z0-9])?$/;
 const SUBDOMAIN =
   /^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)*$/;
 
-/** How long the domain may keep Appflare waiting before the workers.dev address is offered. */
-export const OFFER_WORKERS_DEV_AFTER_MS = 30_000;
+/**
+ * How long the domain may keep Appflare waiting before the workers.dev
+ * address is offered. A new address usually takes one to five minutes, so
+ * offering a way around it sooner only distracts.
+ */
+export const OFFER_WORKERS_DEV_AFTER_MS = 70_000;
+/**
+ * How long any other wait stays quiet (a loader on the step) before the page
+ * says why in one line. The installer lets one request at a time work on an
+ * installation and holds it for at most a minute (an earlier tab of the same
+ * installation can hold it), so this is well past that.
+ */
+export const EXPLAIN_WAIT_AFTER_MS = 90_000;
+/** The least time a Check now shows that it is checking, so a quick answer is still seen. */
+export const MIN_CHECK_MS = 700;
 /** How long the page shows where it is going before it opens owner setup. */
 export const OPEN_DELAY_MS = 1_500;
 /** The wait between two progress requests when the installer names none. */
@@ -74,6 +87,23 @@ export interface Active {
   release: string | null;
   /** False when this browser could not keep it for a later visit. */
   remembered: boolean;
+  /**
+   * What finished steps said that still matters once Appflare is up (a
+   * warning), shown until the page hands over: see {@link isNotice}.
+   */
+  notices: FinishedNote[];
+}
+
+/**
+ * The steps whose message is a warning rather than a record of what was
+ * made. The schedules step says something only when the account has no
+ * scheduled trigger left, so Appflare's regular checks cannot run.
+ */
+const NOTICE_STEPS: ReadonlySet<string> = new Set(["schedules"]);
+
+/** Whether a finished step's message is a warning to keep showing. */
+export function isNotice(note: Pick<FinishedNote, "id">): boolean {
+  return NOTICE_STEPS.has(note.id);
 }
 
 /** An unfinished installation about to be removed. */
@@ -102,6 +132,22 @@ export type HandoffProblem =
   | "unverified"
   /** After the connection was sent: how Appflare answered (see `HandoffFailure`). */
   | Exclude<HandoffFailure, "done">;
+
+/** A step the deploy finished during this visit, and what the installer said about it. */
+export interface FinishedNote {
+  id: string;
+  label: string;
+  message: string;
+}
+
+/**
+ * How a deploy waits. `address`: for the chosen address to answer (its DNS
+ * record and certificate); always explained, with Check now. `quiet`: any
+ * other wait (another tab is working on the installation, Cloudflare is
+ * busy), shown as the step still working. `long`: a quiet wait that went on
+ * past {@link EXPLAIN_WAIT_AFTER_MS}, explained in one line with Check now.
+ */
+export type DeployWait = "address" | "quiet" | "long";
 
 export type DeployView =
   | { step: "loading" }
@@ -153,9 +199,17 @@ export type DeployView =
       active: Active;
       progress: StepAnswer | null;
       /** The installer did not answer the last request; the page keeps trying. */
-      offline: boolean;
+      reconnecting: boolean;
+      /** How the installation is waiting; null while its steps run. */
+      wait: DeployWait | null;
       /** The domain has kept Appflare waiting long enough to offer workers.dev. */
       offerWorkersDev: boolean;
+      /** A Check now is under way. */
+      checking: boolean;
+      /** When the last Check now found the installation still waiting (epoch ms). */
+      checkedAt: number | null;
+      /** What the steps finished during this visit said, in order. */
+      notes: FinishedNote[];
     }
   | { step: "deploy-failed"; active: Active; progress: StepAnswer | null; message: string }
   | { step: "handing-off"; active: Active; address: string }
@@ -167,9 +221,9 @@ export type DeployView =
       /** For `elsewhere`: minutes until trying again can work. */
       minutes?: number;
     }
-  | { step: "opening"; address: string; ownerSetupUrl: string }
+  | { step: "opening"; address: string; ownerSetupUrl: string; notices: FinishedNote[] }
   /** Appflare already has its owner: nothing more to do here. */
-  | { step: "set-up"; address: string }
+  | { step: "set-up"; address: string; notices: FinishedNote[] }
   | { step: "confirm-remove"; target: RemovalTarget; back: DeployView }
   | {
       step: "removing";
@@ -261,6 +315,8 @@ export class DeployFlow {
   /** The account's domains, read once per account. */
   private zones: { accountId: string; list: Promise<Zone[]> } | null = null;
   private wake: (() => void) | null = null;
+  /** When Check now was pressed, until the answer it asked for is shown. */
+  private checkAskedAt: number | null = null;
 
   constructor(private readonly deps: FlowDeps) {}
 
@@ -694,6 +750,7 @@ export class DeployFlow {
       workersDevAddress: plan.hostname === null ? null : addressFor(plan.workerName, null, sub),
       release: created.release.version,
       remembered,
+      notices: [],
     };
     if (created.address !== plan.address) {
       this.set({
@@ -732,15 +789,43 @@ export class DeployFlow {
       workersDevAddress: mine.hostname === null ? null : addressFor(mine.workerName, null, sub),
       release: mine.release.version,
       remembered: true,
+      notices: [],
     });
   }
 
   /** Repeats the installer's `/step` until Appflare is deployed, then hands off. */
-  private async runDeploy(active: Active): Promise<void> {
+  private async runDeploy(start: Active): Promise<void> {
     const generation = this.move();
+    // Gains the warnings finished steps give, which the later steps keep showing.
+    let active = start;
+    this.checkAskedAt = null;
     let progress: StepAnswer | null = null;
-    let waitingSince: number | null = null;
-    this.set({ step: "deploying", active, progress, offline: false, offerWorkersDev: false });
+    /** Since when the chosen address has kept Appflare waiting. */
+    let addressSince: number | null = null;
+    /** Since when any other wait (or a busy installer) has gone on. */
+    let quietSince: number | null = null;
+    const notes: FinishedNote[] = [];
+    const shown = {
+      reconnecting: false,
+      wait: null as DeployWait | null,
+      offerWorkersDev: false,
+      checkedAt: null as number | null,
+    };
+    const draw = () =>
+      this.set({
+        step: "deploying",
+        active,
+        progress,
+        ...shown,
+        checking: this.checkAskedAt !== null,
+        notes: [...notes],
+      });
+    const quietWait = (): DeployWait => {
+      const now = this.deps.now();
+      quietSince ??= now;
+      return now - quietSince >= EXPLAIN_WAIT_AFTER_MS ? "long" : "quiet";
+    };
+    draw();
     while (this.current(generation)) {
       let answer: StepAnswer;
       try {
@@ -759,13 +844,14 @@ export class DeployFlow {
           return;
         }
         if (error instanceof InstallerApiError && error.retryable) {
-          this.set({
-            step: "deploying",
-            active,
-            progress,
-            offline: error.status === null,
-            offerWorkersDev: false,
-          });
+          await this.settleCheck(generation);
+          if (!this.current(generation)) return;
+          // A busy installer is another request working on the installation:
+          // a wait like any other. Anything else is the connection: reconnecting.
+          shown.reconnecting = error.code !== "busy";
+          if (!shown.reconnecting) shown.wait = quietWait();
+          shown.offerWorkersDev = false;
+          draw();
           await this.pause(error.retryAfterMs ?? OFFLINE_WAIT_MS);
           continue;
         }
@@ -773,22 +859,40 @@ export class DeployFlow {
         return;
       }
       if (!this.current(generation)) return;
+      const checked = await this.settleCheck(generation);
+      if (!this.current(generation)) return;
       progress = answer;
-      const domainWait =
-        answer.status === "waiting" &&
-        answer.step.id === "proof" &&
+      const { completed } = answer;
+      if (completed !== undefined && !notes.some((n) => n.id === completed.step.id)) {
+        const note = {
+          id: completed.step.id,
+          label: completed.step.label,
+          message: completed.message,
+        };
+        notes.push(note);
+        if (isNotice(note)) active = { ...active, notices: [...active.notices, note] };
+      }
+      const now = this.deps.now();
+      const waiting = answer.status === "waiting";
+      const addressWait = waiting && answer.step.id === "proof";
+      addressSince = addressWait ? (addressSince ?? now) : null;
+      if (!waiting || addressWait) quietSince = null;
+      shown.reconnecting = false;
+      shown.wait = addressWait ? "address" : waiting ? quietWait() : null;
+      shown.offerWorkersDev =
+        addressSince !== null &&
         active.hostname !== null &&
-        active.workersDevAddress !== null;
-      if (domainWait) waitingSince ??= this.deps.now();
-      else waitingSince = null;
-      const offerWorkersDev =
-        waitingSince !== null && this.deps.now() - waitingSince >= OFFER_WORKERS_DEV_AFTER_MS;
+        active.workersDevAddress !== null &&
+        now - addressSince >= OFFER_WORKERS_DEV_AFTER_MS;
+      // A check that found it still waiting says so until something changes.
+      if (!waiting) shown.checkedAt = null;
+      else if (checked) shown.checkedAt = now;
       switch (answer.status) {
         case "running":
-          this.set({ step: "deploying", active, progress, offline: false, offerWorkersDev });
+          draw();
           continue;
         case "waiting":
-          this.set({ step: "deploying", active, progress, offline: false, offerWorkersDev });
+          draw();
           await this.pause(answer.retryAfterMs ?? DEFAULT_WAIT_MS);
           continue;
         case "deployed":
@@ -806,9 +910,34 @@ export class DeployFlow {
     }
   }
 
-  /** While waiting: ask again now rather than after the pause. */
+  /**
+   * While waiting: ask again now rather than after the pause. The deploy
+   * shows that it is checking until the next answer arrives (at least
+   * {@link MIN_CHECK_MS}), then what it found.
+   */
   checkNow(): void {
-    if (this.view.step === "deploying" || this.view.step === "removing") this.wake?.();
+    const view = this.view;
+    if (view.step === "deploying") {
+      if (view.checking) return;
+      this.checkAskedAt = this.deps.now();
+      this.set({ ...view, checking: true });
+      this.wake?.();
+    } else if (view.step === "removing") {
+      this.wake?.();
+    }
+  }
+
+  /**
+   * Ends a Check now, once an answer is in: keeps it visible for at least
+   * {@link MIN_CHECK_MS} from the press first. True when one was under way.
+   */
+  private async settleCheck(generation: number): Promise<boolean> {
+    const asked = this.checkAskedAt;
+    if (asked === null) return false;
+    const left = asked + MIN_CHECK_MS - this.deps.now();
+    if (left > 0) await this.deps.sleep(left);
+    if (this.current(generation)) this.checkAskedAt = null;
+    return true;
   }
 
   /** After a failed step or handoff: try it again. */
@@ -853,7 +982,7 @@ export class DeployFlow {
     }
     if (probe.state === "done") {
       this.deps.storage.installation.clear();
-      this.set({ step: "set-up", address });
+      this.set({ step: "set-up", address, notices: active.notices });
       return;
     }
     let ownerSetupUrl: string;
@@ -881,7 +1010,7 @@ export class DeployFlow {
       if (error instanceof AuthorizationNeeded) return this.toReconnect();
       if (error instanceof HandoffError && error.kind === "done") {
         this.deps.storage.installation.clear();
-        this.set({ step: "set-up", address });
+        this.set({ step: "set-up", address, notices: active.notices });
         return;
       }
       const problem: HandoffProblem =
@@ -899,7 +1028,7 @@ export class DeployFlow {
     // Appflare refreshes the grant at once, so this tab's copy is spent.
     this.deps.tokens.forget();
     if (!this.current(generation)) return;
-    this.set({ step: "opening", address, ownerSetupUrl });
+    this.set({ step: "opening", address, ownerSetupUrl, notices: active.notices });
     await this.deps.sleep(OPEN_DELAY_MS);
     if (this.current(generation)) this.deps.navigate(ownerSetupUrl);
   }
@@ -969,7 +1098,7 @@ export class DeployFlow {
         if (error instanceof InstallerApiError && error.code === "already_set_up") {
           const local = this.deps.storage.installation.read();
           if (local?.installationId === target.id) this.deps.storage.installation.clear();
-          this.set({ step: "set-up", address: target.address });
+          this.set({ step: "set-up", address: target.address, notices: [] });
           return;
         }
         if (error instanceof InstallerApiError && error.retryable) {

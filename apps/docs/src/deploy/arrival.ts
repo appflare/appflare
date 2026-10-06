@@ -1,3 +1,5 @@
+// First: on the deploy pages, before any schema of the site is built (see the module).
+import "./zod-config.ts";
 import { isCallbackPath } from "./paths.ts";
 
 /**

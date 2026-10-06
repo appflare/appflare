@@ -1,0 +1,31 @@
+/*
+ * The deploy page and its callback look like Appflare itself: Kumo, on top of
+ * the site's own stylesheet (which still loads, with Tailwind's base styles).
+ * Only those two pages link this file, so no other page gets Kumo's tokens.
+ *
+ * Kumo's tokens come before Tailwind's theme (Kumo's installation guide for
+ * Tailwind v4). Utilities are generated only for Kumo's components and the
+ * deploy pages' own files, not for the rest of the site, which app.css covers.
+ * Kumo's colours are `light-dark()` pairs, which follow the element's colour
+ * scheme. The build rewrites them for older browsers into variables that only
+ * a `color-scheme` declaration in a stylesheet switches (the inline style the
+ * site's theme script sets does not), so the scheme is declared here from the
+ * class that script puts on <html>: light, dark and system all work without
+ * Kumo's `data-mode` attribute, and before the page's code runs.
+ */
+@import "@cloudflare/kumo/styles/tailwind";
+@import "tailwindcss/theme.css" layer(theme);
+@import "tailwindcss/utilities.css" layer(utilities) source(none);
+@import "@appflare/brand/loader.css";
+
+@source "../../node_modules/@cloudflare/kumo/dist/**/*.js";
+@source "../components/deploy";
+@source "../routes/deploy";
+
+html.dark {
+  color-scheme: dark;
+}
+
+html.light {
+  color-scheme: light;
+}

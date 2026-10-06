@@ -50,6 +50,10 @@ const progressFields = {
 const stepSchema = z.object({
   status: z.enum(["running", "waiting", "deployed", "failed"]),
   ...progressFields,
+  /** The step this answer finished, with what it said about it; `message` is about `step`. */
+  completed: z
+    .object({ step: z.object({ id: z.string(), label: z.string() }), message: z.string() })
+    .optional(),
 });
 export type StepAnswer = z.infer<typeof stepSchema>;
 

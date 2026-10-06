@@ -2,11 +2,24 @@ import { MANAGER_OAUTH_SCOPES } from "@appflare/cf-api/oauth";
 import { describe, expect, it, vi } from "vitest";
 import { fakeStore } from "../install/test-store.ts";
 import type { OAuthSetup } from "./config.ts";
-import { DeployFlow, type DeployView, OFFER_WORKERS_DEV_AFTER_MS } from "./flow.ts";
+import {
+  DeployFlow,
+  type DeployView,
+  EXPLAIN_WAIT_AFTER_MS,
+  MIN_CHECK_MS,
+  OFFER_WORKERS_DEV_AFTER_MS,
+} from "./flow.ts";
 import { installerApi, type StepAnswer } from "./installer-api.ts";
 import { managerApi } from "./manager-api.ts";
 import { AUTHORIZATION_KEY, deployStorage, GRANT_KEY, INSTALLATION_KEY } from "./storage.ts";
-import { ACCOUNT_ID, CLIENT_ID, FakeWorld, ORIGIN, OTHER_ACCOUNT_ID } from "./test-fakes.ts";
+import {
+  ACCOUNT_ID,
+  CLIENT_ID,
+  DEFAULT_STEPS,
+  FakeWorld,
+  ORIGIN,
+  OTHER_ACCOUNT_ID,
+} from "./test-fakes.ts";
 import { TokenKeeper } from "./tokens.ts";
 
 const START = 1_800_000_000_000;
@@ -406,8 +419,15 @@ describe("a domain that keeps Appflare waiting", () => {
         message: "The address does not answer yet.",
       },
     ];
-    // Waits of the deploy end after four; the short one before opening owner setup does not.
-    const h = harness(world, { block: (ms, count) => ms >= 10_000 && count > 4 });
+    // Waits of the deploy end after eight; the short one before opening owner setup does not.
+    const h = harness(world, { block: (ms, count) => ms >= 10_000 && count > 8 });
+    const seen: Array<{ at: number; offer: boolean; wait: string | null }> = [];
+    h.flow.subscribe(() => {
+      const current = h.flow.state();
+      if (current.step === "deploying" && current.progress !== null) {
+        seen.push({ at: h.now(), offer: current.offerWorkersDev, wait: current.wait });
+      }
+    });
     await toReview(h);
     void h.flow.deploy();
     await vi.waitFor(() => {
@@ -417,7 +437,13 @@ describe("a domain that keeps Appflare waiting", () => {
     const deploying = view(h.flow, "deploying");
     expect(deploying.active.workersDevAddress).toBe("https://appflare.main-sub.workers.dev");
     expect(deploying.progress?.status).toBe("waiting");
+    expect(deploying.wait).toBe("address");
     expect(h.now() - START).toBeGreaterThanOrEqual(OFFER_WORKERS_DEV_AFTER_MS);
+    // Explained from the first answer, but no way around it before 70 seconds.
+    expect(seen.every((s) => s.wait === "address")).toBe(true);
+    const firstWait = seen[0]?.at ?? START;
+    for (const s of seen) expect(s.offer).toBe(s.at - firstWait >= OFFER_WORKERS_DEV_AFTER_MS);
+    expect(seen.some((s) => !s.offer && s.at - firstWait >= 60_000)).toBe(true);
     // Nothing went to either address yet but the installer's own checks.
     expect(world.requests.some((r) => r.url.includes("workers.dev"))).toBe(false);
 
@@ -426,6 +452,188 @@ describe("a domain that keeps Appflare waiting", () => {
       "https://appflare.main-sub.workers.dev/setup#claim=claim0123456789abcdef",
     ]);
     expect(world.managers.get("https://appflare.example.com")?.received).toBeNull();
+  });
+});
+
+const proofWait: StepAnswer = {
+  status: "waiting",
+  step: { id: "proof", label: "Wait for Appflare to answer" },
+  done: 3,
+  total: 4,
+  retryAfterMs: 10_000,
+  message: "The address does not answer yet.",
+};
+
+/** The answer while another request (an earlier tab) holds the installation. */
+function held(retryAfterMs: number): StepAnswer {
+  return {
+    status: "waiting",
+    step: { id: "worker", label: "Upload Appflare" },
+    done: 2,
+    total: 4,
+    retryAfterMs,
+    message: "Another window is working on this installation.",
+  };
+}
+
+/** Every deploying view the flow shows, in order. */
+function deployingViews(h: ReturnType<typeof harness>) {
+  const views: Array<Extract<DeployView, { step: "deploying" }>> = [];
+  h.flow.subscribe(() => {
+    const current = h.flow.state();
+    if (current.step === "deploying") views.push(current);
+  });
+  return views;
+}
+
+describe("feedback while deploying", () => {
+  it("turns the progress into reconnecting while the installer does not answer, then carries on", async () => {
+    const world = new FakeWorld();
+    const h = harness(world);
+    const views = deployingViews(h);
+    await toReview(h);
+    world.stepsUnanswered = 2;
+    await h.flow.deploy();
+    const reconnecting = views.filter((v) => v.reconnecting);
+    expect(reconnecting).toHaveLength(2);
+    expect(reconnecting.every((v) => v.wait === null)).toBe(true);
+    // It never stopped: the deploy finished and owner setup opened.
+    expect(h.navigations).toHaveLength(1);
+    expect(views.at(-1)?.reconnecting).toBe(false);
+  });
+
+  it("waits quietly while another tab holds the installation, then runs on", async () => {
+    const world = new FakeWorld();
+    world.steps = [held(2_000), held(2_000), held(2_000), ...DEFAULT_STEPS];
+    const h = harness(world);
+    const views = deployingViews(h);
+    await toReview(h);
+    await h.flow.deploy();
+    const waits = views.filter((v) => v.progress?.status === "waiting");
+    expect(waits).toHaveLength(3);
+    expect(waits.every((v) => v.wait === "quiet" && !v.reconnecting)).toBe(true);
+    expect(h.navigations).toHaveLength(1);
+  });
+
+  it("explains a hold in one line only once it lasts well past the installer's lease", async () => {
+    const world = new FakeWorld();
+    world.steps = [held(30_000)];
+    const h = harness(world, { block: (ms, count) => ms >= 30_000 && count > 4 });
+    const seen: Array<{ at: number; wait: string | null }> = [];
+    h.flow.subscribe(() => {
+      const current = h.flow.state();
+      if (current.step === "deploying" && current.progress !== null) {
+        seen.push({ at: h.now(), wait: current.wait });
+      }
+    });
+    await toReview(h);
+    void h.flow.deploy();
+    await vi.waitFor(() => expect(view(h.flow, "deploying").wait).toBe("long"));
+    const firstHold = seen[0]?.at ?? START;
+    for (const s of seen) {
+      expect(s.wait).toBe(s.at - firstHold >= EXPLAIN_WAIT_AFTER_MS ? "long" : "quiet");
+    }
+    expect(seen.filter((s) => s.wait === "quiet").length).toBeGreaterThan(2);
+  });
+
+  it("shows Check now as checking at once, asks right away, and says what it found", async () => {
+    const world = new FakeWorld();
+    world.steps = [proofWait];
+    let blocked = 0;
+    const h = harness(world, {
+      block: (ms) => {
+        if (ms < 10_000) return false;
+        blocked++;
+        return true;
+      },
+    });
+    const views = deployingViews(h);
+    await toReview(h);
+    void h.flow.deploy();
+    await vi.waitFor(() => expect(blocked).toBe(1));
+    const [installation] = world.installations.values();
+    const before = installation?.stepCalls ?? 0;
+    const pressedAt = h.now();
+    h.flow.checkNow();
+    expect(view(h.flow, "deploying").checking).toBe(true);
+    // A second press while it checks does nothing more.
+    h.flow.checkNow();
+    await vi.waitFor(() => expect(blocked).toBe(2));
+    const after = view(h.flow, "deploying");
+    expect(installation?.stepCalls).toBe(before + 1);
+    expect(after.checking).toBe(false);
+    expect(after.checkedAt).toBeGreaterThanOrEqual(pressedAt + MIN_CHECK_MS);
+    // Checking stayed visible until the answer was in.
+    const checkingViews = views.filter((v) => v.checking);
+    expect(checkingViews.length).toBeGreaterThan(0);
+  });
+
+  it("keeps what each finished step said, and shows only the current step's own message", async () => {
+    const world = new FakeWorld();
+    world.steps = [
+      {
+        status: "running",
+        step: { id: "worker", label: "Upload Appflare" },
+        done: 2,
+        total: 4,
+        completed: {
+          step: { id: "database", label: "Create the database" },
+          message: 'Created the D1 database "appflare".',
+        },
+      },
+      ...DEFAULT_STEPS.slice(1),
+    ];
+    const h = harness(world);
+    const views = deployingViews(h);
+    await toReview(h);
+    await h.flow.deploy();
+    const last = views.at(-1);
+    expect(last?.notes).toEqual([
+      {
+        id: "database",
+        label: "Create the database",
+        message: 'Created the D1 database "appflare".',
+      },
+    ]);
+  });
+});
+
+describe("warnings from finished steps", () => {
+  it("keeps the schedules warning through the handoff to owner setup, and nothing routine", async () => {
+    const world = new FakeWorld();
+    const cron =
+      "This account already uses every scheduled trigger its Workers plan allows, so Appflare's regular checks do not run on their own.";
+    world.steps = [
+      {
+        status: "running",
+        step: { id: "worker", label: "Upload Appflare" },
+        done: 2,
+        total: 4,
+        completed: {
+          step: { id: "database", label: "Create the database" },
+          message: 'Created the D1 database "appflare".',
+        },
+      },
+      {
+        status: "running",
+        step: { id: "secret", label: "Store the setup key" },
+        done: 3,
+        total: 4,
+        completed: { step: { id: "schedules", label: "Schedule regular checks" }, message: cron },
+      },
+      ...DEFAULT_STEPS.slice(2),
+    ];
+    const h = harness(world);
+    const handingOff: Array<Extract<DeployView, { step: "handing-off" }>> = [];
+    h.flow.subscribe(() => {
+      const current = h.flow.state();
+      if (current.step === "handing-off") handingOff.push(current);
+    });
+    await toReview(h);
+    await h.flow.deploy();
+    const notice = { id: "schedules", label: "Schedule regular checks", message: cron };
+    expect(handingOff[0]?.active.notices).toEqual([notice]);
+    expect(view(h.flow, "opening").notices).toEqual([notice]);
   });
 });
 
