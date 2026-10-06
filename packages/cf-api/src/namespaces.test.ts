@@ -45,6 +45,36 @@ describe("accounts", () => {
     expect(fake.last().method).toBe("GET");
     expect(fake.last().url).toBe(A);
   });
+
+  it("list -> GET /accounts, every page, whatever account the client is bound to", async () => {
+    const fake = makeFakeFetch((req) => {
+      const page = Number(req.query.get("page"));
+      return {
+        result: [{ id: `a${page}`, name: `Account ${page}` }],
+        result_info: { page, per_page: 50, total_pages: 2 },
+      };
+    });
+    const client = createClient({ accountId: "", token: TOKEN, fetch: fake.fetch });
+    expect(await client.accounts.list()).toEqual([
+      { id: "a1", name: "Account 1" },
+      { id: "a2", name: "Account 2" },
+    ]);
+    expect(fake.calls.map((c) => `${c.path}?${c.query.toString()}`)).toEqual([
+      "/client/v4/accounts?page=1&per_page=50",
+      "/client/v4/accounts?page=2&per_page=50",
+    ]);
+    expect(fake.last().authorization).toBe(`Bearer ${TOKEN}`);
+  });
+
+  it("list stops after maxPages", async () => {
+    const fake = makeFakeFetch((req) => ({
+      result: [{ id: `a${req.query.get("page")}`, name: "x" }],
+      result_info: { total_pages: 9 },
+    }));
+    const client = createClient({ accountId: "", token: TOKEN, fetch: fake.fetch });
+    expect(await client.accounts.list({ maxPages: 2 })).toHaveLength(2);
+    expect(fake.calls).toHaveLength(2);
+  });
 });
 
 describe("workers", () => {

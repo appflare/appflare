@@ -130,6 +130,34 @@ importers:
         specifier: 4.6.5
         version: 4.6.5
 
+  apps/installer:
+    dependencies:
+      '@appflare/cf-api':
+        specifier: workspace:*
+        version: link:../../packages/cf-api
+      '@appflare/schema':
+        specifier: workspace:*
+        version: link:../../packages/schema
+      drizzle-orm:
+        specifier: 0.45.3
+        version: 0.45.3(@cloudflare/workers-types@5.20260922.1)(kysely@0.29.6)
+      zod:
+        specifier: 4.6.5
+        version: 4.6.5
+    devDependencies:
+      '@cloudflare/vitest-pool-workers':
+        specifier: 0.22.0
+        version: 0.22.0(@cloudflare/workers-types@5.20260922.1)(@vitest/runner@4.1.11)(@vitest/snapshot@4.1.11)(vitest@4.1.11(@types/node@22.20.4)(happy-dom@20.14.5)(vite@8.3.0(@types/node@22.20.4)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.15)(yaml@2.9.1)))
+      drizzle-kit:
+        specifier: 0.31.11
+        version: 0.31.11
+      vitest:
+        specifier: 4.1.11
+        version: 4.1.11(@types/node@22.20.4)(happy-dom@20.14.5)(vite@8.3.0(@types/node@22.20.4)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.15)(yaml@2.9.1))
+      wrangler:
+        specifier: 4.136.2
+        version: 4.136.2(@cloudflare/workers-types@5.20260922.1)(@types/node@22.20.4)
+
   apps/manager:
     dependencies:
       '@appflare/cf-api':
@@ -9307,7 +9335,7 @@ snapshots:
 
   tsx@4.23.15:
     dependencies:
-      esbuild: 0.28.1
+      esbuild: 0.28.2
     optionalDependencies:
       fsevents: 2.3.3
 

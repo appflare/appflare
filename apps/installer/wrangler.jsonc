@@ -1,0 +1,76 @@
+{
+  // The hosted installer: the JSON API behind appflare.dev/api/install/*. It
+  // deploys a signed Appflare release into the visitor's own Cloudflare account
+  // with the short-lived access token the deploy page sends with each request.
+  // It has no public address of its own: the docs Worker forwards
+  // /api/install/* to it through a service binding, so the deploy page and this
+  // API share one origin.
+  //
+  // Deploy the preview to the dev account from the repository root:
+  //   pnpm wrangler -c apps/installer/wrangler.jsonc deploy --env=""
+  // The `production` environment is deployed only by CI to the account that
+  // owns appflare.dev (README.md, "Deploying").
+  "$schema": "../../node_modules/wrangler/config-schema.json",
+  "name": "appflare-installer",
+  // Pinned to the Appflare Dev account so local wrangler commands cannot target
+  // another account. A production deploy drops this line from a copy of the
+  // file and names its account in CLOUDFLARE_ACCOUNT_ID, because wrangler
+  // prefers this value over the environment variable.
+  "account_id": "e56348678f83352622c33faa66f43c13",
+  "main": "src/index.ts",
+  // The workspace packages are bundled from their TypeScript source, as the
+  // other apps resolve them through the `@appflare/source` condition, so a
+  // deploy needs no build of them first. Paths are relative to this file.
+  "alias": {
+    "@appflare/cf-api": "../../packages/cf-api/src/index.ts",
+    "@appflare/schema": "../../packages/schema/src/index.ts"
+  },
+  "compatibility_date": "2026-09-21",
+  // global_fetch_strictly_public: the installer asks the new manager's
+  // workers.dev address whether it answers. Without the flag a fetch to a
+  // workers.dev host of the account the installer itself runs in is refused
+  // at the edge (`error code: 1042`).
+  "compatibility_flags": ["nodejs_compat", "global_fetch_strictly_public"],
+  "workers_dev": false,
+  "preview_urls": false,
+  "observability": {
+    "enabled": true,
+    // Automatic invocation logs record request details this Worker must never
+    // keep (the Authorization header carries the visitor's access token). The
+    // Worker's own log lines carry method, a redacted path and status only.
+    "logs": { "invocation_logs": false }
+  },
+  // Installation records. The schema is applied by the Worker itself on its
+  // first request (src/db/migrate.ts). No database_id: wrangler creates the
+  // database on the first deploy and finds it by name afterwards.
+  "d1_databases": [{ "binding": "DB", "database_name": "appflare-installer" }],
+  "vars": {
+    // `development` here, `production` below. The release overrides that only
+    // make sense while developing (DEV_RELEASE_URL, DEV_RELEASE_KEYS) are
+    // refused when this says `production`.
+    "INSTALLER_ENV": "development",
+    // The origin the deploy page and this API are served from. The new manager
+    // gets it as APPFLARE_INSTALLER_ORIGIN, answers its handoff only to it, and
+    // tells this API there when its owner is set up.
+    "INSTALLER_ORIGIN": "https://appflare-docs.appflare-dev.workers.dev",
+    // The oldest Appflare release the installer deploys: the first one that
+    // can receive its Cloudflare connection from the browser.
+    "MIN_MANAGER_VERSION": "0.4.0"
+  },
+  "env": {
+    // appflare.dev, in the account that owns the zone. `vars` and
+    // `d1_databases` are not inherited by environments, so both are repeated;
+    // nothing development-only is.
+    "production": {
+      "name": "appflare-installer",
+      "workers_dev": false,
+      "preview_urls": false,
+      "d1_databases": [{ "binding": "DB", "database_name": "appflare-installer" }],
+      "vars": {
+        "INSTALLER_ENV": "production",
+        "INSTALLER_ORIGIN": "https://appflare.dev",
+        "MIN_MANAGER_VERSION": "0.4.0"
+      }
+    }
+  }
+}
