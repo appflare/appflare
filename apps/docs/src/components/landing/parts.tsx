@@ -27,12 +27,18 @@ export function Wordmark({ className = "h-6" }: { className?: string }) {
 }
 
 /** The Deploy to Cloudflare link, as a solid button in the brand's orange. */
-export function DeployButton({ size = "md" }: { size?: "md" | "lg" }) {
+export function DeployButton({
+  size = "md",
+  className = "",
+}: {
+  size?: "md" | "lg";
+  className?: string;
+}) {
   const sizing = size === "lg" ? "h-12 px-6 text-base" : "h-10 px-4 text-sm";
   return (
     <a
       href={DEPLOY_URL}
-      className={`inline-flex shrink-0 items-center justify-center gap-2 rounded-lg font-semibold shadow-sm transition-colors ${FLARE_BUTTON} ${FOCUS_RING} ${sizing}`}
+      className={`inline-flex shrink-0 items-center justify-center gap-2 rounded-lg font-semibold shadow-sm transition-colors ${FLARE_BUTTON} ${FOCUS_RING} ${sizing} ${className}`}
     >
       Deploy to Cloudflare
     </a>

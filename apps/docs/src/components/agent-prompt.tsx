@@ -7,9 +7,19 @@ const COPIED_MS = 2000;
 
 type CopyState = "idle" | "copied" | "failed";
 
+/** In a docs page, a small bordered button beside the lead-in. */
+const BUTTON =
+  "rounded-md border border-fd-border bg-fd-background px-2 py-0.5 transition-colors hover:bg-fd-accent";
+
+/**
+ * Centred under the hero's buttons, an underlined link like the "Read the docs"
+ * below it, so the line reads as one sentence rather than text and a button.
+ */
+const INLINE_LINK = "cursor-pointer rounded-sm underline underline-offset-4";
+
 /**
  * One quiet line: a lead-in and a button that copies a short prompt for a
- * coding agent. The prompt points the agent at the full instructions on this
+ * coding agent. Centred, the button looks like a link. The prompt points the agent at the full instructions on this
  * site, so nothing long is pasted. Where the clipboard is refused, the prompt
  * is shown to be selected by hand.
  */
@@ -54,7 +64,7 @@ export function AgentPrompt({
           type="button"
           onClick={() => void copy()}
           title={prompt}
-          className="inline-flex items-center gap-1.5 rounded-md border border-fd-border bg-fd-background px-2 py-0.5 font-medium text-fd-foreground transition-colors hover:bg-fd-accent focus-visible:outline-2 focus-visible:outline-fd-ring focus-visible:outline-offset-2"
+          className={`inline-flex items-center gap-1.5 font-medium text-fd-foreground focus-visible:outline-2 focus-visible:outline-fd-ring focus-visible:outline-offset-2 ${align === "center" ? INLINE_LINK : BUTTON}`}
         >
           {state === "copied" ? <CheckIcon /> : <CopyIcon />}
           {state === "copied" ? "Copied" : "Copy prompt"}
