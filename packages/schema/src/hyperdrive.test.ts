@@ -69,6 +69,25 @@ describe("resources.hyperdrive", () => {
     expect(hyperdriveDeclarations(undefined)).toEqual([]);
   });
 
+  it("takes query caching on or off, with hyperdrive-caching in requires", () => {
+    const off = catalogManifestSchema.safeParse({
+      ...validManifest,
+      requires: ["hyperdrive-caching"],
+      resources: { hyperdrive: { DB: { protocol: "postgres", caching: false } } },
+    });
+    expect(off.success).toBe(true);
+    expect(hyperdriveDeclarations(off.data?.resources?.hyperdrive)).toEqual([
+      { binding: "DB", protocol: "postgres", caching: false },
+    ]);
+    const missing = withHyperdrive({ DB: { protocol: "postgres", caching: true } });
+    expect(missing.error?.issues.map((i) => i.message)).toEqual([
+      'resources.hyperdrive.DB sets caching, so requires must list "hyperdrive-caching": a manager that does not know it would create the configuration with query caching on',
+    ]);
+    expect(withHyperdrive({ DB: { protocol: "postgres", caching: "off" } }).success).toBe(false);
+    // Omitted keeps Cloudflare's default, and asks nothing of the manager.
+    expect(withHyperdrive({ DB: { protocol: "postgres" } }).success).toBe(true);
+  });
+
   it("refuses unknown protocols, an empty record, too many bindings, and a list", () => {
     expect(withHyperdrive({ DB: { protocol: "sqlserver" } }).success).toBe(false);
     expect(withHyperdrive({}).success).toBe(false);

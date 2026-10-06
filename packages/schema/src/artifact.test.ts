@@ -513,6 +513,86 @@ describe("Worker Loader bindings", () => {
   });
 });
 
+describe('an email placeholder in a wrangler config var needs requires "email-placeholders"', () => {
+  const withVar = (requires: string[], binding: Record<string, unknown>) => ({
+    ...validArtifact,
+    worker: { ...validArtifact.worker, bindings: [...validArtifact.worker.bindings, binding] },
+    catalog: {
+      ...validArtifact.catalog,
+      install: { ...validArtifact.catalog.install, emailRouting: { catchAll: true } },
+      requires,
+    },
+  });
+  const text = { type: "plain_text", name: "AUTH_FROM", text: "accounts@{{emailDomain}}" };
+  // Keys are filled in too, so a JSON var keyed by the zone counts.
+  const json = { type: "json", name: "EMAIL_DOMAINS", json: { "{{emailDomain}}": "x" } };
+
+  it("is refused without it, and read with it", () => {
+    for (const binding of [text, json]) {
+      const refused = artifactManifestSchema.safeParse(withVar([], binding));
+      expect(refused.error?.issues.map((i) => i.message)).toEqual([
+        `the wrangler config's var ${binding.name} uses {{emailDomain}} or {{emailZoneId}}, so the catalog manifest's requires must list "email-placeholders"`,
+        ...(binding === json
+          ? [
+              `the wrangler config's var ${binding.name} has a placeholder in an object key, so the catalog manifest's requires must list "email-placeholders": a manager that fills placeholders in values only would leave the key as written`,
+            ]
+          : []),
+      ]);
+      expect(
+        artifactManifestSchema.safeParse(withVar(["email-placeholders"], binding)).success,
+      ).toBe(true);
+    }
+  });
+});
+
+describe('any placeholder in a JSON object key needs requires "email-placeholders"', () => {
+  // Managers fill keys in only since the email placeholders: an older one
+  // would leave `{{appUrl}}` below as written.
+  const keyed = (
+    requires: string[],
+    binding: Record<string, unknown>,
+    vars: unknown[] = validArtifact.catalog.vars ?? [],
+  ) => ({
+    ...validArtifact,
+    worker: { ...validArtifact.worker, bindings: [...validArtifact.worker.bindings, binding] },
+    catalog: { ...validArtifact.catalog, vars, requires },
+  });
+  const messages = (value: unknown) =>
+    artifactManifestSchema.safeParse(value).error?.issues.map((i) => i.message) ?? [];
+  const missing = (where: string) =>
+    `${where} has a placeholder in an object key, so the catalog manifest's requires must list "email-placeholders": a manager that fills placeholders in values only would leave the key as written`;
+
+  it("is refused in a wrangler config JSON var or service props without it, and read with it", () => {
+    const json = { type: "json", name: "ORIGINS", json: { list: [{ "{{appUrl}}": true }] } };
+    expect(messages(keyed([], json))).toEqual([missing("the wrangler config's var ORIGINS")]);
+    expect(messages(keyed(["email-placeholders"], json))).toEqual([]);
+    const service = {
+      type: "service",
+      name: "CTX",
+      service: "context",
+      props: { "{{workerName}}": "x" },
+    };
+    expect(messages(keyed(["service-props"], service))).toEqual([
+      missing("the wrangler config's service binding CTX"),
+    ]);
+    expect(messages(keyed(["service-props", "email-placeholders"], service))).toEqual([]);
+  });
+
+  it("is refused in the default of a catalog var the wrangler config makes JSON", () => {
+    const json = { type: "json", name: "ORIGINS", json: {} };
+    const vars = [{ name: "ORIGINS", label: "Origins", default: '{"{{appUrl}}":true}' }];
+    expect(messages(keyed([], json, vars))).toEqual([
+      missing("the default of the JSON var ORIGINS"),
+    ]);
+    expect(messages(keyed(["email-placeholders"], json, vars))).toEqual([]);
+  });
+
+  it("leaves placeholders in values, and keys without one, alone", () => {
+    const json = { type: "json", name: "ORIGINS", json: { origin: "{{appUrl}}", "{{x}}": 1 } };
+    expect(messages(keyed([], json))).toEqual([]);
+  });
+});
+
 describe('an Access placeholder in a wrangler config var needs requires "access"', () => {
   const withVar = (requires: string[]) => ({
     ...validArtifact,

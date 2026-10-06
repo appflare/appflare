@@ -140,6 +140,14 @@ describe("placeholder chips", () => {
       "{{appUrl:api}}",
       "{{workerName:api}}",
     ]);
+    // An app that receives email gets the domain it receives for.
+    expect(placeholderOptions({ email: true }).map((o) => o.label)).toEqual([
+      "App address",
+      "App hostname",
+      "Worker name",
+      "Account ID",
+      "Email domain",
+    ]);
   });
 
   it("show every placeholder the schema fills in as a chip", () => {

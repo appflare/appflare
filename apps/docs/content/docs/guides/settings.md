@@ -86,7 +86,9 @@ The job sets up the routing rules on the new zone first, then removes those on t
 old zone the way an [uninstall](/guides/email-apps/#uninstalling) does, including
 turning Email Routing off there if this install turned it on and nothing else uses
 it. Routing rules name the Worker, not a version, so moving email alone deploys
-nothing.
+nothing, unless the app's settings use the domain (an address such as
+`accounts@example.com`): then they are deployed again with the new domain, checked on
+a preview first like any settings change.
 
 If removing the old zone's rules stops part way, the tab shows **Moving email did
 not finish** with the zones that still have rules. Select **Finish moving email**: it

@@ -70,6 +70,23 @@ export const PLACEHOLDERS = [
       "Cloudflare API about their own account.",
   },
   {
+    name: "emailDomain",
+    perWorker: false,
+    meaning:
+      "For an app with `install.emailRouting`, the name of the zone whose mail it receives, " +
+      "the one the admin chose (`example.com`, no scheme), for an address such as " +
+      "`accounts@{{emailDomain}}`. Empty while Appflare has no zone on record for the app. When " +
+      "the admin moves the app's email to another zone, the manager fills the app's settings in " +
+      "again.",
+  },
+  {
+    name: "emailZoneId",
+    perWorker: false,
+    meaning:
+      "For an app with `install.emailRouting`, the id of that zone, for apps that call the " +
+      "Cloudflare API about it. Empty while Appflare has no zone on record for the app.",
+  },
+  {
     name: "wildcardHostname",
     perWorker: false,
     meaning:
@@ -149,6 +166,16 @@ export const ACCESS_PLACEHOLDERS = [
 ] as const satisfies readonly PlaceholderName[];
 export type AccessPlaceholder = (typeof ACCESS_PLACEHOLDERS)[number];
 
+/**
+ * The placeholders of an app that receives email (`install.emailRouting`):
+ * the zone whose mail it receives. Refused in an entry without it.
+ */
+export const EMAIL_PLACEHOLDERS = [
+  "emailDomain",
+  "emailZoneId",
+] as const satisfies readonly PlaceholderName[];
+export type EmailPlaceholder = (typeof EMAIL_PLACEHOLDERS)[number];
+
 /** The placeholders a post-install note takes: the install's addresses and names. */
 export const POST_INSTALL_PLACEHOLDERS = [
   "appUrl",
@@ -157,6 +184,7 @@ export const POST_INSTALL_PLACEHOLDERS = [
   "workerHostname",
   "workerName",
   "accountId",
+  ...EMAIL_PLACEHOLDERS,
   "wildcardHostname",
 ] as const satisfies readonly PlaceholderName[];
 
@@ -226,6 +254,14 @@ export function hasPlaceholder(text: string): boolean {
   return new RegExp(INSTALL_PLACEHOLDER_SOURCE).test(text);
 }
 
+/** The regular expression source of an {@link EMAIL_PLACEHOLDERS} entry as written in a value. */
+export const EMAIL_PLACEHOLDER_SOURCE = `\\{\\{\\s*(?:${EMAIL_PLACEHOLDERS.join("|")})\\s*\\}\\}`;
+
+/** Whether `text` holds `{{emailDomain}}` or `{{emailZoneId}}`. */
+export function usesEmailPlaceholders(text: string): boolean {
+  return new RegExp(EMAIL_PLACEHOLDER_SOURCE).test(text);
+}
+
 /** Whether `text` holds a per-Worker placeholder (`{{appUrl:api}}`). */
 export function hasEntryWorkerPlaceholder(text: string): boolean {
   return new RegExp(ENTRY_WORKER_PLACEHOLDER_SOURCE).test(text);
@@ -264,6 +300,13 @@ export interface PlaceholderValues {
    */
   wildcardHostname?: string | null;
   /**
+   * What `{{emailDomain}}` and `{{emailZoneId}}` become: the zone whose mail
+   * the app receives. Null when Appflare has no zone on record for it, which
+   * fills both in empty. Absent where it is not known (a form showing a
+   * default); they are then kept as written.
+   */
+  email?: EmailPlaceholderValues | null;
+  /**
    * What `{{accessTeamDomain}}`, `{{accessTeamName}}`, `{{accessAud}}` and
    * `{{accessCertsUrl}}` become: the install's Cloudflare Access protection.
    * Null when the app is not protected, which fills all four in empty.
@@ -271,6 +314,14 @@ export interface PlaceholderValues {
    * kept as written.
    */
   access?: AccessPlaceholderValues | null;
+}
+
+/** The values of the email placeholders: the zone whose mail an install receives. */
+export interface EmailPlaceholderValues {
+  /** The zone's name, `example.com`. */
+  zoneName: string;
+  /** The zone's id. */
+  zoneId: string;
 }
 
 /** The values of the Access placeholders for a protected install. */
@@ -320,6 +371,10 @@ export function renderPlaceholders(text: string, values: PlaceholderValues): str
         return values.accountId ?? match;
       case "wildcardHostname":
         return values.wildcardHostname === undefined ? match : (values.wildcardHostname ?? "");
+      case "emailDomain":
+        return values.email === undefined ? match : (values.email?.zoneName ?? "");
+      case "emailZoneId":
+        return values.email === undefined ? match : (values.email?.zoneId ?? "");
       case "accessTeamDomain":
         return values.access === undefined ? match : (values.access?.teamDomain ?? "");
       case "accessTeamName":
@@ -381,19 +436,21 @@ export type JsonValue =
   | { [key: string]: JsonValue };
 
 /**
- * `value` with placeholders filled in inside every string it holds (keys
- * excepted). Every key is copied as an own property, `__proto__` included,
- * so the value round-trips through `JSON.stringify` unchanged.
+ * `value` with `render` applied to every string it holds, object keys
+ * included (a JSON var keyed by `{{emailDomain}}`). Every key is copied as an
+ * own property, `__proto__` included, so the value round-trips through
+ * `JSON.stringify` unchanged; when two keys render alike, the later one wins,
+ * as `JSON.parse` keeps the later of two equal keys.
  */
-export function renderJsonPlaceholders(value: JsonValue, values: PlaceholderValues): JsonValue {
-  if (typeof value === "string") return renderPlaceholders(value, values);
-  if (Array.isArray(value)) return value.map((item) => renderJsonPlaceholders(item, values));
+export function mapJsonText(value: JsonValue, render: (text: string) => string): JsonValue {
+  if (typeof value === "string") return render(value);
+  if (Array.isArray(value)) return value.map((item) => mapJsonText(item, render));
   if (value !== null && typeof value === "object") {
     const out: { [key: string]: JsonValue } = {};
     for (const [key, item] of Object.entries(value)) {
       // Plain assignment of `__proto__` would set the prototype instead.
-      Object.defineProperty(out, key, {
-        value: renderJsonPlaceholders(item, values),
+      Object.defineProperty(out, render(key), {
+        value: mapJsonText(item, render),
         enumerable: true,
         writable: true,
         configurable: true,
@@ -404,10 +461,49 @@ export function renderJsonPlaceholders(value: JsonValue, values: PlaceholderValu
   return value;
 }
 
-/** The Workers of an entry as the placeholder checks read them. */
+/** `value` with placeholders filled in inside every string it holds, object keys included. */
+export function renderJsonPlaceholders(value: JsonValue, values: PlaceholderValues): JsonValue {
+  return mapJsonText(value, (text) => renderPlaceholders(text, values));
+}
+
+/** Every string inside a JSON value, object keys included: where placeholders are filled in. */
+export function jsonTexts(value: unknown): string[] {
+  if (typeof value === "string") return [value];
+  if (Array.isArray(value)) return value.flatMap(jsonTexts);
+  if (value !== null && typeof value === "object") {
+    return Object.entries(value).flatMap(([key, item]) => [key, ...jsonTexts(item)]);
+  }
+  return [];
+}
+
+/** Every object key inside a JSON value, at any depth. */
+export function jsonKeys(value: unknown): string[] {
+  if (Array.isArray(value)) return value.flatMap(jsonKeys);
+  if (value !== null && typeof value === "object") {
+    return Object.entries(value).flatMap(([key, item]) => [key, ...jsonKeys(item)]);
+  }
+  return [];
+}
+
+/**
+ * Whether an object key inside a JSON value holds a placeholder, plain
+ * (`{{appUrl}}`) or per-Worker (`{{appUrl:api}}`). Managers fill keys in
+ * only since `"email-placeholders"`; an older one leaves such a key as
+ * written.
+ */
+export function placeholderInJsonKey(value: unknown): boolean {
+  return jsonKeys(value).some((key) => hasPlaceholder(key) || hasEntryWorkerPlaceholder(key));
+}
+
+/** What the placeholder checks read of an entry: its Workers, and whether it receives email. */
 export interface PlaceholderWorkers {
   /** `install.workers`, or undefined for an entry of one Worker. */
   workers?: ReadonlyArray<{ name: string; workersDev: boolean }> | undefined;
+  /**
+   * Whether the entry sets `install.emailRouting`; without it,
+   * `{{emailDomain}}` and `{{emailZoneId}}` are refused.
+   */
+  emailRouting?: boolean | undefined;
 }
 
 const ADDRESS_KINDS: ReadonlySet<string> = new Set([
@@ -421,9 +517,10 @@ const ADDRESS_KINDS: ReadonlySet<string> = new Set([
  * What is wrong with the placeholders in `text` for `field`, one sentence
  * each; empty when nothing is. Refused: a placeholder the field does not
  * take (`{{stage}}` in a var's default), a known name in the wrong case
- * (`{{appURL}}`, which would be left as written), a per-Worker form on an
- * entry of one Worker, one naming a Worker the entry does not declare or
- * that has no address (`workersDev: false`). Anything else in double braces
+ * (`{{appURL}}`, which would be left as written), an email placeholder in
+ * an entry that receives no email (`install.emailRouting`), a per-Worker
+ * form on an entry of one Worker, one naming a Worker the entry does not
+ * declare or that has no address (`workersDev: false`). Anything else in double braces
  * is not a placeholder and is left alone: an app may use that syntax itself.
  */
 export function placeholderProblems(
@@ -452,6 +549,15 @@ export function placeholderProblems(
     if (!allowed.includes(info.name)) {
       problems.push(
         `${written} is not filled in here; this field takes ${allowed.map((n) => `{{${n}}}`).join(", ")}`,
+      );
+      continue;
+    }
+    if (
+      entry.emailRouting !== true &&
+      (EMAIL_PLACEHOLDERS as readonly string[]).includes(info.name)
+    ) {
+      problems.push(
+        `${written} is filled in only for an app that receives email; this entry has no install.emailRouting`,
       );
       continue;
     }

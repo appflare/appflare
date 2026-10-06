@@ -338,6 +338,7 @@ describe("staleAddressValues", () => {
       subdomain: "appflare-dev",
       accountId: "acc",
       access: null,
+      email: null,
       address: { appUrl: `https://${DOMAIN}`, wildcardHostname: "apps.example.com" },
     };
     const deployed = (url: string, wild: string) => [
@@ -359,5 +360,31 @@ describe("staleAddressValues", () => {
     expect(
       staleAddressValues({ ...base, deployed: deployed(`https://${DOMAIN}/x`, "*.") }),
     ).toEqual(["wildcardHostname"]);
+  });
+
+  it("names the email domain when a deployed version was filled in with another zone", async () => {
+    const fixture = await buildArtifactFixture({
+      catalog: { vars: [{ name: "AUTH_FROM", label: "From", default: "", optional: true }] },
+    });
+    const base = {
+      manifest: fixture.manifest,
+      worker: { manifest: fixture.manifest },
+      userVars: { AUTH_FROM: "accounts@{{emailDomain}}" },
+      workerName: "cut",
+      subdomain: "appflare-dev",
+      accountId: "acc",
+      access: null,
+      email: { zoneName: "b.com", zoneId: "zone-b" },
+      address: { appUrl: `https://${DOMAIN}`, wildcardHostname: null },
+    };
+    const deployed = (from: string) => [{ type: "plain_text", name: "AUTH_FROM", text: from }];
+    expect(staleAddressValues({ ...base, deployed: deployed("accounts@b.com") })).toEqual([]);
+    expect(staleAddressValues({ ...base, deployed: deployed("accounts@a.com") })).toEqual([
+      "emailZone",
+    ]);
+    // Settings that do not use it never count.
+    expect(
+      staleAddressValues({ ...base, userVars: {}, deployed: deployed("accounts@a.com") }),
+    ).toEqual([]);
   });
 });

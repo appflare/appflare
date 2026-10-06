@@ -5,7 +5,9 @@ import {
   type ArtifactManifest,
   accessBypassPaths,
   connectionStringProblems,
+  emailScriptName,
   hyperdriveDeclarations,
+  installedScriptNames,
   secretKey,
   workerUploadProblem,
 } from "@appflare/schema";
@@ -106,13 +108,15 @@ import {
 } from "./install/workflows";
 import {
   type ConnectionReplacement,
+  cachingTargets,
   createReplacementPhase,
   deleteConfigPhase,
   deleteSupersededPhase,
+  reconcileCachingPhase,
   supersededConfigs,
   switchConnectionRecords,
 } from "./reconfigure/hyperdrive";
-import { secretSlots, storedVarsJson } from "./reconfigure/plan";
+import { type EmailZone, secretSlots, storedVarsJson } from "./reconfigure/plan";
 import { undoSecretChangesPhase } from "./reconfigure/secrets";
 import type { JobContext } from "./run-job";
 import {
@@ -132,7 +136,11 @@ import {
   readAppAddress,
   settingsRefreshPhase,
 } from "./update/address-settings";
-import { changeEmailRoutingPhase } from "./update/email-routing";
+import {
+  changeEmailRoutingPhase,
+  emailZoneOnRecord,
+  readEmailRouteRows,
+} from "./update/email-routing";
 import {
   accessUpdateRefusal,
   appliedDurableObjectTag,
@@ -499,6 +507,12 @@ export async function runUpdate(ctx: JobContext): Promise<void> {
         // Routes on record, which a version without email removes even when
         // the installed one's manifest does not say it receives any.
         hasEmailRoutes: rows.some((r) => r.kind === EMAIL_ROUTE_KIND) as boolean | undefined,
+        // The zone the app receives email for, for `{{emailDomain}}` and
+        // `{{emailZoneId}}` (absent in a step output recorded before it was read).
+        emailZone: emailZoneOnRecord(await readEmailRouteRows(orm, params.installId)) as
+          | EmailZone
+          | null
+          | undefined,
         // Where the installed version put its secrets, to keep a value a new
         // key takes over (`adoptedSecretKeys`); null when it cannot be read.
         previousSecrets: (() => {
@@ -964,6 +978,7 @@ export async function runUpdate(ctx: JobContext): Promise<void> {
           workerName,
           binding: decl.binding,
           protocol: decl.protocol,
+          caching: decl.caching,
           current: { rowId: row.id, name: row.name, cfId: row.cfId },
           connection: params.hyperdrive?.[decl.binding],
         }),
@@ -993,6 +1008,16 @@ export async function runUpdate(ctx: JobContext): Promise<void> {
         await provisionPipelinePhase(steps, params.installId, res, token, reserved, "update"),
       );
     }
+    // Kept databases get the query caching this version sets, before it
+    // serves; the ones made above were made with it.
+    await reconcileCachingPhase(
+      steps,
+      cachingTargets(
+        hyperdriveDeclarations(manifest.catalog.resources?.hyperdrive),
+        bound,
+        new Set([...newDatabaseBindings, ...replacements].map((r) => r.binding)),
+      ),
+    );
     // Kept indexes get the metadata indexes this version declares, before its
     // code writes a vector; kept buckets get their rules once it serves.
     for (const { res } of diff.toConfigure) {
@@ -1037,6 +1062,7 @@ export async function runUpdate(ctx: JobContext): Promise<void> {
       appUrl: appBase,
       wildcardHostname: started.wildcardHostname ?? null,
       access: started.access ?? null,
+      email: started.emailZone ?? null,
       ...(placeholders === undefined ? {} : { entryWorkers: placeholders }),
     });
 
@@ -1196,6 +1222,7 @@ export async function runUpdate(ctx: JobContext): Promise<void> {
       appUrl: appBase,
       wildcardHostname: started.wildcardHostname ?? null,
       access: started.access ?? null,
+      email: started.emailZone ?? null,
       placeholders,
       entryNames,
     };
@@ -1520,8 +1547,14 @@ export async function runUpdate(ctx: JobContext): Promise<void> {
     if (emailTarget !== null || started.emailRouting != null || started.hasEmailRoutes === true) {
       await changeEmailRoutingPhase(steps, {
         installId: params.installId,
-        workerName,
+        // The Worker this version's mail goes to, and the app's others,
+        // whose routes this version may take over.
+        workerName: emailScriptName(manifest.catalog, workerName),
         target: emailTarget,
+        otherWorkers: [
+          ...installedScriptNames(manifest.catalog, workerName),
+          ...(started.previousOthers ?? []).map((w) => w.scriptName),
+        ],
       });
     }
 

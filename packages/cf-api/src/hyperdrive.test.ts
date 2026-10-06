@@ -40,6 +40,17 @@ describe("hyperdrive", () => {
     expect(await fake.last().request.json()).toMatchObject({ caching: { disabled: true } });
   });
 
+  it("patchConfig -> PATCH /hyperdrive/configs/{id} with caching alone", async () => {
+    const { fake, client } = make({
+      result: { id: "hd-1", name: "mailbox-hyperdrive", caching: { disabled: true } },
+    });
+    const patched = await client.hyperdrive.patchConfig("hd-1", { caching: { disabled: true } });
+    expect(patched.caching).toEqual({ disabled: true });
+    expect(fake.last().method).toBe("PATCH");
+    expect(fake.last().url).toBe(`${A}/hyperdrive/configs/hd-1`);
+    expect(await fake.last().request.json()).toEqual({ caching: { disabled: true } });
+  });
+
   it("never puts the password in an error", async () => {
     const { client } = make({
       status: 400,

@@ -655,6 +655,99 @@ describe("rollback job", () => {
   });
 });
 
+describe("rollback job, a version that sets its database's query caching", () => {
+  /**
+   * The snapshot's version sets `caching` (`value`) for HYPERDRIVE; the
+   * configuration it binds has caching `disabled` now (an update turned it
+   * the other way). Answers the configuration's read and patch itself.
+   */
+  async function rollbackWithCaching(value: boolean | undefined, disabled: boolean) {
+    const before = await buildArtifactFixture({
+      bindings: [
+        { type: "kv_namespace", name: "CUT_KV" },
+        { type: "hyperdrive", name: "HYPERDRIVE" },
+      ],
+      catalog: {
+        ...(value === undefined ? {} : { requires: ["hyperdrive-caching" as const] }),
+        resources: {
+          hyperdrive: {
+            HYPERDRIVE: {
+              protocol: "postgres",
+              label: "Main database",
+              ...(value === undefined ? {} : { caching: value }),
+            },
+          },
+        },
+      },
+    });
+    await env.DB.prepare("UPDATE snapshots SET manifest_json = ?1 WHERE id = 'upd1'")
+      .bind(JSON.stringify(before.manifest))
+      .run();
+    await env.DB.prepare(
+      `INSERT INTO resources (id, install_id, kind, binding, name, cf_id, created_at)
+       VALUES ('hd-row', ?1, 'hyperdrive', 'HYPERDRIVE', 'cut-hyperdrive', 'hd-1', 1)`,
+    )
+      .bind(INSTALL_ID)
+      .run();
+    const config = { caching: { disabled } };
+    const calls: string[] = [];
+    const r = await rollback(
+      {
+        versionBindings: {
+          [OLD_VERSION]: [
+            { type: "kv_namespace", name: "CUT_KV", namespace_id: "kv-1" },
+            { type: "hyperdrive", name: "HYPERDRIVE", id: "hd-1" },
+          ],
+        },
+      },
+      (fake) => async (input, init) => {
+        const request = new Request(input, init);
+        const path = new URL(request.url).pathname;
+        if (!path.endsWith("/hyperdrive/configs/hd-1")) return fake.fetch(input, init);
+        calls.push(`${request.method} hd-1`);
+        if (request.method === "PATCH") {
+          Object.assign(config, (await request.json()) as object);
+        }
+        return Response.json({
+          success: true,
+          errors: [],
+          messages: [],
+          result: { id: "hd-1", name: "cut-hyperdrive", ...config },
+        });
+      },
+    );
+    return { ...r, config, calls };
+  }
+
+  it("sets the caching the version asks for back before it serves", async () => {
+    const r = await rollbackWithCaching(false, false);
+    expect(r.error).toBeNull();
+    expect(r.job?.status).toBe("succeeded");
+    expect(r.calls).toEqual(["GET hd-1", "PATCH hd-1"]);
+    expect(r.config).toEqual({ caching: { disabled: true } });
+    const names = r.step.names;
+    expect(names.indexOf("set query caching of Hyperdrive configuration cut-hyperdrive")).toBe(
+      names.indexOf("check the version's database connections") + 1,
+    );
+    expect(
+      names.indexOf("set query caching of Hyperdrive configuration cut-hyperdrive"),
+    ).toBeLessThan(names.indexOf("deploy snapshot version"));
+  });
+
+  it("changes nothing when caching is as the version asks, or the version leaves it out", async () => {
+    const same = await rollbackWithCaching(true, false);
+    expect(same.job?.status).toBe("succeeded");
+    expect(same.calls).toEqual(["GET hd-1"]);
+    await reset();
+    await createMigrator(migrations).ensure(env.DB);
+    await seedUpdated();
+    const omitted = await rollbackWithCaching(undefined, true);
+    expect(omitted.job?.status).toBe("succeeded");
+    expect(omitted.calls).toEqual([]);
+    expect(omitted.config).toEqual({ caching: { disabled: true } });
+  });
+});
+
 describe("rollback job, an app of several Workers", () => {
   const JOBS_OLD = "11111111-2222-4333-8444-555555555555";
   const JOBS_NEW = "11111111-2222-4333-8444-666666666666";

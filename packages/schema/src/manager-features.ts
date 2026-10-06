@@ -13,6 +13,16 @@
  * - `config-patch-values`: a config patch sets a var to text or adds a
  *   Workers AI binding, which an older manager's copy of the config patch
  *   rules refuses when it reads the artifact's catalog manifest.
+ * - `email-worker`: `install.emailRouting.worker` names the Worker that
+ *   receives the app's mail. An older manager drops the field and routes the
+ *   mail to the primary Worker.
+ * - `email-placeholders`: a var, a config patch or a post-install note uses
+ *   `{{emailDomain}}` or `{{emailZoneId}}`, or any placeholder is written in
+ *   an object key of a JSON var or of a service binding's props. An older
+ *   manager leaves the email placeholders as written everywhere, and every
+ *   placeholder in a key.
+ * - `hyperdrive-caching`: a Hyperdrive binding sets `caching`, which an
+ *   older manager drops, creating the configuration with query caching on.
  *
  * This module imports nothing: `catalog.ts` imports it, and the JSON Schema
  * export runs `catalog.ts` directly under Node's type stripping.
@@ -21,6 +31,9 @@ export const MANAGER_FEATURE_REQUIREMENTS = [
   "secret-keys",
   "service-props",
   "config-patch-values",
+  "email-worker",
+  "email-placeholders",
+  "hyperdrive-caching",
 ] as const;
 export type ManagerFeatureRequirement = (typeof MANAGER_FEATURE_REQUIREMENTS)[number];
 
@@ -33,6 +46,20 @@ export const SERVICE_PROPS_REQUIREMENT = "service-props" satisfies ManagerFeatur
 /** The `requires` value an entry lists when a config patch sets var text or adds `ai`. */
 export const CONFIG_PATCH_VALUES_REQUIREMENT =
   "config-patch-values" satisfies ManagerFeatureRequirement;
+
+/** The `requires` value an entry lists when `install.emailRouting.worker` is set. */
+export const EMAIL_WORKER_REQUIREMENT = "email-worker" satisfies ManagerFeatureRequirement;
+
+/**
+ * The `requires` value an entry lists when it uses `{{emailDomain}}` or
+ * `{{emailZoneId}}`, or writes a placeholder in a JSON object key.
+ */
+export const EMAIL_PLACEHOLDERS_REQUIREMENT =
+  "email-placeholders" satisfies ManagerFeatureRequirement;
+
+/** The `requires` value an entry lists when a Hyperdrive binding sets `caching`. */
+export const HYPERDRIVE_CACHING_REQUIREMENT =
+  "hyperdrive-caching" satisfies ManagerFeatureRequirement;
 
 /** Whether a `requires` value names a manager feature rather than an account capability. */
 export function isManagerFeatureRequirement(value: string): value is ManagerFeatureRequirement {

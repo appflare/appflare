@@ -1,4 +1,9 @@
-import type { AccessPlaceholderValues, ArtifactManifest, JsonValue } from "@appflare/schema";
+import type {
+  AccessPlaceholderValues,
+  ArtifactManifest,
+  EmailPlaceholderValues,
+  JsonValue,
+} from "@appflare/schema";
 import { and, eq, inArray, isNull } from "drizzle-orm";
 import { appPlace } from "../../components/app-links";
 import { installs, resources } from "../../db/schema";
@@ -25,7 +30,10 @@ import { errorMessage, type JobSteps, type StepTools } from "../steps";
  * address moved. A rollback redeploys a version as it was uploaded, with the
  * address the app had then: it reads that version's vars back from
  * Cloudflare and deploys the settings again when they name another address
- * than the app has now. Both start the same settings refresh a domain change
+ * than the app has now, or another zone than the one it receives email for
+ * now (`{{emailDomain}}`, `{{emailZoneId}}`: the email may have moved to
+ * another zone after that version served, and a rollback does not move it
+ * back). Both start the same settings refresh a domain change
  * starts (`startVarsRefreshCore`), which renders every var of the serving
  * version, as an update renders it, with the current values.
  */
@@ -92,6 +100,10 @@ export function changedAddress(before: AppAddress, now: AppAddress): VarsRefresh
 /** Stand-ins that tell which vars an address value ends up in. */
 const MARKER_URL = "https://app-url.appflare.invalid";
 const MARKER_HOST = "wildcard-hostname.appflare.invalid";
+const MARKER_EMAIL: EmailPlaceholderValues = {
+  zoneName: "email-zone.appflare.invalid",
+  zoneId: "email-zone.appflare.invalid",
+};
 
 /** JSON with sorted keys, so two equal values compare equal however their keys are ordered. */
 function stableJson(value: JsonValue): string {
@@ -128,8 +140,9 @@ export function varValues(bindings: readonly unknown[]): Map<string, string> {
 /**
  * Which address values the vars of `worker` (one Worker of `manifest`, the
  * app's whole entry) use and a version with `deployed` vars does not carry
- * as they are now: each var filled in with `address` is compared with the
- * deployed one, for the vars a change of that value would change. Pure.
+ * as they are now: each var filled in with `address` and `email` is
+ * compared with the deployed one, for the vars a change of that value would
+ * change. Pure.
  */
 export function staleAddressValues(input: {
   manifest: ArtifactManifest;
@@ -139,10 +152,12 @@ export function staleAddressValues(input: {
   subdomain: string;
   accountId: string;
   access: AccessPlaceholderValues | null;
+  /** The zone the app receives email for now (`emailZoneOnRecord`); null when none is on record. */
+  email: EmailPlaceholderValues | null;
   address: AppAddress;
   deployed: readonly unknown[];
 }): VarsRefreshReason[] {
-  const render = (address: AppAddress) => {
+  const render = (address: AppAddress, email = input.email) => {
     const entry = entryPlaceholders(
       input.manifest,
       input.workerName,
@@ -157,6 +172,7 @@ export function staleAddressValues(input: {
         appUrl: address.appUrl,
         wildcardHostname: address.wildcardHostname,
         access: input.access,
+        email,
         ...(entry === undefined ? {} : { entryWorkers: entry }),
       }).vars,
     );
@@ -170,6 +186,7 @@ export function staleAddressValues(input: {
   if (stale(render({ ...input.address, wildcardHostname: MARKER_HOST }))) {
     reasons.push("wildcardHostname");
   }
+  if (stale(render(input.address, MARKER_EMAIL))) reasons.push("emailZone");
   return reasons;
 }
 
@@ -177,6 +194,7 @@ const VALUE_WORDS: Readonly<Record<VarsRefreshReason, string>> = {
   appUrl: "address ({{appUrl}})",
   wildcardHostname: "wildcard domain ({{wildcardHostname}})",
   access: "Cloudflare Access values",
+  emailZone: "email domain ({{emailDomain}})",
 };
 
 /** "address ({{appUrl}}) and wildcard domain ({{wildcardHostname}})". */

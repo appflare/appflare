@@ -189,7 +189,7 @@ describe("catalog manifest revision", () => {
     expect(
       catalogRevisionProblem(released, { ...released, revision: 2, requires: ["access", "r2"] }),
     ).toBe(
-      'it adds "r2" to requires; a revision may add only "access" or "secret-keys", and anything else needs a new build',
+      'it adds "r2" to requires; a revision may add only "access" or "secret-keys" or "email-placeholders", and anything else needs a new build',
     );
     expect(catalogRevisionProblem(r2, { ...r2, revision: 2, requires: [] })).toBe(
       'it removes "r2" from requires, which only a new build can change',

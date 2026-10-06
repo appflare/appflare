@@ -143,6 +143,7 @@ const install = {
   wildcard: null,
   externalDomains: [],
   emailRoutes: [],
+  emailReceiver: null,
   uninstall: "start",
   forgotten: false,
   activeJobId: null,

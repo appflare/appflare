@@ -17,6 +17,7 @@ import { migrations } from "../db/migrations/index";
 import { SETTING, writeSettings } from "../db/settings";
 import type { StartInstallInput } from "../installs/install-input";
 import { startInstallCore } from "../installs/start-install.server";
+import { startUninstallCore } from "../installs/start-uninstall.server";
 import { accessChallenge } from "../test/access-sign-in";
 import {
   type ArtifactFixture,
@@ -27,6 +28,7 @@ import {
   ZIP_URL,
 } from "../test/artifact-fixture";
 import { fakeAccessAccount } from "../test/fake-access-account";
+import { fakeEmailRouting, ZONE_ID } from "../test/fake-email-routing";
 import { fakeEngine } from "../test/fake-invocations";
 import { fakeSelf } from "../test/fake-self";
 import { fakeStep } from "../test/fake-step";
@@ -105,6 +107,8 @@ interface FakeState {
   workflowRefusal?: { name: string; status: number; code?: number };
   /** Keys (`METHOD /path`) whose next call does its work and then answers 500. */
   failAfter: Set<string>;
+  /** A zone's Email Routing (../test/fake-email-routing.ts), answered before the rest. */
+  email?: { handle: (request: Request) => Promise<Response | null> };
   /** The query that applies this migration file answers `status`, without running, `times` times. */
   failMigration?: { file: string; status: number; times: number };
   /** When set, the script upload is refused with this status. */
@@ -739,6 +743,8 @@ function fakeWorld(fixture: ArtifactFixture, over: Partial<FakeState> = {}) {
       }
     }
     const request = new Request(input, init);
+    const routed = await state.email?.handle(new Request(input, init));
+    if (routed != null) return routed;
     if (input.startsWith("https://api.cloudflare.com/")) return cloudflare(request);
     if (input.startsWith(`${WORKER_ORIGIN}/`)) {
       state.healthUrls.push(input);
@@ -1936,7 +1942,7 @@ describe("install job", () => {
     );
     expect(r.job?.status).toBe("failed");
     expect(r.job?.error).toMatch(
-      /it adds "r2" to requires; a revision may add only "access" or "secret-keys", and anything else needs a new build/,
+      /it adds "r2" to requires; a revision may add only "access" or "secret-keys" or "email-placeholders", and anything else needs a new build/,
     );
   });
 
@@ -4286,5 +4292,174 @@ describe("install again", () => {
     expect(r.newResources).toEqual([]);
     // Not one Cloudflare call.
     expect(failed.fake.state.calls.length).toBe(calls);
+  });
+});
+
+describe("install job, an app of several Workers that receives email", () => {
+  const MAIL_WORKER = "cut-mail";
+  /**
+   * The primary Worker serves the app; `mail`, off workers.dev, receives its
+   * mail (`worker` null: the entry names no Worker, so the primary receives it).
+   */
+  const mailApp = (worker: string | null): ArtifactFixtureOptions => ({
+    bindings: [{ type: "kv_namespace", name: "CUT_KV" }],
+    otherWorkers: [
+      {
+        name: "mail",
+        workersDev: false,
+        bindings: [{ type: "json", name: "EMAIL_DOMAINS", json: {} }],
+      },
+    ],
+    catalog: {
+      requires: [...(worker === null ? [] : ["email-worker" as const]), "email-placeholders"],
+      install: {
+        packageManager: "pnpm",
+        wranglerConfig: "wrangler.jsonc",
+        emailRouting: {
+          rules: ["inbox"],
+          catchAll: true,
+          ...(worker === null ? {} : { worker }),
+        },
+      },
+      vars: [
+        { name: "AUTH_FROM", label: "Sender", default: "accounts@{{emailDomain}}" },
+        {
+          name: "EMAIL_DOMAINS",
+          label: "Domains",
+          default: '{"{{emailDomain}}":"{{emailZoneId}}"}',
+          workers: ["mail"],
+        },
+      ],
+      postInstall: [{ type: "markdown", content: "Mail to {{emailDomain}} reaches the app." }],
+    },
+  });
+  const input = { vars: {}, emailRouting: { zoneId: ZONE_ID } };
+
+  async function installMailApp(worker: string | null = "mail") {
+    const email = fakeEmailRouting(ACC);
+    const r = await install(mailApp(worker), { email }, input);
+    return { ...r, email };
+  }
+
+  it("routes the mail to the Worker the entry names, though it is off workers.dev", async () => {
+    const r = await installMailApp();
+    expect(r.error).toBeNull();
+    expect(r.job?.status).toBe("succeeded");
+    const { world } = r.email;
+    expect(world.rules.map((x) => [x.matchers[0]?.value, x.actions, x.name])).toEqual([
+      [
+        "inbox@example.com",
+        [{ type: "worker", value: [MAIL_WORKER] }],
+        `${MAIL_WORKER} (installed by Appflare)`,
+      ],
+    ]);
+    expect(world.catchAll.actions).toEqual([{ type: "worker", value: [MAIL_WORKER] }]);
+    // The routes come once the receiving Worker exists.
+    const calls = r.fake.state.calls;
+    expect(calls.indexOf(`PUT /workers/scripts/${MAIL_WORKER}`)).toBeGreaterThan(-1);
+    expect(r.step.names.indexOf("route inbox@example.com to the Worker")).toBeGreaterThan(
+      r.step.names.indexOf("upload Worker script"),
+    );
+  });
+
+  it("fills in the email zone, in a text var and in the keys and values of a JSON var", async () => {
+    const r = await installMailApp();
+    expect(r.job?.status).toBe("succeeded");
+    // A var without `workers` goes to every Worker; EMAIL_DOMAINS to `mail` only.
+    expect(r.fake.state.metadata?.bindings).toContainEqual({
+      type: "plain_text",
+      name: "AUTH_FROM",
+      text: "accounts@example.com",
+    });
+    const mail = r.fake.state.others[MAIL_WORKER]?.metadata?.bindings as unknown[];
+    expect(mail).toContainEqual({
+      type: "plain_text",
+      name: "AUTH_FROM",
+      text: "accounts@example.com",
+    });
+    expect(mail).toContainEqual({
+      type: "json",
+      name: "EMAIL_DOMAINS",
+      json: { "example.com": ZONE_ID },
+    });
+  });
+
+  it("routes to the primary Worker when the entry names none", async () => {
+    const r = await installMailApp(null);
+    expect(r.job?.status).toBe("succeeded");
+    expect(r.email.world.rules[0]?.actions).toEqual([{ type: "worker", value: ["cut"] }]);
+    expect(r.email.world.catchAll.actions).toEqual([{ type: "worker", value: ["cut"] }]);
+  });
+
+  it("puts the catch-all back on uninstall, though it delivers to a Worker other than the primary", async () => {
+    const r = await installMailApp();
+    expect(r.job?.status).toBe("succeeded");
+    let params: UninstallJobParams | null = null;
+    await startUninstallCore(
+      {
+        db: env.DB,
+        createJob: async (id, p) => {
+          params = p;
+          return { id };
+        },
+        newId: () => "uninstall-1",
+      },
+      { installId: "id1", deleteResources: [] },
+    );
+    if (params === null) throw new Error("no uninstall params");
+    const self = fakeSelf(jobEnv(), { fetch: r.fake.fetch });
+    const step = fakeStep();
+    await runUninstall({
+      params,
+      step,
+      env: { ...jobEnv(), SELF: self },
+      deps: { fetch: r.fake.fetch, signingKeys: r.fixture.keys },
+    });
+    const { world } = r.email;
+    expect(world.rules).toEqual([]);
+    expect(world.catchAll).toEqual({
+      enabled: false,
+      matchers: [{ type: "all" }],
+      actions: [{ type: "drop" }],
+    });
+    expect(world.routingEnabled).toBe(false);
+    const logs = (
+      await env.DB.prepare(
+        "SELECT message FROM job_logs WHERE job_id = 'uninstall-1' ORDER BY id",
+      ).all<{ message: string }>()
+    ).results.map((l) => l.message);
+    expect(logs).toContain(
+      "Put the catch-all (*@example.com) back as it was before the install: drop, off.",
+    );
+  });
+});
+
+describe("install job, a database with query caching set", () => {
+  it("creates the Hyperdrive configuration with caching as the entry sets it", async () => {
+    const options = (caching: boolean | undefined): ArtifactFixtureOptions => ({
+      bindings: [{ type: "hyperdrive", name: "HYPERDRIVE" }],
+      catalog: {
+        ...(caching === undefined ? {} : { requires: ["hyperdrive-caching" as const] }),
+        resources: {
+          hyperdrive: {
+            HYPERDRIVE: {
+              protocol: "postgres" as const,
+              ...(caching === undefined ? {} : { caching }),
+            },
+          },
+        },
+      },
+    });
+    const connection = { hyperdrive: { HYPERDRIVE: "postgres://app:pw@db.example.com/feedlog" } };
+    const off = await install(options(false), {}, connection);
+    expect(off.job?.status).toBe("succeeded");
+    expect(off.fake.state.hyperdrive[0]).toMatchObject({ caching: { disabled: true } });
+    await reset();
+    await createMigrator(migrations).ensure(env.DB);
+    await writeSettings(createDb(env.DB), { [SETTING.accountId]: ACC });
+    // Left out: Cloudflare's default, as before.
+    const omitted = await install(options(undefined), {}, connection);
+    expect(omitted.job?.status).toBe("succeeded");
+    expect(omitted.fake.state.hyperdrive[0]).not.toHaveProperty("caching");
   });
 });

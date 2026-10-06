@@ -198,6 +198,8 @@ const CHIP_LABELS: Readonly<Record<PlaceholderKey, string>> = {
   workerHostname: "workers.dev hostname",
   workerName: "Worker name",
   accountId: "Account ID",
+  emailDomain: "Email domain",
+  emailZoneId: "Email domain ID",
   wildcardHostname: "Wildcard domain",
   accessTeamDomain: "Access team domain",
   accessTeamName: "Access team name",
@@ -220,6 +222,8 @@ const CHIP_MEANINGS: Readonly<Record<PlaceholderKey, string>> = {
   workerHostname: "the app's workers.dev hostname",
   workerName: "the app's Worker name",
   accountId: "your Cloudflare account ID",
+  emailDomain: "the domain the app receives email for",
+  emailZoneId: "the ID of the domain the app receives email for",
   wildcardHostname: "the app's wildcard domain",
   accessTeamDomain: "your Zero Trust team domain",
   accessTeamName: "your Zero Trust team name",
@@ -242,6 +246,8 @@ interface PlaceholderSources {
   workerUrl?: string | null;
   workerName?: string | null;
   accountId?: string | null;
+  emailDomain?: string | null;
+  emailZoneId?: string | null;
   wildcardHostname?: string | null;
   accessTeamDomain?: string | null;
   accessTeamName?: string | null;
@@ -305,19 +311,23 @@ export function describeChip(
 /**
  * The placeholders the Insert menu offers: the app's address and hostname,
  * its Worker name and the account's id always; the wildcard domain for an
- * app that has one; each Worker's address and name for an app of several
+ * app that has one; the domain it receives email for, for an app that
+ * receives email; each Worker's address and name for an app of several
  * Workers. The workers.dev forms stay out of the menu: a setting almost
  * always wants the address people use. Typed in, they show as chips too.
  */
 export function placeholderOptions({
   wildcard = false,
+  email = false,
   workers = [],
 }: {
   wildcard?: boolean;
+  email?: boolean;
   workers?: readonly string[];
 } = {}): PlaceholderOption[] {
   const keys: PlaceholderKey[] = ["appUrl", "appHostname", "workerName", "accountId"];
   if (wildcard) keys.push("wildcardHostname");
+  if (email) keys.push("emailDomain");
   return [
     ...keys.map((key) => ({ placeholder: `{{${key}}}`, label: chipLabel({ key, worker: null }) })),
     ...workers.flatMap((worker) =>

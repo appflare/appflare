@@ -129,7 +129,15 @@ export type ResourceBindingPlan =
       vectorize: VectorizeIndexConfig;
       metadataIndexes?: readonly VectorizeMetadataIndex[];
     })
-  | (ResourcePlanFields & { type: "hyperdrive"; protocol: HyperdriveProtocol })
+  | (ResourcePlanFields & {
+      type: "hyperdrive";
+      protocol: HyperdriveProtocol;
+      /**
+       * Query caching as the catalog manifest sets it (`caching`); absent
+       * keeps Cloudflare's default when the configuration is created.
+       */
+      caching?: boolean;
+    })
   | (ResourcePlanFields & { type: "pipelines"; pipeline: PipelinePlan })
   | (ResourcePlanFields & {
       type: Exclude<ResourceBindingType, "vectorize" | "hyperdrive" | "pipelines">;
@@ -279,7 +287,7 @@ export function planBindings(
   const workflowRuns: Array<{ binding: string; upstream: string }> = [];
   plan.problems.push(...hyperdriveDeclarationProblems(bindings, databases));
   plan.problems.push(...pipelineDeclarationProblems(bindings, streams));
-  const protocols = new Map(databases.map((d) => [d.binding, d.protocol]));
+  const declaredDatabases = new Map(databases.map((d) => [d.binding, d]));
   const r2Bindings = new Set(bindings.filter((b) => b.type === "r2_bucket").map((b) => b.name));
   /** Bucket keys an earlier stream of this plan already writes to. */
   const sinkBuckets = new Set<string>();
@@ -307,14 +315,15 @@ export function planBindings(
       });
     } else if (binding.type === "hyperdrive") {
       // An undeclared one is a problem above; it gets no configuration.
-      const protocol = protocols.get(binding.name);
-      if (protocol !== undefined) {
+      const decl = declaredDatabases.get(binding.name);
+      if (decl !== undefined) {
         addResource({
           binding: binding.name,
           type: "hyperdrive",
           kind: RESOURCE_BINDINGS.hyperdrive,
           name: resourceName(workerName, binding.name),
-          protocol,
+          protocol: decl.protocol,
+          ...(decl.caching === undefined ? {} : { caching: decl.caching }),
         });
       }
     } else if (binding.type === PIPELINES_BINDING_TYPE) {

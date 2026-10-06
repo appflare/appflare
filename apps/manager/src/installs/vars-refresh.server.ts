@@ -37,6 +37,7 @@ const VALUE_WORDS: Readonly<Record<VarsRefreshReason, string>> = {
   wildcardHostname: "{{wildcardHostname}}",
   appUrl: "the app's address ({{appUrl}})",
   access: "the app's Cloudflare Access values ({{accessAud}} and the others)",
+  emailZone: "the app's email domain ({{emailDomain}}, {{emailZoneId}})",
 };
 
 /**

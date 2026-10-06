@@ -5,6 +5,7 @@ import {
   artifactManifestSchema,
   combinedWorkerFacts,
   type EntryWorkerPlaceholders,
+  emailScriptName,
   entryPlaceholderValues,
   SELF_DEPLOYING_TOOLS,
   selfDeployingStage,
@@ -25,6 +26,7 @@ import { readSettings, SETTING } from "../db/settings";
 import { isGatewayReady, readGateway } from "../gateway/gateway.server";
 import { isAccessChangeJob, isRestoreJob, reconcileJobs } from "../jobs/reconcile.server";
 import { recordedCatalog } from "../jobs/self-deploying/phases";
+import { emailZoneOnRecord, readEmailRouteRows } from "../jobs/update/email-routing";
 import { sandboxBinding } from "../sandbox/binding";
 import { type AddressDomain, appAddress } from "./app-address";
 import { addressDomainOf } from "./app-address.server";
@@ -43,7 +45,7 @@ import {
   subdomain,
 } from "./install-rows.server";
 import { type OtherWorkerView, otherWorkerViews } from "./other-workers";
-import { renderPostInstall, workersDevUrl } from "./post-install";
+import { type PostInstallValues, renderPostInstall, workersDevUrl } from "./post-install";
 import { type InstallSettings, readInstallSettingsCore } from "./reconfigure.server";
 import { isDeleteRetainedJob } from "./removed-apps.server";
 import {
@@ -178,6 +180,12 @@ export interface InstallDetail extends InstallRow {
   gatewayReady: boolean;
   /** What the install set up in Email Routing, in the order it was set up. */
   emailRoutes: EmailRouteView[];
+  /**
+   * For an app of several Workers that receives its mail with one other than
+   * the primary: that Worker's name. Null when the app's own Worker receives
+   * it (or it receives none).
+   */
+  emailReceiver: string | null;
   /** Which uninstall action the page offers now. */
   uninstall: "start" | "retry" | null;
   /** Uninstalled and forgotten: no longer listed under Removed apps, even if it kept data. */
@@ -303,7 +311,7 @@ export async function readInstallDetail(installId: string): Promise<InstallDetai
       );
   const primaryUrl = domain === null ? workerUrl : `https://${domain}`;
   // What the jobs fill in, so notes and vars show the values the Worker has.
-  const placeholders = {
+  const placeholders: PostInstallValues = {
     workerUrl,
     appUrl: primaryUrl,
     workerName: row.worker_name,
@@ -320,6 +328,8 @@ export async function readInstallDetail(installId: string): Promise<InstallDetai
   let otherWorkers: OtherWorkerView[] = [];
   // Where its Open button goes within the app (the entry's `openPath`).
   let openPath: string | undefined;
+  /** The Worker that receives the app's mail, when it is not the primary one. */
+  let emailReceiver: string | null = null;
   const installerCatalog =
     row.build_kind === "self-deploying" ? recordedCatalog(row.manifest_json) : null;
   if (installerCatalog !== null) {
@@ -345,6 +355,13 @@ export async function readInstallDetail(installId: string): Promise<InstallDetai
         recorded = await readCatalogRevision(db, row.artifact_digest);
       }
       const manifest = manifestWithRevision(parsed.data, recorded);
+      if (manifest.catalog.install.emailRouting !== undefined) {
+        // The zone the app receives email for, as the jobs read it.
+        placeholders.email = emailZoneOnRecord(await readEmailRouteRows(db, row.id));
+        // Where its mail goes, when another of its Workers than the primary receives it.
+        const receiver = emailScriptName(manifest.catalog, row.worker_name);
+        if (receiver !== row.worker_name) emailReceiver = receiver;
+      }
       name = manifest.catalog.name;
       openPath = manifest.catalog.openPath;
       // An app of several Workers: `{{appUrl:<name>}}` names one of them.
@@ -456,6 +473,7 @@ export async function readInstallDetail(installId: string): Promise<InstallDetai
         .filter((r) => r.kind === EMAIL_ROUTE_KIND)
         .map((r) => ({ id: r.id, name: r.name, cfId: r.cf_id })),
     ),
+    emailReceiver,
     uninstall,
     forgotten: row.forgotten_at !== null,
     activeJobId: activeJob?.id ?? null,

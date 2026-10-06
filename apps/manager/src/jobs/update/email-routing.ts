@@ -3,13 +3,18 @@ import { and, eq, isNull, sql } from "drizzle-orm";
 import { appPlace } from "../../components/app-links";
 import { resources } from "../../db/schema";
 import {
-  deliversTo,
   EMAIL_ROUTING_ADDRESS_MAX_LENGTH,
+  EMAIL_ROUTING_PERMISSION,
   type EmailRouteTarget,
   emailRoutingChangeNote,
   parseEmailRouteCfId,
 } from "../../installs/email-routing";
-import type { EmailRoutingInspection } from "../../installs/email-routing.server";
+import {
+  type EmailRoutingInspection,
+  permissionMessage,
+  repointEmailCatchAll,
+  repointEmailRule,
+} from "../../installs/email-routing.server";
 import { EMAIL_ROUTE_KIND } from "../../installs/resource-kinds";
 import {
   type EmailRouteRecord,
@@ -17,7 +22,7 @@ import {
   removeEmailRoutesPhase,
 } from "../install/email-routing";
 import { type EmailZone, emailZones } from "../reconfigure/plan";
-import { errorMessage, type JobSteps, type StepTools } from "../steps";
+import { errorMessage, JobError, type JobSteps, type StepTools } from "../steps";
 import { settleUnit } from "../units/result";
 
 /**
@@ -42,6 +47,12 @@ import { settleUnit } from "../units/result";
  * warning and sets up the rest, and the next update or rollback tries it
  * again. A version that receives email for an install with no zone on record
  * needs the admin's choice, which only the app's settings ask for.
+ *
+ * Which Worker: the one that receives the version's mail (an app of several
+ * Workers may name one other than the primary, `install.emailRouting.worker`).
+ * Routes the version keeps that deliver to another of the app's Workers (the
+ * version before had that one receive mail) are pointed at it first, in
+ * place, so they keep their ids and the install's records stay true.
  *
  * New routes are set up before old ones are removed, so mail that both
  * versions receive is never unrouted; removing goes through the uninstall's
@@ -78,6 +89,12 @@ export interface EmailRoutingChange {
   verifyCatchAll?: boolean;
   /** Records whose routes go, as an uninstall removes them. */
   remove: EmailRouteRecord[];
+  /**
+   * Rules on record the version keeps (absent in a step output recorded
+   * before it existed): an app of several Workers points them at the Worker
+   * that receives its mail.
+   */
+  keep?: EmailRouteRecord[];
   /** Parts of the version's email that are not set up, one sentence each. */
   refused: string[];
 }
@@ -216,6 +233,7 @@ export function planEmailRoutingChange(
   const rules = onZone.filter((r) => kindOf(r) === "rule");
   change.addresses = wanted.filter((a) => !rules.some((r) => r.name === a));
   change.remove = rules.filter((r) => !wanted.includes(r.name)).map(asRecord);
+  change.keep = rules.filter((r) => wanted.includes(r.name)).map(asRecord);
   const catchAll = onZone.find((r) => kindOf(r) === "catch_all");
   if (target.catchAll === true && catchAll === undefined) change.catchAll = true;
   if (target.catchAll === true && catchAll !== undefined) change.verifyCatchAll = true;
@@ -335,6 +353,76 @@ async function checkAdditionsPhase(
 }
 
 /**
+ * Steps "point <address> at the Worker <name>": for an app of several
+ * Workers, each rule on record the version keeps that delivers to another of
+ * its Workers is pointed at the one that receives its mail now
+ * (`repointEmailRule`). One listing of the zone's rules per rule, and one
+ * update for each that moves. Returns the addresses whose rule is gone, to set up again; a rule
+ * changed since is left alone with a warning.
+ */
+async function pointRulesPhase(
+  steps: JobSteps,
+  request: {
+    zone: EmailZone;
+    rules: readonly EmailRouteRecord[];
+    workerName: string;
+    formerWorkers: readonly string[];
+  },
+): Promise<{ gone: string[] }> {
+  const gone: string[] = [];
+  for (const rule of request.rules) {
+    const target = parseEmailRouteCfId(rule.cfId);
+    if (target?.kind !== "rule") continue;
+    const result = await steps.run(
+      `point ${rule.name} at the Worker "${request.workerName}"`,
+      async ({ log, cf, orm }) => {
+        let found: Awaited<ReturnType<typeof repointEmailRule>>;
+        try {
+          found = await repointEmailRule(cf(), {
+            zoneId: target.zoneId,
+            ruleId: target.ruleId,
+            address: rule.name,
+            workerName: request.workerName,
+            formerWorkers: request.formerWorkers,
+          });
+        } catch (error) {
+          const denied = permissionMessage(
+            error,
+            `point the routing rule for ${rule.name} at the Worker "${request.workerName}"`,
+            EMAIL_ROUTING_PERMISSION.rules,
+          );
+          throw denied === null ? error : new JobError(denied);
+        }
+        switch (found.outcome) {
+          case "pointed":
+            log.info(
+              `Mail to ${rule.name} now goes to the Worker "${request.workerName}", which receives this version's mail (it went to "${found.from}").`,
+            );
+            return { gone: false };
+          case "already":
+            return { gone: false };
+          case "gone":
+            // Set up again below, recorded anew.
+            await orm
+              .update(resources)
+              .set({ deleted_at: new Date(steps.now()) })
+              .where(eq(resources.id, rule.id));
+            log.info(`The routing rule for ${rule.name} is gone; it is set up again.`);
+            return { gone: true };
+          case "not-ours":
+            log.warn(
+              `The routing rule for ${rule.name} was changed since Appflare set it up (it is ${found.action} now), so it was left alone and mail to ${rule.name} does not reach the Worker "${request.workerName}".`,
+            );
+            return { gone: false };
+        }
+      },
+    );
+    if (result.gone) gone.push(rule.name);
+  }
+  return { gone };
+}
+
+/**
  * Brings the install's Email Routing in line with `target`, the
  * `install.emailRouting` of the version that now serves (null: none). Run
  * once that version serves. See the top of this file. Never throws: the
@@ -348,11 +436,21 @@ export async function changeEmailRoutingPhase(
   steps: JobSteps,
   request: {
     installId: string;
+    /** The Worker that receives the version's mail (`emailScriptName`). */
     workerName: string;
     target: CatalogEmailRouting | null;
+    /**
+     * The app's other Workers, of the version it moves to and the one it
+     * leaves (an app of several): routes that deliver to one of them are the
+     * app's, and those the version keeps are pointed at `workerName`.
+     */
+    otherWorkers?: readonly string[];
   },
 ): Promise<void> {
   const failedAt = steps.current;
+  const formerWorkers = [...new Set(request.otherWorkers ?? [])].filter(
+    (n) => n !== request.workerName,
+  );
   try {
     const change = await steps.run("plan Email Routing", async ({ log, orm }) => {
       const planned = planEmailRoutingChange(
@@ -368,12 +466,32 @@ export async function changeEmailRoutingPhase(
     });
 
     const { zone } = change;
+    const keep = change.keep ?? [];
+    if (zone !== null && formerWorkers.length > 0 && keep.length > 0) {
+      const { gone } = await pointRulesPhase(steps, {
+        zone,
+        rules: keep,
+        workerName: request.workerName,
+        formerWorkers,
+      });
+      // A rule deleted since is set up again, through the same check as a new one.
+      for (const address of gone)
+        if (!change.addresses.includes(address)) change.addresses.push(address);
+    }
     if (zone !== null && change.verifyCatchAll === true) {
       const { missing } = await steps.run(
         `check the catch-all of ${zone.zoneName}`,
         async ({ log, cf }) => {
-          const current = await cf().emailRouting.getCatchAll(zone.zoneId);
-          if (current.enabled && deliversTo(current.actions, request.workerName)) {
+          const found = await repointEmailCatchAll(cf(), {
+            zoneId: zone.zoneId,
+            workerName: request.workerName,
+            formerWorkers,
+          });
+          if (found.outcome === "already") return { missing: false };
+          if (found.outcome === "pointed") {
+            log.info(
+              `The catch-all of ${zone.zoneName} now delivers to the Worker "${request.workerName}", which receives this version's mail (it delivered to "${found.from}").`,
+            );
             return { missing: false };
           }
           log.info(
@@ -401,6 +519,7 @@ export async function changeEmailRoutingPhase(
       await removeEmailRoutesPhase(steps, change.remove, request.workerName, {
         retry: "let the next update or rollback of the app finish the change",
         keepInUseRouting: true,
+        otherWorkers: formerWorkers,
       });
     }
   } catch (error) {

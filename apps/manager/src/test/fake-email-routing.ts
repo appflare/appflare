@@ -1,7 +1,8 @@
 /**
  * Test-only stateful fake of one zone's Cloudflare Email Routing: the zone,
  * its apex DNS records, the routing settings (`POST`/`DELETE .../dns` turn it
- * on and off and add or remove the MX records), rules, the catch-all, and the
+ * on and off and add or remove the MX records), rules (created, replaced and
+ * deleted), the catch-all, and the
  * account's destination addresses. `handle` answers the requests it knows and
  * returns null for the rest, so a test can put it in front of another fake.
  */
@@ -132,6 +133,16 @@ export function fakeEmailRouting(accountId: string, over: Partial<EmailWorld> = 
         );
         return ok(list, { result_info: { page: 1, total_count: list.length } });
       }
+    }
+    const replaced = new RegExp(`^PUT ${er}/rules/([^/]+)$`).exec(key);
+    if (replaced?.[1] !== undefined) {
+      const id = replaced[1];
+      const at = world.rules.findIndex((r) => r.id === id);
+      if (at === -1) return fail(404, 2020, "Rule not found");
+      const body = (await request.json()) as Omit<FakeRule, "id">;
+      const rule: FakeRule = { ...body, id };
+      world.rules[at] = rule;
+      return ok(rule);
     }
     const rule = new RegExp(`^DELETE ${er}/rules/([^/]+)$`).exec(key);
     if (rule?.[1] !== undefined) {

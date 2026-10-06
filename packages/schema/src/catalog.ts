@@ -22,6 +22,9 @@ import {
 import { CATALOG_SLUG_PATTERN } from "./links.ts";
 import {
   CONFIG_PATCH_VALUES_REQUIREMENT,
+  EMAIL_PLACEHOLDERS_REQUIREMENT,
+  EMAIL_WORKER_REQUIREMENT,
+  HYPERDRIVE_CACHING_REQUIREMENT,
   MANAGER_FEATURE_REQUIREMENTS,
   SECRET_KEYS_REQUIREMENT,
   SERVICE_PROPS_REQUIREMENT,
@@ -32,7 +35,13 @@ import {
   catalogPipelinesSchema,
   pipelineManifestProblems,
 } from "./pipelines.ts";
-import { PLACEHOLDER_FIELDS, placeholderProblems } from "./placeholders.ts";
+import {
+  jsonTexts,
+  PLACEHOLDER_FIELDS,
+  placeholderInJsonKey,
+  placeholderProblems,
+  usesEmailPlaceholders,
+} from "./placeholders.ts";
 import { catalogR2Schema } from "./r2-lifecycle.ts";
 import { BASE64_KEY_32_LENGTH, isBase64Key32 } from "./random-key.ts";
 import { isSeedOnly, seedManifestProblems } from "./seed.ts";
@@ -1355,13 +1364,28 @@ export const EMAIL_ROUTING_ADDRESS_PATTERN =
  * asks the admin for one of the account's zones, and the install:
  * turns Email Routing on for that zone if it is off (Cloudflare then adds
  * its MX, SPF and DKIM records), creates one routing rule per `rules` entry, and
- * with `catchAll` points the zone's catch-all rule at the app's Worker. The
- * app's Worker must export an `email` handler. Uninstalling removes the
+ * with `catchAll` points the zone's catch-all rule at the app's Worker (for
+ * an app of several Workers, the primary one unless `worker` names another).
+ * That Worker must export an `email` handler. Uninstalling removes the
  * rules, puts the catch-all back as it was, and turns Email Routing off again
  * only when the install turned it on and no other rule remains.
  */
 export const catalogEmailRoutingSchema = z
   .object({
+    /**
+     * For an app of several Workers: the `install.workers[].name` of the
+     * Worker that receives the mail. Omitted means the primary Worker. Read
+     * the receiving Worker's installed name with `emailScriptName`.
+     */
+    worker: entryWorkerNameSchema
+      .describe(
+        "For an app of several Workers (`install.workers`): the `name` of the Worker that " +
+          "receives the mail, which must export an `email` handler. Omitted means the primary " +
+          "Worker. Email Routing delivers to a Worker by name, not over HTTP, so a Worker with " +
+          '`workersDev: false` can receive mail. An entry that sets it lists `"email-worker"` in ' +
+          "`requires`.",
+      )
+      .optional(),
     catchAll: z
       .boolean()
       .default(false)
@@ -1402,15 +1426,48 @@ export const catalogEmailRoutingSchema = z
     description:
       "Email the app receives through Email Routing. The install form asks for one of the " +
       "account's zones; the install turns Email Routing on there if it is off, then points the " +
-      "listed addresses (and, with `catchAll`, every other address) at the app's Worker, which " +
-      "must export an `email` handler. Uninstalling removes what the install added. Not for the " +
-      "self-deploying tier, whose own installer deploys the app.",
+      "listed addresses (and, with `catchAll`, every other address) at the app's Worker (the " +
+      "primary one, or the Worker `worker` names), which must export an `email` handler. " +
+      "Uninstalling removes what the install added. `{{emailDomain}}` and `{{emailZoneId}}` " +
+      "give the app the zone's name and id. Not for the self-deploying tier, whose own " +
+      "installer deploys the app.",
     anyOf: [
       { required: ["catchAll"], properties: { catchAll: { const: true } } },
       { required: ["rules"], properties: { rules: { minItems: 1 } } },
     ],
   });
 export type CatalogEmailRouting = z.infer<typeof catalogEmailRoutingSchema>;
+
+/**
+ * What is wrong with `install.emailRouting.worker`; empty when nothing is.
+ * It names one of `install.workers`, so an entry of one Worker cannot set it.
+ */
+export function emailRoutingWorkerProblems(install: {
+  emailRouting?: { worker?: string | undefined } | undefined;
+  workers?: ReadonlyArray<{ name: string }> | undefined;
+}): Array<{ path: Array<string | number>; message: string }> {
+  const worker = install.emailRouting?.worker;
+  if (worker === undefined) return [];
+  const path = ["emailRouting", "worker"];
+  if (install.workers === undefined) {
+    return [
+      {
+        path,
+        message:
+          "install.emailRouting.worker names one of install.workers; an entry of one Worker receives mail with that Worker, so leave it out",
+      },
+    ];
+  }
+  if (!install.workers.some((w) => w.name === worker)) {
+    return [
+      {
+        path,
+        message: `install.emailRouting.worker names the Worker "${worker}", which install.workers does not declare`,
+      },
+    ];
+  }
+  return [];
+}
 
 /**
  * Container sizes a sandbox build may run on. `standard-1` (1/2 vCPU, 4 GiB
@@ -1914,6 +1971,9 @@ export const catalogInstallSchema = z
           "install.emailRouting is not allowed for the self-deploying tier: the app's own installer deploys it, and Appflare sets up no Email Routing for it",
       });
     }
+    for (const problem of emailRoutingWorkerProblems(install)) {
+      ctx.addIssue({ code: "custom", path: problem.path, message: problem.message });
+    }
     for (const problem of wildcardHostnameProblems(install)) {
       ctx.addIssue({ code: "custom", path: [problem.path], message: problem.message });
     }
@@ -1921,7 +1981,8 @@ export const catalogInstallSchema = z
   // The refinements do not reach the JSON Schema; `allOf` states them there
   // (no `container`, or a tier that runs in the sandbox Worker; `selfDeploying`
   // exactly when the tier is `self-deploying`; no `emailRouting` or
-  // `installDirs` on a `self-deploying` entry; `workers` and `toolchains`
+  // `installDirs` on a `self-deploying` entry; `emailRouting.worker` only
+  // beside `workers`; `workers` and `toolchains`
   // only on the `artifact` tier; `configPatch` neither beside `workers` nor
   // on a `self-deploying` entry; `wranglerConfigInline` beside neither
   // `workers` nor `configPatch`, nor on a `self-deploying` entry), so editors
@@ -2000,6 +2061,14 @@ export const catalogInstallSchema = z
         anyOf: [
           { not: { required: ["buildEnv"] } },
           { properties: { tier: { not: { const: "self-deploying" } } } },
+        ],
+      },
+      // The Worker that receives mail is named only among install.workers.
+      {
+        anyOf: [
+          { not: { required: ["emailRouting"] } },
+          { properties: { emailRouting: { not: { required: ["worker"] } } } },
+          { required: ["workers"] },
         ],
       },
     ],
@@ -2229,7 +2298,14 @@ export const catalogManifestSchema = z
           "the app goes with Cloudflare Access. The account needs a Zero Trust organization " +
           'only while the app is protected (always, with `access.mode: "required"`), and the ' +
           "value keeps the entry away from managers too old to protect apps. Required with " +
-          '`access.mode: "required"` and whenever a var\'s default uses an Access placeholder.',
+          '`access.mode: "required"` and whenever a var\'s default uses an Access placeholder. ' +
+          "Some values name a feature of Appflare instead, which keeps the entry away from " +
+          'managers too old for it: `"secret-keys"` (a secret with a `key`), `"service-props"` ' +
+          '(`props` on a service binding), `"config-patch-values"` (a config patch that sets var ' +
+          'text or adds Workers AI), `"email-worker"` (`install.emailRouting.worker`), ' +
+          '`"email-placeholders"` (`{{emailDomain}}` or `{{emailZoneId}}` anywhere, or any ' +
+          "placeholder in an object key of a JSON var or of service binding `props`) and " +
+          '`"hyperdrive-caching"` (`caching` on a Hyperdrive binding).',
       ),
     secrets: z.array(catalogSecretSchema).default([]),
     vars: z.array(catalogVarSchema).default([]),
@@ -2331,9 +2407,9 @@ export const catalogManifestSchema = z
     };
     check("secrets", manifest.secrets);
     check("vars", manifest.vars);
-    // Placeholders a field does not take, or that name a Worker the entry
-    // does not have (or one with no address).
-    const entry = { workers: declared };
+    // Placeholders a field does not take, that name a Worker the entry does
+    // not have (or one with no address), or that need an entry receiving email.
+    const entry = { workers: declared, emailRouting: manifest.install.emailRouting !== undefined };
     manifest.postInstall.forEach((step, i) => {
       for (const message of placeholderProblems(step.content, "postInstall", entry)) {
         ctx.addIssue({ code: "custom", path: ["postInstall", i, "content"], message });
@@ -2361,6 +2437,7 @@ export const catalogManifestSchema = z
     for (const problem of [
       ...secretKeyProblems(manifest),
       ...configPatchManifestProblems(manifest),
+      ...managerFeatureProblems(manifest),
     ]) {
       ctx.addIssue({ code: "custom", path: problem.path, message: problem.message });
     }
@@ -2610,15 +2687,6 @@ export type CatalogManifest = z.infer<typeof catalogManifestSchema>;
  * token, the admin enters it (not generated, derived or seed-only), and the
  * entry lists the permissions the token needs.
  */
-/** Every string inside a JSON value, in order. */
-function jsonStringsOf(value: unknown): string[] {
-  if (typeof value === "string") return [value];
-  if (Array.isArray(value)) return value.flatMap(jsonStringsOf);
-  if (typeof value === "object" && value !== null)
-    return Object.values(value).flatMap(jsonStringsOf);
-  return [];
-}
-
 /** The Workers a secret goes to, by name within the entry; null for every Worker. */
 function secretWorkerSet(secret: { workers?: readonly string[] | undefined }): Set<string> | null {
   return secret.workers === undefined ? null : new Set(secret.workers);
@@ -2702,6 +2770,7 @@ export function secretKeyProblems(manifest: {
  */
 export function configPatchManifestProblems(manifest: {
   install: {
+    emailRouting?: unknown;
     configPatch?: ConfigPatch | undefined;
     workers?:
       | ReadonlyArray<{
@@ -2725,7 +2794,7 @@ export function configPatchManifestProblems(manifest: {
   // the only Worker of an entry of one, which gets everything).
   const reaches = (workers: readonly string[] | undefined, worker: string | null) =>
     worker === null ? workers === undefined : workers === undefined || workers.includes(worker);
-  const entry = { workers: declared };
+  const entry = { workers: declared, emailRouting: manifest.install.emailRouting !== undefined };
   const patches: Array<{
     path: Array<string | number>;
     worker: string | null;
@@ -2776,7 +2845,7 @@ export function configPatchManifestProblems(manifest: {
     (patch.services ?? []).forEach((service, i) => {
       if (service.props === undefined) return;
       propsAt ??= [...path, "services", i, "props"];
-      const texts = new Set(jsonStringsOf(service.props));
+      const texts = new Set(jsonTexts(service.props));
       for (const text of texts) {
         for (const message of placeholderProblems(text, "varDefault", entry)) {
           problems.push({ path: [...path, "services", i, "props"], message });
@@ -2794,6 +2863,136 @@ export function configPatchManifestProblems(manifest: {
     problems.push({
       path: ["requires"],
       message: `a config patch gives a service binding props, so requires must list "${SERVICE_PROPS_REQUIREMENT}": a manager that does not know props refuses the binding`,
+    });
+  }
+  return problems;
+}
+
+/** The config patches of an entry, each with its path from the manifest's root. */
+function configPatchesOf(install: {
+  configPatch?: ConfigPatch | undefined;
+  workers?: ReadonlyArray<{ configPatch?: ConfigPatch | undefined }> | undefined;
+}): Array<{ path: Array<string | number>; patch: ConfigPatch }> {
+  const patches: Array<{ path: Array<string | number>; patch: ConfigPatch }> = [];
+  if (install.configPatch !== undefined) {
+    patches.push({ path: ["install", "configPatch"], patch: install.configPatch });
+  }
+  (install.workers ?? []).forEach((w, i) => {
+    if (w.configPatch !== undefined) {
+      patches.push({ path: ["install", "workers", i, "configPatch"], patch: w.configPatch });
+    }
+  });
+  return patches;
+}
+
+/**
+ * Where a manifest's own text uses `{{emailDomain}}` or `{{emailZoneId}}`: a
+ * var's default, a post-install note, a var a config patch sets, or the props
+ * of a service binding a patch adds. Null when nowhere. (The wrangler
+ * config's own vars are the artifact's; its schema checks them.)
+ */
+function emailPlaceholderUse(manifest: {
+  install: {
+    configPatch?: ConfigPatch | undefined;
+    workers?: ReadonlyArray<{ configPatch?: ConfigPatch | undefined }> | undefined;
+  };
+  vars: ReadonlyArray<{ default?: string | undefined }>;
+  postInstall: ReadonlyArray<{ content: string }>;
+}): Array<string | number> | null {
+  const v = manifest.vars.findIndex(
+    (x) => x.default !== undefined && usesEmailPlaceholders(x.default),
+  );
+  if (v >= 0) return ["vars", v, "default"];
+  const note = manifest.postInstall.findIndex((p) => usesEmailPlaceholders(p.content));
+  if (note >= 0) return ["postInstall", note, "content"];
+  for (const { path, patch } of configPatchesOf(manifest.install)) {
+    for (const [name, value] of Object.entries(patch.vars ?? {})) {
+      if (value !== null && usesEmailPlaceholders(value)) return [...path, "vars", name];
+    }
+    const service = (patch.services ?? []).findIndex(
+      (svc) => svc.props !== undefined && jsonTexts(svc.props).some(usesEmailPlaceholders),
+    );
+    if (service >= 0) return [...path, "services", service, "props"];
+  }
+  return null;
+}
+
+/**
+ * Where a config patch gives a service binding props with a placeholder in
+ * an object key. Null when none does. (The wrangler config's own vars and
+ * props, and the defaults of JSON vars, are the artifact's; its schema
+ * checks them.)
+ */
+function jsonKeyPlaceholderUse(manifest: {
+  install: {
+    configPatch?: ConfigPatch | undefined;
+    workers?: ReadonlyArray<{ configPatch?: ConfigPatch | undefined }> | undefined;
+  };
+}): Array<string | number> | null {
+  for (const { path, patch } of configPatchesOf(manifest.install)) {
+    const service = (patch.services ?? []).findIndex(
+      (svc) => svc.props !== undefined && placeholderInJsonKey(svc.props),
+    );
+    if (service >= 0) return [...path, "services", service, "props"];
+  }
+  return null;
+}
+
+/**
+ * Which manager features (./manager-features.ts) a manifest uses without
+ * listing them in `requires`, one issue each: `install.emailRouting.worker`
+ * needs `"email-worker"`, `{{emailDomain}}` or `{{emailZoneId}}` in the
+ * manifest's text, or any placeholder in an object key of a service
+ * binding's props, needs `"email-placeholders"`, and `caching` on a Hyperdrive
+ * binding needs `"hyperdrive-caching"`. An older manager would drop each one
+ * without a word (routing mail to the primary Worker, leaving the
+ * placeholder as written, creating the configuration with query caching
+ * on); the requirement keeps the entry away from it instead.
+ */
+export function managerFeatureProblems(manifest: {
+  install: {
+    emailRouting?: { worker?: string | undefined } | undefined;
+    configPatch?: ConfigPatch | undefined;
+    workers?: ReadonlyArray<{ configPatch?: ConfigPatch | undefined }> | undefined;
+  };
+  vars: ReadonlyArray<{ default?: string | undefined }>;
+  postInstall: ReadonlyArray<{ content: string }>;
+  resources?:
+    | { hyperdrive?: Readonly<Record<string, { caching?: boolean | undefined }>> | undefined }
+    | undefined;
+  requires: readonly string[];
+}): Array<{ path: Array<string | number>; message: string }> {
+  const problems: Array<{ path: Array<string | number>; message: string }> = [];
+  if (
+    manifest.install.emailRouting?.worker !== undefined &&
+    !manifest.requires.includes(EMAIL_WORKER_REQUIREMENT)
+  ) {
+    problems.push({
+      path: ["requires"],
+      message: `install.emailRouting.worker names the Worker that receives mail, so requires must list "${EMAIL_WORKER_REQUIREMENT}": a manager that does not know it would route the mail to the primary Worker`,
+    });
+  }
+  const used = emailPlaceholderUse(manifest);
+  if (used !== null && !manifest.requires.includes(EMAIL_PLACEHOLDERS_REQUIREMENT)) {
+    problems.push({
+      path: ["requires"],
+      message: `${formatPath(used)} uses {{emailDomain}} or {{emailZoneId}}, so requires must list "${EMAIL_PLACEHOLDERS_REQUIREMENT}": a manager that does not fill them in would leave them as written`,
+    });
+  }
+  const keyed = jsonKeyPlaceholderUse(manifest);
+  if (keyed !== null && !manifest.requires.includes(EMAIL_PLACEHOLDERS_REQUIREMENT)) {
+    problems.push({
+      path: ["requires"],
+      message: `${formatPath(keyed)} has a placeholder in an object key, so requires must list "${EMAIL_PLACEHOLDERS_REQUIREMENT}": a manager that fills placeholders in values only would leave the key as written`,
+    });
+  }
+  const cached = Object.entries(manifest.resources?.hyperdrive ?? {}).find(
+    ([, decl]) => decl.caching !== undefined,
+  );
+  if (cached !== undefined && !manifest.requires.includes(HYPERDRIVE_CACHING_REQUIREMENT)) {
+    problems.push({
+      path: ["requires"],
+      message: `resources.hyperdrive.${cached[0]} sets caching, so requires must list "${HYPERDRIVE_CACHING_REQUIREMENT}": a manager that does not know it would create the configuration with query caching on`,
     });
   }
   return problems;

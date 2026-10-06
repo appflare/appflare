@@ -86,7 +86,14 @@ const NOTHING_CHANGED =
  */
 export async function setUpEmailAgainPhase(
   steps: JobSteps,
-  request: { installId: string; workerName: string; target: CatalogEmailRouting | null },
+  request: {
+    installId: string;
+    /** The Worker that receives the app's mail (`emailScriptName`). */
+    workerName: string;
+    target: CatalogEmailRouting | null;
+    /** The app's other Workers (an app of several), whose routes are the app's too. */
+    otherWorkers?: readonly string[];
+  },
 ): Promise<boolean> {
   const { target } = request;
   const change = await steps.run("plan Email Routing again", async ({ log, orm }) => {
@@ -151,6 +158,7 @@ export async function setUpEmailAgainPhase(
       retry: "set up the app's email again from its settings",
       keepInUseRouting: true,
       onlyDelivering: true,
+      otherWorkers: request.otherWorkers ?? [],
     });
   }
   return adds || change.remove.length > 0;

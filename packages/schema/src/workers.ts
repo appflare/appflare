@@ -194,6 +194,33 @@ export function entryScriptNames(
   return names;
 }
 
+/**
+ * The Worker name the app's mail is delivered to (`install.emailRouting`):
+ * the installed name of the Worker `install.emailRouting.worker` names, else
+ * the install's own (the primary Worker, or the only one).
+ */
+export function emailScriptName(
+  catalog: { install: Pick<CatalogManifest["install"], "emailRouting" | "workers"> },
+  installWorkerName: string,
+): string {
+  const name = catalog.install.emailRouting?.worker;
+  const declared =
+    name === undefined ? undefined : catalog.install.workers?.find((w) => w.name === name);
+  return declared === undefined
+    ? installWorkerName
+    : entryScriptName(installWorkerName, declared.name, declared.primary);
+}
+
+/** Every Worker name an install of the entry runs under: its own, then the others. */
+export function installedScriptNames(
+  catalog: Pick<CatalogManifest, "install">,
+  installWorkerName: string,
+): string[] {
+  return [
+    ...new Set([installWorkerName, ...Object.values(entryScriptNames(catalog, installWorkerName))]),
+  ];
+}
+
 /** An order of an entry's Workers, or the Workers that name each other in a cycle. */
 export type EntryWorkerOrder = { order: string[]; cycle: null } | { order: null; cycle: string[] };
 

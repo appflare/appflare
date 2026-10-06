@@ -42,6 +42,7 @@ const INSTALL = {
       onUninstall: "deleted",
     },
   ],
+  emailReceiver: null,
 } as InstallDetail;
 
 const LEFT_OUT: EmailAgainParts = {
@@ -67,6 +68,7 @@ function settings(again: EmailAgainParts | null, leftover: string[] = []): Insta
       zoneName: "example.com",
       leftover,
       again,
+      fillsSettings: false,
     },
     skipsPreview: null,
     installer: null,

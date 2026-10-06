@@ -112,6 +112,7 @@ export function AppSettingsSection({
       wildcard:
         settings.placeholders.wildcardHostname !== null ||
         settings.fields.some((f) => /\{\{\s*wildcardHostname\s*\}\}/.test(f.shownDefault)),
+      email: settings.email !== null,
       workers: Object.keys(settings.placeholders.entryWorkers ?? {}),
     }),
     known: settings.placeholders,
@@ -135,7 +136,12 @@ export function AppSettingsSection({
       newConnections,
     );
   /** Only settings, secrets and connections need a new version (and its checks); moving email does not. */
-  const redeploys = varsChanged || secretsChanged || connectionsChanged;
+  // Moving email deploys the settings again when they use the domain.
+  const redeploys =
+    varsChanged ||
+    secretsChanged ||
+    connectionsChanged ||
+    (zoneChanged && settings.email?.fillsSettings === true);
   const ready =
     dirty &&
     !invalid &&
@@ -459,10 +465,9 @@ export function AppSettingsSection({
                         headingLevel="h4"
                       />
                       <Text variant="secondary" size="sm">
-                        Saving sets up the routes on the new domain first, then removes the ones on
-                        the current domain the way an uninstall does. Routing rules name the Worker,
-                        so moving email alone does not deploy it again, and a rollback does not move
-                        email back.
+                        {settings.email.fillsSettings
+                          ? "Saving sets up the routes on the new domain first, then removes the ones on the current domain the way an uninstall does. The app's settings use the domain, so they are deployed again with the new one. A rollback does not move email back."
+                          : "Saving sets up the routes on the new domain first, then removes the ones on the current domain the way an uninstall does. Routing rules name the Worker, so moving email alone does not deploy it again, and a rollback does not move email back."}
                       </Text>
                       <div>
                         <Button

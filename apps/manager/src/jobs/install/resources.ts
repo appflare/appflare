@@ -75,9 +75,16 @@ export async function createResource(
         throw new Error(`no connection string was given for the Hyperdrive binding ${res.binding}`);
       }
       // `POST /hyperdrive/configs` with `{ name, origin }`; Cloudflare
-      // connects to the database before it answers. Query caching keeps its
-      // default (on), as `wrangler hyperdrive create` leaves it.
-      return (await api.hyperdrive.createConfig({ name: res.name, origin })).id;
+      // connects to the database before it answers. Query caching is as the
+      // catalog manifest sets it, else keeps its default (on), as
+      // `wrangler hyperdrive create` leaves it.
+      return (
+        await api.hyperdrive.createConfig({
+          name: res.name,
+          origin,
+          ...(res.caching === undefined ? {} : { caching: { disabled: !res.caching } }),
+        })
+      ).id;
     case "pipelines":
       // A stream comes with its sink and pipeline, and the sink needs the
       // admin's token: `provisionPipelinePhase` (./pipelines.ts) creates all three.

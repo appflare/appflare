@@ -6,6 +6,7 @@ import {
   buildCommandList,
   buildCommandText,
   CATALOG_TOOLCHAINS,
+  type CatalogManifest,
   catalogAuthors,
   catalogHomepage,
   catalogManifestSchema,
@@ -30,6 +31,7 @@ import {
   MAX_VAR_OPTIONS,
   multilineSecretProblems,
   needsWildcardHostname,
+  requirementSchema,
   runsInSandbox,
   SANDBOX_RUN_TIERS,
   SECRET_GENERATE_KINDS,
@@ -41,7 +43,9 @@ import {
   strictRepositoryBuildManifestSchema,
   WILDCARD_REASON_MAX_LENGTH,
 } from "./catalog";
+import { isManagerFeatureRequirement } from "./manager-features";
 import { generateVapidPrivateKey } from "./vapid";
+import { emailScriptName, installedScriptNames } from "./workers";
 
 /** A manifest that states only what has no default. */
 const validManifest = {
@@ -504,6 +508,143 @@ describe("install.emailRouting", () => {
   });
 });
 
+describe("install.emailRouting.worker", () => {
+  const workers = [
+    { name: "dashboard", wranglerConfig: "wrangler.jsonc", primary: true },
+    { name: "api", wranglerConfig: "api/wrangler.jsonc", workersDev: false },
+  ];
+  const mail = (
+    emailRouting: Record<string, unknown>,
+    more: { workers?: unknown; requires?: string[] } = {},
+  ) =>
+    catalogManifestSchema.safeParse({
+      ...validManifest,
+      requires: more.requires ?? ["email-worker"],
+      install: {
+        ...validManifest.install,
+        ...(more.workers === null ? {} : { workers: more.workers ?? workers }),
+        emailRouting: { catchAll: true, ...emailRouting },
+      },
+    });
+  const messages = (result: ReturnType<typeof mail>) =>
+    result.error?.issues.map((i) => `${i.path.join(".")}: ${i.message}`) ?? [];
+
+  it("names one of the entry's Workers, which may be off workers.dev", () => {
+    const parsed = mail({ worker: "api" });
+    expect(messages(parsed)).toEqual([]);
+    expect(parsed.data?.install.emailRouting?.worker).toBe("api");
+    expect(emailScriptName(parsed.data as CatalogManifest, "mailbox")).toBe("mailbox-api");
+    expect(installedScriptNames(parsed.data as CatalogManifest, "mailbox")).toEqual([
+      "mailbox",
+      "mailbox-api",
+    ]);
+  });
+
+  it("means the primary Worker when omitted, and the only one for an entry of one", () => {
+    const primary = mail({}, { requires: [] });
+    expect(emailScriptName(primary.data as CatalogManifest, "mailbox")).toBe("mailbox");
+    expect(mail({ worker: "dashboard" }).success).toBe(true);
+    const single = withRoutingOnly();
+    expect(emailScriptName(single, "inbox")).toBe("inbox");
+    expect(installedScriptNames(single, "inbox")).toEqual(["inbox"]);
+  });
+
+  it("refuses a Worker the entry does not declare, or an entry of one Worker", () => {
+    expect(messages(mail({ worker: "web" }))).toEqual([
+      'install.emailRouting.worker: install.emailRouting.worker names the Worker "web", which install.workers does not declare',
+    ]);
+    expect(messages(mail({ worker: "api" }, { workers: null }))).toEqual([
+      "install.emailRouting.worker: install.emailRouting.worker names one of install.workers; an entry of one Worker receives mail with that Worker, so leave it out",
+    ]);
+    expect(mail({ worker: "API" }).success).toBe(false);
+  });
+
+  it("needs email-worker in requires, so older managers leave the entry out", () => {
+    expect(messages(mail({ worker: "api" }, { requires: [] }))).toEqual([
+      'requires: install.emailRouting.worker names the Worker that receives mail, so requires must list "email-worker": a manager that does not know it would route the mail to the primary Worker',
+    ]);
+    expect(requirementSchema.options).toContain("email-worker");
+    expect(isManagerFeatureRequirement("email-worker")).toBe(true);
+  });
+
+  function withRoutingOnly(): CatalogManifest {
+    return catalogManifestSchema.parse({
+      ...validManifest,
+      install: { ...validManifest.install, emailRouting: { rules: ["inbox"] } },
+    });
+  }
+});
+
+describe("the email placeholders in a manifest", () => {
+  // `null`: the entry receives no email.
+  const entry = (more: Record<string, unknown>, emailRouting: unknown = { catchAll: true }) =>
+    catalogManifestSchema.safeParse({
+      ...validManifest,
+      install: {
+        ...validManifest.install,
+        ...(emailRouting === null ? {} : { emailRouting }),
+      },
+      ...more,
+    });
+  const messages = (result: ReturnType<typeof entry>) =>
+    result.error?.issues.map((i) => `${i.path.join(".")}: ${i.message}`) ?? [];
+
+  it("fill a var's default and a note of an app that receives email", () => {
+    const parsed = entry({
+      requires: ["email-placeholders"],
+      vars: [
+        { name: "AUTH_FROM", label: "Sender", default: "accounts@{{emailDomain}}" },
+        {
+          name: "EMAIL_DOMAINS",
+          label: "Domains",
+          default: '{"{{emailDomain}}":"{{emailZoneId}}"}',
+        },
+      ],
+      postInstall: [{ type: "markdown", content: "Mail to {{emailDomain}} reaches the app." }],
+    });
+    expect(messages(parsed)).toEqual([]);
+  });
+
+  it("need email-placeholders in requires, wherever the manifest uses them", () => {
+    const missing =
+      'requires: vars[0].default uses {{emailDomain}} or {{emailZoneId}}, so requires must list "email-placeholders": a manager that does not fill them in would leave them as written';
+    expect(
+      messages(entry({ vars: [{ name: "FROM", label: "From", default: "a@{{emailDomain}}" }] })),
+    ).toEqual([missing]);
+    expect(
+      messages(entry({ postInstall: [{ type: "markdown", content: "Zone {{emailZoneId}}" }] })),
+    ).toEqual([missing.replace("vars[0].default", "postInstall[0].content")]);
+    expect(
+      messages(
+        entry({
+          install: {
+            ...validManifest.install,
+            emailRouting: { catchAll: true },
+            configPatch: { vars: { FROM: "a@{{emailDomain}}" } },
+          },
+          requires: ["config-patch-values"],
+        }),
+      ),
+    ).toEqual([missing.replace("vars[0].default", "install.configPatch.vars.FROM")]);
+  });
+
+  it("are refused in an entry that receives no email", () => {
+    expect(
+      messages(
+        entry(
+          {
+            requires: ["email-placeholders"],
+            vars: [{ name: "FROM", label: "From", default: "a@{{emailDomain}}" }],
+          },
+          null,
+        ),
+      ),
+    ).toEqual([
+      "vars.0.default: {{emailDomain}} is filled in only for an app that receives email; this entry has no install.emailRouting",
+    ]);
+  });
+});
+
 describe("install.container", () => {
   const withContainer = (container: unknown, tier = "sandbox") =>
     catalogManifestSchema.safeParse({
@@ -660,6 +801,14 @@ describe("install.container", () => {
           anyOf: [
             { not: { required: ["buildEnv"] } },
             { properties: { tier: { not: { const: "self-deploying" } } } },
+          ],
+        },
+        // The Worker that receives mail is one of several.
+        {
+          anyOf: [
+            { not: { required: ["emailRouting"] } },
+            { properties: { emailRouting: { not: { required: ["worker"] } } } },
+            { required: ["workers"] },
           ],
         },
       ],

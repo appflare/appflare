@@ -103,12 +103,14 @@ export type {
   EmailRoutingSettings,
   EmailRoutingStatus,
   UpdateEmailRoutingCatchAllArgs,
+  UpdateEmailRoutingRuleArgs,
 } from "./namespaces/email-routing";
 export { EmailRoutingShapeError } from "./namespaces/email-routing";
 export type {
   CreateHyperdriveConfigArgs,
   HyperdriveConfig,
   HyperdriveOriginInput,
+  PatchHyperdriveConfigArgs,
 } from "./namespaces/hyperdrive";
 export type {
   CreateCatalogSinkArgs,

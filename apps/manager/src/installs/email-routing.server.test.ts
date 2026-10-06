@@ -351,6 +351,54 @@ describe("zone options and preview", () => {
   });
 });
 
+describe("an app of several Workers that names the one receiving its mail", () => {
+  const catalog = async (worker: string | null) =>
+    (
+      await buildArtifactFixture({
+        otherWorkers: [{ name: "mail", workersDev: false }],
+        catalog: {
+          requires: worker === null ? [] : ["email-worker"],
+          install: {
+            packageManager: "pnpm",
+            wranglerConfig: "wrangler.jsonc",
+            emailRouting: { catchAll: true, ...(worker === null ? {} : { worker }) },
+          },
+        },
+      })
+    ).manifest.catalog;
+  const mailCatchAll = {
+    enabled: true,
+    matchers: [{ type: "all" }],
+    actions: [{ type: "worker", value: ["inbox-mail"] }],
+  };
+
+  it("takes a catch-all already on that Worker as the app's own in the install form", async () => {
+    const { api } = setup({ routingEnabled: true, catchAll: mailCatchAll });
+    const preview = await previewEmailRoutingCore(api, {
+      catalog: await catalog("mail"),
+      bindings: [],
+      zoneId: ZONE_ID,
+      workerName: "inbox",
+    });
+    expect(preview.catchAll?.state).toBe("ours");
+    expect(preview.problems).toEqual([]);
+  });
+
+  it("sees the same catch-all as someone else's when the primary Worker receives the mail", async () => {
+    const { api } = setup({ routingEnabled: true, catchAll: mailCatchAll });
+    const preview = await previewEmailRoutingCore(api, {
+      catalog: await catalog(null),
+      bindings: [],
+      zoneId: ZONE_ID,
+      workerName: "inbox",
+    });
+    expect(preview.catchAll?.state).toBe("taken");
+    expect(preview.problems).toEqual([
+      "The catch-all of example.com already sends mail to the Worker inbox-mail. Appflare does not replace it; turn the catch-all off in the Cloudflare dashboard or choose another zone.",
+    ]);
+  });
+});
+
 describe("undoing an install's email routes", () => {
   it("deletes a rule, and counts one already gone as removed", async () => {
     const { api, world } = setup({
@@ -425,6 +473,31 @@ describe("undoing an install's email routes", () => {
       "not-ours",
     );
     expect(world.catchAll).toEqual(off);
+  });
+
+  it("restores a catch-all that delivers to any of the app's Workers", async () => {
+    const { api, world } = setup({
+      catchAll: {
+        enabled: true,
+        matchers: [{ type: "all" }],
+        actions: [{ type: "worker", value: ["inbox-mail"] }],
+      },
+    });
+    expect(
+      await resetEmailCatchAll(api, {
+        zoneId: ZONE_ID,
+        workerName: ["inbox", "inbox-web"],
+        previous: null,
+      }),
+    ).toBe("not-ours");
+    expect(
+      await resetEmailCatchAll(api, {
+        zoneId: ZONE_ID,
+        workerName: ["inbox", "inbox-mail"],
+        previous: null,
+      }),
+    ).toBe("restored");
+    expect(world.catchAll.enabled).toBe(false);
   });
 
   it("restores the catch-all only while it still delivers to the Worker", async () => {

@@ -5,7 +5,7 @@ import {
   type EmailRoutingRule,
   type Zone,
 } from "@appflare/cf-api";
-import type { CatalogEmailRouting, CatalogManifest } from "@appflare/schema";
+import { type CatalogEmailRouting, type CatalogManifest, emailScriptName } from "@appflare/schema";
 import { isPermissionError, listAccountZones, unlessForbidden } from "./custom-domains.server";
 import {
   DEFAULT_CATCH_ALL,
@@ -13,12 +13,14 @@ import {
   describeAction,
   EMAIL_ROUTING_PERMISSION,
   EMAIL_ROUTING_RULES_PER_DOMAIN,
+  emailRuleName,
   isCloudflareMx,
   planEmailRouting,
   routesAddressTo,
   type SavedCatchAll,
   saveCatchAll,
   sendsEmail,
+  workerAction,
 } from "./email-routing";
 
 /**
@@ -305,8 +307,9 @@ export interface EmailRoutingPreview extends EmailRoutingInspection {
 
 /**
  * The preview for the catalog entry `catalog` installed as `workerName` on
- * `zoneId`: the inspection, plus the verified destination addresses when the
- * app sends email. `bindings` are the Worker's bindings from the entry's
+ * `zoneId`: the inspection, for the Worker that receives the app's mail
+ * (`emailScriptName`: an app of several Workers may name one other than the
+ * primary), plus the verified destination addresses when the app sends email. `bindings` are the Worker's bindings from the entry's
  * built artifact; null for an entry that has none yet (a sandbox tier entry
  * is built in this account during the install), which leaves `sendsEmail`
  * unknown.
@@ -327,7 +330,7 @@ export async function previewEmailRoutingCore(
   const inspection = await inspectEmailRouting(api, {
     zoneId: request.zoneId,
     config,
-    workerName: request.workerName,
+    workerName: emailScriptName(request.catalog, request.workerName),
   });
   const sends = request.bindings === null ? null : sendsEmail(request.bindings);
   let destinations: string[] | null = null;
@@ -369,13 +372,19 @@ export type RuleRemoval =
 
 /**
  * Deletes a routing rule Appflare created; one already gone counts as
- * removed. With `workerName`, the rule is read first (one listing of the
- * zone's rules) and left alone when it no longer delivers to that Worker,
- * as `resetEmailCatchAll` does for the catch-all: someone changed it since.
+ * removed. With `workerName` (the app's Worker, or each of an app of several
+ * Workers), the rule is read first (one listing of the zone's rules) and left
+ * alone when it no longer delivers to that Worker, as `resetEmailCatchAll`
+ * does for the catch-all: someone changed it since.
  */
 export async function removeEmailRule(
   api: CloudflareClient,
-  target: { zoneId: string; ruleId: string; workerName?: string; address?: string },
+  target: {
+    zoneId: string;
+    ruleId: string;
+    workerName?: string | readonly string[];
+    address?: string;
+  },
 ): Promise<RuleRemoval> {
   try {
     if (target.workerName !== undefined) {
@@ -405,11 +414,16 @@ export type CatchAllReset = "restored" | "not-ours";
 /**
  * Puts the zone's catch-all back as it was before the install (`previous`;
  * without a record of it, drop and off, as Cloudflare starts a zone), if it
- * is on and still delivers to `workerName`; one changed since is left alone.
+ * is on and still delivers to `workerName` (or one of the app's Workers);
+ * one changed since is left alone.
  */
 export async function resetEmailCatchAll(
   api: CloudflareClient,
-  target: { zoneId: string; workerName: string; previous: SavedCatchAll | null },
+  target: {
+    zoneId: string;
+    workerName: string | readonly string[];
+    previous: SavedCatchAll | null;
+  },
 ): Promise<CatchAllReset> {
   const current = await api.emailRouting.getCatchAll(target.zoneId);
   // One turned off since is left as it is: restoring the earlier state could
@@ -424,6 +438,80 @@ export async function resetEmailCatchAll(
     enabled: previous.enabled,
   });
   return "restored";
+}
+
+/** What pointing a recorded routing rule or catch-all at the receiving Worker did. */
+export type Repoint =
+  /** It delivered to another of the app's Workers, and now delivers to this one. */
+  | { outcome: "pointed"; from: string }
+  /** It already delivers to this Worker. */
+  | { outcome: "already" }
+  /** The rule is gone, or the catch-all is off. */
+  | { outcome: "gone" }
+  /** It no longer is what Appflare set up (`action`: what it does now), so it was left. */
+  | { outcome: "not-ours"; action: string };
+
+/**
+ * Points a routing rule Appflare set up for `address` at `workerName`, the
+ * Worker that receives the app's mail now, when it delivers to another of
+ * the app's Workers (`formerWorkers`): a version of an app of several Workers
+ * that has another one receive its mail. The rule keeps its id, so the
+ * install's record of it stays true. One listing of the zone's rules, and one
+ * update when the rule moves; a rule changed since (off, matching more, or
+ * delivering elsewhere) is left alone.
+ */
+export async function repointEmailRule(
+  api: CloudflareClient,
+  target: {
+    zoneId: string;
+    ruleId: string;
+    address: string;
+    workerName: string;
+    formerWorkers: readonly string[];
+  },
+): Promise<Repoint> {
+  const address = target.address.toLowerCase();
+  const current = (await api.emailRouting.listRules(target.zoneId)).find(
+    (r) => r.id === target.ruleId,
+  );
+  if (current === undefined) return { outcome: "gone" };
+  if (routesAddressTo(current, address, target.workerName)) return { outcome: "already" };
+  if (!routesAddressTo(current, address, target.formerWorkers)) {
+    return { outcome: "not-ours", action: describeRule(current) };
+  }
+  await api.emailRouting.updateRule(target.zoneId, target.ruleId, {
+    name: emailRuleName(target.workerName),
+    enabled: true,
+    matchers: [{ type: "literal", field: "to", value: address }],
+    actions: [workerAction(target.workerName)],
+    ...(current.priority === undefined ? {} : { priority: current.priority }),
+  });
+  return { outcome: "pointed", from: current.actions[0]?.value?.[0] ?? "" };
+}
+
+/**
+ * Points the zone's catch-all at `workerName` when it is on and delivers to
+ * another of the app's Workers (`formerWorkers`), as `repointEmailRule` does
+ * for a rule: one read, and one update when it moves. Its saved state from
+ * before the install is in the install's record, which stays as it is.
+ */
+export async function repointEmailCatchAll(
+  api: CloudflareClient,
+  target: { zoneId: string; workerName: string; formerWorkers: readonly string[] },
+): Promise<Repoint> {
+  const current = await api.emailRouting.getCatchAll(target.zoneId);
+  if (!current.enabled) return { outcome: "gone" };
+  if (deliversTo(current.actions, target.workerName)) return { outcome: "already" };
+  if (!deliversTo(current.actions, target.formerWorkers)) {
+    return { outcome: "not-ours", action: describeAction(current.actions) };
+  }
+  await api.emailRouting.updateCatchAll(target.zoneId, {
+    name: emailRuleName(target.workerName),
+    enabled: true,
+    matchers: [{ type: "all" }],
+    actions: [workerAction(target.workerName)],
+  });
+  return { outcome: "pointed", from: current.actions[0]?.value?.[0] ?? "" };
 }
 
 /** What turning routing back off did. */

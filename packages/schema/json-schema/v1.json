@@ -314,6 +314,13 @@
         "emailRouting": {
           "type": "object",
           "properties": {
+            "worker": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 24,
+              "pattern": "^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$",
+              "description": "For an app of several Workers (`install.workers`): the `name` of the Worker that receives the mail, which must export an `email` handler. Omitted means the primary Worker. Email Routing delivers to a Worker by name, not over HTTP, so a Worker with `workersDev: false` can receive mail. An entry that sets it lists `\"email-worker\"` in `requires`."
+            },
             "catchAll": {
               "default": false,
               "description": "Send every address of the zone that no other rule matches to the app (the zone's catch-all rule). The install refuses when the catch-all already sends mail somewhere else.",
@@ -332,7 +339,7 @@
             }
           },
           "additionalProperties": false,
-          "description": "Email the app receives through Email Routing. The install form asks for one of the account's zones; the install turns Email Routing on there if it is off, then points the listed addresses (and, with `catchAll`, every other address) at the app's Worker, which must export an `email` handler. Uninstalling removes what the install added. Not for the self-deploying tier, whose own installer deploys the app.",
+          "description": "Email the app receives through Email Routing. The install form asks for one of the account's zones; the install turns Email Routing on there if it is off, then points the listed addresses (and, with `catchAll`, every other address) at the app's Worker (the primary one, or the Worker `worker` names), which must export an `email` handler. Uninstalling removes what the install added. `{{emailDomain}}` and `{{emailZoneId}}` give the app the zone's name and id. Not for the self-deploying tier, whose own installer deploys the app.",
           "anyOf": [
             {
               "required": [
@@ -2726,6 +2733,33 @@
               }
             }
           ]
+        },
+        {
+          "anyOf": [
+            {
+              "not": {
+                "required": [
+                  "emailRouting"
+                ]
+              }
+            },
+            {
+              "properties": {
+                "emailRouting": {
+                  "not": {
+                    "required": [
+                      "worker"
+                    ]
+                  }
+                }
+              }
+            },
+            {
+              "required": [
+                "workers"
+              ]
+            }
+          ]
         }
       ]
     },
@@ -2739,7 +2773,7 @@
     },
     "requires": {
       "default": [],
-      "description": "Account capabilities the app needs beyond the free Workers baseline. `\"access\"`: the app goes with Cloudflare Access. The account needs a Zero Trust organization only while the app is protected (always, with `access.mode: \"required\"`), and the value keeps the entry away from managers too old to protect apps. Required with `access.mode: \"required\"` and whenever a var's default uses an Access placeholder.",
+      "description": "Account capabilities the app needs beyond the free Workers baseline. `\"access\"`: the app goes with Cloudflare Access. The account needs a Zero Trust organization only while the app is protected (always, with `access.mode: \"required\"`), and the value keeps the entry away from managers too old to protect apps. Required with `access.mode: \"required\"` and whenever a var's default uses an Access placeholder. Some values name a feature of Appflare instead, which keeps the entry away from managers too old for it: `\"secret-keys\"` (a secret with a `key`), `\"service-props\"` (`props` on a service binding), `\"config-patch-values\"` (a config patch that sets var text or adds Workers AI), `\"email-worker\"` (`install.emailRouting.worker`), `\"email-placeholders\"` (`{{emailDomain}}` or `{{emailZoneId}}` anywhere, or any placeholder in an object key of a JSON var or of service binding `props`) and `\"hyperdrive-caching\"` (`caching` on a Hyperdrive binding).",
       "type": "array",
       "items": {
         "type": "string",
@@ -2754,7 +2788,10 @@
           "access",
           "secret-keys",
           "service-props",
-          "config-patch-values"
+          "config-patch-values",
+          "email-worker",
+          "email-placeholders",
+          "hyperdrive-caching"
         ]
       }
     },
@@ -3242,7 +3279,7 @@
           "content": {
             "type": "string",
             "minLength": 1,
-            "description": "Markdown the manager shows once the app is installed, such as how to sign in the first time. These placeholders are filled in: `{{appUrl}}`, `{{appHostname}}`, `{{workerUrl}}`, `{{workerHostname}}`, `{{workerName}}`, `{{accountId}}`, `{{wildcardHostname}}`. For the address people open, use `{{appUrl}}`, which follows a custom domain. An entry of several Workers names one of them with `{{appUrl:<name>}}` and the like."
+            "description": "Markdown the manager shows once the app is installed, such as how to sign in the first time. These placeholders are filled in: `{{appUrl}}`, `{{appHostname}}`, `{{workerUrl}}`, `{{workerHostname}}`, `{{workerName}}`, `{{accountId}}`, `{{emailDomain}}`, `{{emailZoneId}}`, `{{wildcardHostname}}`. For the address people open, use `{{appUrl}}`, which follows a custom domain. An entry of several Workers names one of them with `{{appUrl:<name>}}` and the like."
           }
         },
         "required": [
@@ -3565,6 +3602,10 @@
                 "type": "string",
                 "minLength": 1,
                 "description": "A sentence under the connection string field, for example which schema it needs."
+              },
+              "caching": {
+                "type": "boolean",
+                "description": "Whether Hyperdrive caches the results of read queries for this database. Omitted keeps Cloudflare's default (on) when the configuration is created, and updates leave the setting as it is. `false` turns caching off, for an app that must read its own writes at once; `true` turns it on. Either value is applied at install and again on every update and settings change, and needs `\"hyperdrive-caching\"` in `requires`."
               }
             },
             "required": [

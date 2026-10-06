@@ -33,6 +33,15 @@ export interface CreateHyperdriveConfigArgs {
     | { disabled?: false; max_age?: number; stale_while_revalidate?: number };
 }
 
+/**
+ * The body of `PATCH /accounts/{id}/hyperdrive/configs/{id}` Appflare
+ * sends: only `caching`, every field of the patch being optional, so the
+ * origin (and its password, which Appflare does not keep) is left as it is.
+ */
+export interface PatchHyperdriveConfigArgs {
+  caching: { disabled: boolean };
+}
+
 /** A Hyperdrive configuration as the API returns it (fields Appflare reads; never a password). */
 export interface HyperdriveConfig {
   id: string;
@@ -81,6 +90,16 @@ export function createHyperdrive(http: HttpApi) {
     /** `GET /hyperdrive/configs/{id}`. */
     getConfig(id: string): Promise<HyperdriveConfig> {
       return http.result("GET", http.acct(`/hyperdrive/configs/${enc(id)}`));
+    },
+
+    /**
+     * `PATCH /hyperdrive/configs/{id}`: changes only what `args` names (query
+     * caching), keeping the origin and its credentials.
+     */
+    patchConfig(id: string, args: PatchHyperdriveConfigArgs): Promise<HyperdriveConfig> {
+      return http.result("PATCH", http.acct(`/hyperdrive/configs/${enc(id)}`), {
+        json: { caching: { disabled: args.caching.disabled } },
+      });
     },
 
     /** `DELETE /hyperdrive/configs/{id}`. */
