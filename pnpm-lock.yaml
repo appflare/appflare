@@ -172,6 +172,9 @@ importers:
 
   apps/manager:
     dependencies:
+      '@appflare/brand':
+        specifier: workspace:*
+        version: link:../../packages/brand
       '@appflare/cf-api':
         specifier: workspace:*
         version: link:../../packages/cf-api

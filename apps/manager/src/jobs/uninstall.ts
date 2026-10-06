@@ -6,6 +6,7 @@ import { removeInstallProtectionLocked, removePublicPathsLocked } from "../acces
 import { withAccessLock } from "../access/toggle.server";
 import { readAccountPlan } from "../account/plan.server";
 import { requireConnection } from "../cloudflare/connection.server";
+import { TOKEN_REFUSALS } from "../cloudflare/token-refusals";
 import { createDb } from "../db/client";
 import { installs, jobs, resources } from "../db/schema";
 import { readSettings, SETTING } from "../db/settings";
@@ -487,7 +488,13 @@ export async function runUninstall(ctx: JobContext): Promise<void> {
         } catch (error) {
           if (saasRefusal(error) !== "missing-permission") throw error;
           throw new JobError(
-            `Cloudflare refused to remove the external domain ${domain.hostname} (${errorMessage(error)}). The token needs ${SSL_PERMISSION} on the gateway domain; add it to the token and retry the uninstall`,
+            TOKEN_REFUSALS.removeDomain(
+              "external domain",
+              domain.hostname,
+              errorMessage(error),
+              SSL_PERMISSION,
+              "the gateway domain",
+            ),
           );
         }
         await orm
@@ -526,7 +533,13 @@ export async function runUninstall(ctx: JobContext): Promise<void> {
         } catch (error) {
           if (!isPermissionError(error)) throw error;
           throw new JobError(
-            `Cloudflare refused to remove the custom domain ${domain.hostname} (${errorMessage(error)}). The token needs Workers Routes: Edit on its zone; add it to the token and retry the uninstall`,
+            TOKEN_REFUSALS.removeDomain(
+              "custom domain",
+              domain.hostname,
+              errorMessage(error),
+              "Workers Routes: Edit",
+              "its zone",
+            ),
           );
         }
         log.info(detachMessage(domain.hostname, outcome));
@@ -547,7 +560,13 @@ export async function runUninstall(ctx: JobContext): Promise<void> {
         } catch (error) {
           if (!isPermissionError(error)) throw error;
           throw new JobError(
-            `Cloudflare refused to remove the wildcard domain *.${domain.hostname} (${errorMessage(error)}). The token needs Workers Routes: Edit and DNS: Edit on its zone; add them to the token and retry the uninstall`,
+            TOKEN_REFUSALS.removeDomain(
+              "wildcard domain",
+              `*.${domain.hostname}`,
+              errorMessage(error),
+              "Workers Routes: Edit and DNS: Edit",
+              "its zone",
+            ),
           );
         }
         log.info(wildcardDetachMessage(domain.hostname, done));

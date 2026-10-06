@@ -62,11 +62,19 @@ export function isManagerWorkersDevHost(hostname: string, workerName: string): b
 interface AddressRows {
   managerHostname: string | null;
   workerName: string | null;
+  /** The custom domain Appflare moves to once it serves (pending-address.server.ts). */
+  pendingHostname: string | null;
 }
 
 export interface AddressRedirect {
   /** The 302 to send instead, or null to serve the request here. */
   check(request: Request, db: D1Database): Promise<Response | null>;
+  /**
+   * Whether the last read found a pending address while Appflare has none
+   * of its own: page requests at workers.dev then look whether it serves.
+   * Known only from a read `check` made; no read of its own.
+   */
+  pendingSeen(): boolean;
   /** Drops the cached address so the next request reads it again. */
   invalidate(): void;
 }
@@ -87,13 +95,14 @@ export function createAddressRedirect(
   async function rows(db: D1Database): Promise<AddressRows> {
     if (cached !== null && now() < cached.expiresAt) return cached.rows;
     const { results } = await db
-      .prepare("SELECT key, value FROM settings WHERE key IN (?1, ?2)")
-      .bind(SETTING.managerHostname, SETTING.workerName)
+      .prepare("SELECT key, value FROM settings WHERE key IN (?1, ?2, ?3)")
+      .bind(SETTING.managerHostname, SETTING.workerName, SETTING.managerPendingHostname)
       .all<{ key: string; value: string }>();
     const s = new Map(results.map((r) => [r.key, r.value]));
     const read: AddressRows = {
       managerHostname: s.get(SETTING.managerHostname) || null,
       workerName: s.get(SETTING.workerName) || null,
+      pendingHostname: s.get(SETTING.managerPendingHostname) || null,
     };
     cached = { rows: read, expiresAt: now() + ttlMs };
     return read;
@@ -117,6 +126,13 @@ export function createAddressRedirect(
         status: 302,
         headers: { location: target, "cache-control": "no-store" },
       });
+    },
+    pendingSeen() {
+      return (
+        cached !== null &&
+        cached.rows.managerHostname === null &&
+        cached.rows.pendingHostname !== null
+      );
     },
     invalidate() {
       cached = null;

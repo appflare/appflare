@@ -12,6 +12,7 @@ import {
 import { and, eq, isNull } from "drizzle-orm";
 import { z } from "zod";
 import { invalidateScriptsCache } from "../cloudflare/scripts-cache.server";
+import { TOKEN_REFUSALS } from "../cloudflare/token-refusals";
 import {
   EXTERNAL_DOMAINS_FEATURE,
   permissionName,
@@ -177,9 +178,7 @@ export async function readGatewayZone(api: CloudflareClient, zoneId: string): Pr
     zone = await api.zones.getZone(zoneId);
   } catch (error) {
     if (isPermissionError(error) || (error instanceof CloudflareApiError && error.status === 404)) {
-      throw new GatewayError(
-        "The Cloudflare token cannot see that domain. It needs Zone: Read, DNS: Edit and Workers Routes: Edit on it.",
-      );
+      throw new GatewayError(TOKEN_REFUSALS.gatewayZoneHidden);
     }
     throw error;
   }
@@ -207,9 +206,7 @@ async function needing<T>(permission: string, zoneName: string, run: () => Promi
       );
     }
     if (isPermissionError(error)) {
-      throw new GatewayError(
-        `Cloudflare refused a call on ${zoneName}: the token needs ${permission} on it. Edit the token in the Cloudflare dashboard to add it, then try again.`,
-      );
+      throw new GatewayError(TOKEN_REFUSALS.gatewayCall(zoneName, permission));
     }
     throw error;
   }

@@ -6,6 +6,8 @@ import {
   type Zone,
 } from "@appflare/cf-api";
 import { type CatalogEmailRouting, type CatalogManifest, emailScriptName } from "@appflare/schema";
+import type { ConnectionKind } from "../cloudflare/connection-view";
+import { TOKEN_REFUSALS } from "../cloudflare/token-refusals";
 import { isPermissionError, listAccountZones, unlessForbidden } from "./custom-domains.server";
 import {
   DEFAULT_CATCH_ALL,
@@ -156,7 +158,7 @@ export async function inspectEmailRouting(
   } catch (error) {
     if (isPermissionError(error) || isGone(error)) {
       addMissing(result.missing, EMAIL_ROUTING_PERMISSION.zone);
-      result.problems.push("The Cloudflare token cannot see that zone.");
+      result.problems.push(TOKEN_REFUSALS.emailZoneHidden);
       return result;
     }
     throw error;
@@ -275,6 +277,8 @@ export interface EmailZoneOptions {
   inactiveZones: string[];
   /** The token sees no zone: it lacks Zone: Read, or the account has none. */
   noZones: boolean;
+  /** How Appflare connects, for how to add what is missing; an API token when left out. */
+  connection?: ConnectionKind;
 }
 
 export async function getEmailZoneOptionsCore(api: CloudflareClient): Promise<EmailZoneOptions> {
@@ -303,6 +307,8 @@ export interface EmailRoutingPreview extends EmailRoutingInspection {
    * yet) or the token cannot list them.
    */
   destinations: string[] | null;
+  /** How Appflare connects, for how to add what is missing; an API token when left out. */
+  connection?: ConnectionKind;
 }
 
 /**
@@ -340,7 +346,7 @@ export async function previewEmailRoutingCore(
     );
     if (listed === null) {
       inspection.warnings.push(
-        `The token cannot list the account's destination addresses (it needs ${EMAIL_ROUTING_PERMISSION.addresses}), so this page cannot show which ones are verified.`,
+        TOKEN_REFUSALS.destinationAddresses(EMAIL_ROUTING_PERMISSION.addresses),
       );
     } else {
       destinations = listed.filter((a) => a.verified != null).map((a) => a.email);
@@ -360,7 +366,11 @@ export async function previewEmailRoutingCore(
  */
 export function permissionMessage(error: unknown, what: string, permission: string): string | null {
   if (!isPermissionError(error)) return null;
-  return `Cloudflare refused to ${what} (${error instanceof Error ? error.message : String(error)}). The token needs ${permission} on the zone; add it to the token and try again`;
+  return TOKEN_REFUSALS.emailRoutingCall(
+    what,
+    error instanceof Error ? error.message : String(error),
+    permission,
+  );
 }
 
 /** What removing a recorded routing rule did. */

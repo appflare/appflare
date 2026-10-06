@@ -7,6 +7,7 @@ import { migrations } from "../db/migrations/index";
 import { SETTING, writeSettings } from "../db/settings";
 import type { ManagerAddressDeps } from "../domains/manager-address.server";
 import type { MoveAddressJobParams } from "../domains/move-address-job";
+import { handoffProof } from "../handoff/handoff-proof";
 import { ACC, TOKEN } from "./fake-account";
 
 /**
@@ -52,6 +53,12 @@ export interface World {
   certificateAfter: number;
   /** PUT /access/apps answers with no policies (a policy must be made again). */
   dropPolicies: boolean;
+  /**
+   * The handoff hash the Worker at the new hostname holds: `/api/handoff`
+   * answers with the proof for it. Null: it answers 404, as a manager not
+   * installed from the browser does.
+   */
+  handoffHash: string | null;
   calls: string[];
   bodies: Array<{ key: string; body: unknown }>;
   probes: string[];
@@ -66,6 +73,7 @@ export function fakeWorld(over: Partial<World> = {}) {
     health: { kind: "serve", version: VERSION },
     certificateAfter: 0,
     dropPolicies: false,
+    handoffHash: null,
     calls: [],
     bodies: [],
     probes: [],
@@ -163,6 +171,17 @@ export function fakeWorld(over: Partial<World> = {}) {
     }
     if (world.health.kind === "edge-1042") {
       return new Response("error code: 1042", { status: 404 });
+    }
+    if (url.pathname === "/api/handoff") {
+      const challenge = url.searchParams.get("challenge") ?? "";
+      return world.handoffHash === null
+        ? Response.json({ error: "not_found" }, { status: 404 })
+        : Response.json({
+            app: "appflare",
+            version: world.health.version,
+            state: "done",
+            proof: await handoffProof(world.handoffHash, challenge),
+          });
     }
     return Response.json({ version: world.health.version, db: "ok" });
   };

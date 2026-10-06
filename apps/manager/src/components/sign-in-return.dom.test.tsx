@@ -29,9 +29,11 @@ const auth = vi.hoisted(() => ({
   signInPasskey: vi.fn(async () => ({ error: null as unknown })),
   requestPasswordReset: vi.fn(async (_body: unknown) => ({ error: null as unknown })),
   $fetch: vi.fn(async (_path: string, _opts: unknown) => ({ error: null as unknown })),
+  addPasskey: vi.fn(async (_body: unknown) => ({ error: null as unknown })),
 }));
 vi.mock("../auth/client", () => ({
   authClient: {
+    passkey: { addPasskey: auth.addPasskey },
     signIn: { email: auth.signInEmail, passkey: auth.signInPasskey },
     requestPasswordReset: auth.requestPasswordReset,
     resetPassword: vi.fn(async () => ({ error: null })),
@@ -43,10 +45,14 @@ vi.mock("../server/setup.functions", () => ({
   getSetupStatus: async () => ({ needsSetup: setup.needsSetup }),
 }));
 vi.mock("../server/version.functions", () => ({ loadAppflareVersion: async () => "1.0.0" }));
+/** The signed-in user's passkeys, as the sign-in page asks after a move. */
+const passkeys = vi.hoisted(() => ({ rows: [] as Array<{ id: string; worksAt: string | null }> }));
+vi.mock("../server/passkeys.functions", () => ({ listPasskeys: async () => passkeys.rows }));
 vi.mock("../server/recovery.functions", () => ({
   getPasswordRecoveryOptions: async () => ({ emailReset: true }),
 }));
 
+const { MOVED_HERE_NOTE, PASSKEY_OFFER } = await import("../domains/moved-note");
 const { Route: Login } = await import("../routes/login");
 const { Route: ForgotPassword } = await import("../routes/forgot-password");
 const { Route: ResetPassword } = await import("../routes/reset-password");
@@ -73,7 +79,10 @@ beforeEach(() => {
   auth.signInPasskey.mockClear();
   auth.requestPasswordReset.mockClear();
   auth.$fetch.mockClear();
+  auth.addPasskey.mockClear();
   setup.needsSetup = false;
+  passkeys.rows = [];
+  page.context = { version: "1.0.0", emailReset: true };
   (globalThis as { PublicKeyCredential?: unknown }).PublicKeyCredential = () => {};
 });
 
@@ -159,6 +168,45 @@ describe("the sign-in page with a page to return to", () => {
     await expect(beforeLoad({ search: { returnTo: "/install/cut" } })).rejects.toEqual({
       redirectTo: { href: "/setup?returnTo=%2Finstall%2Fcut" },
     });
+  });
+});
+
+describe("the sign-in page right after Appflare moved here", () => {
+  it("says why, then offers a passkey for this address before going on", async () => {
+    page.context = { version: "1.0.0", movedHere: true };
+    passkeys.rows = [{ id: "p1", worksAt: "appflare.ada.workers.dev" }];
+    open(Login, { returnTo: "/catalog" });
+    expect(container.textContent).toContain(MOVED_HERE_NOTE);
+    await submit(document.querySelector("form"));
+    expect(page.navigate).not.toHaveBeenCalled();
+    expect(container.textContent).toContain(PASSKEY_OFFER.description);
+    await act(async () => button("Add a passkey").click());
+    expect(auth.addPasskey).toHaveBeenCalledWith({ name: PASSKEY_OFFER.name });
+    expect(page.navigate).toHaveBeenCalledWith({ href: "/catalog", replace: true });
+  });
+
+  it("goes on with Not now", async () => {
+    page.context = { version: "1.0.0", movedHere: true };
+    open(Login, {});
+    await submit(document.querySelector("form"));
+    await act(async () => button("Not now").click());
+    expect(auth.addPasskey).not.toHaveBeenCalled();
+    expect(page.navigate).toHaveBeenCalledWith({ href: "/", replace: true });
+  });
+
+  it("goes on at once when a passkey works here already", async () => {
+    page.context = { version: "1.0.0", movedHere: true };
+    passkeys.rows = [{ id: "p2", worksAt: null }];
+    open(Login, {});
+    await submit(document.querySelector("form"));
+    expect(page.navigate).toHaveBeenCalledWith({ href: "/", replace: true });
+  });
+
+  it("offers nothing when Appflare did not move", async () => {
+    open(Login, {});
+    expect(container.textContent).not.toContain(MOVED_HERE_NOTE);
+    await submit(document.querySelector("form"));
+    expect(page.navigate).toHaveBeenCalledWith({ href: "/", replace: true });
   });
 });
 

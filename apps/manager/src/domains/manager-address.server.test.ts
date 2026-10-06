@@ -562,6 +562,7 @@ describe("readManagerAddress", () => {
       ],
       movingJobId: null,
       movingTo: null,
+      pending: null,
     });
     w.world.domains.delete("dom-0");
     expect((await readManagerAddress(deps(w))).serving).toBe(false);

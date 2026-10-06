@@ -1,3 +1,4 @@
+import { AppflareLoader } from "@appflare/brand/loader";
 import { Banner, Button, LayerDialog, Link, LinkButton, Text } from "@cloudflare/kumo";
 import { ArrowSquareOutIcon, ArrowUUpLeftIcon, GlobeIcon } from "@phosphor-icons/react";
 import { useRouter } from "@tanstack/react-router";
@@ -8,10 +9,12 @@ import {
   getManagerAddress,
   getManagerAddressOptions,
   type ManagerAddress,
+  retryPendingMove,
   revertManagerAddress,
+  stayAtWorkersDev,
 } from "../domains/manager-address.functions";
-import { AppflareLoader } from "./appflare-loader";
-import { BusyMark, busyActionProps } from "./busy-button";
+import { PENDING_ROW } from "../domains/moved-note";
+import { BusyButton, BusyMark, busyActionProps } from "./busy-button";
 import { ConfirmDialog } from "./confirm-dialog";
 import { TokenPermissionsBanner } from "./domain-dialog-parts";
 import {
@@ -26,7 +29,7 @@ import {
   useAddressFields,
   useAddressMove,
 } from "./manager-address-move";
-import { BANNER_ICON, ErrorMessageBanner } from "./message-text";
+import { BANNER_ICON, ErrorMessageBanner, TechnicalDetails } from "./message-text";
 import { Section, SectionBody, SectionRow, SectionRows } from "./section";
 import { settingsSection } from "./settings-links";
 import { Timestamp } from "./timestamp";
@@ -104,6 +107,7 @@ export function ManagerAddressSection({ view }: { view: AddressView }) {
       {address !== null && (
         <SectionRows>
           <CurrentAddressRow address={address} onMoved={setMovedTo} />
+          {address.pending != null && moving === null && <PendingRow pending={address.pending} />}
           {address.serving === false && address.hostname !== null && (
             <SectionBody>
               <Banner
@@ -189,6 +193,68 @@ function CurrentAddressRow({
         </>
       }
     />
+  );
+}
+
+/**
+ * The domain the install chose, while Appflare waits to move there: one
+ * line, and Stay at workers.dev. When the move failed, one line saying so
+ * (why, under Details), Try again (one move, now) and Stay at workers.dev.
+ */
+function PendingRow({ pending }: { pending: NonNullable<ManagerAddress["pending"]> }) {
+  const router = useRouter();
+  const [busy, setBusy] = useState<"retry" | "stay" | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const failed = pending.failedAt !== null;
+
+  async function run(which: "retry" | "stay") {
+    setBusy(which);
+    setError(null);
+    try {
+      if (which === "retry") {
+        const moved = await retryPendingMove({ data: {} });
+        if (!moved.ok) setError(`${moved.hostname} has DNS records the move would replace.`);
+      } else {
+        await stayAtWorkersDev();
+      }
+      // A move that started shows its progress; staying drops this row.
+      await router.invalidate();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not do that. Try again.");
+    }
+    setBusy(null);
+  }
+
+  return (
+    <SectionRow
+      title={failed ? PENDING_ROW.failed(pending.hostname) : pending.hostname}
+      {...(failed ? {} : { description: PENDING_ROW.waiting })}
+      action={
+        <>
+          {failed && (
+            <BusyButton
+              pending={busy === "retry"}
+              disabled={busy !== null}
+              variant="primary"
+              onClick={() => void run("retry")}
+            >
+              Try again
+            </BusyButton>
+          )}
+          <BusyButton
+            pending={busy === "stay"}
+            disabled={busy !== null}
+            variant="secondary"
+            onClick={() => void run("stay")}
+          >
+            Stay at workers.dev
+          </BusyButton>
+        </>
+      }
+    >
+      {failed && pending.failure !== null && <TechnicalDetails message={pending.failure} />}
+      {error !== null && <ErrorMessageBanner message={error} />}
+    </SectionRow>
   );
 }
 

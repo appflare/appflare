@@ -17,6 +17,7 @@ import {
 import { and, eq, inArray, isNotNull, isNull } from "drizzle-orm";
 import { MANIFEST_TTL_SECONDS, manifestCacheKey } from "../../catalog/app-manifest.server";
 import type { ReleaseAssets } from "../../catalog/release-assets";
+import { TOKEN_REFUSALS } from "../../cloudflare/token-refusals";
 import { appPlace } from "../../components/app-links";
 import type { Database } from "../../db/client";
 import { type RESOURCE_KINDS, resources } from "../../db/schema";
@@ -543,9 +544,7 @@ export async function explainHyperdriveRefusal<T>(call: () => Promise<T>): Promi
   } catch (error) {
     if (error instanceof CloudflareApiError && (error.status === 401 || error.status === 403)) {
       const said = error.errors.map((e) => e.message).join("; ") || `HTTP ${error.status}`;
-      throw new JobError(
-        `Cloudflare refused the Hyperdrive call (${said}). The API token needs ${HYPERDRIVE_PERMISSION}, an optional permission for apps with a database elsewhere: add it to the token in the Cloudflare dashboard, then try again`,
-      );
+      throw new JobError(TOKEN_REFUSALS.hyperdrive(said, HYPERDRIVE_PERMISSION));
     }
     throw error;
   }

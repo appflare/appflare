@@ -244,6 +244,11 @@ export function createJobSteps(ctx: JobContext, jobId: string): JobSteps {
     if (error instanceof Error) error.message = await inConnectionWordsOf(db, error.message);
   }
 
+  /** The same for the step's log lines (a warning that a permission is missing), before they are written. */
+  async function inSignInLines(log: StepLog): Promise<void> {
+    for (const line of log.lines) line.message = await inConnectionWordsOf(db, line.message);
+  }
+
   async function runStep<T extends object>(
     name: string,
     body: (tools: StepTools) => Promise<T>,
@@ -273,6 +278,7 @@ export function createJobSteps(ctx: JobContext, jobId: string): JobSteps {
               url,
             ),
         });
+        await inSignInLines(log);
         await log.flush(db, jobId);
         return value;
       } catch (error) {
@@ -284,6 +290,7 @@ export function createJobSteps(ctx: JobContext, jobId: string): JobSteps {
             ? new NonRetryableError(`${errorMessage(failure)} ${OWN_LIMIT_NOTE}`)
             : failure;
         log.error(`${name} failed: ${errorMessage(own)}`);
+        await inSignInLines(log);
         await log.flush(db, jobId);
         throw own;
       }

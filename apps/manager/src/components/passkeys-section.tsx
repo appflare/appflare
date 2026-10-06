@@ -8,6 +8,7 @@ import {
   passkeyRegistrationErrorMessage,
   passkeysSupported,
 } from "../auth/passkey-errors";
+import { passkeysAfterMoveLine } from "../domains/moved-note";
 import { type PasskeyRow, removePasskey } from "../server/passkeys.functions";
 import { passkeyNameInput } from "../server/schemas";
 import { BusyMark, busyActionProps } from "./busy-button";
@@ -23,16 +24,35 @@ import { Timestamp } from "./timestamp";
  * passkey prompt; removing one only deletes it here, so the device or
  * password manager keeps an unusable copy until the user deletes it there too.
  */
-export function PasskeysSection({ passkeys }: { passkeys: PasskeyRow[] }) {
+export function PasskeysSection({
+  passkeys,
+  afterMove = null,
+}: {
+  passkeys: PasskeyRow[];
+  /**
+   * The domain Appflare is about to move to, while this page is at its
+   * workers.dev address: a passkey made here would work only here, so none
+   * is offered; one line says when instead.
+   */
+  afterMove?: string | null;
+}) {
   const supported = passkeysSupported();
+  const canAdd = supported && afterMove === null;
   return (
     <Section
       {...settingsSection("users", "passkeys")}
       description="Sign in with your fingerprint, face, screen lock, or a security key instead of your password. Your password keeps working."
       // With no passkey yet, the empty state offers it instead.
-      action={supported && passkeys.length > 0 ? <AddPasskeyDialog /> : null}
+      action={canAdd && passkeys.length > 0 ? <AddPasskeyDialog /> : null}
     >
-      {!supported && (
+      {afterMove !== null && (
+        <SectionBody>
+          <Text variant="secondary" as="p">
+            {passkeysAfterMoveLine(afterMove)}
+          </Text>
+        </SectionBody>
+      )}
+      {afterMove === null && !supported && (
         <SectionBody>
           <Banner
             variant="alert"
@@ -43,14 +63,16 @@ export function PasskeysSection({ passkeys }: { passkeys: PasskeyRow[] }) {
         </SectionBody>
       )}
       {passkeys.length === 0 ? (
-        <SectionBody>
-          <SectionEmpty
-            icon={<FingerprintIcon size={48} className="text-kumo-inactive" />}
-            title="No passkeys yet"
-            description="Add a passkey to sign in without typing your password."
-            contents={supported ? <AddPasskeyDialog /> : undefined}
-          />
-        </SectionBody>
+        afterMove !== null ? null : (
+          <SectionBody>
+            <SectionEmpty
+              icon={<FingerprintIcon size={48} className="text-kumo-inactive" />}
+              title="No passkeys yet"
+              description="Add a passkey to sign in without typing your password."
+              contents={supported ? <AddPasskeyDialog /> : undefined}
+            />
+          </SectionBody>
+        )
       ) : (
         <SectionTable label="Passkeys" minWidth="sm" stickyFirstColumn>
           <Table.Header>

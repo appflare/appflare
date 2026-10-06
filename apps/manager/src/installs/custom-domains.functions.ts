@@ -3,6 +3,8 @@ import { createServerFn } from "@tanstack/react-start";
 import { accessAddressSync } from "../access/address-sync.server";
 import { probeHeadersFromEnv } from "../access/probe-credentials.server";
 import { CfTokenNotConfiguredError, getCfClient } from "../cloudflare/client.server";
+import { connectionKindOf } from "../cloudflare/connection.server";
+import { inConnectionWordsOf } from "../cloudflare/sign-in-words.server";
 import { requireRole } from "../server/auth.server";
 import { addCustomDomainInput, customDomainInput } from "./custom-domain-input";
 import {
@@ -27,7 +29,7 @@ async function asUserError<T>(run: () => Promise<T>): Promise<T> {
     return await run();
   } catch (error) {
     if (error instanceof CustomDomainError || error instanceof CfTokenNotConfiguredError) {
-      throw new Error(error.message);
+      throw new Error(await inConnectionWordsOf(env.DB, error.message));
     }
     throw error;
   }
@@ -52,9 +54,16 @@ export const checkInstallHostname = createServerFn({ method: "GET" })
   .validator(installHostnameInput)
   .handler(async ({ data }): Promise<InstallHostnameAnswer> => {
     await requireRole("admin");
-    return asUserError(async () =>
-      checkInstallHostnameCore({ db: env.DB, api: await getCfClient(env) }, data),
-    );
+    return asUserError(async () => {
+      const answer = await checkInstallHostnameCore(
+        { db: env.DB, api: await getCfClient(env) },
+        data,
+      );
+      // How to add the missing permission depends on how Appflare connects.
+      return answer.state === "cannot-attach"
+        ? { ...answer, connection: await connectionKindOf(env.DB) }
+        : answer;
+    });
   });
 
 /** Attaches a hostname to the install's Worker, or reports the DNS records it would replace. */

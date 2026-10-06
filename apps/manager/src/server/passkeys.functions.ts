@@ -8,6 +8,7 @@ import {
   withPasskeyHosts,
 } from "../auth/passkeys.server";
 import { readPasskeyHosts } from "../domains/manager-address.server";
+import { passkeyMoveNotice } from "../domains/pending-address.server";
 import { currentAuth, requireSession } from "./auth.server";
 import { removePasskeyInput } from "./schemas";
 import { authErrorMessage } from "./users.server";
@@ -33,6 +34,18 @@ export const listPasskeys = createServerFn({ method: "GET" }).handler(
       rows.map((r) => r.id),
     );
     return withPasskeyHosts(rows, hosts, new URL(request.url).hostname);
+  },
+);
+
+/**
+ * The domain Appflare is about to move to, while this request comes to its
+ * workers.dev address: a passkey made here would work only here, so none is
+ * offered until the move. Null otherwise.
+ */
+export const getPasskeyMoveNotice = createServerFn({ method: "GET" }).handler(
+  async (): Promise<string | null> => {
+    await requireSession();
+    return passkeyMoveNotice(env.DB, new URL(getRequest().url).hostname);
   },
 );
 

@@ -1,3 +1,4 @@
+import { AppflareLoader } from "@appflare/brand/loader";
 import { Badge, Banner, Button, Checkbox, LayerDialog, LinkButton, Text } from "@cloudflare/kumo";
 import { ArrowsClockwiseIcon, LockKeyIcon, LockKeyOpenIcon } from "@phosphor-icons/react";
 import { useRouter } from "@tanstack/react-router";
@@ -12,7 +13,6 @@ import {
   turnOffAccess,
   turnOnAccess,
 } from "../server/access.functions";
-import { AppflareLoader } from "./appflare-loader";
 import { BusyButton, BusyMark, busyActionProps } from "./busy-button";
 import { ConfirmDialog } from "./confirm-dialog";
 import { DescriptionItem, DescriptionList } from "./description-list";

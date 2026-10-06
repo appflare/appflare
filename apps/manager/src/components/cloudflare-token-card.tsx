@@ -19,34 +19,39 @@ import {
 import { useRouter } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 import {
-  CONNECTION_KIND_LABELS,
+  CONNECTION_COPY,
   type ConnectionKind,
   type ConnectionView,
-  connectedWith,
   RECONNECT_COPY,
 } from "../cloudflare/connection-view";
 import { startCloudflareReconnect } from "../cloudflare/reconnect.functions";
 import { RECONNECT_OUTCOME_COPY, type ReconnectOutcome } from "../cloudflare/reconnect-outcome";
+import { scopeReasons } from "../cloudflare/scope-reasons";
 import type { TokenStatus } from "../server/token.functions";
 import { appflareDevLink } from "./appflare-dev-link";
 import { BusyButton } from "./busy-button";
 import { CloudflareTokenForm, type SavedToken } from "./cloudflare-token-form";
 import { DescriptionItem, DescriptionList } from "./description-list";
 import { DocsLink } from "./docs-link";
-import { ErrorMessageBanner, StatusRegion, SuccessBanner } from "./message-text";
+import {
+  ACTIONS_UNDER_ON_PHONE,
+  ErrorMessageBanner,
+  StatusRegion,
+  SuccessBanner,
+  TOUCH_TARGET,
+} from "./message-text";
 import { Section, SectionBody } from "./section";
 import { settingsLink, settingsSection } from "./settings-links";
 import { Timestamp } from "./timestamp";
 
 /**
- * The account settings' Cloudflare connection: the account and Worker the
- * manager runs as, how it connects (Cloudflare sign-in or an API token),
- * since when, and whether that works; the technical details on demand; and,
- * for admins, Reconnect Cloudflare (while the connection needs it) or
- * Change how Appflare connects (while it works), which offer the same two
- * ways. A connection that needs reconnecting says so first, in plain words,
- * with what still works. A quiet link makes appflare.dev's Install buttons
- * open this manager.
+ * The account settings' Cloudflare connection. At a glance: the account,
+ * how Appflare connects (Cloudflare sign-in or an API token), and whether
+ * that works (the badge). Everything else (ids, since when, the last
+ * problem, the permissions, the appflare.dev link) is under Details. For
+ * admins, Reconnect Cloudflare (while the connection needs it) or Change how
+ * Appflare connects (while it works), which offer the same two ways. A
+ * connection that needs reconnecting says so first, in one line.
  */
 export function CloudflareTokenCard({
   status,
@@ -64,7 +69,6 @@ export function CloudflareTokenCard({
   /** Opens the reconnect dialog at once (Home's Reconnect Cloudflare). */
   startOpen?: boolean;
 }) {
-  const appflareDev = appflareDevLink(managerUrl);
   const connection = status.connection;
   const needsReconnect = connection.state === "needs_reconnect";
   const [dialogOpen, setDialogOpen] = useState(false);
@@ -77,7 +81,7 @@ export function CloudflareTokenCard({
       {...settingsSection("account", "connection")}
       titleAction={<DocsLink topic="tokenPermissions" />}
       badge={<ConnectionBadge connection={connection} />}
-      description="The Cloudflare account Appflare manages, and how Appflare connects to it."
+      description={CONNECTION_COPY.cardDescription}
       action={
         canRotate ? (
           <ReconnectDialog connection={connection} open={dialogOpen} onOpenChange={setDialogOpen} />
@@ -88,80 +92,17 @@ export function CloudflareTokenCard({
         {outcome !== null && (
           <OutcomeBanner outcome={outcome} onRetry={canRotate ? () => setDialogOpen(true) : null} />
         )}
-        {needsReconnect && <ReconnectNotice connection={connection} canRotate={canRotate} />}
+        {needsReconnect && <ReconnectNotice canRotate={canRotate} />}
         <DescriptionList>
           <DescriptionItem label="Account">{status.accountName ?? "Unknown"}</DescriptionItem>
-          <DescriptionItem label="Account ID">
-            <span className="break-all">
-              <Text variant="mono" as="span">
-                {status.accountId ?? "Unknown"}
-              </Text>
-            </span>
+          <DescriptionItem label={needsReconnect ? "Was connected with" : "Connected with"}>
+            {CONNECTION_COPY.kindName[connection.kind]}
           </DescriptionItem>
-          <DescriptionItem label="Worker">
-            <Text variant="mono" as="span">
-              {status.workerName ?? "Unknown"}
-            </Text>
-          </DescriptionItem>
-          <DescriptionItem label="Connection">
-            {needsReconnect
-              ? `Was connected with ${CONNECTION_KIND_LABELS[connection.kind]}`
-              : connectedWith(connection.kind)}
-          </DescriptionItem>
-          <DescriptionItem label="Since">
-            <Timestamp
-              iso={
-                connection.kind === "api_token"
-                  ? (status.verifiedAt ?? connection.connectedSince)
-                  : connection.connectedSince
-              }
-              fallback="Unknown"
-            />
-          </DescriptionItem>
-          <DescriptionItem label="State">{stateWords(connection)}</DescriptionItem>
-          {!needsReconnect && connection.problem !== null && (
-            <DescriptionItem label="Last problem">
-              {connection.problem}{" "}
-              {connection.problemAt !== null && (
-                <Text variant="secondary" as="span">
-                  (<Timestamp iso={connection.problemAt} />)
-                </Text>
-              )}
-            </DescriptionItem>
-          )}
         </DescriptionList>
-        {connection.oauth !== null ? (
-          <AuthorizationDetails oauth={connection.oauth} />
-        ) : (
-          <TokenDetails status={status} />
-        )}
-        {appflareDev !== null && (
-          <div className="grid gap-0.5">
-            <Text size="sm" as="p">
-              <Link href={appflareDev} target="_blank" rel="noreferrer">
-                Use this Appflare on appflare.dev
-                <ArrowSquareOutIcon className="ml-1 inline" aria-hidden />
-              </Link>
-            </Text>
-            <Text variant="secondary" size="sm" as="p">
-              Remembers this Appflare in your browser so Install buttons on appflare.dev open here.
-            </Text>
-          </div>
-        )}
+        <ConnectionDetails status={status} managerUrl={managerUrl ?? null} />
       </SectionBody>
     </Section>
   );
-}
-
-/** The connection's state in a few plain words. */
-function stateWords(connection: ConnectionView): string {
-  if (connection.state === "needs_reconnect") {
-    return "Needs reconnecting. Appflare cannot change anything in the account until then; your apps keep running.";
-  }
-  if (!connection.ready) return "Saved. Appflare is redeploying itself to use it.";
-  return connection.kind === "oauth"
-    ? "Working. Appflare renews its access by itself."
-    : "Working.";
 }
 
 function ConnectionBadge({ connection }: { connection: ConnectionView }) {
@@ -193,11 +134,12 @@ function OutcomeBanner({
       <Banner
         variant={notice ? "alert" : "error"}
         icon={notice ? <WarningIcon weight="fill" /> : <WarningCircleIcon weight="fill" />}
+        className={ACTIONS_UNDER_ON_PHONE}
         title={copy.title}
         description={copy.description}
         action={
           copy.retry && onRetry !== null ? (
-            <Button variant="secondary" size="sm" onClick={onRetry}>
+            <Button variant="secondary" size="sm" className={TOUCH_TARGET} onClick={onRetry}>
               Start again
             </Button>
           ) : undefined
@@ -207,114 +149,167 @@ function OutcomeBanner({
   );
 }
 
-/** What happened, what still works, and where reconnecting happens. */
-function ReconnectNotice({
-  connection,
-  canRotate,
-}: {
-  connection: ConnectionView;
-  canRotate: boolean;
-}) {
+/** One line: what still works, and who reconnects. Why it happened is under Details. */
+function ReconnectNotice({ canRotate }: { canRotate: boolean }) {
   return (
     <Banner
       variant="error"
       icon={<WarningIcon weight="fill" />}
       title={RECONNECT_COPY.title}
-      description={
-        <span className="grid gap-1">
-          {connection.problem !== null && <span>{connection.problem}</span>}
-          <span>
-            Until then Appflare cannot install, update or remove apps. Your apps keep running.
-          </span>
-          <span>
-            {canRotate
-              ? `Choose ${RECONNECT_COPY.action} to sign in with Cloudflare again or to connect an API token instead.`
-              : "An administrator reconnects Cloudflare here, in this section."}
-          </span>
-        </span>
-      }
+      description={canRotate ? RECONNECT_COPY.adminLine : RECONNECT_COPY.memberLine}
     />
   );
 }
 
-/** The authorization's technical details, behind a toggle. */
-function AuthorizationDetails({ oauth }: { oauth: NonNullable<ConnectionView["oauth"]> }) {
+/** The connection's state in a few plain words, for Details. */
+function stateWords(connection: ConnectionView): string {
+  if (connection.state === "needs_reconnect") return "Needs reconnecting.";
+  if (!connection.ready) return "Saved. Appflare is redeploying itself to use it.";
+  return connection.kind === "oauth"
+    ? "Working. Appflare renews its access by itself."
+    : "Working.";
+}
+
+/** Everything technical about the connection, behind one toggle. */
+function ConnectionDetails({
+  status,
+  managerUrl,
+}: {
+  status: TokenStatus;
+  managerUrl: string | null;
+}) {
+  const { connection } = status;
+  const appflareDev = appflareDevLink(managerUrl);
   return (
     <Collapsible.Root>
-      <Collapsible.DefaultTrigger>Details</Collapsible.DefaultTrigger>
+      <Collapsible.DefaultTrigger className={TOUCH_TARGET}>Details</Collapsible.DefaultTrigger>
       <Collapsible.DefaultPanel>
-        <DescriptionList>
-          <DescriptionItem label="Last renewed">
-            <Timestamp iso={oauth.renewedAt} />
-          </DescriptionItem>
-          <DescriptionItem label="OAuth client ID">
-            <span className="break-all">
+        <div className="grid gap-3">
+          <DescriptionList>
+            <DescriptionItem label="State">{stateWords(connection)}</DescriptionItem>
+            {connection.problem !== null && (
+              <DescriptionItem
+                label={connection.state === "needs_reconnect" ? "Why" : "Last problem"}
+              >
+                {connection.problem}{" "}
+                {connection.problemAt !== null && (
+                  <Text variant="secondary" as="span">
+                    (<Timestamp iso={connection.problemAt} />)
+                  </Text>
+                )}
+              </DescriptionItem>
+            )}
+            <DescriptionItem label="Since">
+              <Timestamp
+                iso={
+                  connection.kind === "api_token"
+                    ? (status.verifiedAt ?? connection.connectedSince)
+                    : connection.connectedSince
+                }
+                fallback="Unknown"
+              />
+            </DescriptionItem>
+            <DescriptionItem label="Account ID">
+              <span className="break-all">
+                <Text variant="mono" as="span">
+                  {status.accountId ?? "Unknown"}
+                </Text>
+              </span>
+            </DescriptionItem>
+            <DescriptionItem label="Worker">
               <Text variant="mono" as="span">
-                {oauth.clientId}
+                {status.workerName ?? "Unknown"}
               </Text>
-            </span>
-          </DescriptionItem>
-        </DescriptionList>
-        <ScopeList label={`Permissions (${oauth.scopes.length})`} scopes={oauth.scopes} />
-        {oauth.missingScopes.length > 0 && (
-          <ScopeList label="Not granted" scopes={oauth.missingScopes} />
-        )}
+            </DescriptionItem>
+            {connection.oauth !== null ? (
+              <>
+                <DescriptionItem label="Last renewed">
+                  <Timestamp iso={connection.oauth.renewedAt} />
+                </DescriptionItem>
+                <DescriptionItem label="OAuth client ID">
+                  <span className="break-all">
+                    <Text variant="mono" as="span">
+                      {connection.oauth.clientId}
+                    </Text>
+                  </span>
+                </DescriptionItem>
+              </>
+            ) : (
+              <>
+                <DescriptionItem label="Last verified">
+                  <Timestamp iso={status.verifiedAt} fallback="Never" />
+                </DescriptionItem>
+                <DescriptionItem label="Stored as">
+                  {status.hasSecret
+                    ? "The CF_API_TOKEN secret, bound to the running version."
+                    : "The CF_API_TOKEN secret; the running version does not have it yet."}
+                </DescriptionItem>
+                <DescriptionItem label="Permissions">
+                  <Link href={settingsLink("account", "capability-token-permissions")}>
+                    Token permissions
+                  </Link>
+                </DescriptionItem>
+              </>
+            )}
+          </DescriptionList>
+          {connection.oauth !== null && (
+            <>
+              <ScopeList
+                label={`Permissions (${connection.oauth.scopes.length})`}
+                scopes={connection.oauth.scopes}
+              />
+              {connection.oauth.missingScopes.length > 0 && (
+                <ScopeList label="Not granted" scopes={connection.oauth.missingScopes} />
+              )}
+            </>
+          )}
+          {appflareDev !== null && (
+            <div className="grid gap-0.5">
+              <Text size="sm" as="p">
+                <Link href={appflareDev} target="_blank" rel="noreferrer">
+                  Use this Appflare on appflare.dev
+                  <ArrowSquareOutIcon className="ml-1 inline" aria-hidden />
+                </Link>
+              </Text>
+              <Text variant="secondary" size="sm" as="p">
+                Install buttons on appflare.dev then open here, in this browser.
+              </Text>
+            </div>
+          )}
+        </div>
       </Collapsible.DefaultPanel>
     </Collapsible.Root>
   );
 }
 
 /**
- * Scope ids under their label, across the whole panel rather than in a row's
- * value column, so on a phone the longest id still fits on a line: each id
- * stays whole and lines wrap only between ids.
+ * The sign-in's permissions under their label, one line each: the
+ * permission's name, and why Appflare holds it behind it, in the words the
+ * install page used before Cloudflare's consent page.
  */
 function ScopeList({ label, scopes }: { label: string; scopes: readonly string[] }) {
   return (
-    <div className="mt-2.5 grid gap-1">
+    <div className="grid gap-1">
       <Text variant="secondary" as="p">
         {label}
       </Text>
-      <p>
-        <Text variant="mono" as="span">
-          {scopes.map((scope, i) => (
-            <span key={scope}>
-              <span className="whitespace-nowrap">
-                {scope}
-                {i < scopes.length - 1 ? "," : ""}
-              </span>{" "}
-            </span>
-          ))}
-        </Text>
-      </p>
+      <ul className="grid">
+        {scopeReasons(scopes).map((reason) => (
+          <li key={reason.scope}>
+            <Collapsible.Root>
+              <Collapsible.DefaultTrigger className={TOUCH_TARGET}>
+                {reason.label}
+              </Collapsible.DefaultTrigger>
+              <Collapsible.DefaultPanel>
+                <Text variant="secondary" as="p">
+                  {reason.text}
+                </Text>
+              </Collapsible.DefaultPanel>
+            </Collapsible.Root>
+          </li>
+        ))}
+      </ul>
     </div>
-  );
-}
-
-/** The token's technical details, behind a toggle; its permissions are checked elsewhere. */
-function TokenDetails({ status }: { status: TokenStatus }) {
-  return (
-    <Collapsible.Root>
-      <Collapsible.DefaultTrigger>Details</Collapsible.DefaultTrigger>
-      <Collapsible.DefaultPanel>
-        <DescriptionList>
-          <DescriptionItem label="Last verified">
-            <Timestamp iso={status.verifiedAt} fallback="Never" />
-          </DescriptionItem>
-          <DescriptionItem label="Stored as">
-            {status.hasSecret
-              ? "The CF_API_TOKEN secret, bound to the running version."
-              : "The CF_API_TOKEN secret; the running version does not have it yet."}
-          </DescriptionItem>
-          <DescriptionItem label="Permissions">
-            <Link href={settingsLink("account", "capability-token-permissions")}>
-              Token permissions
-            </Link>{" "}
-            in What this account can run shows what the token allows.
-          </DescriptionItem>
-        </DescriptionList>
-      </Collapsible.DefaultPanel>
-    </Collapsible.Root>
   );
 }
 
@@ -354,6 +349,7 @@ function ReconnectDialog({
   }
 
   const label = needsReconnect ? RECONNECT_COPY.action : RECONNECT_COPY.change;
+  const ways = CONNECTION_COPY.ways(connection.kind);
   return (
     <LayerDialog.Root open={open} onOpenChange={change}>
       <LayerDialog.Trigger
@@ -362,6 +358,7 @@ function ReconnectDialog({
             {...p}
             variant={needsReconnect ? "primary" : "secondary"}
             icon={needsReconnect ? <PlugsConnectedIcon /> : <ArrowsClockwiseIcon />}
+            className={TOUCH_TARGET}
           >
             {label}
           </Button>
@@ -369,10 +366,7 @@ function ReconnectDialog({
       />
       <LayerDialog.Content size="lg">
         <LayerDialog.Title>{label}</LayerDialog.Title>
-        <LayerDialog.Description>
-          Choose how Appflare connects to your Cloudflare account. Your apps keep running either
-          way.
-        </LayerDialog.Description>
+        <LayerDialog.Description>{CONNECTION_COPY.dialogDescription}</LayerDialog.Description>
         <LayerDialog.Body>
           {saved === null && (
             <div className="grid gap-5">
@@ -385,19 +379,9 @@ function ReconnectDialog({
                 <Radio.Item
                   value="sign-in"
                   label="Sign in with Cloudflare"
-                  description="Recommended. Gives Appflare every permission it needs at once, with nothing to copy or paste."
+                  description={ways.signIn}
                 />
-                <Radio.Item
-                  value="token"
-                  label={
-                    connection.kind === "api_token" ? "Use a new API token" : "Use an API token"
-                  }
-                  description={
-                    connection.kind === "oauth"
-                      ? "Create a token in the Cloudflare dashboard and paste it here. Appflare then stops using Cloudflare sign-in and withdraws it."
-                      : "Create a token in the Cloudflare dashboard and paste it here. It replaces the one Appflare uses now."
-                  }
-                />
+                <Radio.Item value="token" label={ways.tokenLabel} description={ways.token} />
               </Radio.Group>
               {way === "sign-in" ? (
                 <SignInWay kind={connection.kind} />
@@ -412,11 +396,7 @@ function ReconnectDialog({
               <SuccessBanner
                 live={false}
                 title={saved.replacedAuthorization ? "Connected with the API token" : "Token saved"}
-                description={
-                  saved.replacedAuthorization
-                    ? `Appflare now uses this token on "${saved.workerName}" and withdrew its Cloudflare sign-in. It redeploys itself to pick the token up.`
-                    : `The new token is stored on "${saved.workerName}". Appflare redeploys itself to pick it up. Revoke the old token in the Cloudflare dashboard.`
-                }
+                description={CONNECTION_COPY.tokenSaved(saved)}
               />
             )}
           </StatusRegion>
@@ -433,9 +413,9 @@ function ReconnectDialog({
   );
 }
 
-/** This browser's address for Appflare, where the sign-in comes back. */
-function currentOrigin(): string | null {
-  return typeof window === "undefined" ? null : window.location.origin;
+/** This browser's host for Appflare, where the sign-in comes back. */
+function currentHost(): string | null {
+  return typeof window === "undefined" ? null : window.location.host;
 }
 
 /**
@@ -445,7 +425,6 @@ function currentOrigin(): string | null {
 function SignInWay({ kind }: { kind: ConnectionKind }) {
   const [starting, setStarting] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const origin = currentOrigin();
 
   async function onStart() {
     setStarting(true);
@@ -463,12 +442,16 @@ function SignInWay({ kind }: { kind: ConnectionKind }) {
   return (
     <div className="grid gap-3">
       <Text variant="secondary" as="p">
-        Cloudflare asks you to approve access, then appflare.dev asks you to confirm your Appflare
-        address{origin === null ? "" : `, ${origin},`} to bring you back here.
-        {kind === "api_token" ? " Appflare then removes its API token from its Worker." : ""}
+        {CONNECTION_COPY.signInNext(currentHost(), kind)}
       </Text>
       <div className="flex justify-end">
-        <BusyButton pending={starting} variant="primary" icon={<SignInIcon />} onClick={onStart}>
+        <BusyButton
+          pending={starting}
+          variant="primary"
+          icon={<SignInIcon />}
+          className={`max-sm:w-full max-sm:justify-center ${TOUCH_TARGET}`}
+          onClick={onStart}
+        >
           Continue to Cloudflare
         </BusyButton>
       </div>

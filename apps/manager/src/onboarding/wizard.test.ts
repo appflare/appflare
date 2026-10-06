@@ -125,7 +125,8 @@ describe("the setup wizard", () => {
     expect(wizardCopy(handoff).title).toBe("Finish where you installed Appflare");
     const received = initialWizardState("handoff", null, { handoff: "received" });
     expect(received).toEqual({ step: "handoff", received: true, installPage: null });
-    expect(wizardCopy(received).description).toContain("connected to Cloudflare");
+    expect(wizardCopy(received).description).toContain("to create your owner account");
+    expect(wizardCopy(handoff).description).toContain("It connects Appflare");
     // Connect with an API token instead.
     expect(run(handoff, { type: "use-token" })).toEqual({ step: "connect" });
     expect(run({ step: "create-owner" }, { type: "use-token" })).toEqual({ step: "create-owner" });

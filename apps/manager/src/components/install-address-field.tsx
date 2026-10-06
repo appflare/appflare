@@ -1,3 +1,4 @@
+import { AppflareLoader } from "@appflare/brand/loader";
 import {
   Banner,
   Button,
@@ -43,9 +44,8 @@ import {
   wildcardPattern,
 } from "../installs/wildcard-domain-input";
 import type { WorkerNameCheck } from "../installs/worker-name-check";
-import { AppflareLoader } from "./appflare-loader";
 import { MoreText, useTechnicalNames } from "./field-label";
-import { ErrorMessageBanner } from "./message-text";
+import { ErrorMessageBanner, MessageText } from "./message-text";
 import { settingsLink } from "./settings-links";
 import { Tooltip } from "./tooltip";
 import { WildcardNotes } from "./wildcard-notes";
@@ -564,7 +564,7 @@ export function InstallAddressField({
             variant="alert"
             icon={<WarningIcon weight="fill" />}
             title={consequence.title}
-            description={consequence.description}
+            description={<MessageText message={consequence.description} newTab />}
           />
         </div>
       )}

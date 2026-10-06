@@ -219,17 +219,12 @@ export function wizardCopy(state: WizardState): WizardCopy {
         description: "Appflare needs an API token for the Cloudflare account it runs in.",
       };
     case "handoff":
-      return state.received
-        ? {
-            title: "Finish where you installed Appflare",
-            description:
-              "Appflare is connected to Cloudflare. Go back to the page that installed it and open Appflare from there to create your owner account.",
-          }
-        : {
-            title: "Finish where you installed Appflare",
-            description:
-              "Appflare is installed and waiting to be connected to Cloudflare. Go back to the page that installed it: it connects Appflare and brings you here to create your owner account.",
-          };
+      return {
+        title: "Finish where you installed Appflare",
+        description: state.received
+          ? "Open Appflare from the page that installed it to create your owner account."
+          : "Go back to the page that installed Appflare. It connects Appflare and brings you here.",
+      };
     case "redeploying":
       return {
         title: "Create the owner account",

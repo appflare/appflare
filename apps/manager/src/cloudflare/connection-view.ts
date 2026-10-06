@@ -42,24 +42,50 @@ export interface ConnectionView {
   } | null;
 }
 
-/** What the connection is called, for people who never saw the word OAuth. */
-export const CONNECTION_KIND_LABELS: Record<ConnectionKind, string> = {
-  api_token: "an API token",
-  oauth: "Cloudflare sign-in",
-};
-
-/** The connection's type as one sentence: "Connected with Cloudflare sign-in". */
-export function connectedWith(kind: ConnectionKind): string {
-  return `Connected with ${CONNECTION_KIND_LABELS[kind]}`;
-}
-
-/** Home's row and the settings card's notice while the connection needs reconnecting. */
+/**
+ * Home's row and the settings card's notice while the connection needs
+ * reconnecting: one line each. Why it happened is under the card's Details.
+ */
 export const RECONNECT_COPY = {
-  title: "Appflare needs to be reconnected to Cloudflare",
-  description:
-    "Cloudflare no longer accepts Appflare's connection, so apps cannot be installed, updated or removed. Your apps keep running. An administrator reconnects Cloudflare on the Your account page.",
+  title: "Reconnect Appflare to Cloudflare",
+  /** Home's row, for everyone. */
+  description: "Your apps keep running, but none can be installed or changed until then.",
+  /** The card, for an administrator. */
+  adminLine: "Your apps keep running. Reconnect to install or change them again.",
+  /** The card, for a member. */
+  memberLine: "Your apps keep running. An administrator reconnects here.",
   /** The action that reconnects, on the connection card and Home. */
   action: "Reconnect Cloudflare",
   /** The same choice while the connection works. */
   change: "Change how Appflare connects",
+} as const;
+
+/** The connection card's and its dialog's words, one short line each. */
+export const CONNECTION_COPY = {
+  cardDescription: "How Appflare reaches your Cloudflare account.",
+  /** The value beside "Connected with": what the connection is called, never "OAuth". */
+  kindName: { api_token: "An API token", oauth: "Cloudflare sign-in" } satisfies Record<
+    ConnectionKind,
+    string
+  >,
+  dialogDescription: "Your apps keep running either way.",
+  /** The two ways, as the dialog offers them to a manager connected with `kind`. */
+  ways: (kind: ConnectionKind) => ({
+    signIn: "Recommended. Nothing to copy or paste.",
+    tokenLabel: kind === "api_token" ? "Use a new API token" : "Use an API token",
+    token:
+      kind === "oauth"
+        ? "Create one in Cloudflare and paste it here. It replaces the sign-in."
+        : "Create one in Cloudflare and paste it here. It replaces the current token.",
+  }),
+  /** What happens after Continue to Cloudflare, for a browser at `host`. */
+  signInNext: (host: string | null, kind: ConnectionKind) =>
+    `Approve on Cloudflare, then confirm ${host ?? "this address"} on appflare.dev to come back.${
+      kind === "api_token" ? " Appflare then removes its API token from its Worker." : ""
+    }`,
+  /** After an API token was saved in the dialog. */
+  tokenSaved: (saved: { workerName: string; replacedAuthorization: boolean }) =>
+    saved.replacedAuthorization
+      ? `Appflare withdrew its Cloudflare sign-in and redeploys "${saved.workerName}" to use the token.`
+      : `Appflare redeploys "${saved.workerName}" to use it. Revoke the old token in Cloudflare.`,
 } as const;

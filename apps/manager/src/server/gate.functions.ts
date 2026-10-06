@@ -4,6 +4,7 @@ import { createServerFn } from "@tanstack/react-start";
 import { getCookie, getRequest } from "@tanstack/react-start/server";
 import { z } from "zod";
 import { MAX_RETURN_PATH_LENGTH } from "../components/internal-path";
+import { readPendingAddress } from "../domains/pending-address.server";
 import { handoffHashOf } from "../handoff/handoff-proof";
 import { installerOriginOf } from "../handoff/installer-completion.server";
 import { authSecretBound, sessionFor } from "./auth.server";
@@ -77,10 +78,12 @@ export const enterSetup = createServerFn({ method: "GET" })
     if ("redirect" in gate) throw redirect({ href: redirectHref(gate.redirect, data.returnTo) });
     if (state.handoff === undefined) return gate;
     const installer = installerOriginOf(env.APPFLARE_INSTALLER_ORIGIN);
+    const pending = state.handoff === "received" ? await readPendingAddress(env.DB) : null;
     return {
       ...gate,
       handoff: state.handoff,
       ...(installer === null ? {} : { installPage: `${installer}/deploy` }),
+      ...(pending === null ? {} : { pendingAddress: pending.hostname }),
     };
   });
 
@@ -90,4 +93,9 @@ export interface SetupEntry {
   handoff?: "waiting" | "received";
   /** The page that installed it, where setup continues. */
   installPage?: string;
+  /**
+   * The custom domain the install chose, which Appflare moves to once it
+   * serves; setup meanwhile happens here, with a password only.
+   */
+  pendingAddress?: string;
 }

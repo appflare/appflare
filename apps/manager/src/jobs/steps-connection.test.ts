@@ -6,6 +6,7 @@ import { isolateConnectionMemo } from "../cloudflare/connection.server";
 import { generateGrantKey, importGrantKey, sealContext, sealValue } from "../cloudflare/grant-seal";
 import { type GrantRow, replaceGrantStatements } from "../cloudflare/grant-store.server";
 import { SIGN_IN_WORDS } from "../cloudflare/sign-in-words";
+import { TOKEN_REFUSALS } from "../cloudflare/token-refusals";
 import { createMigrator } from "../db/migrate";
 import { migrations } from "../db/migrations/index";
 import { NO_CONTAINERS_PERMISSION_REASON } from "../sandbox/preflight";
@@ -199,5 +200,22 @@ describe("a unit on an OAuth connection", () => {
     );
     expect(result).toMatchObject({ ok: true, value: 0, subrequests: 2 });
     expect(JSON.stringify(result)).not.toContain("SECRET");
+  });
+});
+
+describe("a job's log on an OAuth connection", () => {
+  it("words a warning written for an API token for the sign-in", async () => {
+    await seedGrant();
+    const steps = jobSteps(fakeCloudflare({}).fetch);
+    await steps.run("check Email Routing on example.com", async ({ log }) => {
+      log.warn(
+        `${TOKEN_REFUSALS.emailZoneGone("example.com", "Zone: Read")} Nothing new is set up.`,
+      );
+      return {};
+    });
+    const logs = await jobLogs();
+    expect(logs).toContain("Appflare's Cloudflare sign-in cannot see it");
+    expect(logs).toContain("Nothing new is set up.");
+    expect(logs).not.toContain("the token lacks");
   });
 });

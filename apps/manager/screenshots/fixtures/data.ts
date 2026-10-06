@@ -428,6 +428,19 @@ const managerAddress =
         attachedByHand: [],
         movingJobId: null,
         movingTo: null,
+        // Installed for a domain that does not serve yet (`?fixture=address-pending`),
+        // or whose automatic move failed (`?fixture=address-move-failed`).
+        pending:
+          variant === "address-pending" || variant === "address-move-failed"
+            ? {
+                hostname: "appflare.example.com",
+                failedAt: variant === "address-move-failed" ? now : null,
+                failure:
+                  variant === "address-move-failed"
+                    ? "Moving Cloudflare Access: Cloudflare refused to update the Access application. Appflare stays at its current address."
+                    : null,
+              }
+            : null,
       };
 
 /**
@@ -553,6 +566,86 @@ const accessCheck: AppAccessCheck = {
   oneTimePin: true,
 };
 
+/**
+ * An install that stopped at its first Cloudflare call (`?fixture=job-failed`):
+ * the error as the job recorded it, and log lines with long requests.
+ */
+const failedJob = {
+  ...job,
+  id: "01K5Q3MGN7F6YP8T2RC9VJ4BXB",
+  status: "failed",
+  error:
+    "verify API token: Cloudflare API request failed: GET /user/tokens/verify -> 401: [1000] Invalid API Token",
+  finishedAt: "2026-09-25T10:14:04.000Z",
+  againHref: "/catalog/cut?again=install-cut#install",
+  logs: [
+    {
+      id: 1,
+      ts: "2026-09-25T10:14:01.000Z",
+      level: "info",
+      message: 'Installing Short links 1.4.0 as Worker "links" (key appflare-2026-09).',
+      requests: [],
+      detail: null,
+    },
+    {
+      id: 2,
+      ts: "2026-09-25T10:14:02.000Z",
+      level: "info",
+      message: "Preflight passed: plan free, 1 resource to create.",
+      requests: [],
+      detail: null,
+    },
+    {
+      id: 3,
+      ts: "2026-09-25T10:14:04.000Z",
+      level: "error",
+      message:
+        "verify API token failed: Cloudflare API request failed: GET /user/tokens/verify -> 401: [1000] Invalid API Token",
+      requests: [
+        `GET /accounts/${view.accountId}/tokens/verify -> 401`,
+        "GET /user/tokens/verify -> 401",
+      ],
+      detail: null,
+    },
+    {
+      id: 4,
+      ts: "2026-09-25T10:14:04.000Z",
+      level: "error",
+      message: 'Install failed at "verify API token". Resources created so far stay recorded.',
+      requests: [],
+      detail: null,
+    },
+  ],
+};
+
+/**
+ * Where setup starts: the owner step, or on a manager installed from the
+ * browser, the step that sends a visitor back to the page that installed it
+ * (`?fixture=setup-handoff`, `setup-handoff-received`), or that page's code
+ * refused (`setup-claim-refused`) or not answered yet (`setup-claim-retry`;
+ * both open `/setup#claim=<code>`).
+ */
+function setupEntry() {
+  switch (variant) {
+    case "setup-handoff":
+      return { step: "handoff", handoff: "waiting", installPage: "https://appflare.dev/deploy" };
+    case "setup-handoff-received":
+    case "setup-claim-refused":
+    case "setup-claim-retry":
+      return { step: "handoff", handoff: "received", installPage: "https://appflare.dev/deploy" };
+    // Handed over at workers.dev while the chosen domain does not serve yet.
+    case "address-pending":
+      return {
+        step: "create-owner",
+        handoff: "received",
+        installPage: "https://appflare.dev/deploy",
+        pendingAddress: "appflare.example.com",
+      };
+    default:
+      return { step: "create-owner" };
+  }
+}
+
 function argument(args: unknown[], key: string): string {
   const first = args[0] as { data?: Record<string, string> } | undefined;
   return first?.data?.[key] ?? "";
@@ -561,7 +654,12 @@ function argument(args: unknown[], key: string): string {
 export function fixture(name: string, args: unknown[]): unknown {
   const result: Record<string, () => unknown> = {
     // Setup at the owner step: the token is saved, and nobody exists yet.
-    enterSetup: () => ({ step: "create-owner" }),
+    enterSetup: () => setupEntry(),
+    // The sign-in page, at the address Appflare just moved to (`?fixture=address-moved-here`).
+    getSetupStatus: () => ({ needsSetup: false, movedHere: variant === "address-moved-here" }),
+    redeemOwnerClaim: () => ({
+      outcome: variant === "setup-claim-refused" ? "refused" : "rate-limited",
+    }),
     loadAppflareVersion: () => "0.1.0",
     createOwner: () => ({ ok: true }),
     enterApp: () => ({
@@ -629,7 +727,7 @@ export function fixture(name: string, args: unknown[]): unknown {
       build: null,
       cronTriggers: null,
     }),
-    getJob: () => job,
+    getJob: () => (variant === "job-failed" ? failedJob : job),
     listJobs: () => [
       job,
       {
@@ -739,6 +837,8 @@ export function fixture(name: string, args: unknown[]): unknown {
         createdAt: "2026-09-03T10:00:00.000Z",
       },
     ],
+    // At workers.dev while the chosen domain is pending, passkeys wait for the move.
+    getPasskeyMoveNotice: () => (variant === "address-pending" ? "appflare.example.com" : null),
     listPasskeys: () => [
       {
         id: "passkey-1",

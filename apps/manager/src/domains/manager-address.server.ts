@@ -239,6 +239,13 @@ export interface ManagerAddress {
   movingJobId: string | null;
   /** Where that job moves Appflare; null when no move runs. */
   movingTo: { hostname: string; zoneId: string } | null;
+  /**
+   * The custom domain the install chose, which Appflare moves to by itself
+   * once it serves (pending-address.server.ts); null when none is pending.
+   * `failedAt`: the move there failed, and Appflare waits for an admin.
+   * Optional for callers that build an address by hand.
+   */
+  pending?: { hostname: string; failedAt: string | null; failure: string | null } | null;
 }
 
 /** A move job queued or running. */
@@ -300,9 +307,14 @@ export async function readManagerAddress(
 ): Promise<ManagerAddress> {
   const workerName = await readWorkerName(deps.db);
   const rows = await readAddressRows(deps.db);
-  const { account_subdomain: subdomain } = await readSettings(createDb(deps.db), [
+  const s = await readSettings(createDb(deps.db), [
     SETTING.accountSubdomain,
+    SETTING.managerPendingHostname,
+    SETTING.managerPendingFailedAt,
+    SETTING.managerPendingFailure,
   ]);
+  const subdomain = s.account_subdomain;
+  const pending = s.manager_pending_hostname;
   const [domains, attachedBy, moving] = await Promise.all([
     deps.api.workerDomains.listDomains({ service: workerName }),
     readAllAttachedBy(deps.db),
@@ -327,9 +339,18 @@ export async function readManagerAddress(
     movedAt: rows.movedAt,
     workersDevHostname: subdomain ? `${workerName}.${subdomain}.workers.dev`.toLowerCase() : null,
     serving: rows.hostname === null ? null : serving.some((d) => d.hostname === rows.hostname),
-    attachedByHand: serving.filter((d) => d.hostname !== rows.hostname),
+    // The pending domain is attached too; Appflare moves there by itself.
+    attachedByHand: serving.filter((d) => d.hostname !== rows.hostname && d.hostname !== pending),
     movingJobId: moving?.id ?? null,
     movingTo: moving === null ? null : { hostname: moving.hostname, zoneId: moving.zoneId },
+    pending:
+      rows.hostname === null && pending
+        ? {
+            hostname: pending,
+            failedAt: s.manager_pending_failed_at || null,
+            failure: s.manager_pending_failure || null,
+          }
+        : null,
   };
 }
 
@@ -365,6 +386,8 @@ export interface MoveAddressRequest {
   overrideExistingDnsRecord?: boolean;
   /** The page to open at the new address once signed in there. */
   returnTo?: string;
+  /** Who starts the move: an admin (default), or Appflare itself for a pending address. */
+  startedBy?: "admin" | "schedule";
 }
 
 export type MoveAddressResult =
@@ -505,11 +528,11 @@ async function move(
   const claimed = await deps.db
     .prepare(
       `INSERT INTO jobs (id, install_id, kind, status, input_json, started_by)
-       SELECT ?1, NULL, 'move_address', 'queued', ?2, 'admin'
+       SELECT ?1, NULL, 'move_address', 'queued', ?2, ?3
        WHERE NOT EXISTS (SELECT 1 FROM jobs WHERE kind = 'move_address' AND status IN ('queued', 'running'))
          AND ${NO_ACTIVE_SELF_UPDATE_SQL}`,
     )
-    .bind(jobId, JSON.stringify(input))
+    .bind(jobId, JSON.stringify(input), request.startedBy ?? "admin")
     .run();
   if (claimed.meta.changes !== 1) throw new ManagerAddressError(ADDRESS_MESSAGES.busy);
   let instanceId: string;
@@ -674,6 +697,8 @@ async function switchAddress(
     const statements: D1PreparedStatement[] = [
       addressStatement(db, change.rows, now),
       db.prepare("DELETE FROM settings WHERE key = ?1").bind(MANAGER_URL_KEY),
+      // Any change of address ends a pending one (pending-address.server.ts).
+      clearPendingStatement(db),
       // Every passkey without a row was added at the address being left...
       db
         .prepare(
@@ -716,6 +741,22 @@ async function switchAddress(
   deps.invalidateAccessGate?.();
   addressRedirect.invalidate();
   return accessMoved;
+}
+
+/**
+ * Ends a pending address (pending-address.server.ts): in every batch that
+ * changes the address, and once Appflare has an address of its own.
+ */
+export function clearPendingStatement(db: D1Database): D1PreparedStatement {
+  return db
+    .prepare("DELETE FROM settings WHERE key IN (?1, ?2, ?3, ?4, ?5)")
+    .bind(
+      SETTING.managerPendingHostname,
+      SETTING.managerPendingZoneId,
+      SETTING.managerPendingJobId,
+      SETTING.managerPendingFailedAt,
+      SETTING.managerPendingFailure,
+    );
 }
 
 function upsertStatement(db: D1Database, key: string, value: string, now: Date) {

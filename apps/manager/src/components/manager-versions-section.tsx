@@ -1,3 +1,4 @@
+import { AppflareLoader } from "@appflare/brand/loader";
 import { Badge, Banner, Button, Link, Table, Text } from "@cloudflare/kumo";
 import { ArrowClockwiseIcon, ArrowCounterClockwiseIcon } from "@phosphor-icons/react";
 import { useRouter } from "@tanstack/react-router";
@@ -7,7 +8,6 @@ import type { SwitchJob } from "../jobs/live-job-state";
 import type { ManagerVersionRow } from "../jobs/self-update/rollback";
 import { type ManagerVersionsState, rollBackManager } from "../jobs/self-update/rollback.functions";
 import type { RollBackManagerResult } from "../jobs/self-update/rollback.server";
-import { AppflareLoader } from "./appflare-loader";
 import { ConfirmDialog } from "./confirm-dialog";
 import { DocsLink } from "./docs-link";
 import { BANNER_ICON, StatusRegion, SuccessBanner } from "./message-text";

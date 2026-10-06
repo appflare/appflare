@@ -65,6 +65,21 @@ describe("the install form's check of a custom domain", () => {
     expect(hostnameAllowsInstall(check)).toBe(true);
   });
 
+  it("says to reconnect, not to edit a token, for a Cloudflare sign-in", () => {
+    const check: InstallHostnameCheck = {
+      state: "cannot-attach",
+      missing: ["Workers Routes: Edit"],
+      connection: "oauth",
+    };
+    expect(hostnameStatus(check)?.text).toBe(
+      "Appflare's Cloudflare sign-in cannot add domains to apps yet.",
+    );
+    const description = hostnameConsequence(check)?.description ?? "";
+    expect(description).toContain("Reconnect Cloudflare in");
+    expect(description).not.toMatch(/\btoken\b/i);
+    expect(hostnameLeftOut(check)).toBe(true);
+  });
+
   it("holds Install only for a name another app here uses", () => {
     expect(hostnameAllowsInstall({ state: "other-app" })).toBe(false);
     expect(hostnameStatus({ state: "other-app" })?.tone).toBe("danger");

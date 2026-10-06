@@ -14,6 +14,7 @@ import { apiBaseOption } from "../cloudflare/api-base";
 import { logCfRequest } from "../cloudflare/client.server";
 import { createDb } from "../db/client";
 import { readSettings, SETTING } from "../db/settings";
+import { movedHere } from "../domains/moved-note";
 import { completeInstallation } from "../handoff/installer-completion.server";
 import { OWNER_CLAIM_FORMAT } from "../handoff/owner-claim";
 import { selfUnits } from "../jobs/units/client";
@@ -43,8 +44,34 @@ import { authErrorMessage, hasAnyUser } from "./users.server";
  * then the setup claim cookie that saving it issued (see `setup.server.ts`).
  */
 
+/**
+ * Whether setup is needed (the sign-in page sends everyone there until the
+ * owner exists), and whether Appflare moved to the address this request
+ * came to lately, so the sign-in page says why everyone signs in again and
+ * offers a passkey for the new address. Public: the address is no secret.
+ */
 export const getSetupStatus = createServerFn({ method: "GET" }).handler(async () => {
-  return { needsSetup: !(await hasAnyUser(createDb(env.DB))) };
+  const db = createDb(env.DB);
+  const [hasUser, rows] = await Promise.all([
+    hasAnyUser(db),
+    readSettings(db, [
+      SETTING.managerHostname,
+      SETTING.managerPreviousHostname,
+      SETTING.managerMovedAt,
+    ]),
+  ]);
+  return {
+    needsSetup: !hasUser,
+    movedHere: movedHere(
+      {
+        hostname: rows.manager_hostname || null,
+        previousHostname: rows.manager_previous_hostname || null,
+        movedAt: rows.manager_moved_at || null,
+      },
+      new URL(getRequest().url).hostname,
+      new Date(),
+    ),
+  };
 });
 
 function tokenDeps(token: string): TokenFlowDeps {
@@ -218,10 +245,12 @@ export const createOwner = createServerFn({ method: "POST" })
     // A manager installed from the browser tells its installer setup is
     // done, after the answer; the cron tries again when this fails.
     waitUntil(completeInstallation(env));
-    const { manager_hostname: hostname } = await readSettings(createDb(env.DB), [
-      SETTING.managerHostname,
-    ]);
+    const { manager_hostname: hostname, manager_pending_hostname: pending } = await readSettings(
+      createDb(env.DB),
+      [SETTING.managerHostname, SETTING.managerPendingHostname],
+    );
     // Its address is set already when it was installed on a domain of the
-    // account: setup then skips the address step.
-    return { ok: true as const, addressSet: Boolean(hostname) };
+    // account, or chosen when that domain does not serve yet (Appflare moves
+    // there by itself): setup then skips the address step.
+    return { ok: true as const, addressSet: Boolean(hostname) || Boolean(pending) };
   });

@@ -2,7 +2,7 @@ import { TooltipProvider } from "@cloudflare/kumo";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { ConnectionView } from "../cloudflare/connection-view";
+import { type ConnectionView, RECONNECT_COPY } from "../cloudflare/connection-view";
 import type { ReconnectOutcome } from "../cloudflare/reconnect-outcome";
 import type { TokenStatus } from "../server/token.functions";
 import type { SavedToken } from "./cloudflare-token-form";
@@ -99,7 +99,12 @@ function status(connection: ConnectionView): TokenStatus {
 
 function render(
   connection: ConnectionView,
-  props: { canRotate?: boolean; outcome?: ReconnectOutcome | null; startOpen?: boolean } = {},
+  props: {
+    canRotate?: boolean;
+    outcome?: ReconnectOutcome | null;
+    startOpen?: boolean;
+    managerUrl?: string;
+  } = {},
 ) {
   act(() =>
     root.render(
@@ -109,6 +114,7 @@ function render(
           canRotate={props.canRotate ?? true}
           outcome={props.outcome ?? null}
           startOpen={props.startOpen ?? false}
+          managerUrl={props.managerUrl ?? null}
         />
       </TooltipProvider>,
     ),
@@ -131,13 +137,38 @@ async function chooseWay(label: string) {
 }
 
 describe("CloudflareTokenCard", () => {
-  it("shows the connection type, since when and the state", () => {
+  it("shows the account and how Appflare connects; the rest under Details", async () => {
     render(API_TOKEN);
-    expect(container.textContent).toContain("Connected with an API token");
-    expect(container.textContent).toContain("Working.");
-    render(OAUTH);
-    expect(container.textContent).toContain("Connected with Cloudflare sign-in");
+    expect(container.textContent).toContain("Connected withAn API token");
+    expect(container.textContent).not.toContain("Working.");
+    render(OAUTH, { managerUrl: "https://appflare.example.com" });
+    expect(container.textContent).toContain("Connected withCloudflare sign-in");
+    expect(container.textContent).not.toContain("appflare.dev");
+    await act(async () => button(container, "Details").click());
+    await settle();
     expect(container.textContent).toContain("Appflare renews its access by itself.");
+    expect(container.textContent).toContain("b99863433175d812f9595af56dd1b71d");
+    expect(container.querySelector('a[href^="https://appflare.dev/my/"]')).not.toBeNull();
+    // Each permission by its name, why Appflare holds it one more click away.
+    expect(container.textContent).toContain("Permissions (1)");
+    await act(async () => button(container, "Workers Scripts").click());
+    await settle();
+    expect(container.textContent).toContain("Workers Scripts lets Appflare install, update");
+  });
+
+  it("says why a connection needs reconnecting under Details, in one line above", async () => {
+    render({
+      ...OAUTH,
+      state: "needs_reconnect",
+      ready: false,
+      problem: "Cloudflare no longer accepts this connection: it was withdrawn in Cloudflare.",
+    });
+    expect(container.textContent).toContain(RECONNECT_COPY.title);
+    expect(container.textContent).toContain(RECONNECT_COPY.adminLine);
+    expect(container.textContent).not.toContain("withdrawn");
+    await act(async () => button(container, "Details").click());
+    await settle();
+    expect(container.textContent).toContain("it was withdrawn in Cloudflare");
   });
 
   it("announces a new token in a status that was there with the form", async () => {
@@ -152,7 +183,7 @@ describe("CloudflareTokenCard", () => {
     await settle();
     expect(region?.isConnected).toBe(true);
     expect(region?.textContent).toContain("Token saved");
-    expect(region?.textContent).toContain('The new token is stored on "appflare".');
+    expect(region?.textContent).toContain('Appflare redeploys "appflare" to use it.');
     expect(dialog().querySelectorAll('[role="status"]')).toHaveLength(1);
   });
 
@@ -173,6 +204,7 @@ describe("CloudflareTokenCard", () => {
     vi.stubGlobal("location", {
       ...window.location,
       origin: "https://appflare.example.com",
+      host: "appflare.example.com",
       assign,
     });
     startCloudflareReconnect.mockResolvedValue({
@@ -186,7 +218,7 @@ describe("CloudflareTokenCard", () => {
     // Exactly two ways.
     expect(dialog().querySelectorAll('[role="radio"]')).toHaveLength(2);
     expect(dialog().textContent).toContain(
-      "appflare.dev asks you to confirm your Appflare address, https://appflare.example.com,",
+      "Approve on Cloudflare, then confirm appflare.example.com on appflare.dev to come back.",
     );
     await act(async () => button(dialog(), "Continue to Cloudflare").click());
     await settle();
@@ -216,7 +248,7 @@ describe("CloudflareTokenCard", () => {
   it("offers members no way to change the connection", () => {
     render({ ...OAUTH, state: "needs_reconnect", ready: false }, { canRotate: false });
     expect(hasButton(container, "Reconnect Cloudflare")).toBe(false);
-    expect(container.textContent).toContain("An administrator reconnects Cloudflare here");
+    expect(container.textContent).toContain(RECONNECT_COPY.memberLine);
     render(API_TOKEN, { canRotate: false, outcome: "expired" });
     expect(hasButton(container, "Change how Appflare connects")).toBe(false);
     expect(hasButton(container, "Start again")).toBe(false);

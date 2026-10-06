@@ -15,7 +15,7 @@ import type { Plugin } from "vite";
  * Register it in `plugins` for builds and in
  * `optimizeDeps.rolldownOptions.plugins` for dev, where Kumo is served from
  * Vite's pre-bundled dependencies and ordinary plugins never see its files.
- * The pre-bundle is cached, mark included: after editing `appflare-loader.tsx`,
+ * The pre-bundle is cached, mark included: after editing the loader (`@appflare/brand/loader`),
  * restart dev with `--force` to see the change inside Kumo's components.
  *
  * The chunk's file name and its export name are Kumo build details that can
@@ -29,7 +29,10 @@ import type { Plugin } from "vite";
  * so only the unused ring in the bundle depends on it.
  */
 const KUMO_LOADER_CHUNK = /[\\/]@cloudflare[\\/]kumo[\\/]dist[\\/]chunks[\\/]loader-[\w-]+\.js$/;
-const APPFLARE_LOADER = resolve(import.meta.dirname, "../src/components/appflare-loader.tsx");
+const APPFLARE_LOADER = resolve(
+  import.meta.dirname,
+  "../node_modules/@appflare/brand/src/appflare-loader.tsx",
+);
 
 export function kumoLoaderAsAppflareLoader(): Plugin {
   // Only a Vite build checks for a match: `configResolved` never runs when the

@@ -13,6 +13,7 @@ import { GrantStoreError } from "../cloudflare/grant.server";
 import { readGrant } from "../cloudflare/grant-store.server";
 import { createDb } from "../db/client";
 import { completeAddressMove } from "../domains/manager-address.server";
+import { recordPendingAddress } from "../domains/pending-address.server";
 import { selfUnits } from "../jobs/units/client";
 import {
   type AttemptLimit,
@@ -46,12 +47,14 @@ import {
  *   where `state` is `waiting`, `received` (the connection arrived) or
  *   `done` (an owner exists) and `proof` shows this manager holds the hash
  *   (handoff-proof.ts). Unauthenticated and cheap: one read, one HMAC.
- * - `POST { secret, grant, accountId, installer? }`: with the right secret,
+ * - `POST { secret, grant, accountId, installer?, intendedAddress? }`: with the right secret,
  *   the first call is setup's "Connect Cloudflare" step with the grant
  *   (server/setup.server.ts `connectGrantStep`): the grant is refreshed at
  *   once, checked against the account and the running version, and stored;
  *   a missing auth secret and `SELF` are written; a custom domain of this
- *   Worker the request arrived on becomes Appflare's address; the
+ *   Worker the request arrived on becomes Appflare's address (arriving at
+ *   workers.dev, the chosen domain, `intendedAddress` or the Worker's only
+ *   one, becomes its pending address); the
  *   installer's details are kept for reporting the end of setup. The answer
  *   is the owner setup URL, `https://<host>/setup#claim=<code>`, whose
  *   one-time code `/setup` exchanges for the setup claim. A later call
@@ -130,6 +133,16 @@ const handoffBody = z.object({
       installationId: z.string().min(1).max(128),
       key: z.string().min(1).max(1024),
     })
+    .optional(),
+  /**
+   * The custom domain the installing page reviewed, when it hands over at
+   * the workers.dev address because that domain does not serve yet.
+   * Optional: without it, the Worker's only custom domain is taken.
+   */
+  intendedAddress: z
+    .string()
+    .max(253)
+    .regex(/^[A-Za-z0-9.-]+$/)
     .optional(),
 });
 
@@ -403,6 +416,7 @@ async function firstHandoff(
           db: env.DB,
           api: saved.api,
           hostname: url.hostname,
+          intended: body.intendedAddress ?? null,
           workerName: saved.workerName,
           now,
         });
@@ -448,20 +462,35 @@ async function firstHandoff(
  * When the handoff arrives on a custom domain attached to this Worker, that
  * domain becomes Appflare's address, as if Appflare had moved there: the
  * workers.dev address then redirects to it, and passkeys are made for it.
- * On workers.dev, or a hostname that is not one of the Worker's custom
- * domains, nothing changes. Best effort: Domains settings can do it later.
+ * When it arrives at workers.dev while the Worker has the custom domain the
+ * install chose (`intended`, or its only one), that domain does not serve
+ * yet: it is recorded as pending, and Appflare moves there by itself once
+ * it serves (domains/pending-address.server.ts). On any other hostname
+ * nothing changes. Best effort: Domains settings can do it later.
  */
 async function adoptAddress(deps: {
   db: D1Database;
   api: CloudflareClient;
   hostname: string;
+  intended: string | null;
   workerName: string;
   now: Date;
 }): Promise<void> {
   const hostname = deps.hostname.toLowerCase();
-  if (hostname.endsWith(".workers.dev") || hostname === "localhost" || /^[\d.]+$/.test(hostname)) {
+  if (hostname.endsWith(".workers.dev")) {
+    try {
+      const pending = await recordPendingAddress(deps);
+      if (pending !== null) {
+        console.log(`address: Appflare moves to ${pending.hostname} once it serves`);
+      }
+    } catch (error) {
+      console.error("handoff: could not record the pending address", {
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
     return;
   }
+  if (hostname === "localhost" || /^[\d.]+$/.test(hostname)) return;
   try {
     const domains = await deps.api.workerDomains.listDomains({ hostname });
     const domain = domains.find(

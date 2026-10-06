@@ -184,6 +184,7 @@ export function UsersSettingsView({
   users,
   recovery,
   passkeys,
+  passkeysAfterMove = null,
   accessStatus,
   viewer,
 }: {
@@ -191,6 +192,8 @@ export function UsersSettingsView({
   /** Null for members. */
   recovery: PasswordRecoverySettings | null;
   passkeys: PasskeyRow[];
+  /** The domain Appflare moves to; passkeys wait for the move. Null when none is pending. */
+  passkeysAfterMove?: string | null;
   accessStatus: AccessStatus;
   viewer: Pick<Viewer, "id" | "email" | "role">;
 }) {
@@ -205,7 +208,7 @@ export function UsersSettingsView({
         emailReset={recovery?.email.enabled ?? false}
       />
       {recovery !== null && <PasswordRecoveryCard settings={recovery} />}
-      <PasskeysSection passkeys={passkeys} />
+      <PasskeysSection passkeys={passkeys} afterMove={passkeysAfterMove} />
       <AccessCard
         status={accessStatus}
         isAdmin={viewer.role === "admin"}

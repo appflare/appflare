@@ -272,7 +272,7 @@ function AttentionRowLayout({
           </Text>
           <Text variant="secondary">{description}</Text>
         </div>
-        <div className="flex flex-col-reverse gap-2 *:w-full *:justify-center sm:shrink-0 sm:flex-row sm:items-center sm:*:w-auto">
+        <div className="flex flex-col-reverse gap-2 *:w-full *:justify-center max-sm:*:min-h-11 sm:shrink-0 sm:flex-row sm:items-center sm:*:w-auto">
           {actions}
         </div>
       </div>

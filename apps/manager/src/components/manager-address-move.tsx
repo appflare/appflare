@@ -1,3 +1,4 @@
+import { AppflareLoader } from "@appflare/brand/loader";
 import { Banner, Button, LayerDialog, Link, LinkButton, Text } from "@cloudflare/kumo";
 import { CircleIcon } from "@phosphor-icons/react";
 import { useEffect, useRef, useState } from "react";
@@ -12,7 +13,6 @@ import { MOVED_PASSKEY_NOTE } from "../domains/moved-note";
 import { checkSubdomainInZone, type HostnameCheck } from "../installs/custom-domain-input";
 import type { JobView } from "../jobs/jobs.functions";
 import { useLiveJob } from "../jobs/live-job";
-import { AppflareLoader } from "./appflare-loader";
 import { type DnsConflict, DnsConflictNotice } from "./domain-dialog-parts";
 import { BANNER_ICON, ErrorMessageBanner, MessageText } from "./message-text";
 import { ZoneCombobox } from "./zone-combobox";

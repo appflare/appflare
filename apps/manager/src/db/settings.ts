@@ -164,6 +164,23 @@ export const SETTING = {
   managerPreviousHostname: "manager_previous_hostname",
   managerMovedAt: "manager_moved_at",
   /**
+   * The custom domain Appflare was installed for while it does not serve
+   * yet (domains/pending-address.server.ts): its hostname and zone, written
+   * when the browser that installed Appflare hands over at the workers.dev
+   * address instead. Appflare moves there by itself once the domain serves;
+   * any change of address deletes both.
+   */
+  managerPendingHostname: "manager_pending_hostname",
+  managerPendingZoneId: "manager_pending_zone_id",
+  /** The move job started for the pending address, while it may still run. */
+  managerPendingJobId: "manager_pending_job_id",
+  /**
+   * ISO 8601 time the move to the pending address failed, and why: no
+   * further automatic try until an admin chooses Try again.
+   */
+  managerPendingFailedAt: "manager_pending_failed_at",
+  managerPendingFailure: "manager_pending_failure",
+  /**
    * UTC day (`YYYY-MM-DD`) the cron last finished looking for Workflows of
    * installed apps that do not exist in Cloudflare (installs/workflow-repair.server.ts).
    */

@@ -1,3 +1,4 @@
+import { AppflareLoader } from "@appflare/brand/loader";
 import { Badge, Banner, Button, Link, Text } from "@cloudflare/kumo";
 import {
   ArrowsClockwiseIcon,
@@ -27,7 +28,6 @@ import {
   startAccessChange,
 } from "../installs/access-change.functions";
 import type { InstallDetail } from "../installs/installs.functions";
-import { AppflareLoader } from "./appflare-loader";
 import { ConfirmDialog } from "./confirm-dialog";
 import { DescriptionItem, DescriptionList } from "./description-list";
 import { DocsLink } from "./docs-link";

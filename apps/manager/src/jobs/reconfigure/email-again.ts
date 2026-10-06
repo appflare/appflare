@@ -1,4 +1,5 @@
 import type { CatalogEmailRouting } from "@appflare/schema";
+import { TOKEN_REFUSALS } from "../../cloudflare/token-refusals";
 import { parseEmailRouteCfId } from "../../installs/email-routing";
 import { provisionEmailRoutingPhase, removeEmailRoutesPhase } from "../install/email-routing";
 import { JobError, type JobSteps } from "../steps";
@@ -135,13 +136,14 @@ export async function setUpEmailAgainPhase(
           log,
         );
         if (found.zoneName === null) {
+          // In the token's words; the step runner rewords them for a Cloudflare sign-in.
           throw new JobError(
-            `Appflare cannot see ${zone.zoneName}, the domain the app receives email for: it may have been removed from Cloudflare, or the token lacks ${found.missing.join(", ") || "Zone: Read"}. ${NOTHING_CHANGED}`,
+            `${TOKEN_REFUSALS.emailZoneGone(zone.zoneName, found.missing.join(", ") || "Zone: Read")} ${NOTHING_CHANGED}`,
           );
         }
         if (found.missing.length > 0) {
           throw new JobError(
-            `the Cloudflare token lacks ${found.missing.join(", ")}, which setting up the app's email needs; add them to the token (for this zone). ${NOTHING_CHANGED}`,
+            `${TOKEN_REFUSALS.emailPermissions(found.missing.join(", "), "setting up the app's email")}. ${NOTHING_CHANGED}`,
           );
         }
         if (found.problems.length > 0) {

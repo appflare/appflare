@@ -9,6 +9,7 @@ import { createMigrator } from "../db/migrate";
 import { migrations } from "../db/migrations/index";
 import { tryAcquireSettingsLock } from "../db/settings-lock";
 import { addressRedirectTarget } from "../domains/address-redirect";
+import { readPendingAddress } from "../domains/pending-address.server";
 import {
   connectCloudflareStep,
   createOwnerStep,
@@ -355,9 +356,9 @@ describe("the first handoff", () => {
     const keys = w.api.keys();
     expect(keys.indexOf(SELF_PATCH)).toBeGreaterThan(keys.lastIndexOf(SECRETS));
     expect(keys).toContain(DEPLOY);
-    // On workers.dev nothing about the address is asked or changed.
-    expect(keys).not.toContain(DOMAINS);
+    // On workers.dev the address stays; the Worker's custom domain becomes pending.
     expect((await settingsRows()).get("manager_hostname")).toBeUndefined();
+    expect(await readPendingAddress(env.DB)).toMatchObject({ hostname: DOMAIN, zoneId: "zone-1" });
     // Stored and recorded.
     expect(await readGrant(env.DB)).toMatchObject({ clientId: CLIENT, status: "connected" });
     const rows = await settingsRows();
@@ -798,6 +799,68 @@ describe("Appflare's address", () => {
       await handoffResponse(post(handoffBody(), { host: DOMAIN }), managerEnv(), w.deps),
     );
     expect((await settingsRows()).get("manager_hostname")).toBeUndefined();
+    expect(await readPendingAddress(env.DB)).toBeNull();
+  });
+
+  const domain = (id: string, hostname: string, zone: string) => ({
+    id,
+    hostname,
+    service: "appflare",
+    zone_id: zone,
+    zone_name: hostname.split(".").slice(-2).join("."),
+  });
+
+  it("arriving at workers.dev, makes the chosen domain pending: the one the page names", async () => {
+    const w = world({
+      [DOMAINS]: ok([
+        domain("dom-1", DOMAIN, "zone-1"),
+        domain("dom-2", "manage.example.org", "zone-2"),
+      ]),
+    });
+    const { host } = await claimOf(
+      await handoffResponse(
+        post(handoffBody({ intendedAddress: "Manage.Example.org" })),
+        managerEnv(),
+        w.deps,
+      ),
+    );
+    // Owner setup stays at workers.dev; Appflare moves once the domain serves.
+    expect(host).toBe(WORKERS_DEV);
+    expect((await settingsRows()).get("manager_hostname")).toBeUndefined();
+    expect(await readPendingAddress(env.DB)).toMatchObject({
+      hostname: "manage.example.org",
+      zoneId: "zone-2",
+    });
+  });
+
+  it("makes nothing pending when it cannot tell which domain was chosen", async () => {
+    const two = ok([domain("dom-1", DOMAIN, "zone-1"), domain("dom-2", "b.example.org", "z2")]);
+    await claimOf(
+      await handoffResponse(post(handoffBody()), managerEnv(), world({ [DOMAINS]: two }).deps),
+    );
+    expect(await readPendingAddress(env.DB)).toBeNull();
+  });
+
+  it("makes nothing pending for a named domain this Worker does not have", async () => {
+    const w = world();
+    await claimOf(
+      await handoffResponse(
+        post(handoffBody({ intendedAddress: "elsewhere.example.net" })),
+        managerEnv(),
+        w.deps,
+      ),
+    );
+    expect(await readPendingAddress(env.DB)).toBeNull();
+  });
+
+  it("refuses a malformed intended address", async () => {
+    const w = world();
+    const response = await handoffResponse(
+      post(handoffBody({ intendedAddress: "https://x/" })),
+      managerEnv(),
+      w.deps,
+    );
+    expect(response.status).toBe(400);
   });
 });
 

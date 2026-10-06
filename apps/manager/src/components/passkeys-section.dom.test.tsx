@@ -42,3 +42,17 @@ describe("the passkeys list", () => {
     expect(rows).toEqual(["Laptop", "PhoneWorks at appflare.ada.workers.dev"]);
   });
 });
+
+describe("passkeys before Appflare moves to its domain", () => {
+  it("offers no passkey at workers.dev, and says when instead", () => {
+    (globalThis as { PublicKeyCredential?: unknown }).PublicKeyCredential = () => {};
+    act(() => root.render(<PasskeysSection passkeys={[]} afterMove="appflare.example.com" />));
+    expect(container.textContent).toContain(
+      "Add passkeys after Appflare moves to appflare.example.com.",
+    );
+    expect(container.textContent).not.toContain("No passkeys yet");
+    expect(container.querySelectorAll("button")).toHaveLength(0);
+    act(() => root.render(<PasskeysSection passkeys={[]} />));
+    expect(container.textContent).toContain("Add passkey");
+  });
+});

@@ -21,9 +21,16 @@ import { createDb } from "./db/client";
 import { ensureMigrated } from "./db/migrate";
 import { addressRedirect, serveRequest } from "./domains/address-redirect";
 import { reconcileManagerAddress } from "./domains/manager-address.server";
+import {
+  movePendingAddress,
+  type PendingMoveDeps,
+  pendingMoveLog,
+} from "./domains/pending-address.server";
+import { handoffHashOf } from "./handoff/handoff-proof";
 import { completeInstallation } from "./handoff/installer-completion.server";
 import { scheduledSourceBuildExpiry } from "./installs/source-builds-expiry.server";
 import { workflowRepairLog, workflowRepairNeeded } from "./installs/workflow-repair.server";
+import { jobCreator } from "./jobs/create-job.server";
 import { finalizeSelfUpdates } from "./jobs/self-update/record";
 import { scheduledExternalDomainCheck, scheduledNotifications } from "./notifications/cron.server";
 import { createNotificationUnits, selfNotificationUnits } from "./notifications/units";
@@ -145,15 +152,53 @@ async function authStorage(ctx: ExecutionContext): Promise<void> {
   }
 }
 
+/** When this isolate may next look whether the pending address serves. */
+let pendingNextLook = 0;
+/** Between two looks from page requests; the cron looks every 30 minutes besides. */
+const PENDING_LOOK_MS = 60_000;
+
+/** What a look at the pending address needs: the move's own dependencies, made lazily. */
+function pendingMoveDeps(env: Env): PendingMoveDeps {
+  return {
+    db: env.DB,
+    api: () => getCfClient(env),
+    version: runningVersion(env),
+    createJob: jobCreator(env.JOBS),
+    workflows: env.JOBS,
+    invalidateAccessGate: () => accessGate.invalidate(),
+    fetch: (input: string, init?: RequestInit) => fetch(input, init),
+    handoffHash: handoffHashOf(env.APPFLARE_HANDOFF),
+  };
+}
+
+/** Looks whether the pending address serves, and moves there when it does; never fails. */
+async function lookAtPendingAddress(env: Env): Promise<void> {
+  try {
+    const line = pendingMoveLog(await movePendingAddress(pendingMoveDeps(env)));
+    if (line !== null) console.log(line);
+  } catch (error) {
+    console.error("address: the look at the pending address failed", {
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
+}
+
 export default {
   async fetch(request, env, ctx) {
     await authStorage(ctx);
     const failed = await migrated(env, request);
     if (failed !== null) return failed;
     lookAtCapabilities(env, ctx);
+    // Appflare's address: page requests at workers.dev go to its custom domain.
+    const redirect = await addressRedirect.check(request, env.DB);
+    if (redirect !== null) return redirect;
+    // A page request at workers.dev while the chosen domain is pending: at
+    // most once a minute per isolate, after the answer, look whether it serves.
+    if (addressRedirect.pendingSeen() && Date.now() >= pendingNextLook) {
+      pendingNextLook = Date.now() + PENDING_LOOK_MS;
+      ctx.waitUntil(lookAtPendingAddress(env));
+    }
     return (
-      // Appflare's address: page requests at workers.dev go to its custom domain.
-      (await addressRedirect.check(request, env.DB)) ??
       // Cloudflare Access protection, when on: checked before any routing.
       (await accessGate.check(request, env.DB, runningVersion(env))) ??
       // Pages and public files from the static assets (the SPA shell for any page).
@@ -179,7 +224,9 @@ export default {
    * and "Appflare users" after a failed update; Access applications whose
    * sync failed or is due, and a check that they still exist. Then the
    * repair of installed apps' Workflows that do not exist in Cloudflare
-   * (installs/workflow-repair.server.ts).
+   * (installs/workflow-repair.server.ts). Before the check that Appflare's
+   * custom domain still serves it, the move to a pending address once that
+   * serves (domains/pending-address.server.ts).
    */
   async scheduled(_controller, env) {
     if ((await migrated(env)) !== null) return;
@@ -273,6 +320,9 @@ export default {
     // External domains: record their state and emit "Domain active" or
     // "Domain failed" for the delivery below; never fails the run.
     await scheduledExternalDomainCheck(env);
+    // Appflare's pending address (installed for a domain that did not serve
+    // yet): moved there once it serves; one read when none; never fails the run.
+    await lookAtPendingAddress(env);
     // Appflare's address: when its custom domain no longer serves it, back to
     // workers.dev, with a notification delivered just below; never fails the run.
     try {

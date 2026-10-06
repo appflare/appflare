@@ -1,3 +1,4 @@
+import { AppflareLoader } from "@appflare/brand/loader";
 import {
   Badge,
   Banner,
@@ -31,7 +32,6 @@ import {
   appSectionTab,
 } from "../../../components/app-links";
 import { AppSettingsSection } from "../../../components/app-settings-section";
-import { AppflareLoader } from "../../../components/appflare-loader";
 import { AppIcon } from "../../../components/catalog-media";
 import { CatalogSourceBadge } from "../../../components/catalog-source-badge";
 import { CustomDomainsSection } from "../../../components/custom-domains-section";
@@ -45,7 +45,7 @@ import { jobKindLabel, resourceKindLabel } from "../../../components/format";
 import { FLUSH_RING_CLASS } from "../../../components/hash-target";
 import { InstallHealth } from "../../../components/install-health";
 import { Markdown } from "../../../components/markdown";
-import { BANNER_ICON, bannerRole } from "../../../components/message-text";
+import { ACTIONS_UNDER_ON_PHONE, BANNER_ICON, bannerRole } from "../../../components/message-text";
 import { OpenAppButton } from "../../../components/open-app-button";
 import { OriginBadge } from "../../../components/origin-badge";
 import { PageHeader } from "../../../components/page-header";
@@ -636,6 +636,7 @@ function FailedInstallState({ install, isAdmin }: { install: InstallDetail; isAd
       variant="error"
       icon={BANNER_ICON.error}
       role={bannerRole("error")}
+      className={ACTIONS_UNDER_ON_PHONE}
       title="The install did not finish"
       description={
         again

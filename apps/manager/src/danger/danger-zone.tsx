@@ -1,9 +1,9 @@
+import { AppflareLoader } from "@appflare/brand/loader";
 import { SANDBOX_CONTAINERS } from "@appflare/schema";
 import { Banner, Button, Collapsible, Link, Text } from "@cloudflare/kumo";
 import { KeyIcon, TrashIcon } from "@phosphor-icons/react";
 import { type ReactNode, useState } from "react";
 import { appLink } from "../components/app-links";
-import { AppflareLoader } from "../components/appflare-loader";
 import { ConfirmDialog } from "../components/confirm-dialog";
 import { BANNER_ICON, bannerRole, MessageText } from "../components/message-text";
 import { Section, SectionRow, SectionRows } from "../components/section";

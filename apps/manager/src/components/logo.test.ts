@@ -1,7 +1,3 @@
-import { describe, expect, it } from "vitest";
-import logoFull from "../../../../docs/assets/logo_full.svg?raw";
-import logoFullWhite from "../../../../docs/assets/logo_full_white.svg?raw";
-import logoSquare from "../../../../docs/assets/logo_square.svg?raw";
 import {
   CLOUD_ORANGE,
   CLOUD_PATH,
@@ -9,7 +5,11 @@ import {
   SQUARE_CLOUD_PATH,
   SQUARE_INK_PATHS,
   SQUARE_VIEW_BOX,
-} from "./logo-paths";
+} from "@appflare/brand/logo-paths";
+import { describe, expect, it } from "vitest";
+import logoFull from "../../../../docs/assets/logo_full.svg?raw";
+import logoFullWhite from "../../../../docs/assets/logo_full_white.svg?raw";
+import logoSquare from "../../../../docs/assets/logo_square.svg?raw";
 
 /** The `d` of every path in an SVG, in order. */
 function pathsOf(svg: string): string[] {

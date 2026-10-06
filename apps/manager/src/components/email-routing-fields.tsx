@@ -1,3 +1,4 @@
+import { AppflareLoader } from "@appflare/brand/loader";
 import { Banner, Link, LinkButton, Text } from "@cloudflare/kumo";
 import { EnvelopeSimpleIcon, KeyIcon } from "@phosphor-icons/react";
 import { useEffect, useState } from "react";
@@ -6,7 +7,7 @@ import { EMAIL_ROUTING_PERMISSIONS } from "../installs/email-routing";
 import { getEmailZoneOptions, previewEmailRouting } from "../installs/email-routing.functions";
 import type { EmailRoutingPreview, EmailZoneOptions } from "../installs/email-routing.server";
 import { WORKER_NAME_PATTERN } from "../installs/install-input";
-import { AppflareLoader } from "./appflare-loader";
+import { SignInPermissionsBanner } from "./domain-dialog-parts";
 import { BANNER_ICON, bannerRole, ErrorMessageBanner, MessageBanner } from "./message-text";
 import { settingsLink } from "./settings-links";
 import { useAccountId } from "./use-account-id";
@@ -133,13 +134,16 @@ export function EmailRoutingFields({
         </div>
       )}
       {loadError !== null && <ErrorMessageBanner message={loadError} newTab />}
-      {options?.noZones && (
-        <PermissionsBanner
-          title="Appflare cannot see any domain in this account"
-          missing={EMAIL_ROUTING_PERMISSIONS}
-          why="Either the account has no domain on Cloudflare yet (add one and wait until it is active), or the token lacks the permissions receiving email needs."
-        />
-      )}
+      {options?.noZones &&
+        (options.connection === "oauth" ? (
+          <SignInPermissionsBanner noZones />
+        ) : (
+          <PermissionsBanner
+            title="Appflare cannot see any domain in this account"
+            missing={EMAIL_ROUTING_PERMISSIONS}
+            why="Either the account has no domain on Cloudflare yet (add one and wait until it is active), or the token lacks the permissions receiving email needs."
+          />
+        ))}
       {options !== null && !options.noZones && options.zones.length === 0 && (
         <Text variant="secondary">
           None of the account's domains is active yet ({options.inactiveZones.join(", ")}). A domain
@@ -238,13 +242,16 @@ function PreviewDetails({
   }
   return (
     <div className="grid gap-3">
-      {preview.missing.length > 0 && (
-        <PermissionsBanner
-          title="The Cloudflare token cannot set up Email Routing yet"
-          missing={preview.missing}
-          why={`The token lacks permissions on ${zone} that the install needs.`}
-        />
-      )}
+      {preview.missing.length > 0 &&
+        (preview.connection === "oauth" ? (
+          <SignInPermissionsBanner noZones={false} what="set up Email Routing" />
+        ) : (
+          <PermissionsBanner
+            title="The Cloudflare token cannot set up Email Routing yet"
+            missing={preview.missing}
+            why={`The token lacks permissions on ${zone} that the install needs.`}
+          />
+        ))}
       {preview.problems.length > 0 && (
         <Banner
           variant="error"

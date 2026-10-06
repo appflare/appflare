@@ -1,9 +1,9 @@
+import { AppflareLoader } from "@appflare/brand/loader";
 import { CodeBlock, Collapsible, Text } from "@cloudflare/kumo";
 import { useRouter } from "@tanstack/react-router";
 import { useState } from "react";
 import { TELEMETRY_COPY, type TelemetryStatus } from "../telemetry/telemetry";
 import { previewTelemetry, setTelemetry } from "../telemetry/telemetry.functions";
-import { AppflareLoader } from "./appflare-loader";
 import { ErrorMessageBanner } from "./message-text";
 import { Section, SectionBody } from "./section";
 import { settingsSection } from "./settings-links";

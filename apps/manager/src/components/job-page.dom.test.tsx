@@ -110,11 +110,20 @@ describe("the job page", () => {
     expect(box.scrollTop).toBe(200);
   });
 
-  it("announces a failure as an alert", () => {
-    render({ ...JOB, status: "failed", error: "The Worker could not be uploaded." });
+  it("announces a failure as an alert, in a plain sentence, the error behind Details", () => {
+    const error =
+      "verify API token: Cloudflare API request failed: GET /user/tokens/verify -> 401: [1000] Invalid API Token";
+    render({ ...JOB, status: "failed", error });
     const alert = container.querySelector('[role="alert"]');
-    expect(alert?.textContent).toContain("The job failed");
-    expect(alert?.textContent).toContain("The Worker could not be uploaded.");
+    expect(alert?.textContent).toContain("Install did not finish.");
+    expect(alert?.textContent).toContain("Cloudflare did not accept Appflare's access.");
+    // The step's name and Cloudflare's answer are there on request only.
+    expect(alert?.textContent).not.toContain("verify API token");
+    const details = [...(alert?.querySelectorAll("button") ?? [])].find(
+      (b) => b.textContent === "Details",
+    );
+    act(() => details?.click());
+    expect(alert?.textContent).toContain(error);
   });
 
   it("says when the log is empty", () => {

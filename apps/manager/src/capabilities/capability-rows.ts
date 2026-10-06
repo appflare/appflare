@@ -778,7 +778,7 @@ function signInPermissionsRow(input: CapabilityRowsInput): CapabilityRow {
   const base = {
     id: "token-permissions" as const,
     name: "Sign-in permissions",
-    why: "Appflare can only set up what you allowed when you signed in with Cloudflare.",
+    why: "Appflare can only do what you allowed when you signed in.",
   };
   const notGranted = [
     ...new Set((input.connection?.missingScopes ?? []).map((s) => MANAGER_SCOPE_LABELS[s] ?? s)),

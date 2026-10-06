@@ -1,3 +1,4 @@
+import { AppflareLoader } from "@appflare/brand/loader";
 import {
   Banner,
   Button,
@@ -16,17 +17,17 @@ import { serverErrorMessage } from "../auth/sign-in-errors";
 import { getCapabilityRowsData } from "../capabilities/capability-rows.functions";
 import type { CapabilityRowsData } from "../capabilities/capability-rows.server";
 import { SetupCapabilities } from "../capabilities/capability-section";
-import { AppflareLoader } from "../components/appflare-loader";
 import { AuthError, AuthLayout, FULL_WIDTH_ACTION } from "../components/auth-layout";
 import { BusyButton } from "../components/busy-button";
 import { SetupTokenForm, type SetupTokenSaved } from "../components/cloudflare-token-form";
-import { MessageText } from "../components/message-text";
+import { ACTIONS_UNDER_ON_PHONE, MessageText, TOUCH_TARGET } from "../components/message-text";
 import { PasswordInput } from "../components/password-input";
 import { afterSignIn, returnToSearchSchema, withReturnTo } from "../components/return-to";
 import {
   type AddressOptions,
   getManagerAddressOptions,
 } from "../domains/manager-address.functions";
+import { pendingAddressNote } from "../domains/moved-note";
 import {
   type ClaimNotice as ClaimNoticeState,
   claimNoticeFor,
@@ -120,6 +121,8 @@ export const Route = createFileRoute("/setup")({
       // the first step. A code that got no definite answer stays in memory
       // (never in the address bar again) for Try again.
       claim: claimNoticeFor(taken, redeemed, gate.step === "handoff" || gate.step === "connect"),
+      // The domain the install chose, while it does not serve yet.
+      pendingAddress: gate.pendingAddress ?? null,
       version,
     };
   },
@@ -180,7 +183,12 @@ function SetupPage() {
           }}
         />
       )}
-      <StepContent state={state} dispatch={dispatch} resync={resync} />
+      <StepContent
+        state={state}
+        dispatch={dispatch}
+        resync={resync}
+        pendingAddress={loaded.pendingAddress}
+      />
     </AuthLayout>
   );
 }
@@ -202,8 +210,8 @@ function ClaimNotice({
       <Banner
         variant="alert"
         icon={<WarningIcon weight="fill" />}
-        title="This setup link no longer works"
-        description="It was already used, or it is more than 30 minutes old. Go back to the page that installed Appflare and open Appflare from there again."
+        title="This setup link has expired"
+        description="Links work once, for 30 minutes. Open Appflare again from the page that installed it."
       />
     );
   }
@@ -211,28 +219,26 @@ function ClaimNotice({
     <Banner
       variant="alert"
       icon={<WarningIcon weight="fill" />}
-      title="Your setup link could not be used yet"
-      description={
-        <div className="grid gap-2">
-          <p>Appflare did not answer, or asked this browser to wait a moment. Try again.</p>
-          <div>
-            <BusyButton
-              pending={trying}
-              variant="secondary"
-              size="sm"
-              onClick={async () => {
-                setTrying(true);
-                try {
-                  await onAnswer(await redeem(claim.code));
-                } finally {
-                  setTrying(false);
-                }
-              }}
-            >
-              Try again
-            </BusyButton>
-          </div>
-        </div>
+      className={ACTIONS_UNDER_ON_PHONE}
+      title="Your setup link did not go through"
+      description="Appflare did not answer yet."
+      action={
+        <BusyButton
+          pending={trying}
+          variant="secondary"
+          size="sm"
+          className={TOUCH_TARGET}
+          onClick={async () => {
+            setTrying(true);
+            try {
+              await onAnswer(await redeem(claim.code));
+            } finally {
+              setTrying(false);
+            }
+          }}
+        >
+          Try again
+        </BusyButton>
       }
     />
   );
@@ -242,10 +248,13 @@ function StepContent({
   state,
   dispatch,
   resync,
+  pendingAddress,
 }: {
   state: WizardState;
   dispatch: (event: WizardEvent) => void;
   resync: () => Promise<void>;
+  /** The domain Appflare moves to once it serves; null when none is pending. */
+  pendingAddress: string | null;
 }) {
   switch (state.step) {
     case "connect":
@@ -273,6 +282,7 @@ function StepContent({
             dispatch({ type: "owner-created", checklist, address })
           }
           resync={resync}
+          pendingAddress={pendingAddress}
         />
       );
     case "address":
@@ -364,24 +374,27 @@ function HandoffStep({
   installPage: string | null;
   onUseToken: () => void;
 }) {
+  const otherWays = (
+    <div className="grid gap-3">
+      <Text variant="secondary">
+        Closed it? Open it again in the same browser; it picks up where it stopped. Or connect with
+        an API token for this account.
+      </Text>
+      <Button variant="secondary" className={FULL_WIDTH_ACTION} onClick={onUseToken}>
+        Connect with an API token instead
+      </Button>
+    </div>
+  );
+  if (installPage === null) return otherWays;
   return (
     <>
-      <Text variant="secondary">
-        If you closed that page, open it again in the same browser: it continues where it stopped.
-      </Text>
-      {installPage !== null && (
-        <LinkButton href={installPage} variant="primary" className={FULL_WIDTH_ACTION}>
-          Open the installer
-        </LinkButton>
-      )}
-      <div className="grid gap-2">
-        <Text variant="secondary">
-          You can also connect Appflare with a Cloudflare API token for this account instead.
-        </Text>
-        <Button variant="secondary" className={FULL_WIDTH_ACTION} onClick={onUseToken}>
-          Connect with an API token instead
-        </Button>
-      </div>
+      <LinkButton href={installPage} variant="primary" className={FULL_WIDTH_ACTION}>
+        Back to the installer
+      </LinkButton>
+      <Collapsible.Root>
+        <Collapsible.DefaultTrigger className={TOUCH_TARGET}>Other ways</Collapsible.DefaultTrigger>
+        <Collapsible.DefaultPanel>{otherWays}</Collapsible.DefaultPanel>
+      </Collapsible.Root>
     </>
   );
 }
@@ -419,13 +432,19 @@ function RedeployingStep({ onReady }: { onReady: () => void }) {
   );
 }
 
-/** Step 2: the owner account, only in the browser that connected Cloudflare. */
+/**
+ * Step 2: the owner account, only in the browser that connected Cloudflare.
+ * A password only: while the chosen domain is pending, a passkey made here
+ * would belong to this temporary address, so passkeys come after the move.
+ */
 function CreateOwnerStep({
   onCreated,
   resync,
+  pendingAddress,
 }: {
   onCreated: (checklist: CapabilityRowsData, address: AddressOptions | null | "set") => void;
   resync: () => Promise<void>;
+  pendingAddress: string | null;
 }) {
   const router = useRouter();
   const { returnTo } = Route.useSearch();
@@ -480,6 +499,11 @@ function CreateOwnerStep({
         maxLength={128}
         description={`At least ${MIN_PASSWORD_LENGTH} characters.`}
       />
+      {pendingAddress !== null && (
+        <Text variant="secondary" size="sm" as="p">
+          {pendingAddressNote(pendingAddress)}
+        </Text>
+      )}
       <BusyButton pending={pending} type="submit" variant="primary" className={FULL_WIDTH_ACTION}>
         Create owner account
       </BusyButton>

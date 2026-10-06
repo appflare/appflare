@@ -6,18 +6,18 @@ import { requireConnection } from "../cloudflare/connection.server";
 import { createDb } from "../db/client";
 import { jobs } from "../db/schema";
 import { readSettings, SETTING } from "../db/settings";
+import { handoffHashOf } from "../handoff/handoff-proof";
 import { detachMessage } from "../installs/custom-domains.server";
-import { probeHealth } from "../jobs/install/health";
 import type { JobContext, StepConfig, StepRunner } from "../jobs/run-job";
 import { StepLog } from "../jobs/step-log";
 import { createJobSteps, errorMessage, JobError, type JobSteps } from "../jobs/steps";
 import {
   completeAddressMove,
   detachQuietly,
-  managerVerdict,
   readAttachedBy,
   readManagerDomain,
 } from "./manager-address.server";
+import { identityVerdict } from "./manager-identity";
 import { MOVE_FAILURES, MOVE_LINES, MOVE_STEPS, MOVE_WAIT_MS } from "./move-address-lines";
 
 /**
@@ -26,8 +26,9 @@ import { MOVE_FAILURES, MOVE_LINES, MOVE_STEPS, MOVE_WAIT_MS } from "./move-addr
  * (manager-address.server.ts). Until the switch, the address people use
  * keeps serving.
  *
- * 1. Wait for the certificate and the new address: `https://<host>/api/health`
- *    must answer as this Appflare (200 with this version). A new domain's
+ * 1. Wait for the certificate and the new address, until it answers as this
+ *    Appflare (`identityVerdict`: its health report with this version, and on a
+ *    manager installed from the browser its handoff proof). A new domain's
  *    certificate commonly takes one to several minutes, so the job probes
  *    with a growing wait between probes (`step.sleep`) for up to 15 minutes,
  *    and logs a line about once a minute while it waits.
@@ -111,9 +112,8 @@ const PROBE_STEP: StepConfig = { retries: { limit: 1, delay: "2 seconds" } };
 async function waitForAddress(
   steps: JobSteps,
   step: StepRunner,
-  target: { hostname: string; version: string },
+  target: { hostname: string; version: string; handoffHash: string | null },
 ): Promise<{ ok: true } | { ok: false; last: string }> {
-  const url = `https://${target.hostname}/api/health`;
   let firstAt: number | null = null;
   let loggedAt: number | null = null;
   for (let attempt = 1; ; attempt++) {
@@ -122,7 +122,8 @@ async function waitForAddress(
       async ({ log, fetch }): Promise<ProbeResult> => {
         const at = steps.now();
         if (attempt === 1) log.info(MOVE_LINES.waiting(target.hostname, target.version));
-        const last = managerVerdict(await probeHealth(fetch, url), target.version);
+        // "Answers as this Appflare": see identityVerdict for exactly what is checked.
+        const last = await identityVerdict(fetch, target.hostname, target);
         if (last === null) {
           log.info(MOVE_LINES.answers(target.hostname));
           return { at, last, logged: true };
@@ -178,7 +179,11 @@ export async function runMoveAddress(ctx: JobContext): Promise<void> {
     replacedRecords = started.replacedRecords;
 
     // 1. The new address answers as this Appflare.
-    const waited = await waitForAddress(steps, step, { hostname, version: params.version });
+    const waited = await waitForAddress(steps, step, {
+      hostname,
+      version: params.version,
+      handoffHash: handoffHashOf(env.APPFLARE_HANDOFF),
+    });
     if (!waited.ok) {
       reason = MOVE_FAILURES.neverAnswered(hostname, waited.last, replacedRecords);
     } else {
