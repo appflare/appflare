@@ -138,8 +138,12 @@ export interface ConnectionMemo {
    * again, so the newest refresh token is not lost while the isolate lives.
    */
   pending: { grantId: string; sent: string; renewal: GrantRenewal } | null;
-  /** When an access token the API refused was last renewed, per grant. */
-  rejected: { grantId: string; at: number } | null;
+  /**
+   * The last access token the API refused, and when it was renewed for that:
+   * no resolution hands it out again, and another refusal soon after is not
+   * renewed again.
+   */
+  rejected: { grantId: string; token: string; at: number } | null;
   /**
    * Keys this isolate can use, by fingerprint: the Worker's own, and a key
    * this isolate wrote itself while its version did not have it yet.
@@ -251,7 +255,8 @@ function lasts(expiresAt: number | null, ctx: Ctx, minValidityMs: number): boole
 
 function memoHit(ctx: Ctx, grantId: string, ask: Ask): string | null {
   const access = ctx.memo.access;
-  if (access === null || access.grantId !== grantId || access.token === ask.reject) return null;
+  if (access === null || access.grantId !== grantId) return null;
+  if (refusedToken(ctx, grantId, access.token, ask)) return null;
   return lasts(access.expiresAt, ctx, ask.minValidityMs) ? access.token : null;
 }
 
@@ -310,16 +315,39 @@ async function keyFor(ctx: Ctx, row: GrantRow): Promise<CryptoKey> {
 /**
  * Stores a renewal this isolate could not store before. Kept for later when
  * D1 fails again; dropped once stored, or once the grant moved on without it.
+ * A newer one kept while this write was out stays kept.
  */
 async function flushPending(ctx: Ctx): Promise<void> {
   const pending = ctx.memo.pending;
   if (pending === null || ctx.db === null) return;
   try {
     await saveRenewal(ctx.db, pending.grantId, pending.sent, pending.renewal);
-    ctx.memo.pending = null;
+    if (ctx.memo.pending === pending) ctx.memo.pending = null;
   } catch {
     // Still unreachable: kept, and tried again on the next resolution.
   }
+}
+
+/**
+ * The renewal of `row` this isolate holds and has not stored: its refresh
+ * token is the newest, and the one in D1 (`sent`) was already used. Null
+ * when there is none, or when the grant moved on without it (then dropped).
+ */
+function pendingFor(ctx: Ctx, row: GrantRow): ConnectionMemo["pending"] {
+  const pending = ctx.memo.pending;
+  if (pending === null || pending.grantId !== row.id) return null;
+  if (pending.sent !== row.refreshToken) {
+    ctx.memo.pending = null;
+    return null;
+  }
+  return pending;
+}
+
+/** An access token the API refused: never handed out again, from the memo or from D1. */
+function refusedToken(ctx: Ctx, grantId: string, token: string, ask: Ask): boolean {
+  if (token === ask.reject) return true;
+  const rejected = ctx.memo.rejected;
+  return rejected !== null && rejected.grantId === grantId && rejected.token === token;
 }
 
 interface Resolved {
@@ -356,7 +384,7 @@ async function storedAccess(
     // Unreadable with the right key: renew it rather than fail.
     return null;
   }
-  if (token === ask.reject) return null;
+  if (refusedToken(ctx, row.id, token, ask)) return null;
   ctx.memo.access = { grantId: row.id, token, expiresAt: row.accessExpiresAt ?? 0 };
   return token;
 }
@@ -454,8 +482,11 @@ export async function refreshWithRetries(
 
 /**
  * Refreshes the grant (holding the lease) and stores the result before the
- * lease is let go. Every write is conditional on the refresh token sent
- * (`row.refreshToken`, sealed): see grant-store.server.ts.
+ * lease is let go. Every write is conditional on the refresh token D1 holds
+ * (`row.refreshToken`, sealed): see grant-store.server.ts. When this isolate
+ * holds a renewal D1 would not store, its refresh token is the newest (the
+ * one in D1 was already used), so that is the one sent; the result is
+ * stored over what D1 holds, or kept in its place.
  */
 async function renew(
   ctx: Ctx,
@@ -464,12 +495,20 @@ async function renew(
   key: CryptoKey,
   ask: Ask,
 ): Promise<Resolved> {
+  const pending = pendingFor(ctx, row);
   let refreshToken: string;
   try {
-    refreshToken = await openValue(key, row.refreshToken, sealContext(row.id, "refresh"));
+    refreshToken = await openValue(
+      key,
+      pending === null ? row.refreshToken : pending.renewal.refreshToken,
+      sealContext(row.id, "refresh"),
+    );
   } catch {
     throw new CloudflareConnectionError("key_lost", CONNECTION_MESSAGES.keyLost);
   }
+  const dropPending = () => {
+    if (pending !== null && ctx.memo.pending === pending) ctx.memo.pending = null;
+  };
   let tokens: RefreshedTokens;
   try {
     tokens = await refreshWithRetries({ clientId: row.clientId, refreshToken }, ctx);
@@ -480,6 +519,7 @@ async function renew(
         await markNeedsReconnect(db, row.id, row.refreshToken, GRANT_PROBLEMS.revoked, ctx.now())
       ) {
         if (ctx.memo.access?.grantId === row.id) ctx.memo.access = null;
+        dropPending();
         console.error("cloudflare connection: the grant was refused; it needs reconnecting");
         throw reconnectError();
       }
@@ -517,11 +557,13 @@ async function renew(
     try {
       stored = await saveRenewal(db, row.id, row.refreshToken, renewal);
     } catch {
+      // In place of any older one: this renewal's refresh token is the newest.
       ctx.memo.pending = { grantId: row.id, sent: row.refreshToken, renewal };
       console.error("cloudflare connection: could not store the renewed access; kept to retry");
       throw temporaryError();
     }
   }
+  dropPending();
   if (!stored) {
     // Replaced, removed, or renewed by a request whose lease outlived ours:
     // the access token still serves this call.
@@ -604,7 +646,7 @@ export function cloudflareConnection(
         ) {
           return response;
         }
-        ctx.memo.rejected = { grantId, at: ctx.now() };
+        ctx.memo.rejected = { grantId, token: refused, at: ctx.now() };
         if (ctx.memo.access?.token === refused) ctx.memo.access = null;
         await response.body?.cancel();
         // The cached token is refused: read the grant again and renew.
@@ -748,10 +790,13 @@ export async function openStoredGrant(
   if (grant === null) return null;
   const key = await heldKey(ctx, grant.keyId);
   if (key === null) return null;
+  // A renewal this isolate could not store holds the newest refresh token.
+  const pending = pendingFor(ctx, grant);
+  const sealed = pending === null ? grant.refreshToken : pending.renewal.refreshToken;
   try {
     return {
       clientId: grant.clientId,
-      refreshToken: await openValue(key, grant.refreshToken, sealContext(grant.id, "refresh")),
+      refreshToken: await openValue(key, sealed, sealContext(grant.id, "refresh")),
     };
   } catch {
     return null;

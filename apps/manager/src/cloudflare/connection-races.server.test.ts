@@ -15,6 +15,7 @@ import {
   cloudflareConnection,
   connectionProblem,
   createConnectionMemo,
+  holdGrantForRemoval,
   isolateConnectionMemo,
   LOCK_POLL_MS,
   LOCK_POLLS,
@@ -205,7 +206,82 @@ describe("a renewal D1 would not store", () => {
     expect((await stored()).refresh).toBe("cf-refresh-SECRET-1");
     expect(oauth.refreshes).toHaveLength(1);
   });
+
+  it("a forced renewal while it is still unstored sends its refresh token, never the used one in D1", async () => {
+    await seedGrant();
+    const api = fakeCloudflare({ [SCRIPTS]: { result: [] } });
+    const oauth = fakeOAuth(api.fetch);
+    const memo = createConnectionMemo();
+    const writes = failRenewalWrites();
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    await connection(oauth.fetch, { memo })
+      .token()
+      .catch(() => {});
+    expect(memo.pending).not.toBeNull();
+    // Removal wants a token that lasts longer than the one held: a refresh
+    // is forced while the flush keeps failing.
+    const held = await holdGrantForRemoval(
+      { DB: env.DB, CF_GRANT_KEY: keySecret },
+      2 * 60 * 60_000,
+      { fetch: oauth.fetch, now, sleep: quickSleep, memo },
+    );
+    expect(oauth.refreshes.map((r) => r.refreshToken)).toEqual([REFRESH, "cf-refresh-SECRET-1"]);
+    // What removal revokes is the newest refresh token, still only in memory.
+    expect(held?.refreshToken).toBe("cf-refresh-SECRET-2");
+    expect((await stored()).refresh).toBe(REFRESH);
+    // D1 answers again: the newest renewal is stored, over the token D1 held.
+    writes.stop();
+    expect(await connection(oauth.fetch, { memo }).token()).toBe("cf-access-SECRET-2");
+    expect(memo.pending).toBeNull();
+    expect((await stored()).refresh).toBe("cf-refresh-SECRET-2");
+    expect(oauth.refreshes).toHaveLength(2);
+  });
+
+  it("a flush that finishes keeps a newer renewal kept while it was out", async () => {
+    const memo = createConnectionMemo();
+    const renewal = {
+      refreshToken: "x",
+      accessToken: "y",
+      accessExpiresAt: 1,
+      scopes: null,
+      at: 1,
+    };
+    const older = { grantId: "grant-gone", sent: "sealed-1", renewal };
+    const newer = { grantId: "grant-gone", sent: "sealed-2", renewal };
+    memo.pending = older;
+    const real = env.DB.prepare.bind(env.DB);
+    vi.spyOn(env.DB, "prepare").mockImplementation((sql: string) => {
+      if (sql.startsWith("UPDATE cloudflare_grant SET refresh_token")) memo.pending = newer;
+      return real(sql);
+    });
+    const conn = cloudflareConnection(
+      { DB: env.DB, CF_API_TOKEN: "cf-api-SECRET" },
+      { memo },
+      {
+        grant: null,
+      },
+    );
+    expect(await conn.token()).toBe("cf-api-SECRET");
+    expect(memo.pending).toBe(newer);
+  });
 });
+
+/** Makes every write of renewed tokens fail until `stop()`. */
+function failRenewalWrites(): { stop(): void } {
+  let failing = true;
+  const real = env.DB.prepare.bind(env.DB);
+  vi.spyOn(env.DB, "prepare").mockImplementation((sql: string) => {
+    if (failing && sql.startsWith("UPDATE cloudflare_grant SET refresh_token")) {
+      throw new Error("D1_ERROR: storage unavailable");
+    }
+    return real(sql);
+  });
+  return {
+    stop() {
+      failing = false;
+    },
+  };
+}
 
 describe("waiting for another request's refresh", () => {
   it("lasts longer than the slowest refresh, then ends as temporary", () => {
@@ -280,6 +356,52 @@ describe("an access token the API refuses (401)", () => {
       .catch(() => {});
     expect(oauth.refreshes).toHaveLength(1);
     expect(rest.calls).toHaveLength(3);
+  });
+
+  it("renews from a renewal D1 would not store, when the API refuses its access token", async () => {
+    await seedGrant();
+    const rest = api(["cf-access-SECRET-1"]);
+    const oauth = fakeOAuth(rest.fetch);
+    const memo = createConnectionMemo();
+    const writes = failRenewalWrites();
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    // The first renewal (of the seed) cannot be stored.
+    await connection(oauth.fetch, { memo })
+      .token()
+      .catch(() => {});
+    // Its access token is refused; the flush fails again; the forced renewal
+    // sends the newest refresh token, which only this isolate holds.
+    const error = await client(oauth.fetch, memo)
+      .workers.listScripts()
+      .catch((e: unknown) => e);
+    expect((error as CloudflareConnectionError).problem).toBe("temporary");
+    expect(oauth.refreshes.map((r) => r.refreshToken)).toEqual([REFRESH, "cf-refresh-SECRET-1"]);
+    writes.stop();
+    await client(oauth.fetch, memo).workers.listScripts();
+    expect((await stored()).refresh).toBe("cf-refresh-SECRET-2");
+    expect(rest.calls.at(-1)).toBe("Bearer cf-access-SECRET-2");
+    expect(oauth.refreshes).toHaveLength(2);
+  });
+
+  it("never hands a refused token out again, so a renewal that fails for now says so", async () => {
+    await seedGrant({ access: "cf-access-SECRET-withdrawn" });
+    const rest = api(["cf-access-SECRET-withdrawn"]);
+    const oauth = fakeOAuth(rest.fetch);
+    const memo = createConnectionMemo();
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    oauth.next.push({ status: 503 }, { status: 503 }, { status: 503 });
+    const first = await client(oauth.fetch, memo)
+      .workers.listScripts()
+      .catch((e: unknown) => e);
+    expect((first as CloudflareConnectionError).problem).toBe("temporary");
+    // A plain resolution right after does not pick the refused token back up from D1.
+    oauth.next.push({ status: 503 }, { status: 503 }, { status: 503 });
+    const second = await connection(oauth.fetch, { memo })
+      .token()
+      .catch((e: unknown) => e);
+    expect((second as CloudflareConnectionError).problem).toBe("temporary");
+    expect(oauth.refreshes).toHaveLength(6);
+    expect(rest.calls).toEqual(["Bearer cf-access-SECRET-withdrawn"]);
   });
 
   it("leaves an API token connection's 401 alone", async () => {
