@@ -1,10 +1,9 @@
 import { Banner, ClipboardText, LayerDialog, Radio, Text } from "@cloudflare/kumo";
-import { CheckCircleIcon, WarningCircleIcon } from "@phosphor-icons/react";
 import { useState } from "react";
 import { serverErrorMessage } from "../auth/sign-in-errors";
 import { issuePasswordRecoveryCode, sendPasswordResetLink } from "../server/recovery.functions";
 import { BusyMark, busyActionProps } from "./busy-button";
-import { ErrorMessageBanner } from "./message-text";
+import { BANNER_ICON, ErrorMessageBanner, StatusRegion, SuccessBanner } from "./message-text";
 
 type Way = "link" | "code";
 
@@ -110,21 +109,23 @@ export function ResetPasswordDialog({
                 <ClipboardText text={outcome.code} />
                 <Banner
                   variant="alert"
-                  icon={<WarningCircleIcon weight="fill" />}
+                  icon={BANNER_ICON.alert}
                   title="Copy it now"
                   description='On the sign-in page they choose "Forgot your password?", then "I have a recovery code", and enter their email, this code and a new password. It works once, for 30 minutes.'
                 />
               </>
             )}
+          </div>
+          {/* The grid above is empty by the time it holds anything. */}
+          <StatusRegion>
             {outcome?.kind === "link" && (
-              <Banner
-                variant="secondary"
-                icon={<CheckCircleIcon weight="fill" />}
+              <SuccessBanner
+                live={false}
                 title="Reset link sent"
                 description="It works for 30 minutes. If it does not arrive, show a recovery code instead."
               />
             )}
-          </div>
+          </StatusRegion>
         </LayerDialog.Body>
         <LayerDialog.Actions dismissLabel={outcome === null ? "Cancel" : "Close"}>
           {outcome === null ? (

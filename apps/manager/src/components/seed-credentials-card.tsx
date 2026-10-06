@@ -1,6 +1,6 @@
 import { Banner, ClipboardText, Text } from "@cloudflare/kumo";
-import { WarningCircleIcon } from "@phosphor-icons/react";
 import { useEffect, useState } from "react";
+import { BANNER_ICON } from "./message-text";
 import { Section, SectionBody } from "./section";
 import { forgetSeedCredentials, peekSeedCredentials } from "./seed-credentials";
 
@@ -20,7 +20,7 @@ export function SeedCredentialsCard({ jobId }: { jobId: string }) {
       <SectionBody>
         <Banner
           variant="alert"
-          icon={<WarningCircleIcon weight="fill" />}
+          icon={BANNER_ICON.alert}
           title="Copy it now"
           description="The install uses it once to create the first admin account. Appflare does not keep it, and this page shows it only until you leave."
         />

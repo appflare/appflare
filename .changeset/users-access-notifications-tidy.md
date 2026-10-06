@@ -1,0 +1,5 @@
+---
+"@appflare/manager": patch
+---
+
+Each notification channel now keeps "Send test" at its right, with a menu beside it to edit the channel, replace a webhook's signing secret, or remove it, and every row's buttons say which channel they act on; after a channel is removed the keyboard focus moves to "Add channel" instead of being lost. A delivered test message, a re-sync of the Cloudflare Access admins, a sent reset link, a changed password and Cloudflare Access turning on now show the same green-check success message as the rest of the manager, shown in a place that is already on the page and marked for screen readers, so they read the message out when it arrives; a failed test message or Access check is announced at once, and an Access check's dashboard address is a link. The users table shows each person's role once, as "Owner", "Admin" or "Member", worded as in the account menu. Password reset emails that are on show a green "On", "Turn off" is drawn as the destructive action it is, a passkey's kind is no longer highlighted, and warnings use the same icons everywhere.

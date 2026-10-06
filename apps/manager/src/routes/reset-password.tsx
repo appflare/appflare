@@ -1,5 +1,4 @@
-import { Banner, Link, Text } from "@cloudflare/kumo";
-import { CheckCircleIcon } from "@phosphor-icons/react";
+import { Link, Text } from "@cloudflare/kumo";
 import { createFileRoute, redirect } from "@tanstack/react-router";
 import { type FormEvent, useState } from "react";
 import { z } from "zod";
@@ -11,6 +10,7 @@ import {
 } from "../auth/recovery-messages";
 import { AuthError, AuthLayout, FULL_WIDTH_ACTION } from "../components/auth-layout";
 import { BusyButton } from "../components/busy-button";
+import { StatusRegion, SuccessBanner } from "../components/message-text";
 import { PasswordInput } from "../components/password-input";
 import { returnToSearchSchema, withReturnTo } from "../components/return-to";
 import { getSetupStatus } from "../server/setup.functions";
@@ -68,48 +68,52 @@ function ResetPasswordPage() {
       description="You are signed out everywhere once it is set."
       version={version}
     >
-      <div className="grid gap-5">
-        {!usable ? (
-          <>
-            <AuthError message={RECOVERY_MESSAGES.linkInvalid} />
-            <Link href={withReturnTo("/forgot-password", returnTo)}>Ask for a new link</Link>
-          </>
-        ) : done ? (
-          <>
-            <Banner
-              variant="secondary"
-              icon={<CheckCircleIcon weight="fill" />}
+      <div>
+        {/* Outside the grid, so it adds no gap while empty. */}
+        <StatusRegion spacing="mb-5">
+          {usable && done && (
+            <SuccessBanner
+              live={false}
               title="Password changed"
               description="Sign in with your new password."
             />
+          )}
+        </StatusRegion>
+        <div className="grid gap-5">
+          {!usable ? (
+            <>
+              <AuthError message={RECOVERY_MESSAGES.linkInvalid} />
+              <Link href={withReturnTo("/forgot-password", returnTo)}>Ask for a new link</Link>
+            </>
+          ) : done ? (
             <Link href={signInHref}>Sign in</Link>
-          </>
-        ) : (
-          <>
-            {error !== null && <AuthError message={error} />}
-            <form className="grid gap-4" onSubmit={onSubmit}>
-              <PasswordInput
-                label="New password"
-                name="newPassword"
-                autoComplete="new-password"
-                minLength={PASSWORD_LIMITS.min}
-                maxLength={PASSWORD_LIMITS.max}
-                description={`At least ${PASSWORD_LIMITS.min} characters.`}
-              />
-              <BusyButton
-                pending={pending}
-                type="submit"
-                variant="primary"
-                className={FULL_WIDTH_ACTION}
-              >
-                Set new password
-              </BusyButton>
-            </form>
-            <Text variant="secondary" size="sm" as="p">
-              <Link href={signInHref}>Back to sign in</Link>
-            </Text>
-          </>
-        )}
+          ) : (
+            <>
+              {error !== null && <AuthError message={error} />}
+              <form className="grid gap-4" onSubmit={onSubmit}>
+                <PasswordInput
+                  label="New password"
+                  name="newPassword"
+                  autoComplete="new-password"
+                  minLength={PASSWORD_LIMITS.min}
+                  maxLength={PASSWORD_LIMITS.max}
+                  description={`At least ${PASSWORD_LIMITS.min} characters.`}
+                />
+                <BusyButton
+                  pending={pending}
+                  type="submit"
+                  variant="primary"
+                  className={FULL_WIDTH_ACTION}
+                >
+                  Set new password
+                </BusyButton>
+              </form>
+              <Text variant="secondary" size="sm" as="p">
+                <Link href={signInHref}>Back to sign in</Link>
+              </Text>
+            </>
+          )}
+        </div>
       </div>
     </AuthLayout>
   );
