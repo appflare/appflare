@@ -1,11 +1,5 @@
-import { Banner, Link, LinkButton, Select, Text } from "@cloudflare/kumo";
-import {
-  EnvelopeSimpleIcon,
-  InfoIcon,
-  KeyIcon,
-  WarningCircleIcon,
-  WarningIcon,
-} from "@phosphor-icons/react";
+import { Banner, Link, LinkButton, Text } from "@cloudflare/kumo";
+import { EnvelopeSimpleIcon, KeyIcon } from "@phosphor-icons/react";
 import { useEffect, useState } from "react";
 import { accountTokenTemplateUrl } from "../cloudflare/token-template";
 import { EMAIL_ROUTING_PERMISSIONS } from "../installs/email-routing";
@@ -13,9 +7,10 @@ import { getEmailZoneOptions, previewEmailRouting } from "../installs/email-rout
 import type { EmailRoutingPreview, EmailZoneOptions } from "../installs/email-routing.server";
 import { WORKER_NAME_PATTERN } from "../installs/install-input";
 import { AppflareLoader } from "./appflare-loader";
-import { ErrorMessageBanner, MessageBanner } from "./message-text";
+import { BANNER_ICON, bannerRole, ErrorMessageBanner, MessageBanner } from "./message-text";
 import { settingsLink } from "./settings-links";
 import { useAccountId } from "./use-account-id";
+import { ZoneCombobox } from "./zone-combobox";
 
 /** The records Cloudflare adds when it turns Email Routing on for a zone. */
 const ROUTING_RECORDS =
@@ -152,12 +147,10 @@ export function EmailRoutingFields({
         </Text>
       )}
       {options !== null && options.zones.length > 0 && (
-        <Select
-          label="Domain"
-          placeholder="Choose a domain"
+        <ZoneCombobox
+          zones={options.zones}
           value={zoneId}
-          onValueChange={(v) => onZoneChange(typeof v === "string" ? v : null)}
-          items={Object.fromEntries(options.zones.map((z) => [z.id, z.name]))}
+          onChange={onZoneChange}
           disabled={disabled}
         />
       )}
@@ -186,7 +179,7 @@ function PermissionsBanner({
   return (
     <Banner
       variant="alert"
-      icon={<WarningIcon weight="fill" />}
+      icon={BANNER_ICON.alert}
       title={title}
       description={
         <span className="grid gap-1.5">
@@ -255,7 +248,8 @@ function PreviewDetails({
       {preview.problems.length > 0 && (
         <Banner
           variant="error"
-          icon={<WarningCircleIcon weight="fill" />}
+          icon={BANNER_ICON.error}
+          role={bannerRole("error")}
           title={`The app cannot receive email on ${zone} yet`}
           description={
             <ul className="grid list-disc gap-1 pl-5">
@@ -267,7 +261,7 @@ function PreviewDetails({
         />
       )}
       {preview.warnings.map((w) => (
-        <MessageBanner key={w} message={w} variant="alert" icon={<WarningIcon weight="fill" />} />
+        <MessageBanner key={w} message={w} variant="alert" />
       ))}
       {preview.problems.length === 0 && steps.length > 0 && (
         <Banner
@@ -296,7 +290,7 @@ function PreviewDetails({
       {preview.sendsEmail === null && (
         <Banner
           variant="secondary"
-          icon={<InfoIcon weight="fill" />}
+          icon={BANNER_ICON.secondary}
           title="Whether this app also sends email is unknown until it is built"
           description="The app is built in this account when the install starts. If it sends email, it can send to the account's verified destination addresses for free; sending to other addresses needs Email Sending on Workers Paid."
         />
@@ -304,7 +298,7 @@ function PreviewDetails({
       {preview.sendsEmail === true && (
         <Banner
           variant="secondary"
-          icon={<InfoIcon weight="fill" />}
+          icon={BANNER_ICON.secondary}
           title="This app also sends email"
           description={
             preview.destinations === null

@@ -1,13 +1,10 @@
-import { Badge, Banner, Button, InlineCopyText, LinkButton, Select, Text } from "@cloudflare/kumo";
+import { Badge, Banner, Button, InlineCopyText, LinkButton, Text } from "@cloudflare/kumo";
 import {
   ArrowSquareOutIcon,
   ArrowsClockwiseIcon,
-  CheckCircleIcon,
   GlobeIcon,
-  InfoIcon,
   KeyIcon,
   TrashIcon,
-  WarningIcon,
 } from "@phosphor-icons/react";
 import { useRouter } from "@tanstack/react-router";
 import { useState } from "react";
@@ -26,11 +23,18 @@ import { BusyButton } from "./busy-button";
 import { ConfirmDialog } from "./confirm-dialog";
 import { DescriptionItem, DescriptionList } from "./description-list";
 import { DocsLink } from "./docs-link";
-import { ErrorMessageBanner, MessageText } from "./message-text";
+import {
+  BANNER_ICON,
+  bannerRole,
+  ErrorMessageBanner,
+  MessageText,
+  SuccessBanner,
+} from "./message-text";
 import { Section, SectionBody } from "./section";
 import { settingsSection } from "./settings-links";
 import { Timestamp } from "./timestamp";
 import { useAccountId } from "./use-account-id";
+import { ZoneCombobox } from "./zone-combobox";
 
 const mono = "font-mono text-[0.9em]";
 
@@ -123,10 +127,12 @@ function CheckBanner({
         Check again
       </BusyButton>
     );
+  const variant = check.kind === "error" ? "error" : "alert";
   return (
     <Banner
-      variant={check.kind === "error" ? "error" : "alert"}
-      icon={<WarningIcon weight="fill" />}
+      variant={variant}
+      icon={BANNER_ICON[variant]}
+      role={bannerRole(variant)}
       title={
         check.kind === "saas-off"
           ? `Cloudflare for SaaS is off for ${zoneName}`
@@ -134,7 +140,7 @@ function CheckBanner({
             ? `The token cannot manage custom hostnames on ${zoneName}`
             : "Cloudflare could not be asked"
       }
-      description={message}
+      description={<MessageText message={message} />}
       action={
         <span className="flex flex-wrap gap-2">
           {check.kind === "saas-off" && (
@@ -182,7 +188,7 @@ function ChooseZone({
     return (
       <Banner
         variant="alert"
-        icon={<WarningIcon weight="fill" />}
+        icon={BANNER_ICON.alert}
         title="Appflare cannot list the account's domains"
         description="The token needs Zone: Read, DNS: Edit and Workers Routes: Edit (the custom domain permissions) and SSL and Certificates: Edit on the domain that becomes the gateway. Edit the token in the Cloudflare dashboard to add them."
       />
@@ -192,7 +198,7 @@ function ChooseZone({
     return (
       <Banner
         variant="secondary"
-        icon={<InfoIcon weight="fill" />}
+        icon={BANNER_ICON.secondary}
         title="External domains need one domain on Cloudflare in this account"
         description="Add a domain you own to this account (the free plan is enough; it means changing its nameservers), or register one with Cloudflare Registrar at cost. Either also lets apps use custom domains, which need no gateway. Until then, apps answer on workers.dev."
       />
@@ -234,18 +240,16 @@ function ChooseZone({
   const zone = zones.find((z) => z.id === zoneId) ?? null;
   return (
     <div className="grid gap-4">
-      <Select
+      <ZoneCombobox
         label="Gateway domain"
         description="A domain of this account with Cloudflare for SaaS on. A domain of its own is tidiest, but one that serves a site works: its own hostnames pass through the gateway to their origin unchanged."
-        placeholder="Choose a domain"
+        zones={zones}
         value={zoneId}
-        onValueChange={(v) => {
-          const id = typeof v === "string" ? v : null;
+        onChange={(id) => {
           setZoneId(id);
           setCheck(null);
-          if (id !== null) void runCheck(id);
+          void runCheck(id);
         }}
-        items={Object.fromEntries(zones.map((z) => [z.id, z.name]))}
         disabled={settingUp}
       />
       {checking && (
@@ -263,9 +267,7 @@ function ChooseZone({
         />
       )}
       {check !== null && !checking && check.kind === "ready" && (
-        <Banner
-          variant="secondary"
-          icon={<CheckCircleIcon weight="fill" />}
+        <SuccessBanner
           title={`Cloudflare for SaaS is on for ${check.zoneName}`}
           description={`Setting up adds a proxied DNS record appflare-gateway.${check.zoneName}, makes it the domain's fallback origin (unless it has one), creates the Worker ${GATEWAY_WORKER_NAME} with a KV namespace for its routing table, and routes every request of ${check.zoneName} to that Worker.`}
         />
@@ -348,7 +350,7 @@ function GatewayDetails({
       {!gateway.ready && (
         <Banner
           variant="alert"
-          icon={<WarningIcon weight="fill" />}
+          icon={BANNER_ICON.alert}
           title="Setting up the gateway did not finish"
           description="Finishing continues where it stopped; nothing is created twice."
           action={
@@ -369,7 +371,7 @@ function GatewayDetails({
       {gateway.ready && gateway.answering === false && check.kind === "ready" && (
         <Banner
           variant="alert"
-          icon={<WarningIcon weight="fill" />}
+          icon={BANNER_ICON.alert}
           title={`https://${gateway.hostname} did not answer as the gateway`}
           description="A new route or DNS record can take a minute. If it stays like this, check the Worker's routes on the domain in the Cloudflare dashboard."
           action={

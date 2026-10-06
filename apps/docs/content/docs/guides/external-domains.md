@@ -113,7 +113,7 @@ twice.
 
 ## Add a domain to an app
 
-On the app's **Domains and email** tab, admins select **Add an external domain**.
+On the app's **Domains and email** tab, admins select **Add external domain**.
 The [install form](/guides/install-apps/#the-install-form) offers the same under
 **Address**: pick **Another domain, managed elsewhere** at the right of the field and
 type the whole hostname. The install adds the domain once the app runs.

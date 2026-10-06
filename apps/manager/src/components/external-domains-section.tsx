@@ -10,13 +10,7 @@ import {
   Table,
   Text,
 } from "@cloudflare/kumo";
-import {
-  ArrowsClockwiseIcon,
-  InfoIcon,
-  PlusIcon,
-  TrashIcon,
-  WarningIcon,
-} from "@phosphor-icons/react";
+import { ArrowsClockwiseIcon, GlobeSimpleIcon, PlusIcon, TrashIcon } from "@phosphor-icons/react";
 import { useRouter } from "@tanstack/react-router";
 import { type FormEvent, useCallback, useEffect, useId, useRef, useState } from "react";
 import {
@@ -47,9 +41,9 @@ import { DocsLink } from "./docs-link";
 import { formatTime } from "./format";
 import { FLUSH_RING_CLASS } from "./hash-target";
 import { HealthBadge } from "./install-health";
-import { ErrorMessageBanner, MessageText } from "./message-text";
+import { BANNER_ICON, ErrorMessageBanner, MessageText } from "./message-text";
 import { ResponsiveTable } from "./responsive-table";
-import { Section, SectionBody, SectionRow, SectionRows } from "./section";
+import { Section, SectionBody, SectionEmpty, SectionRow, SectionRows } from "./section";
 import { settingsLink } from "./settings-links";
 import { NEW_ADDRESS_SETTINGS, useSettingsRefresh } from "./settings-refresh";
 
@@ -104,10 +98,17 @@ export function ExternalDomainsSection({
       className={FLUSH_RING_CLASS}
       empty={
         install.externalDomains.length === 0 ? (
-          <Text variant="secondary">
-            None yet. An external domain needs the gateway, set up once in the{" "}
-            <Link href={settingsLink("domains", "external-domains")}>domains settings</Link>.
-          </Text>
+          <SectionEmpty
+            size="sm"
+            icon={<GlobeSimpleIcon size={32} className="text-kumo-inactive" />}
+            title="No external domains"
+            description="An external domain needs the gateway, set up once in the domains settings."
+            contents={
+              <Link href={settingsLink("domains", "external-domains")}>
+                Open the domains settings
+              </Link>
+            }
+          />
         ) : null
       }
     >
@@ -231,6 +232,7 @@ function ExternalDomainRow({
             variant="secondary"
             icon={<ArrowsClockwiseIcon />}
             onClick={() => void refresh(true)}
+            aria-label={`Check ${domain.hostname} now`}
           >
             Check now
           </BusyButton>
@@ -276,7 +278,7 @@ function DomainState({ status }: { status: ExternalDomainStatus }) {
       {status.errors.length > 0 && (
         <Banner
           variant="secondary"
-          icon={<InfoIcon weight="fill" />}
+          icon={BANNER_ICON.secondary}
           title="Cloudflare says"
           description={<MessageText message={status.errors.join(" ")} />}
         />
@@ -417,8 +419,8 @@ function AddExternalDomainDialog({ install }: { install: InstallDetail }) {
     >
       <LayerDialog.Trigger
         render={(p) => (
-          <Button {...p} variant="secondary" icon={<PlusIcon />}>
-            Add an external domain
+          <Button {...p} variant="primary" icon={<PlusIcon />}>
+            Add external domain
           </Button>
         )}
       />
@@ -441,7 +443,7 @@ function AddExternalDomainDialog({ install }: { install: InstallDetail }) {
             {options !== null && gateway === null && (
               <Banner
                 variant="alert"
-                icon={<WarningIcon weight="fill" />}
+                icon={BANNER_ICON.alert}
                 title="The gateway is not set up"
                 description={
                   <span>

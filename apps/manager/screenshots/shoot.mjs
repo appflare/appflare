@@ -363,7 +363,7 @@ const shots = [
     name: "domains-custom-form",
     path: "/apps/install-cut?tab=domains",
     expected: "Custom domains",
-    click: "Add a domain",
+    click: "Add domain",
     height: 700,
   },
   {

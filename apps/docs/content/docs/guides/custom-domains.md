@@ -23,7 +23,7 @@ Appflare itself can have a domain too: see
   token link in setup includes them. Appflare works without them; only custom
   domains (and [wildcard domains](#wildcard-domains)) need them.
 
-If the token lacks them, the **Add a domain** dialog says which ones. Open **API
+If the token lacks them, the **Add domain** dialog says which ones. Open **API
 Tokens** in the Cloudflare dashboard, edit the Appflare token, add the permissions
 for your domains, and save. An edited token keeps its value, so nothing changes in
 Appflare. You can also create a new token and replace the old one with **Rotate token** under
@@ -32,7 +32,7 @@ Appflare. You can also create a new token and replace the old one with **Rotate 
 ## Add a domain
 
 On the app's **Domains and email** tab, admins find **Custom domains** and select
-**Add a domain**. The install form offers the same: pick the domain at the right of
+**Add domain**. The install form offers the same: pick the domain at the right of
 the **Address** field and type the name before it. The install adds the domain once
 the app runs. The form warns when the name already has DNS records: the install does
 not replace them, so add the domain here afterwards if you want them replaced.
@@ -200,7 +200,7 @@ one domain of this account, the gateway domain:
 3. In **Settings > Domains > External domains**, choose the domain and select **Set up gateway**.
    Appflare adds the Worker `appflare-gateway`, its route and a DNS record; the
    domain's own sites keep working.
-4. On the app's **Domains and email** tab, select **Add an external domain**. The
+4. On the app's **Domains and email** tab, select **Add external domain**. The
    domain's owner adds the CNAME (or TXT records) shown there, and the app answers on
    it a minute or two later.
 

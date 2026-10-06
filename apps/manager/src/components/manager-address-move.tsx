@@ -1,5 +1,5 @@
-import { Banner, Button, LayerDialog, Link, LinkButton, Select, Text } from "@cloudflare/kumo";
-import { CircleIcon, WarningCircleIcon, WarningIcon } from "@phosphor-icons/react";
+import { Banner, Button, LayerDialog, Link, LinkButton, Text } from "@cloudflare/kumo";
+import { CircleIcon } from "@phosphor-icons/react";
 import { useEffect, useRef, useState } from "react";
 import { isAccessDenied } from "../access/denied";
 import {
@@ -14,7 +14,8 @@ import type { JobView } from "../jobs/jobs.functions";
 import { useLiveJob } from "../jobs/live-job";
 import { AppflareLoader } from "./appflare-loader";
 import { type DnsConflict, DnsConflictNotice } from "./domain-dialog-parts";
-import { MessageText } from "./message-text";
+import { BANNER_ICON, ErrorMessageBanner, MessageText } from "./message-text";
+import { ZoneCombobox } from "./zone-combobox";
 import { ZoneHostnameField } from "./zone-hostname-field";
 
 /**
@@ -287,15 +288,13 @@ export function AddressFields({
   const atRoot = zone !== null && checked?.ok === true && checked.hostname === zone.name;
   return (
     <div className="grid gap-4">
-      <Select
-        label="Domain"
-        placeholder="Choose a domain"
+      <ZoneCombobox
+        zones={zones}
         value={zone?.id ?? null}
-        onValueChange={(v) => {
-          fields.chooseZone(typeof v === "string" ? v : null);
+        onChange={(id) => {
+          fields.chooseZone(id);
           move.edited();
         }}
-        items={Object.fromEntries(zones.map((z) => [z.id, z.name]))}
         disabled={disabled}
       />
       <ZoneHostnameField
@@ -322,20 +321,7 @@ export function AddressFields({
           {...(atRoot ? { site: `Your site at ${zone.name} stops answering.` } : {})}
         />
       )}
-      {move.error !== null && <MoveError message={move.error} />}
-    </div>
-  );
-}
-
-/** A move that did not complete, in the server's or the job's words: they say what became of the domain. */
-export function MoveError({ message }: { message: string }) {
-  return (
-    <div role="alert">
-      <Banner
-        variant="error"
-        icon={<WarningCircleIcon weight="fill" />}
-        description={<MessageText message={message} newTab />}
-      />
+      {move.error !== null && <ErrorMessageBanner message={move.error} newTab />}
     </div>
   );
 }
@@ -403,7 +389,7 @@ export function MoveProgress({
       {refused && !done && (
         <Banner
           variant="alert"
-          icon={<WarningIcon weight="fill" />}
+          icon={BANNER_ICON.alert}
           description="Cloudflare Access refused the last few checks of the move, so this page cannot tell where it stands. Reload the page, or open Appflare at its new address."
           action={
             <Button variant="secondary" onClick={() => window.location.reload()}>

@@ -5,6 +5,7 @@ import { useState } from "react";
 import type { HealthStatus } from "../db/schema";
 import { checkInstallHealth } from "../installs/health.functions";
 import { BusyButton } from "./busy-button";
+import { MessageText } from "./message-text";
 import { Timestamp } from "./timestamp";
 
 /**
@@ -137,8 +138,8 @@ export function InstallHealth({
         </Text>
       )}
       {error !== null && (
-        <Text as="span" variant="error" size="sm">
-          {error}
+        <Text as="span" variant="error" size="sm" role="alert">
+          <MessageText message={error} />
         </Text>
       )}
     </span>
