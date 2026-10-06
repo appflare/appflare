@@ -632,12 +632,14 @@ Points that need care:
   Routing Rules. Cache Purge has one level, Purge, which `"access": "edit"` asks for.
   Account groups: Account Settings, Account Analytics, Billing, Logs, Magic Transit,
   Workers Scripts, Workers KV Storage, Workers R2 Storage, Workers R2 Data Catalog,
-  Workers R2 SQL, Workers Tail, Workers Containers, D1, Queues, Vectorize,
+  Workers R2 SQL, Workers Tail, Workers Containers, D1, Queues, Vectorize, Images,
   Hyperdrive, Pipelines, Secrets Store, Email Sending, Email Routing Addresses,
   "Access: Apps and Policies", and "Access: Organizations, Identity Providers, and
-  Groups". The secret that takes the token sets `"cloudflareToken": true`, and the
-  install form shows how to create the token next to it. At most one secret does,
-  and it cannot be generated, derived or seed-only.
+  Groups". Images is for apps that call the Images REST API; a Worker's Images
+  binding needs no token. The secret that takes the token sets
+  `"cloudflareToken": true`, and the install form shows how to create the token
+  next to it. At most one secret does, and it cannot be generated, derived or
+  seed-only.
 - **`access`.** Appflare can put
   any installed app behind Cloudflare Access, so only the manager's users reach it
   (Appflare's own health checks get in with a service token of the app's own). The

@@ -252,6 +252,7 @@ describe("app token permissions", () => {
         perm("zone", "DNS", "read"),
         perm("account", "Workers KV Storage"),
         perm("account", "Hyperdrive", "read"),
+        perm("account", "Images"),
         perm("account", "Access: Organizations, Identity Providers, and Groups", "read"),
       ]),
     ).toEqual([
@@ -259,6 +260,7 @@ describe("app token permissions", () => {
       { key: "dns", type: "read" },
       { key: "workers_kv_storage", type: "edit" },
       { key: "query_cache", type: "read" },
+      { key: "images", type: "edit" },
       { key: "access_acct", type: "read" },
     ]);
   });

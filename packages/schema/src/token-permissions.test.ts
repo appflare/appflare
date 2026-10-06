@@ -36,6 +36,24 @@ describe("APP_TOKEN_PERMISSION_GROUPS", () => {
     expect(appTokenPermissionGroup("zone", "Workers Scripts")).toBeNull();
     expect(tokenPermissionGroupNames("zone")).toContain("Email Routing Rules");
   });
+
+  it("selects Images, an account group, with the template page's key", () => {
+    expect(appTokenPermissionGroup("account", "Images")).toEqual({
+      scope: "account",
+      group: "Images",
+      templateKey: "images",
+      service: "images",
+    });
+    expect(appTokenPermissionGroup("zone", "Images")).toBeNull();
+    expect(
+      strictTokenPermissionSchema.safeParse({
+        group: "Images",
+        scope: "account",
+        access: "edit",
+        reason: "Uploads images to Cloudflare Images.",
+      }).success,
+    ).toBe(true);
+  });
 });
 
 describe("tokenPermissionSchema", () => {
