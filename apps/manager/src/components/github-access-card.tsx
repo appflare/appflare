@@ -10,13 +10,7 @@ import {
   Table,
   Text,
 } from "@cloudflare/kumo";
-import {
-  ArrowSquareOutIcon,
-  GithubLogoIcon,
-  PlusIcon,
-  TrashIcon,
-  WarningCircleIcon,
-} from "@phosphor-icons/react";
+import { ArrowSquareOutIcon, GithubLogoIcon, PlusIcon, TrashIcon } from "@phosphor-icons/react";
 import { type FormEvent, type ReactNode, useCallback, useEffect, useId, useState } from "react";
 import {
   addGithubTokenInput,
@@ -40,7 +34,7 @@ import { BusyMark, busyActionProps } from "./busy-button";
 import { ConfirmDialog } from "./confirm-dialog";
 import { DocsLink } from "./docs-link";
 import { FieldHelp } from "./field-label";
-import { ErrorMessageBanner, MessageText } from "./message-text";
+import { BANNER_ICON, ErrorMessageBanner, MessageText } from "./message-text";
 import { Section, SectionBody, SectionEmpty, SectionTable } from "./section";
 import { settingsSection } from "./settings-links";
 import { Timestamp } from "./timestamp";
@@ -90,7 +84,7 @@ export function GithubAccessCard({ isAdmin }: { isAdmin: boolean }) {
       titleAction={<DocsLink topic="githubAccess" />}
       badge={
         state !== null && (
-          <Badge variant={hasTokens ? "primary" : "neutral"}>
+          <Badge variant="neutral">
             {state.tokens.length === 1 ? "1 token" : `${state.tokens.length} tokens`}
           </Badge>
         )
@@ -113,7 +107,8 @@ export function GithubAccessCard({ isAdmin }: { isAdmin: boolean }) {
       {state !== null && !hasTokens && state.sandboxConnected && (
         <SectionBody>
           <SectionEmpty
-            icon={<GithubLogoIcon size={48} className="text-kumo-inactive" />}
+            size="sm"
+            icon={<GithubLogoIcon size={32} className="text-kumo-inactive" />}
             title="No GitHub access tokens"
             description="Public repositories need none. Add a token to install from a private one."
             contents={addToken ?? undefined}
@@ -130,6 +125,7 @@ function accessNotice(state: GithubAccessState): ReactNode {
     return (
       <Banner
         variant="secondary"
+        icon={BANNER_ICON.secondary}
         title="Sandbox builds are off"
         description={
           <MessageText
@@ -143,7 +139,7 @@ function accessNotice(state: GithubAccessState): ReactNode {
     return (
       <Banner
         variant="alert"
-        icon={<WarningCircleIcon weight="fill" />}
+        icon={BANNER_ICON.alert}
         title="The sandbox Worker cannot use tokens yet"
         description={<MessageText message={`To update it, ${UPDATE_SANDBOX_HINT}.`} />}
       />
@@ -153,7 +149,7 @@ function accessNotice(state: GithubAccessState): ReactNode {
     return (
       <Banner
         variant="alert"
-        icon={<WarningCircleIcon weight="fill" />}
+        icon={BANNER_ICON.alert}
         title="The sandbox Worker did not answer"
         description="Tokens can be added once it answers again. Reload the page in a minute."
       />

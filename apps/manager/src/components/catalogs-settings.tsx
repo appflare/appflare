@@ -5,9 +5,9 @@ import {
   type SigningKey,
 } from "@appflare/schema";
 import {
-  Badge,
   Banner,
   Button,
+  DropdownMenu,
   Input,
   InputArea,
   LayerDialog,
@@ -16,9 +16,15 @@ import {
   Text,
   useKumoToastManager,
 } from "@cloudflare/kumo";
-import { CheckCircleIcon, PencilSimpleIcon, PlusIcon, TrashIcon } from "@phosphor-icons/react";
+import {
+  DotsThreeIcon,
+  FingerprintIcon,
+  PencilSimpleIcon,
+  PlusIcon,
+  TrashIcon,
+} from "@phosphor-icons/react";
 import { useRouter } from "@tanstack/react-router";
-import { type FormEvent, useEffect, useId, useState } from "react";
+import { type FormEvent, type RefObject, useEffect, useId, useRef, useState } from "react";
 import {
   addCatalog,
   type CatalogView,
@@ -39,7 +45,7 @@ import { CatalogSourceBadge } from "./catalog-source-badge";
 import { ConfirmDialog } from "./confirm-dialog";
 import { DescriptionItem, DescriptionList } from "./description-list";
 import { DocsLink } from "./docs-link";
-import { ErrorMessageBanner } from "./message-text";
+import { ErrorMessageBanner, MessageText } from "./message-text";
 import { Section, SectionRow, SectionRows } from "./section";
 import { settingsSection } from "./settings-links";
 import { Timestamp } from "./timestamp";
@@ -47,7 +53,7 @@ import { Timestamp } from "./timestamp";
 /**
  * The catalogs settings' one section: the official catalog (turned off and
  * on, never removed) and the catalogs admins added, one row each with the
- * public keys its releases are verified with, and "Add a catalog" at the
+ * public keys its releases are verified with, and "Add catalog" at the
  * right of the header. Members see the list read-only.
  */
 
@@ -58,30 +64,62 @@ function errorText(err: unknown, fallback: string): string {
 }
 
 export function CatalogsList({ catalogs, isAdmin }: { catalogs: CatalogView[]; isAdmin: boolean }) {
+  const addSlot = useRef<HTMLDivElement>(null);
+  const [removedId, setRemovedId] = useState<string | null>(null);
+  // A removed catalog's row goes, with its menu and dialog, once the list
+  // reloads: the focus moves to "Add catalog" instead of the page's start.
+  useEffect(() => {
+    if (removedId === null || catalogs.some((c) => c.id === removedId)) return;
+    setRemovedId(null);
+    addSlot.current?.querySelector("button")?.focus();
+  }, [catalogs, removedId]);
   return (
     <Section
       {...settingsSection("catalogs", "catalogs")}
       description="Each catalog lists apps, and Appflare checks every release it installs from one with that catalog's keys."
       action={
         isAdmin ? (
-          <AddCatalogDialog customCount={catalogs.filter((c) => !c.official).length} />
+          <div ref={addSlot} className="contents">
+            <AddCatalogDialog customCount={catalogs.filter((c) => !c.official).length} />
+          </div>
         ) : null
       }
     >
       <SectionRows>
         {catalogs.map((catalog) => (
-          <CatalogRow key={catalog.id} catalog={catalog} isAdmin={isAdmin} />
+          <CatalogRow
+            key={catalog.id}
+            catalog={catalog}
+            isAdmin={isAdmin}
+            onRemoved={() => setRemovedId(catalog.id)}
+          />
         ))}
       </SectionRows>
     </Section>
   );
 }
 
-function CatalogRow({ catalog, isAdmin }: { catalog: CatalogView; isAdmin: boolean }) {
+function CatalogRow({
+  catalog,
+  isAdmin,
+  onRemoved,
+}: {
+  catalog: CatalogView;
+  isAdmin: boolean;
+  onRemoved: () => void;
+}) {
   const router = useRouter();
   const [enabled, setEnabled] = useState(catalog.enabled);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [editing, setEditing] = useState(false);
+  const [removing, setRemoving] = useState(false);
+  const editable = isAdmin && !catalog.official;
+  const menuTrigger = useRef<HTMLButtonElement>(null);
+  /** A closed dialog hands the focus back to the menu it was picked from. */
+  function onDialogDone(opened: boolean) {
+    if (!opened && menuTrigger.current?.isConnected) menuTrigger.current.focus();
+  }
 
   async function onToggle(next: boolean) {
     const previous = enabled;
@@ -101,19 +139,24 @@ function CatalogRow({ catalog, isAdmin }: { catalog: CatalogView; isAdmin: boole
   return (
     <SectionRow
       id={`catalog-${catalog.id}`}
-      title={
-        <span className="flex min-w-0 items-center gap-2">
-          <CatalogSourceBadge source={catalog} />
-          {!enabled && <Badge variant="neutral">Off</Badge>}
-        </span>
-      }
+      title={<CatalogSourceBadge source={catalog} />}
       action={
-        <Switch
-          label={enabled ? "On" : "Off"}
-          checked={enabled}
-          disabled={!isAdmin || pending}
-          onCheckedChange={(next: boolean) => void onToggle(next)}
-        />
+        <>
+          <Switch
+            label={enabled ? "On" : "Off"}
+            checked={enabled}
+            disabled={!isAdmin || pending}
+            onCheckedChange={(next: boolean) => void onToggle(next)}
+          />
+          {editable && (
+            <CatalogRowMenu
+              triggerRef={menuTrigger}
+              label={catalog.label}
+              onEdit={() => setEditing(true)}
+              onRemove={() => setRemoving(true)}
+            />
+          )}
+        </>
       }
     >
       <div className="grid gap-4">
@@ -155,9 +198,9 @@ function CatalogRow({ catalog, isAdmin }: { catalog: CatalogView; isAdmin: boole
           <DescriptionItem label="Last refreshed">
             <Timestamp iso={catalog.refreshedAt} />
             {catalog.refreshError !== null && (
-              <Text as="span" variant="secondary">
+              <Text as="span" variant="error">
                 {" "}
-                Last attempt failed: {catalog.refreshError}
+                Last attempt failed: <MessageText message={catalog.refreshError} />
               </Text>
             )}
           </DescriptionItem>
@@ -168,14 +211,70 @@ function CatalogRow({ catalog, isAdmin }: { catalog: CatalogView; isAdmin: boole
           )}
         </DescriptionList>
         {error !== null && <ErrorMessageBanner message={error} />}
-        {isAdmin && !catalog.official && (
-          <div className="flex flex-wrap gap-2">
-            <CatalogDialog editing={catalog} />
-            <RemoveCatalogDialog catalog={catalog} />
-          </div>
-        )}
       </div>
+      {editable && (
+        <>
+          <CatalogDialog
+            editing={catalog}
+            open={editing}
+            onOpenChange={setEditing}
+            onOpenChangeComplete={onDialogDone}
+          />
+          <RemoveCatalogDialog
+            catalog={catalog}
+            open={removing}
+            onOpenChange={setRemoving}
+            onOpenChangeComplete={onDialogDone}
+            onRemoved={onRemoved}
+          />
+        </>
+      )}
     </SectionRow>
+  );
+}
+
+/**
+ * An added catalog's Edit and Remove, in a menu beside its switch. Each
+ * opens its dialog, which the row keeps mounted (a dialog created on the
+ * pick would skip its opening animation).
+ */
+function CatalogRowMenu({
+  triggerRef,
+  label,
+  onEdit,
+  onRemove,
+}: {
+  triggerRef: RefObject<HTMLButtonElement | null>;
+  label: string;
+  onEdit: () => void;
+  onRemove: () => void;
+}) {
+  return (
+    <DropdownMenu>
+      <DropdownMenu.Trigger
+        render={
+          <Button
+            ref={triggerRef}
+            variant="ghost"
+            size="sm"
+            shape="square"
+            aria-label={`Actions for ${label}`}
+          >
+            <DotsThreeIcon weight="bold" size={16} />
+          </Button>
+        }
+      />
+      <DropdownMenu.Content>
+        {/* Icons go in as components: Kumo sizes and spaces a component icon. */}
+        <DropdownMenu.Item icon={PencilSimpleIcon} onClick={onEdit}>
+          Edit
+        </DropdownMenu.Item>
+        <DropdownMenu.Separator />
+        <DropdownMenu.Item icon={TrashIcon} variant="danger" onClick={onRemove}>
+          Remove
+        </DropdownMenu.Item>
+      </DropdownMenu.Content>
+    </DropdownMenu>
   );
 }
 
@@ -223,12 +322,12 @@ function pasteText(keys: readonly { keyId: string; publicKeyBase64: string }[]):
   return JSON.stringify(shaped.length === 1 ? shaped[0] : shaped);
 }
 
-/** "Add a catalog", at the right of the section's header. */
+/** "Add catalog", at the right of the section's header. */
 function AddCatalogDialog({ customCount }: { customCount: number }) {
   if (customCount >= MAX_CUSTOM_CATALOGS) {
     return (
       <Button variant="primary" icon={<PlusIcon />} disabled title="Remove a catalog first.">
-        Add a catalog
+        Add catalog
       </Button>
     );
   }
@@ -239,12 +338,27 @@ function AddCatalogDialog({ customCount }: { customCount: number }) {
  * Add a catalog, or edit an added one. Saving checks the index and verifies
  * one of its releases with the pasted keys first (on edit, only when the URL
  * or the keys changed); the dialog shows why when that fails.
+ *
+ * Adding opens from its own "Add catalog" button. Editing has no trigger: the
+ * row's menu opens it through `open` and `onOpenChange`.
  */
-function CatalogDialog({ editing }: { editing: CatalogView | null }) {
+function CatalogDialog({
+  editing,
+  open: openProp,
+  onOpenChange: onOpenChangeProp,
+  onOpenChangeComplete,
+}: {
+  editing: CatalogView | null;
+  open?: boolean;
+  onOpenChange?: (open: boolean) => void;
+  /** The dialog finished opening or closing, its animation included. */
+  onOpenChangeComplete?: (open: boolean) => void;
+}) {
   const router = useRouter();
   const toasts = useKumoToastManager();
   const formId = useId();
-  const [open, setOpen] = useState(false);
+  const [ownOpen, setOwnOpen] = useState(false);
+  const open = openProp ?? ownOpen;
   const [indexUrl, setIndexUrl] = useState("");
   const [publicKeys, setPublicKeys] = useState("");
   const [label, setLabel] = useState("");
@@ -254,9 +368,12 @@ function CatalogDialog({ editing }: { editing: CatalogView | null }) {
   const [failure, setFailure] = useState<string | null>(null);
   const pasted = usePastedKeys(publicKeys);
 
-  function onOpenChange(next: boolean) {
-    setOpen(next);
-    if (next) {
+  // Each opening starts from the catalog as saved, whether the dialog's own
+  // button or a row's menu opened it.
+  const [wasOpen, setWasOpen] = useState(open);
+  if (open !== wasOpen) {
+    setWasOpen(open);
+    if (open) {
       setIndexUrl(editing?.indexUrl ?? "");
       setPublicKeys(editing === null ? "" : pasteText(editing.keys));
       setLabel(editing?.label ?? "");
@@ -264,6 +381,11 @@ function CatalogDialog({ editing }: { editing: CatalogView | null }) {
       setErrors({});
       setFailure(null);
     }
+  }
+
+  function setOpen(next: boolean) {
+    if (openProp === undefined) setOwnOpen(next);
+    onOpenChangeProp?.(next);
   }
 
   async function onSubmit(event: FormEvent<HTMLFormElement>) {
@@ -304,23 +426,20 @@ function CatalogDialog({ editing }: { editing: CatalogView | null }) {
   return (
     <LayerDialog.Root
       open={open}
-      onOpenChange={onOpenChange}
+      onOpenChange={setOpen}
+      {...(onOpenChangeComplete === undefined ? {} : { onOpenChangeComplete })}
       disablePointerDismissal
       dismissDisabled={pending}
     >
-      <LayerDialog.Trigger
-        render={(p) =>
-          editing === null ? (
+      {editing === null && (
+        <LayerDialog.Trigger
+          render={(p) => (
             <Button {...p} variant="primary" icon={<PlusIcon />}>
-              Add a catalog
+              Add catalog
             </Button>
-          ) : (
-            <Button {...p} variant="secondary" icon={<PencilSimpleIcon />}>
-              Edit
-            </Button>
-          )
-        }
-      />
+          )}
+        />
+      )}
       <LayerDialog.Content size="lg">
         <LayerDialog.Title>
           {editing === null ? "Add a catalog" : `Edit ${editing.label}`}
@@ -360,7 +479,7 @@ function CatalogDialog({ editing }: { editing: CatalogView | null }) {
             {pasted !== null && typeof pasted !== "string" && (
               <Banner
                 variant="default"
-                icon={<CheckCircleIcon weight="fill" />}
+                icon={<FingerprintIcon weight="fill" />}
                 title={
                   pasted.keys.length === 1 ? "Fingerprint" : `${pasted.keys.length} fingerprints`
                 }
@@ -427,21 +546,32 @@ function CatalogDialog({ editing }: { editing: CatalogView | null }) {
 }
 
 /**
- * "Remove" for an added catalog. While apps installed from it are still
- * installed, the dialog says why it cannot be removed and the action stays
- * off (the server refuses too).
+ * "Remove" for an added catalog, opened from its row's menu. While apps
+ * installed from it are still installed, the dialog says why it cannot be
+ * removed and the action stays off (the server refuses too).
  */
-function RemoveCatalogDialog({ catalog }: { catalog: CatalogView }) {
+function RemoveCatalogDialog({
+  catalog,
+  open,
+  onOpenChange,
+  onOpenChangeComplete,
+  onRemoved,
+}: {
+  catalog: CatalogView;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  onOpenChangeComplete: (open: boolean) => void;
+  /** The catalog is removed; its row goes when the list reloads. */
+  onRemoved: () => void;
+}) {
   const router = useRouter();
   const blocked = catalog.installs > 0;
   return (
     <ConfirmDialog
-      trigger={(p) => (
-        <Button {...p} variant="secondary" icon={<TrashIcon />}>
-          Remove
-        </Button>
-      )}
-      title={`Remove ${catalog.label}?`}
+      open={open}
+      onOpenChange={onOpenChange}
+      onOpenChangeComplete={onOpenChangeComplete}
+      title={`Remove ${catalog.label}`}
       description={
         blocked
           ? `${catalog.installs} app${catalog.installs === 1 ? " is" : "s are"} installed from ${catalog.label}. Their updates, form revisions and checks come from this catalog, and its key verifies them, so it cannot be removed while they are installed. Uninstall them first, or turn the catalog off instead.`
@@ -451,6 +581,7 @@ function RemoveCatalogDialog({ catalog }: { catalog: CatalogView }) {
       disabled={blocked}
       onConfirm={async () => {
         await deleteCatalog({ data: { id: catalog.id } });
+        onRemoved();
         await router.invalidate();
       }}
     />

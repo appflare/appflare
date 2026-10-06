@@ -1,11 +1,5 @@
 import { Badge, Banner, Button, Link, Table, Text } from "@cloudflare/kumo";
-import {
-  ArrowCounterClockwiseIcon,
-  ArrowsClockwiseIcon,
-  CheckCircleIcon,
-  WarningCircleIcon,
-  WarningIcon,
-} from "@phosphor-icons/react";
+import { ArrowClockwiseIcon, ArrowCounterClockwiseIcon } from "@phosphor-icons/react";
 import { useRouter } from "@tanstack/react-router";
 import { useCallback, useEffect, useState } from "react";
 import { useVersionSwitch } from "../jobs/live-job";
@@ -13,8 +7,10 @@ import type { SwitchJob } from "../jobs/live-job-state";
 import type { ManagerVersionRow } from "../jobs/self-update/rollback";
 import { type ManagerVersionsState, rollBackManager } from "../jobs/self-update/rollback.functions";
 import type { RollBackManagerResult } from "../jobs/self-update/rollback.server";
+import { AppflareLoader } from "./appflare-loader";
 import { ConfirmDialog } from "./confirm-dialog";
 import { DocsLink } from "./docs-link";
+import { BANNER_ICON, StatusRegion, SuccessBanner } from "./message-text";
 import { Section, SectionBody, SectionTable } from "./section";
 import { settingsSection } from "./settings-links";
 import { Timestamp } from "./timestamp";
@@ -128,16 +124,19 @@ export function ManagerVersionsSection({
         ) : undefined
       }
     >
-      {(notice !== null || pending || stalled) && (
-        <SectionBody>
-          <RollbackNotices
-            notice={notice}
-            switchingTo={pending && result !== null ? result.version : null}
-            switching={switching}
-            stalledAt={stalled && result !== null ? result.version : null}
-          />
-        </SectionBody>
-      )}
+      {/* Mounted with the list, so screen readers announce each notice as it comes. */}
+      <StatusRegion>
+        {(notice !== null || pending || stalled) && (
+          <SectionBody>
+            <RollbackNotices
+              notice={notice}
+              switchingTo={pending && result !== null ? result.version : null}
+              switching={switching}
+              stalledAt={stalled && result !== null ? result.version : null}
+            />
+          </SectionBody>
+        )}
+      </StatusRegion>
       {state.ok && state.versions.length > 0 && (
         <SectionTable label="Appflare versions" stickyFirstColumn>
           <Table.Header>
@@ -192,7 +191,11 @@ export function ManagerVersionsSection({
   );
 }
 
-/** What the last rollback did: finished, switching traffic, or not answering here yet. */
+/**
+ * What the last rollback did: finished, switching traffic, or not answering
+ * here yet. Plain banners: the section's status region around them is what
+ * screen readers follow.
+ */
 function RollbackNotices({
   notice,
   switchingTo,
@@ -207,9 +210,8 @@ function RollbackNotices({
   return (
     <>
       {notice !== null && (
-        <Banner
-          variant="secondary"
-          icon={<CheckCircleIcon weight="fill" className="text-kumo-success" />}
+        <SuccessBanner
+          live={false}
           title={`Appflare rolled back to ${notice.version}`}
           description={
             <Link href={`/jobs/${notice.jobId}`} variant="inline">
@@ -221,7 +223,8 @@ function RollbackNotices({
       {switchingTo !== null && (
         <Banner
           variant="secondary"
-          icon={<ArrowsClockwiseIcon />}
+          // The loader is a status of its own; the banner's title says what runs.
+          icon={<AppflareLoader size="sm" aria-hidden />}
           title={`Switching to Appflare ${switchingTo}…`}
           description={
             switching
@@ -233,22 +236,17 @@ function RollbackNotices({
       {stalledAt !== null && (
         <Banner
           variant="alert"
-          icon={<WarningCircleIcon weight="fill" />}
+          icon={BANNER_ICON.alert}
           title={`Rolled back to ${stalledAt}`}
-          description={
-            <>
-              It did not answer here yet.{" "}
-              <Link
-                href="#"
-                variant="inline"
-                onClick={(event) => {
-                  event.preventDefault();
-                  window.location.reload();
-                }}
-              >
-                Reload
-              </Link>
-            </>
+          description="It did not answer here yet."
+          action={
+            <Banner.Action
+              variant="secondary"
+              icon={ArrowClockwiseIcon}
+              onClick={() => window.location.reload()}
+            >
+              Reload
+            </Banner.Action>
           }
         />
       )}
@@ -298,7 +296,7 @@ function RollbackDialog({
     >
       <Banner
         variant="alert"
-        icon={<WarningIcon weight="fill" />}
+        icon={BANNER_ICON.alert}
         title="The database is not rolled back"
         description="Appflare's database stays as it is. When this version's code is older than the database's schema (a newer version migrated it since), Appflare refuses the rollback."
       />

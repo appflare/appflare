@@ -442,7 +442,7 @@ describe("CatalogsSettingsView", () => {
     installs: 2,
   };
 
-  it("lists the catalogs as rows of one card, with Add a catalog in the header", () => {
+  it("lists the catalogs as rows of one card, with Add catalog in the header", () => {
     const html = render(
       createElement(CatalogsSettingsView, {
         catalogs: [
@@ -452,7 +452,9 @@ describe("CatalogsSettingsView", () => {
         isAdmin: true,
       }),
     );
-    expectPattern(html, ["catalogs"], ["Add a catalog", "Mine", "Remove"]);
+    expectPattern(html, ["catalogs"], ["Add catalog", "Mine"]);
+    // Edit and Remove of the added catalog are in its row's menu.
+    expect(html).toContain('aria-label="Actions for Mine"');
     expect(count(html, 'role="switch"')).toBe(2);
   });
 });

@@ -1,12 +1,7 @@
-import { Badge, Button, LinkButton, Text } from "@cloudflare/kumo";
-import {
-  ArrowCircleUpIcon,
-  ArrowRightIcon,
-  ArrowsClockwiseIcon,
-  InfoIcon,
-} from "@phosphor-icons/react";
+import { Badge, Button, Link, LinkButton, Text } from "@cloudflare/kumo";
+import { ArrowCircleUpIcon, ArrowRightIcon, ArrowsClockwiseIcon } from "@phosphor-icons/react";
 import { useRouter } from "@tanstack/react-router";
-import { useState } from "react";
+import { type ComponentProps, useState } from "react";
 import type { AutoUpdateSettings } from "../auto-update/auto-update";
 import { AppflareAutomaticUpdates } from "../auto-update/automatic-updates-card";
 import {
@@ -20,7 +15,7 @@ import { DescriptionItem, DescriptionList } from "./description-list";
 import { useJobStarted } from "./job-started";
 import { MessageBanner } from "./message-text";
 import { Section, SectionBody, SectionFormActions, SectionRows } from "./section";
-import { settingsSection } from "./settings-links";
+import { settingsLink, settingsSection, settingsSectionTitle } from "./settings-links";
 import { Timestamp } from "./timestamp";
 
 /**
@@ -88,7 +83,7 @@ export function AppflareUpdatesCard({
       description="The version of Appflare running here, its newest release, and whether it updates itself."
       action={
         update !== null ? (
-          <SelfUpdateDialog from={state.current} version={update.version} />
+          <SettingsSelfUpdate from={state.current} version={update.version} />
         ) : (
           checkNow
         )
@@ -124,9 +119,7 @@ export function AppflareUpdatesCard({
               <Timestamp iso={state.checkedAt} />
             </DescriptionItem>
           </DescriptionList>
-          {notice !== null && (
-            <MessageBanner message={notice} variant="secondary" icon={<InfoIcon weight="fill" />} />
-          )}
+          {notice !== null && <MessageBanner message={notice} variant="secondary" />}
           {(state.activeJobId !== null || update !== null) && (
             <SectionFormActions>
               {state.activeJobId !== null && (
@@ -150,24 +143,54 @@ export function AppflareUpdatesCard({
   );
 }
 
-function SelfUpdateDialog({ from, version }: { from: string; version: string }) {
+/** "Update Appflare to <version>", which opens the update's log once it starts. */
+function SettingsSelfUpdate({ from, version }: { from: string; version: string }) {
   const jobStarted = useJobStarted();
   return (
-    <ConfirmDialog
-      size="lg"
+    <SelfUpdateDialog
+      from={from}
+      version={version}
       trigger={(p) => (
         <Button {...p} variant="primary" icon={<ArrowCircleUpIcon />}>
           Update Appflare to {version}
         </Button>
       )}
-      title={`Update Appflare to ${version}`}
-      description={`From ${from}. Appflare keeps the current version for a rollback.`}
-      actionLabel="Update"
-      destructive={false}
       onConfirm={async () => {
         const { jobId } = await startSelfUpdate({ data: { version } });
         await jobStarted(jobId, "Appflare update started");
       }}
+    />
+  );
+}
+
+/**
+ * The confirmation before Appflare updates itself to `version`, the same
+ * here and in the sidebar's card: what the update does, step by step.
+ * `onConfirm` starts it; when it throws, the dialog shows why and stays open.
+ * Without `trigger` it is controlled, as `ConfirmDialog` is.
+ */
+export function SelfUpdateDialog({
+  from,
+  version,
+  onConfirm,
+  ...dialog
+}: {
+  from: string;
+  version: string;
+  onConfirm: () => Promise<void>;
+} & Pick<
+  ComponentProps<typeof ConfirmDialog>,
+  "trigger" | "open" | "onOpenChange" | "onOpenChangeComplete"
+>) {
+  return (
+    <ConfirmDialog
+      {...dialog}
+      size="lg"
+      title={`Update Appflare to ${version}`}
+      description={`From ${from}. Appflare keeps the current version for a rollback.`}
+      actionLabel="Update"
+      destructive={false}
+      onConfirm={onConfirm}
     >
       <ol className="grid list-decimal gap-2 pl-5">
         <li>
@@ -185,7 +208,7 @@ function SelfUpdateDialog({ from, version }: { from: string; version: string }) 
         </li>
         <li>
           <Text>
-            Then it switches all traffic to the new version. The update's page reloads by itself
+            Then it switches all traffic to the new version. The page you are on reloads by itself
             once the new version answers.
           </Text>
         </li>
@@ -193,7 +216,11 @@ function SelfUpdateDialog({ from, version }: { from: string; version: string }) 
       <Text variant="secondary">
         Nothing else runs during the update: installs, updates, and uninstalls wait until it
         finishes. If the new version fails its check, the current one keeps serving. To go back
-        later, roll back under Versions on this page.
+        later, roll back under{" "}
+        <Link href={settingsLink("updates", "versions")}>
+          {settingsSectionTitle("updates", "versions")}
+        </Link>
+        .
       </Text>
     </ConfirmDialog>
   );

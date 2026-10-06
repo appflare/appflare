@@ -1,15 +1,6 @@
 import { SANDBOX_BUCKET_NAME } from "@appflare/schema";
 import { Badge, Banner, Button, Collapsible, Link, Text } from "@cloudflare/kumo";
-import {
-  ArrowCircleUpIcon,
-  CheckCircleIcon,
-  CubeIcon,
-  PlugsConnectedIcon,
-  PowerIcon,
-  SpinnerGapIcon,
-  WarningCircleIcon,
-  WarningIcon,
-} from "@phosphor-icons/react";
+import { ArrowCircleUpIcon, CubeIcon, PlugsConnectedIcon, PowerIcon } from "@phosphor-icons/react";
 import { useRouter } from "@tanstack/react-router";
 import { type ReactNode, useState } from "react";
 import type { CapabilitiesView } from "../capabilities/capabilities";
@@ -20,6 +11,7 @@ import {
   type SandboxCardState,
   startSandboxJob,
 } from "../server/sandbox.functions";
+import { AppflareLoader } from "./appflare-loader";
 import { BusyButton } from "./busy-button";
 import { ConfirmDialog } from "./confirm-dialog";
 import { DescriptionItem, DescriptionList } from "./description-list";
@@ -27,7 +19,14 @@ import { DocsLink } from "./docs-link";
 import { jobKindLabel } from "./format";
 import { SendReportButton } from "./job-report-dialog";
 import { useJobStarted } from "./job-started";
-import { ErrorMessageBanner, MessageText } from "./message-text";
+import {
+  BANNER_ICON,
+  bannerRole,
+  ErrorMessageBanner,
+  MessageText,
+  StatusRegion,
+  SuccessBanner,
+} from "./message-text";
 import { Section, SectionBody } from "./section";
 import { settingsSection } from "./settings-links";
 
@@ -66,6 +65,10 @@ export function SandboxCard({
   capabilities: CapabilitiesView;
   isAdmin: boolean;
 }) {
+  // Kept here, above the connected and not-connected views, so the region
+  // that announces a Connect only stays mounted when the refreshed status
+  // swaps one view for the other.
+  const [justConnected, setJustConnected] = useState(false);
   return (
     <Section
       {...settingsSection("building", "sandbox")}
@@ -78,11 +81,28 @@ export function SandboxCard({
         {status.activeJob === null && status.lastFailure !== null && (
           <LastFailure failure={status.lastFailure} isAdmin={isAdmin} />
         )}
-        {status.connected ? (
-          <Connected status={status} isAdmin={isAdmin} />
-        ) : (
-          <NotConnected status={status} capabilities={capabilities} isAdmin={isAdmin} />
-        )}
+        {/* One grid item, so the empty region adds no gap. */}
+        <div>
+          <StatusRegion spacing="mb-4">
+            {justConnected && (
+              <SuccessBanner
+                live={false}
+                title={CONNECTED}
+                description="Appflare now runs with its binding to the sandbox Worker. It can take a few seconds to show here."
+              />
+            )}
+          </StatusRegion>
+          {status.connected ? (
+            <Connected status={status} isAdmin={isAdmin} />
+          ) : (
+            <NotConnected
+              status={status}
+              capabilities={capabilities}
+              isAdmin={isAdmin}
+              connect={{ done: justConnected, onDone: () => setJustConnected(true) }}
+            />
+          )}
+        </div>
       </SectionBody>
     </Section>
   );
@@ -98,7 +118,8 @@ function StateBadge({ status }: { status: SandboxCardState }) {
 function RunningJob({ job }: { job: { id: string; kind: string } }) {
   return (
     <Banner
-      icon={<SpinnerGapIcon />}
+      // The loader is a status of its own; the banner's title says what runs.
+      icon={<AppflareLoader size="sm" aria-hidden />}
       title={`${jobKindLabel(job)} is running`}
       description={
         <>
@@ -121,7 +142,8 @@ function LastFailure({
   return (
     <Banner
       variant="error"
-      icon={<WarningCircleIcon weight="fill" />}
+      icon={BANNER_ICON.error}
+      role={bannerRole("error")}
       title={`${jobKindLabel(failure)} failed`}
       description={
         <span className="grid gap-1">
@@ -271,7 +293,8 @@ function Connected({ status, isAdmin }: { status: SandboxCardState; isAdmin: boo
       {status.info === null ? (
         <Banner
           variant="error"
-          icon={<WarningCircleIcon weight="fill" />}
+          icon={BANNER_ICON.error}
+          role={bannerRole("error")}
           title="The sandbox Worker does not answer as expected"
           description={
             status.problem === null ? undefined : <MessageText message={status.problem} />
@@ -289,7 +312,7 @@ function Connected({ status, isAdmin }: { status: SandboxCardState; isAdmin: boo
       )}
       {status.updateAvailable && (
         <Banner
-          icon={<ArrowCircleUpIcon />}
+          icon={<ArrowCircleUpIcon weight="fill" />}
           title={`Sandbox Worker ${status.pinnedVersion} is available`}
           description="This Appflare version comes with a newer sandbox Worker. Updating uploads it and rolls its container applications to its image; builds wait until it is done."
         />
@@ -306,14 +329,22 @@ function Connected({ status, isAdmin }: { status: SandboxCardState; isAdmin: boo
   );
 }
 
+/** Whether Connect only just worked, and what it calls when it does. */
+interface ConnectState {
+  done: boolean;
+  onDone(): void;
+}
+
 function NotConnected({
   status,
   capabilities,
   isAdmin,
+  connect,
 }: {
   status: SandboxCardState;
   capabilities: CapabilitiesView;
   isAdmin: boolean;
+  connect: ConnectState;
 }) {
   const busy = status.activeJob !== null;
   const paidDetected = capabilities.plan.source === "detected" && capabilities.plan.plan === "paid";
@@ -333,7 +364,7 @@ function NotConnected({
         </Text>
         {dangling && <DanglingBindingNote />}
         {isAdmin && status.workerExists === true && (
-          <LeftoverWorker status={status} disabled={busy} />
+          <LeftoverWorker status={status} disabled={busy} connect={connect} />
         )}
         {dangling && status.workerExists !== true && (
           <div className="flex justify-end">
@@ -354,7 +385,7 @@ function NotConnected({
       {problems.length > 0 && (
         <Banner
           variant="alert"
-          icon={<WarningIcon weight="fill" />}
+          icon={BANNER_ICON.alert}
           title="Fix this first"
           description={
             <span className="grid gap-1">
@@ -371,8 +402,8 @@ function NotConnected({
       {status.workerExists === null && isAdmin && (
         <Banner
           variant="alert"
-          icon={<WarningIcon weight="fill" />}
-          title="Appflare could not check whether the sandbox Worker exists."
+          icon={BANNER_ICON.alert}
+          title="Appflare could not check whether the sandbox Worker exists"
         />
       )}
       {isAdmin ? (
@@ -380,7 +411,7 @@ function NotConnected({
           {(status.workerExists === true || dangling) && (
             <DisableDialog status={status} disabled={busy} />
           )}
-          {status.workerExists === true && <ConnectButton disabled={busy} />}
+          {status.workerExists === true && <ConnectButton disabled={busy} connect={connect} />}
           <EnableDialog status={status} disabled={busy || problems.length > 0} />
         </div>
       ) : (
@@ -400,7 +431,7 @@ function DanglingBindingNote() {
   return (
     <Banner
       variant="alert"
-      icon={<WarningIcon weight="fill" />}
+      icon={BANNER_ICON.alert}
       title="Appflare still has a binding to a deleted sandbox Worker"
       description="Sandbox builds are off. Disabling them removes the binding, and enabling them replaces it."
     />
@@ -408,7 +439,15 @@ function DanglingBindingNote() {
 }
 
 /** A sandbox Worker without Workers Paid detected: it can still be removed. */
-function LeftoverWorker({ status, disabled }: { status: SandboxCardState; disabled: boolean }) {
+function LeftoverWorker({
+  status,
+  disabled,
+  connect,
+}: {
+  status: SandboxCardState;
+  disabled: boolean;
+  connect: ConnectState;
+}) {
   return (
     <div className="flex flex-wrap items-center justify-between gap-3">
       <Text variant="secondary" size="sm">
@@ -416,25 +455,22 @@ function LeftoverWorker({ status, disabled }: { status: SandboxCardState; disabl
       </Text>
       <div className="flex gap-2">
         <DisableDialog status={status} disabled={disabled} />
-        <ConnectButton disabled={disabled} />
+        <ConnectButton disabled={disabled} connect={connect} />
       </div>
     </div>
   );
 }
 
-/** Connects to a sandbox Worker that is already there (deployed by the CLI, for example). */
-function ConnectButton({ disabled }: { disabled: boolean }) {
+const CONNECTED = "Sandbox builds are connected";
+
+/**
+ * Connects to a sandbox Worker that is already there (deployed by the CLI,
+ * for example). The card announces the result, in a region that outlives
+ * this button.
+ */
+function ConnectButton({ disabled, connect }: { disabled: boolean; connect: ConnectState }) {
   const router = useRouter();
-  const [done, setDone] = useState(false);
-  if (done) {
-    return (
-      <Banner
-        icon={<CheckCircleIcon weight="fill" />}
-        title="Sandbox builds are connected"
-        description="Appflare now runs with its binding to the sandbox Worker. It can take a few seconds to show here."
-      />
-    );
-  }
+  if (connect.done) return null;
   return (
     <ActionButton
       label="Connect only"
@@ -443,7 +479,7 @@ function ConnectButton({ disabled }: { disabled: boolean }) {
       disabled={disabled}
       action={async () => {
         await connectSandbox();
-        setDone(true);
+        connect.onDone();
         await router.invalidate();
       }}
     />
@@ -470,7 +506,7 @@ function DisableDialog({ status, disabled }: { status: SandboxCardState; disable
       {inUse ? (
         <Banner
           variant="alert"
-          icon={<WarningIcon weight="fill" />}
+          icon={BANNER_ICON.alert}
           title="Apps still need the sandbox Worker"
           description={`${status.inUseBy.join(", ")} ${status.inUseBy.length === 1 ? "was" : "were"} built or deployed in it, and ${status.inUseBy.length === 1 ? "its" : "their"} updates and uninstall run there. Uninstall ${status.inUseBy.length === 1 ? "it" : "them"} first.`}
         />

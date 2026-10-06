@@ -1,10 +1,11 @@
 import { Banner, Button, Text } from "@cloudflare/kumo";
-import { EyeSlashIcon, TrashIcon, WarningIcon } from "@phosphor-icons/react";
+import { EyeSlashIcon, TrashIcon } from "@phosphor-icons/react";
 import { useRouter } from "@tanstack/react-router";
 import { deleteRetainedData, forgetRemovedApp } from "../installs/removed-apps.functions";
 import { ConfirmDialog } from "./confirm-dialog";
 import { resourceKindLabel } from "./format";
 import { useJobStarted } from "./job-started";
+import { BANNER_ICON } from "./message-text";
 
 /** An uninstalled install and what it kept in the account. */
 export interface RemovedApp {
@@ -45,7 +46,14 @@ export function DeleteRetainedDialog({
     <ConfirmDialog
       size="lg"
       trigger={(p) => (
-        <Button {...p} variant="secondary-destructive" icon={<TrashIcon />} disabled={disabled}>
+        <Button
+          {...p}
+          variant="secondary-destructive"
+          icon={<TrashIcon />}
+          disabled={disabled}
+          // Removed apps lists one per app: the name says whose.
+          aria-label={`Delete retained data of ${app.label}`}
+        >
           Delete retained data
         </Button>
       )}
@@ -60,7 +68,7 @@ export function DeleteRetainedDialog({
     >
       <Banner
         variant="alert"
-        icon={<WarningIcon weight="fill" />}
+        icon={BANNER_ICON.alert}
         title="Deleting data is permanent"
         description="Each resource is deleted with everything in it, including every object in an R2 bucket."
       />
@@ -82,7 +90,13 @@ export function ForgetDialog({ app, disabled = false }: { app: RemovedApp; disab
     <ConfirmDialog
       size="lg"
       trigger={(p) => (
-        <Button {...p} variant="secondary" icon={<EyeSlashIcon />} disabled={disabled}>
+        <Button
+          {...p}
+          variant="secondary"
+          icon={<EyeSlashIcon />}
+          disabled={disabled}
+          aria-label={`Forget ${app.label}`}
+        >
           Forget
         </Button>
       )}
