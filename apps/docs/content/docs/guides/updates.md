@@ -32,6 +32,9 @@ Admins select **Update**. A dialog opens first when:
   [Apps with Durable Objects](#apps-with-durable-objects) below). The dialog says
   which case applies. You confirm with **Update without checking the new version
   first**.
+- the new version receives other email than the installed one. The dialog says which
+  addresses and whether the catch-all change on the app's domain; selecting **Update**
+  confirms it. See [Updates and rollbacks](/guides/email-apps/#updates-and-rollbacks).
 
 ![Update review asking for a new secret before the app changes](/screenshots/updates-review.png)
 
@@ -53,7 +56,11 @@ The update job:
    says so and the job goes on.
 6. Applies new D1 migrations.
 7. Switches all traffic to the new version.
-8. Runs a [health check](/guides/health/) and records the result.
+8. For an app that receives email, sets up the routing rules and catch-all the new
+   version adds and removes the ones it no longer needs, on the app's domain (see
+   [Updates and rollbacks](/guides/email-apps/#updates-and-rollbacks)). A part it
+   cannot do is noted in the job log; the update still finishes.
+9. Runs a [health check](/guides/health/) and records the result.
 
 The current version keeps serving until the new one has passed its checks. If the
 job fails before step 7, the app is unchanged, except for new resources and any D1
@@ -112,7 +119,8 @@ needs nothing from you:
 - no confirmation that the new version cannot be checked before it goes live,
 - no Workers Paid confirmation for more cron triggers,
 - no build or installer run to approve (apps built in your account never update on
-  their own).
+  their own),
+- no change to the email the app receives (its routing rules or catch-all).
 
 Anything else waits for you on the app's page, as described above, and the cron does
 not try that version again; it tries the next one the catalog publishes. An automatic
@@ -133,10 +141,12 @@ and ends with a health check. If automatic updates were on for the app, the roll
 them off, so the cron does not install the version you left again; turn them back on
 on the app's page once a fixed version is out.
 
-A rollback changes the Worker and its settings and secrets only. **Databases are not
-changed.** If the newer version changed its data, the older code may not read it.
+A rollback changes the Worker, its settings and secrets, and for an app that receives
+email its routing rules and catch-all, which follow the version it returns to (see
+[Updates and rollbacks](/guides/email-apps/#updates-and-rollbacks)). **Databases are
+not changed.** If the newer version changed its data, the older code may not read it.
 Restore a database separately if you need its data as it was. A rollback does not move
-an app's email back to another zone either; see
+an app's email back to another zone; see
 [What a rollback puts back](/guides/settings/#what-a-rollback-puts-back).
 
 Rollback is not offered across a change to the app's Durable Object classes:

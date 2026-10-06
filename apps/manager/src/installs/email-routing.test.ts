@@ -9,7 +9,7 @@ import {
   type EmailRouteTarget,
   emailRouteCfId,
   emailRouteViews,
-  emailRoutingChangeWarning,
+  emailRoutingChangeNote,
   emailRoutingOfManifest,
   isCloudflareMx,
   parseEmailRouteCfId,
@@ -146,27 +146,56 @@ describe("the catch-all before an install", () => {
 });
 
 describe("email routing across versions", () => {
-  it("warns only when a version receives different email", () => {
+  it("notes only when a version receives different email", () => {
     expect(
-      emailRoutingChangeWarning(
+      emailRoutingChangeNote(
         { catchAll: false, rules: ["a", "b"] },
         { catchAll: false, rules: ["b", "a"] },
         "2.0.0",
       ),
     ).toBeNull();
-    expect(emailRoutingChangeWarning(null, undefined, "2.0.0")).toBeNull();
-    const warning = emailRoutingChangeWarning(
+    expect(emailRoutingChangeNote(null, undefined, "2.0.0")).toBeNull();
+    // A local part and the full address at the zone on record are the same address.
+    expect(
+      emailRoutingChangeNote(
+        { catchAll: false, rules: ["inbox"] },
+        { catchAll: false, rules: ["inbox@example.com"] },
+        "2.0.0",
+        "example.com",
+      ),
+    ).toBeNull();
+    const note = emailRoutingChangeNote(
       { catchAll: false, rules: ["inbox"] },
       { catchAll: true, rules: [] },
       "2.0.0",
+      "example.com",
     );
-    expect(warning).toContain(
-      "Version 2.0.0 receives the catch-all; the installed one receives inbox.",
+    expect(note).toBe(
+      "Version 2.0.0 changes the email the app receives: mail to inbox@example.com stops reaching the app; every other address at example.com starts reaching the app (the catch-all). Appflare makes the change once the version serves, and never touches a routing rule or catch-all it did not set up. If Email Routing is off for example.com, it is turned on, and Cloudflare adds its MX, SPF and DKIM records.",
     );
-    expect(warning).toContain("does not change Email Routing on an update or rollback");
     expect(
-      emailRoutingChangeWarning(null, { catchAll: false, rules: ["inbox"] }, "2.0.0"),
-    ).toContain("the installed one receives no email");
+      emailRoutingChangeNote({ catchAll: true, rules: ["inbox"] }, null, "2.0.0", "example.com"),
+    ).toBe(
+      "Version 2.0.0 receives no email: mail to inbox@example.com stops reaching the app; the catch-all of example.com is put back as it was. Appflare makes the change once the version serves, and never touches a routing rule or catch-all it did not set up. Email Routing is turned off again if Appflare turned it on and nothing else uses it.",
+    );
+    // Only rules: nothing about the catch-all, and no routing to turn on for a removal.
+    expect(
+      emailRoutingChangeNote(
+        { catchAll: false, rules: ["inbox", "old"] },
+        { catchAll: false, rules: ["inbox"] },
+        "2.0.0",
+        "example.com",
+      ),
+    ).toBe(
+      "Version 2.0.0 changes the email the app receives: mail to old@example.com stops reaching the app. Appflare makes the change once the version serves, and never touches a routing rule or catch-all it did not set up.",
+    );
+    // No zone on record: nothing to remove, and setting up waits for one.
+    expect(
+      emailRoutingChangeNote({ catchAll: false, rules: ["inbox"] }, null, "2.0.0", null),
+    ).toBeNull();
+    expect(emailRoutingChangeNote(null, { catchAll: false, rules: ["inbox"] }, "2.0.0", null)).toBe(
+      "Version 2.0.0 receives email (inbox), and Appflare has no domain on record for the app's email: choose one in the app's settings (Email) once the version serves.",
+    );
   });
 
   it("reads emailRouting from a stored manifest, and nothing from a broken one", () => {

@@ -1,5 +1,11 @@
 import { Banner, Checkbox, LayerDialog, LinkButton, Text } from "@cloudflare/kumo";
-import { ArrowCircleUpIcon, ArrowRightIcon, InfoIcon, WarningIcon } from "@phosphor-icons/react";
+import {
+  ArrowCircleUpIcon,
+  ArrowRightIcon,
+  EnvelopeSimpleIcon,
+  InfoIcon,
+  WarningIcon,
+} from "@phosphor-icons/react";
 import { type FormEvent, type ReactNode, useId, useState } from "react";
 import type { InstallDetail } from "../installs/installs.functions";
 import { reinstallSentence } from "../installs/tier-change";
@@ -212,6 +218,7 @@ function UpdateDialog({
                 paidConfirmed,
                 ...(paidConfirmed && rememberPaid ? { rememberPaidPlan: true } : {}),
               }),
+          ...(needs.emailRouting === undefined ? {} : { confirmEmailRouting: needs.version }),
         },
       });
       if ("jobId" in result) {
@@ -278,6 +285,14 @@ function UpdateDialog({
                   label="Update without checking the new version first"
                 />
               </div>
+            )}
+            {needs.emailRouting !== undefined && (
+              <Banner
+                variant="secondary"
+                icon={<EnvelopeSimpleIcon />}
+                title="Email changes with this version"
+                description={needs.emailRouting}
+              />
             )}
             {needs.cronTriggers !== null && (
               <CronTriggersField

@@ -342,25 +342,61 @@ export function emailRoutingOfManifest(manifestJson: string | null): CatalogEmai
   }
 }
 
-function describeRouting(config: CatalogEmailRouting | null | undefined): string {
-  if (config == null) return "no email";
-  const parts = [...(config.rules ?? [])].sort();
-  if (config.catchAll === true) parts.push("the catch-all");
-  return parts.join(", ");
+/** The addresses a version routes to the app, as full addresses when the zone is known, sorted. */
+function addressesOf(
+  config: CatalogEmailRouting | null | undefined,
+  zone: string | null,
+): string[] {
+  if (config == null) return [];
+  const all = (config.rules ?? []).map((rule) =>
+    zone === null || rule.includes("@") ? rule : `${rule}@${zone}`,
+  );
+  return [...new Set(all)].sort();
 }
 
 /**
- * The job log warning when the version a job moves to receives different
- * email than the installed one; null when both ask for the same. Updates and
- * rollbacks leave Email Routing as the install set it up.
+ * The note when the version an update or rollback moves to receives
+ * different email than the one serving; null when nothing would change.
+ * The job changes Email Routing to match once that version serves, on the
+ * zone the app receives email for (see jobs/update/email-routing.ts), so the
+ * update and rollback dialogs show it and an update without an admin waits
+ * for one. `zoneName`: that zone; null when Appflare has none on record
+ * (then nothing can be removed, and nothing is set up until the admin
+ * chooses one); undefined when not looked up (the job log, which says
+ * where separately).
  */
-export function emailRoutingChangeWarning(
-  installed: CatalogEmailRouting | null | undefined,
+export function emailRoutingChangeNote(
+  serving: CatalogEmailRouting | null | undefined,
   next: CatalogEmailRouting | null | undefined,
   version: string,
+  zoneName?: string | null,
 ): string | null {
-  const from = describeRouting(installed);
-  const to = describeRouting(next);
-  if (from === to) return null;
-  return `Version ${version} receives ${to}; the installed one receives ${from}. Appflare does not change Email Routing on an update or rollback yet, so the routing rules and catch-all stay as they are. To match this version, uninstall and install the app again, or change the rules in the Cloudflare dashboard (Email Service, Email Routing).`;
+  const zone = zoneName ?? null;
+  const from = addressesOf(serving, zone);
+  const to = addressesOf(next, zone);
+  const added = to.filter((a) => !from.includes(a));
+  const removed = from.filter((a) => !to.includes(a));
+  const takesCatchAll = next?.catchAll === true && serving?.catchAll !== true;
+  const givesCatchAll = serving?.catchAll === true && next?.catchAll !== true;
+  if (added.length === 0 && removed.length === 0 && !takesCatchAll && !givesCatchAll) return null;
+  if (zoneName === null) {
+    // No routes on record: nothing to remove, and nowhere to set any up.
+    if (next == null) return null;
+    return `Version ${version} receives email${to.length > 0 ? ` (${to.join(", ")})` : ""}, and Appflare has no domain on record for the app's email: choose one in the app's settings (Email) once the version serves.`;
+  }
+  const where = zone ?? "the app's domain";
+  const parts: string[] = [];
+  if (added.length > 0) parts.push(`mail to ${added.join(", ")} starts reaching the app`);
+  if (removed.length > 0) parts.push(`mail to ${removed.join(", ")} stops reaching the app`);
+  if (takesCatchAll) {
+    parts.push(`every other address at ${where} starts reaching the app (the catch-all)`);
+  }
+  if (givesCatchAll) parts.push(`the catch-all of ${where} is put back as it was`);
+  const after =
+    next == null
+      ? " Email Routing is turned off again if Appflare turned it on and nothing else uses it."
+      : added.length > 0 || takesCatchAll
+        ? ` If Email Routing is off for ${where}, it is turned on, and Cloudflare adds its MX, SPF and DKIM records.`
+        : "";
+  return `Version ${version} ${next == null ? "receives no email" : "changes the email the app receives"}: ${parts.join("; ")}. Appflare makes the change once the version serves, and never touches a routing rule or catch-all it did not set up.${after}`;
 }

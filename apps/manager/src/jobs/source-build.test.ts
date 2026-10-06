@@ -19,6 +19,7 @@ import {
   installSourceBuildCore,
   type ReadRefs,
   type SourceBuildDeps,
+  sourceUpdateNeeds,
   startSourceBuildCore,
   updateFromSourceBuildCore,
 } from "../installs/source-builds.server";
@@ -948,6 +949,70 @@ describe("checking for changes and rebuilding", () => {
       installId,
       keepVersions: [NEWER_VERSION, VERSION],
     });
+  });
+
+  it("shows how a rebuild changes the app's email, and starts only once that is confirmed", async () => {
+    const installed = await installFromRepository();
+    const installId = installed.started.installId;
+    const next = await repositoryBuild(NEWER, NEWER_VERSION);
+    const rebuilt = await build({
+      fixture: next,
+      remote: refsAt(NEWER),
+      request: { kind: "rebuild", installId, costConfirmed: true },
+      ids: () => "rebuild-1",
+    });
+    expect(rebuilt.error).toBeNull();
+    // The installed version receives mail at inbox@; the rebuild receives none.
+    const row = await env.DB.prepare("SELECT * FROM installs WHERE id = ?1")
+      .bind(installId)
+      .first<Record<string, unknown> & { manifest_json: string }>();
+    const manifest = JSON.parse(row?.manifest_json ?? "{}");
+    manifest.catalog.install.emailRouting = { rules: ["inbox"], catchAll: false };
+    await env.DB.prepare("UPDATE installs SET manifest_json = ?2 WHERE id = ?1")
+      .bind(installId, JSON.stringify(manifest))
+      .run();
+    // The rule the install set up on its zone, which the update would remove.
+    await env.DB.prepare(
+      `INSERT INTO resources (id, install_id, kind, binding, name, cf_id, created_at)
+       VALUES (?1, ?2, 'email_route', NULL, 'inbox@example.com', ?3, 1)`,
+    )
+      .bind(
+        `${installId}:email_route:rule:inbox@example.com`,
+        installId,
+        `rule:${"0".repeat(32)}:r1`,
+      )
+      .run();
+    const install = await env.DB.prepare("SELECT * FROM installs WHERE id = ?1")
+      .bind(installId)
+      .first();
+    const needs = await sourceUpdateNeeds(
+      env.DB,
+      install as Parameters<typeof sourceUpdateNeeds>[1],
+      next.manifest,
+    );
+    expect(needs.emailRouting).toContain(
+      `Version ${NEWER_VERSION} receives no email: mail to inbox@example.com stops reaching the app.`,
+    );
+
+    let params: UpdateJobParams | null = null;
+    const deps = {
+      db: env.DB,
+      createJob: async (id: string, p: UpdateJobParams) => {
+        params = p;
+        return { id };
+      },
+      newId: () => "update-job",
+    };
+    await expect(updateFromSourceBuildCore(deps, { buildId: rebuilt.jobId })).rejects.toThrow(
+      "Confirm this change to the app's email to update.",
+    );
+    expect(params).toBeNull();
+    const started = await updateFromSourceBuildCore(deps, {
+      buildId: rebuilt.jobId,
+      confirmEmailRouting: true,
+    });
+    expect(started.jobId).toBe("update-job");
+    expect(params).not.toBeNull();
   });
 
   it("refuses a rebuild of an app that comes from the catalog", async () => {

@@ -145,12 +145,15 @@ A rollback puts back:
 - the secrets that version had, with the values it had: a rotated secret gets its old
   value back, a removed secret comes back, and a secret added since is gone. The
   app's list of secrets follows.
+- for an app that receives email, the routing rules and catch-all that version asks
+  for, on the zone the app receives email for now (see
+  [Updates and rollbacks](/guides/email-apps/#updates-and-rollbacks)).
 
 A rollback does not change:
 
 - **Databases.** Restore one from the snapshot separately if you need its data as it
   was.
-- **Email Routing.** A rollback does not move email back to the old zone. Move it
+- **The email zone.** A rollback does not move email back to the old zone. Move it
   under Settings again if you need to.
 - **A self-deploying app**, which has no snapshots.
 

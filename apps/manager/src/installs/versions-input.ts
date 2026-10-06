@@ -25,6 +25,8 @@ export const startUpdateInput = installIdInput.extend({
   paidConfirmed: z.boolean().optional(),
   /** With `paidConfirmed`: also record Workers Paid as the account's plan in Settings. */
   rememberPaidPlan: z.boolean().optional(),
+  /** The version whose change to the app's Email Routing the admin saw. */
+  confirmEmailRouting: z.string().min(1).max(200).optional(),
 });
 export type StartUpdateInput = z.infer<typeof startUpdateInput>;
 

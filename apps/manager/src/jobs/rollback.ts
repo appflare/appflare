@@ -2,6 +2,7 @@ import { NonRetryableError } from "cloudflare:workflows";
 import {
   type ArtifactManifest,
   artifactManifestSchema,
+  type CatalogEmailRouting,
   DEFAULT_HEALTH_MODE,
 } from "@appflare/schema";
 import { and, eq, inArray, isNull, type SQL } from "drizzle-orm";
@@ -15,8 +16,8 @@ import { appPlace } from "../components/app-links";
 import { createDb, type Database } from "../db/client";
 import { installs, jobs, resources, snapshots } from "../db/schema";
 import { readSettings, SETTING } from "../db/settings";
-import { emailRoutingChangeWarning, emailRoutingOfManifest } from "../installs/email-routing";
-import { varsNeedRefresh } from "../installs/install-vars";
+import { emailRoutingChangeNote, emailRoutingOfManifest } from "../installs/email-routing";
+import { type VarsRefreshReason, varsNeedRefresh } from "../installs/install-vars";
 import { ADDRESS_KINDS, HYPERDRIVE_KINDS, QUEUE_CONSUMER_KIND } from "../installs/resource-kinds";
 import {
   rollbackFinishMessage,
@@ -65,7 +66,14 @@ import {
 import { parseStoredVars } from "./reconfigure/plan";
 import type { JobContext } from "./run-job";
 import { StepLog } from "./step-log";
-import { createJobSteps, errorMessage, JobError } from "./steps";
+import { createJobSteps, errorMessage, JobError, type JobSteps } from "./steps";
+import {
+  describeValues,
+  readAppAddress,
+  settingsRefreshPhase,
+  staleAddressValues,
+} from "./update/address-settings";
+import { changeEmailRoutingPhase, readEmailRouteRows } from "./update/email-routing";
 import {
   accessUpdateRefusal,
   declaredLifecycleOf,
@@ -79,7 +87,11 @@ import {
  * artifact) back to what it was when the snapshot was taken. D1 databases are
  * not touched: restoring data is a separate, explicit action on the install
  * page. Neither are the lifecycle rules an update put on an R2 bucket; the
- * log names those the version it returns to does not declare. The install is `updating` while the job runs and returns to
+ * log names those the version it returns to does not declare. Email Routing
+ * follows the version once it serves, as after an update
+ * (./update/email-routing.ts), and settings uploaded with another address
+ * than the app has now are deployed again (./update/address-settings.ts).
+ * The install is `updating` while the job runs and returns to
  * `installed` whatever happens.
  */
 
@@ -135,6 +147,16 @@ export function versionSecretNames(version: { resources?: Record<string, unknown
     if (type === "secret_text" && typeof name === "string") names.add(name);
   }
   return [...names].sort();
+}
+
+/** The var bindings (`plain_text`, `json`) of a version, from `GET .../versions/{id}`. */
+function versionVarBindings(version: { resources?: Record<string, unknown> }): unknown[] {
+  const bindings = version.resources?.bindings;
+  if (!Array.isArray(bindings)) return [];
+  return bindings.filter((b: unknown) => {
+    const type = typeof b === "object" && b !== null ? (b as { type?: unknown }).type : undefined;
+    return type === "plain_text" || type === "json";
+  });
 }
 
 /**
@@ -268,6 +290,81 @@ async function rollbackAccessPlan(
     dropsPaths: sharedPaths.length < before.length,
     refreshValues: usesAccess && snapshot.access_aud !== (current?.aud ?? ""),
   };
+}
+
+/**
+ * Once the snapshot's version serves again: the address values (`appUrl`,
+ * `wildcardHostname`) its settings were filled in with that differ from the
+ * app's address now, read back from each Worker's version in `checks` (one
+ * step and one request per Worker) and compared with the vars the install's
+ * settings render to now. Never throws: a version that cannot be read is
+ * a warning, and counts as current.
+ */
+async function staleAddressPhase(
+  steps: JobSteps,
+  installId: string,
+  workerName: string,
+  subdomain: string,
+  checks: ReadonlyArray<{ scriptName: string; versionId: string }>,
+  /** Var bindings of versions read already, by version id. */
+  known: Readonly<Record<string, unknown[]>>,
+): Promise<VarsRefreshReason[]> {
+  const reasons = new Set<VarsRefreshReason>();
+  for (const check of checks) {
+    const found = await steps
+      .run(`check the address settings of version ${check.versionId}`, async ({ log, cf, orm }) => {
+        const none = { stale: [] as VarsRefreshReason[] };
+        const [install] = await orm
+          .select({
+            manifest_json: installs.manifest_json,
+            artifact_digest: installs.artifact_digest,
+            config_json: installs.config_json,
+          })
+          .from(installs)
+          .where(eq(installs.id, installId))
+          .limit(1);
+        if (install === undefined) return none;
+        // The install records the snapshot's version and settings by now.
+        const manifest = await storedEffectiveManifest(orm, storedRelease(install));
+        const worker =
+          manifest === null
+            ? undefined
+            : entryWorkers(manifest, workerName).find((w) => w.scriptName === check.scriptName);
+        const address = await readAppAddress(orm, installId, subdomain);
+        if (manifest === null || worker === undefined || address === null) return none;
+        let deployed: unknown[];
+        try {
+          deployed =
+            known[check.versionId] ??
+            versionVarBindings(await cf().versions.getVersion(check.scriptName, check.versionId));
+        } catch (error) {
+          log.warn(
+            `Could not read the settings of version ${check.versionId} (${errorMessage(error)}); if the app's address changed since it was deployed, save the app's settings to fill in the current one.`,
+          );
+          return none;
+        }
+        const stale = staleAddressValues({
+          manifest,
+          worker,
+          userVars: parseStoredVars(install.config_json),
+          workerName,
+          subdomain,
+          accountId: steps.accountId(),
+          access: await readAccessPlaceholderValues(orm, installId),
+          address,
+          deployed,
+        });
+        if (stale.length > 0) {
+          log.info(
+            `Version ${check.versionId} of "${check.scriptName}" was deployed with another ${describeValues(stale)} than the app has now (${address.appUrl}).`,
+          );
+        }
+        return { stale };
+      })
+      .catch(() => ({ stale: [] as VarsRefreshReason[] }));
+    for (const reason of found.stale) reasons.add(reason);
+  }
+  return [...reasons];
 }
 
 export async function runRollback(ctx: JobContext): Promise<void> {
@@ -419,17 +516,43 @@ export async function runRollback(ctx: JobContext): Promise<void> {
       if (!env.CF_API_TOKEN) {
         throw new JobError("the Cloudflare API token is not configured; finish setup first");
       }
-      // TODO: apply `install.emailRouting` changes between versions (create and
-      // delete routing rules, take over or give back the catch-all). The zone the
-      // admin chose and the records of what the install set up exist only from the
-      // install; until an update can reconcile them, the job warns in its log and
-      // leaves Email Routing as the install set it up.
-      const emailChange = emailRoutingChangeWarning(
-        emailRoutingOfManifest(install.manifest_json),
-        emailRoutingOfManifest(snapshot.manifest_json),
-        snapshot.catalog_version ?? "the snapshot's version",
-      );
-      if (emailChange !== null) log.warn(emailChange);
+      // The snapshot's version as the newest revision recorded for its
+      // release says; null when the snapshot kept no readable manifest.
+      const snapshotEffective =
+        snapshot.manifest_json === null
+          ? null
+          : await storedEffectiveManifest(orm, storedRelease(snapshot));
+      const servingEmail = emailRoutingOfManifest(install.manifest_json);
+      const emailTarget =
+        snapshotEffective === null
+          ? null
+          : (snapshotEffective.catalog.install.emailRouting ?? null);
+      // Email Routing follows the version once it serves again (below).
+      if (snapshotEffective !== null) {
+        const emailChange = emailRoutingChangeNote(
+          servingEmail,
+          emailTarget,
+          snapshot.catalog_version ?? "the snapshot's version",
+        );
+        if (emailChange !== null) log.info(emailChange);
+      }
+      // Each Worker of the snapshot's version whose settings use the app's
+      // address, with the version it serves again: once it does, its
+      // settings are compared with the address the app has now.
+      const snapshotVars = parseStoredVars(snapshot.config_json ?? install.config_json);
+      const snapshotOtherVersions = parseWorkerVersions(snapshot.worker_versions_json);
+      const addressChecks =
+        snapshotEffective === null
+          ? []
+          : entryWorkers(snapshotEffective, install.worker_name).flatMap((w) => {
+              if (!varsNeedRefresh(w.manifest, snapshotVars, ["appUrl", "wildcardHostname"])) {
+                return [];
+              }
+              const versionId = w.primary
+                ? snapshot.worker_version_id
+                : snapshotOtherVersions[w.scriptName];
+              return versionId === undefined ? [] : [{ scriptName: w.scriptName, versionId }];
+            });
       // Lifecycle rules an update merged into a bucket stay: a rollback
       // removes no rule, and the log names those the old version lacks.
       const leaving = declaredLifecycleOf(install.manifest_json);
@@ -518,6 +641,26 @@ export async function runRollback(ctx: JobContext): Promise<void> {
           };
         }),
         sameCode,
+        // Unknown (null) when the snapshot kept no readable manifest: Email
+        // Routing is then left as it is (absent in a step output recorded before).
+        email: (snapshotEffective === null
+          ? null
+          : {
+              target: emailTarget,
+              serving: servingEmail !== null,
+              // Routes on record (absent in a step output recorded before).
+              routes: (await readEmailRouteRows(orm, params.installId)).some((r) => !r.deleted),
+            }) as
+          | {
+              target: CatalogEmailRouting | null;
+              serving: boolean;
+              routes?: boolean;
+            }
+          | null
+          | undefined,
+        addressChecks: addressChecks as
+          | Array<{ scriptName: string; versionId: string }>
+          | undefined,
         workflows: workflows as WorkflowTarget[] | undefined,
         // The Workflows the serving version runs on a schedule (absent in a
         // step output recorded before schedules were followed).
@@ -668,7 +811,16 @@ export async function runRollback(ctx: JobContext): Promise<void> {
             ? `Version ${started.versionId} has no secrets.`
             : `Version ${started.versionId} has the secrets ${names.join(", ")}.`,
         );
-        return { names, hyperdrive: versionHyperdriveBindings(version) };
+        // Its vars too when its settings use the app's address, for the
+        // check once the rollback is done (no second read of the version).
+        const primaryChecked = (started.addressChecks ?? []).some(
+          (c) => c.versionId === started.versionId,
+        );
+        return {
+          names,
+          hyperdrive: versionHyperdriveBindings(version),
+          ...(primaryChecked ? { vars: versionVarBindings(version) } : {}),
+        };
       } catch (error) {
         log.warn(
           `Could not read the secrets of version ${started.versionId} (${errorMessage(error)}); the install's list of secrets may not match the Worker until its next settings change.`,
@@ -799,6 +951,20 @@ export async function runRollback(ctx: JobContext): Promise<void> {
       }
     }
 
+    // Email Routing to what the snapshot's version receives, now that it
+    // serves again: the routes it has that the newer one dropped come back,
+    // those only the newer one had go (absent in a step output recorded
+    // before it was read, and unknown for a snapshot without a manifest).
+    // Never throws: a part it cannot do is a warning for the next job.
+    const email = started.email;
+    if (email != null && (email.target !== null || email.serving || email.routes === true)) {
+      await changeEmailRoutingPhase(steps, {
+        installId: params.installId,
+        workerName,
+        target: email.target,
+      });
+    }
+
     const subdomain = await subdomainOf();
     const url = `${appBaseUrl({ workerName, subdomain, workersDev: started.workersDev, domains: started.domains, served: started.servedDomain })}${started.healthPath}`;
     // Recorded rather than fatal: the snapshot's version already serves. A
@@ -839,9 +1005,29 @@ export async function runRollback(ctx: JobContext): Promise<void> {
       );
       return {};
     });
-    // The snapshot's version was deployed with another protection than the
-    // app has now: its settings get the current Access values again.
-    if (access?.refreshValues === true) {
+    // The snapshot's version was deployed with the address the app had then
+    // (or another protection than it has now): its settings get the current
+    // values again, in one settings change. Never throws.
+    const stale = await staleAddressPhase(
+      steps,
+      params.installId,
+      workerName,
+      subdomain,
+      started.addressChecks ?? [],
+      "vars" in secretNames && secretNames.vars !== undefined
+        ? { [started.versionId]: secretNames.vars }
+        : {},
+    );
+    if (stale.length > 0) {
+      const withAccess = access?.refreshValues === true;
+      await settingsRefreshPhase(
+        steps,
+        env,
+        params.installId,
+        withAccess ? ["access", ...stale] : stale,
+        `This version's settings were filled in with another ${describeValues(stale)} than the app has now${withAccess ? ", and with another Cloudflare Access protection" : ""}`,
+      );
+    } else if (access?.refreshValues === true) {
       await accessValuesRefreshPhase(steps, env, params.installId);
     }
   } catch (error) {

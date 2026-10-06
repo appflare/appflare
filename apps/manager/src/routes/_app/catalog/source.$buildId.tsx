@@ -3,6 +3,7 @@ import {
   ArrowCircleUpIcon,
   ArrowRightIcon,
   CheckCircleIcon,
+  EnvelopeSimpleIcon,
   GitBranchIcon,
   TrashIcon,
   WarningCircleIcon,
@@ -691,6 +692,7 @@ function UpdateFromBuild({
           buildId: build.id,
           secrets,
           ...(review.skipsPreview === null ? {} : { confirmNoPreview: noPreview }),
+          ...(review.emailRouting === null ? {} : { confirmEmailRouting: true }),
         },
       });
       await jobStarted(jobId, "Update started");
@@ -724,6 +726,14 @@ function UpdateFromBuild({
                 label="Update without checking the new version first"
               />
             </div>
+          )}
+          {review.emailRouting !== null && (
+            <Banner
+              variant="secondary"
+              icon={<EnvelopeSimpleIcon />}
+              title="Email changes with this version"
+              description={review.emailRouting}
+            />
           )}
           {review.needsSecrets.length > 0 && (
             <div className="grid gap-4">

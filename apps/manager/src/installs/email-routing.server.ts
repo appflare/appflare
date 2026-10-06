@@ -47,6 +47,11 @@ export interface InspectedAddress {
   address: string;
   /** A rule that already delivers this address to the Worker (an earlier attempt), else null. */
   existingRuleId: string | null;
+  /**
+   * Set when the address already has a rule that delivers elsewhere, which
+   * Appflare never replaces: the sentence that says so (also in `problems`).
+   */
+  conflict?: string;
 }
 
 /**
@@ -68,6 +73,8 @@ export interface EmailRoutingInspection {
     action: string;
     /** The catch-all as it is now, which the uninstall puts back. */
     previous: SavedCatchAll;
+    /** Set when the state is `taken`: the sentence that says so (also in `problems`). */
+    problem?: string;
   } | null;
   /** Mail servers of another provider at the zone apex, when routing is off. */
   foreignMx: string[];
@@ -212,10 +219,9 @@ export async function inspectEmailRouting(
         } else if (deliversTo(existing.actions, request.workerName)) {
           result.addresses.push({ address, existingRuleId: existing.id });
         } else {
-          result.addresses.push({ address, existingRuleId: null });
-          result.problems.push(
-            `${address} already has a routing rule (${describeAction(existing.actions)}). Appflare does not replace it; delete the rule in the Cloudflare dashboard or choose another zone.`,
-          );
+          const conflict = `${address} already has a routing rule (${describeAction(existing.actions)}). Appflare does not replace it; delete the rule in the Cloudflare dashboard or choose another zone.`;
+          result.addresses.push({ address, existingRuleId: null, conflict });
+          result.problems.push(conflict);
         }
       }
       const toCreate = result.addresses.filter((a) => a.existingRuleId === null).length;
@@ -238,9 +244,9 @@ export async function inspectEmailRouting(
       else if (catchAllInUse(catchAll)) state = "taken";
       result.catchAll = { state, action, previous: saveCatchAll(catchAll) };
       if (state === "taken") {
-        result.problems.push(
-          `The catch-all of ${zone.name} already sends mail to ${action}. Appflare does not replace it; turn the catch-all off in the Cloudflare dashboard or choose another zone.`,
-        );
+        const problem = `The catch-all of ${zone.name} already sends mail to ${action}. Appflare does not replace it; turn the catch-all off in the Cloudflare dashboard or choose another zone.`;
+        result.catchAll.problem = problem;
+        result.problems.push(problem);
       }
     }
   }

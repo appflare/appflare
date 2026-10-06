@@ -106,6 +106,7 @@ export function describeNeeds(needs: UpdateNeeds): string {
   if (needs.skipsPreview !== null) parts.push("a confirmation to update without a preview check");
   if (needs.build !== null) parts.push("approval of the build or installer run");
   if (needs.cronTriggers !== null) parts.push("a Workers Paid confirmation for its cron triggers");
+  if (needs.emailRouting !== undefined) parts.push("a look at how it changes the app's email");
   return parts.length === 0 ? "an admin's confirmation" : parts.join(", ");
 }
 
