@@ -148,7 +148,7 @@ export interface CatalogDetail {
   /** Why the index or the manifest could not be loaded. */
   error: string | null;
   /** Installs of this app that are not uninstalled, oldest first. */
-  instances: InstalledRef[];
+  installs: InstalledRef[];
   /** Worker name to prefill: the catalog's, or the next free `<name>-N`. */
   suggestedWorkerName: string | null;
   /** The app only works under its catalog Worker name, so it installs once. */
@@ -289,7 +289,7 @@ export async function readCatalogEntry(
     authors: [],
     creates: [],
     durableObjects: [],
-    instances: [],
+    installs: [],
     suggestedWorkerName: null,
     fixedWorkerName: false,
     varFields: [],
@@ -310,7 +310,7 @@ export async function readCatalogEntry(
   if (read.listed === null) return { app: null, error: null, ...empty };
   const { app, key, source, trust }: ListedApp = read.listed;
   const stats = source.official ? await statsFor(statsRead, read.index) : null;
-  const instances = active.bySlug.get(key) ?? [];
+  const existing = active.bySlug.get(key) ?? [];
   const shown = {
     key,
     source,
@@ -327,7 +327,7 @@ export async function readCatalogEntry(
       ...shown,
       app,
       authors: app.authors,
-      instances,
+      installs: existing,
       error: unsigned,
     };
   }
@@ -346,7 +346,7 @@ export async function readCatalogEntry(
       ...shown,
       app,
       authors: app.authors,
-      instances,
+      installs: existing,
       error: manifest.error,
     };
   }
@@ -390,7 +390,7 @@ export async function readCatalogEntry(
         ? null
         : moduleBytes(appWorkers(manifest.manifest).map((w) => w.worker)) || null,
     error: null,
-    instances,
+    installs: existing,
     suggestedWorkerName: fixed ? catalogName : suggestWorkerName(catalogName, taken),
     fixedWorkerName: fixed,
     // A sandbox tier app's wrangler config is read only when it is built, so

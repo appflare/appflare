@@ -61,7 +61,11 @@ describe("InstallHealth", () => {
   it("keeps its own words for an app that did not answer", () => {
     const text = show("unverified", false);
     expect(text).toContain("Not verified yet");
-    expect(text).toContain("The Worker did not answer its last health check");
+    expect(text).toContain(
+      "The last health check could not reach the app. Open the app to check it.",
+    );
+    // Not every check follows a route going live (a settings change, Check now).
+    expect(text).not.toContain("going live");
     expect(text).not.toContain("Cloudflare Access");
   });
 

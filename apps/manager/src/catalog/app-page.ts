@@ -52,19 +52,19 @@ export type HeaderAction =
 export const ADMINS_ONLY = "Only admins can install apps";
 
 export function headerAction(
-  instances: ReadonlyArray<{ installId: string }>,
+  installs: ReadonlyArray<{ installId: string }>,
   installable: boolean,
   canInstall: boolean,
 ): HeaderAction {
-  const [first] = instances;
+  const [first] = installs;
   if (first === undefined) {
     if (!canInstall) return { kind: "install", disabled: true, reason: ADMINS_ONLY };
     return { kind: "install", disabled: !installable, reason: null };
   }
   return {
     kind: "manage",
-    href: instances.length === 1 ? `/apps/${first.installId}` : null,
-    count: instances.length,
+    href: installs.length === 1 ? `/apps/${first.installId}` : null,
+    count: installs.length,
   };
 }
 

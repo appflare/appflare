@@ -855,12 +855,19 @@ async function liveHealthLoop(
     opts.installId === undefined
       ? "check again from its page"
       : `check again from ${appPlace(opts.installId, "health", "its page")}`;
+  // What the job did, for the warnings. A settings change (`routeWasLive`)
+  // created nothing, and its URL served before the job, so its warnings say
+  // neither that everything was created nor that the route may be going live.
   const done =
     opts.access === "on"
       ? "The app is protected now"
       : opts.access === "off"
         ? "The protection is removed"
-        : "Everything was created";
+        : opts.routeWasLive === true
+          ? "The new settings are in place"
+          : "Everything was created";
+  const notVerified =
+    opts.routeWasLive === true ? `${done}.` : `${done}; the route may still be going live.`;
   let firstProbeAt: number | null = null;
   // The install's token for this URL, looked up once for the whole phase.
   let credentials: (() => Promise<Record<string, string> | undefined>) | undefined;
@@ -916,7 +923,7 @@ async function liveHealthLoop(
           );
         } else {
           log.warn(
-            `Could not verify ${url} after ${attempt} attempts (${decision.detail}). ${done}; the route may still be going live. Open the app to check, or ${checkAgain}.`,
+            `Could not verify ${url} after ${attempt} attempts (${decision.detail}). ${notVerified} Open the app to check, or ${checkAgain}.`,
           );
         }
         return { at, decision, tokenAccepted };

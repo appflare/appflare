@@ -2555,7 +2555,9 @@ describe("install job", () => {
         (l) =>
           l.level === "warn" &&
           l.message.startsWith(`Could not verify ${HEALTH_URL} after 12 attempts`) &&
-          l.message.includes("Open the app to check"),
+          l.message.includes(
+            "Everything was created; the route may still be going live. Open the app to check",
+          ),
       ),
     ).toBe(true);
     expect(r.logs.at(-1)?.message).toMatch(/\(health: not verified yet \(404 error code: 1042/);

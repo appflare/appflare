@@ -204,7 +204,7 @@ function AppPage({
     categories: detail.categories,
     pin: catalog?.source.sha ?? app.build?.pin ?? null,
   });
-  const action = headerAction(detail.instances, installable, canInstall);
+  const action = headerAction(detail.installs, installable, canInstall);
   const multipleInstalls = !detail.fixedWorkerName && installable;
 
   return (
@@ -293,7 +293,7 @@ function AppPage({
         </AppSection>
       )}
 
-      {detail.instances.length > 0 && (
+      {detail.installs.length > 0 && (
         <div ref={installedRef} tabIndex={-1} className="scroll-mt-6 outline-none">
           <AppSection
             id="installed"
@@ -306,7 +306,7 @@ function AppPage({
               ) : undefined
             }
           >
-            <InstallsList instances={detail.instances} />
+            <InstallsList installs={detail.installs} />
           </AppSection>
         </div>
       )}
@@ -358,7 +358,7 @@ function InstallPanel({
           fixedWorkerName: detail.fixedWorkerName,
         });
   // The install being replaced is no reason to refuse one that installs once.
-  const others = detail.instances.filter((i) => i.installId !== replacing?.installId);
+  const others = detail.installs.filter((i) => i.installId !== replacing?.installId);
   const sandboxBuild = app.tier === "sandbox" ? (app.build ?? null) : null;
   const installer = app.tier === "self-deploying" ? (app.build ?? null) : null;
   // Sandbox builds off: the install turns them on first when the account

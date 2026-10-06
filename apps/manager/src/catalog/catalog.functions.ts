@@ -49,7 +49,7 @@ export interface CatalogListItem extends IndexApp {
   /** The catalog that lists it, for its source badge and the source filter. */
   source: CatalogSource;
   /** Installs of this app that are not uninstalled. */
-  instances: InstalledRef[];
+  installs: InstalledRef[];
   /** The entry's images, as manager paths. */
   images: AppMediaView;
   /** Stars and install counts; null when the catalog publishes none (or they are stale). */
@@ -114,7 +114,7 @@ async function listItems(
       ...app,
       key,
       source: read.source,
-      instances: active.bySlug.get(key) ?? [],
+      installs: active.bySlug.get(key) ?? [],
       // Images, avatars and popularity come from the official catalog alone.
       images: appMediaView(official ? app.media : undefined, indexUrl),
       popularity: official ? appPopularity(stats, app.slug) : null,

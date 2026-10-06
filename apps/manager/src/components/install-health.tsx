@@ -25,7 +25,9 @@ const HEALTH: Record<HealthStatus, { variant: BadgeVariant; label: string; hint:
   unverified: {
     variant: "warning",
     label: "Not verified yet",
-    hint: "The Worker did not answer its last health check; its route may still have been going live. Open the app to check.",
+    // Recorded by an install's, an update's or a settings change's check, or
+    // by "Check now", so it does not guess why: only some of those make a route go live.
+    hint: "The last health check could not reach the app. Open the app to check it.",
   },
   unhealthy: {
     variant: "error",

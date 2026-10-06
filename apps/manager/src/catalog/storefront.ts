@@ -116,7 +116,7 @@ function popularRow<T extends BrowsableApp>(apps: readonly T[]): StorefrontRow<T
 }
 
 function installedRow<T extends BrowsableApp>(apps: readonly T[]): StorefrontRow<T> | null {
-  const installed = apps.filter((app) => app.instances.length > 0);
+  const installed = apps.filter((app) => app.installs.length > 0);
   if (installed.length === 0) return null;
   return {
     id: "installed",
@@ -273,9 +273,9 @@ export function showRowArrows(state: { narrow: boolean; overflows: boolean }): b
 export function primaryAction(app: {
   key: string;
   name: string;
-  instances: ReadonlyArray<{ installId: string }>;
+  installs: ReadonlyArray<{ installId: string }>;
 }): { label: "Get" | "Manage"; href: string; ariaLabel: string } {
-  const [first, second] = app.instances;
+  const [first, second] = app.installs;
   if (first === undefined) {
     return { label: "Get", href: `/catalog/${app.key}`, ariaLabel: `Get ${app.name}` };
   }

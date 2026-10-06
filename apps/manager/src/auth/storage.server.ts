@@ -32,6 +32,21 @@ import {
  * (`waitUntil`, so a client that disconnects cannot cut it short). From then
  * on Better Auth finds them and never awaits that import again. Only success
  * is remembered: a failed attempt is retried by the next request.
+ *
+ * #11482 also describes a second hang: `betterAuth()` starts its own
+ * initialization when it is built and keeps that promise for the life of the
+ * instance, and the manager keeps one instance per isolate and origin
+ * (server/auth.server.ts). That hang needs the initialization to wait on
+ * something tied to the request that built the instance (a database query, a
+ * fetch, a timer). With the manager's setup in Better Auth 1.7.7 it waits on
+ * nothing: `better-auth/minimal` with an adapter function does no database
+ * work, telemetry is off and has no endpoint, no plugin has an async `init`,
+ * none of it awaits the import above, and the schema check it starts compares
+ * the Drizzle schema object without reading D1. So the instance is ready
+ * before the request that built it can end, and it needs no workaround
+ * (`storage.server.test.ts` checks that it settles without waiting). Revisit
+ * this if the auth setup gains a direct database, telemetry, or a plugin
+ * whose `init` does I/O.
  */
 
 export interface AuthStorageDeps {
