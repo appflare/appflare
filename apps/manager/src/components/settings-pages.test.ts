@@ -303,7 +303,7 @@ describe("UsersSettingsView", () => {
         viewer: { id: "u2", email: "member@example.com", role: "member" },
       }),
     );
-    expectPattern(html, ["users", "passkeys", "access"], ["Only admins can view and add users."]);
+    expectPattern(html, ["users", "passkeys", "access"], ["Only admins can view and add users"]);
     expect(text(html)).not.toContain("Add user");
     expect(text(html)).toContain("No passkeys yet");
   });
@@ -411,7 +411,9 @@ describe("NotificationsSettingsView", () => {
         channels: [channel, { ...channel, id: "c2", label: "Ops" }],
       }),
     );
-    expectPattern(html, ["channels"], ["Add channel", "Team", "Ops", "Send test", "Edit"]);
+    expectPattern(html, ["channels"], ["Add channel", "Team", "Ops", "Send test"]);
+    // Edit, Replace signing secret and Remove live in each row's menu.
+    expect(html).toContain('aria-label="Actions for Ops"');
     expect(html).toContain('id="channel-c2"');
   });
 
