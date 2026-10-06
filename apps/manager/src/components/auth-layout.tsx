@@ -1,10 +1,9 @@
 import { SITE_URL } from "@appflare/schema/links";
-import { Banner, cn, LayerCard, Link, Meter, Text } from "@cloudflare/kumo";
-import { WarningCircleIcon } from "@phosphor-icons/react";
+import { cn, LayerCard, Link, Meter, Text } from "@cloudflare/kumo";
 import type { ReactNode } from "react";
 import { managerSiteLink } from "../site-links";
 import { Logo } from "./logo";
-import { MessageText } from "./message-text";
+import { ErrorMessageBanner } from "./message-text";
 
 /**
  * Where the documentation starts, which the footer's version line and the
@@ -118,19 +117,12 @@ export function AuthLayout({
 }
 
 /**
- * An error on an auth screen: a plain sentence, announced when it appears.
- * A link in it (to a settings page) opens in a new tab, keeping the screen.
+ * An error on an auth screen, like any other error banner and announced
+ * when it appears. A link in it (to a settings page) opens in a new tab,
+ * keeping the screen.
  */
 export function AuthError({ message }: { message: string }) {
-  return (
-    <div role="alert">
-      <Banner
-        variant="error"
-        icon={<WarningCircleIcon weight="fill" />}
-        description={<MessageText message={message} newTab />}
-      />
-    </div>
-  );
+  return <ErrorMessageBanner message={message} newTab />;
 }
 
 /** "or" between two ways of doing the same thing, with a hairline on each side. */

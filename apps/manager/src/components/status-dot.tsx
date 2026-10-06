@@ -13,7 +13,9 @@ const DOT_COLOURS: Record<AppSignal, string> = {
  * red when something it was doing did not finish, amber when it is not
  * responding, blue when a newer version is out (an update, or a reinstall
  * when the app's catalog entry changed how it is installed). Its meaning is its
- * accessible name and tooltip.
+ * accessible name. On a Home card the line beside it says the same in words,
+ * and in the folded sidebar the app's tooltip does; in the expanded sidebar
+ * only its accessible name carries it.
  */
 export function StatusDot({ signal, className }: { signal: AppSignal; className?: string }) {
   const label = APP_SIGNAL_LABELS[signal];
@@ -21,7 +23,6 @@ export function StatusDot({ signal, className }: { signal: AppSignal; className?
     <span
       role="img"
       aria-label={label}
-      title={label}
       data-signal={signal}
       className={cn("inline-block size-2 shrink-0 rounded-full", DOT_COLOURS[signal], className)}
     />

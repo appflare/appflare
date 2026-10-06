@@ -174,7 +174,7 @@ export function AccountMenu({
           <DropdownMenu.Item icon={SparkleIcon} onClick={openNotes}>
             What's new
             {unread > 0 && (
-              <Badge variant="red" className="ml-auto">
+              <Badge variant="error" className="ml-auto">
                 <span aria-hidden>{unreadLabel(unread)}</span>
                 <span className="sr-only">{unreadNotes}</span>
               </Badge>
@@ -207,7 +207,7 @@ export function AccountMenu({
             </>
           )}
           <DropdownMenu.Separator />
-          <DropdownMenu.Item icon={SignOutIcon} variant="danger" onClick={() => void signOut()}>
+          <DropdownMenu.Item icon={SignOutIcon} onClick={() => void signOut()}>
             Sign out
           </DropdownMenu.Item>
         </DropdownMenu.Content>

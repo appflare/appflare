@@ -33,6 +33,10 @@ function Monogram({ name, size, round }: { name: string; size: number; round?: b
  * the home list, an install's page). Without one, or when the image fails to
  * load (a catalog that dropped an icon the page still names), a monogram of
  * `name`: the catalog ships upstream icons only, never generated ones.
+ *
+ * The icon sits on a white tile in both modes: upstream icons are mostly
+ * drawn for a light page on a transparent background, and a dark glyph
+ * would vanish against a dark sidebar or card.
  */
 export function AppIcon({
   src,
@@ -55,7 +59,7 @@ export function AppIcon({
       eager={eager}
       fallback={<Monogram name={name} size={size} />}
       style={{ width: size, height: size }}
-      className="shrink-0 rounded-lg ring ring-kumo-hairline"
+      className="shrink-0 rounded-lg bg-white ring ring-kumo-hairline"
     />
   );
 }
