@@ -1,11 +1,13 @@
 import { Button, LayerCard, Link, Sidebar, Text } from "@cloudflare/kumo";
 import {
   ArrowCircleUpIcon,
+  ArrowClockwiseIcon,
   CheckCircleIcon,
   WarningCircleIcon,
+  WarningIcon,
   XIcon,
 } from "@phosphor-icons/react";
-import { type ReactNode, useCallback, useEffect, useState } from "react";
+import { type ReactNode, useCallback, useEffect, useRef, useState } from "react";
 import { startSelfUpdate } from "../catalog/manager-releases.functions";
 import { MANAGER_UPDATES_HREF, type ManagerStatus } from "../installs/pending-updates";
 import type { JobView } from "../jobs/jobs.functions";
@@ -20,7 +22,7 @@ import {
   UPDATED_TO_KEY,
 } from "./appflare-card-state";
 import { AppflareLoader } from "./appflare-loader";
-import { BusyButton } from "./busy-button";
+import { SelfUpdateDialog } from "./appflare-updates-card";
 import { SendReportButton } from "./job-report-dialog";
 import { MessageText } from "./message-text";
 
@@ -103,7 +105,7 @@ const RAIL_ICONS: Record<AppflareRailItem["tone"], ReactNode> = {
   success: <CheckCircleIcon weight="fill" className="size-4 shrink-0 text-kumo-success" />,
   update: <ArrowCircleUpIcon weight="fill" className="size-4 shrink-0 text-kumo-link" />,
   progress: <AppflareLoader size="sm" />,
-  warning: <WarningCircleIcon weight="fill" className="size-4 shrink-0 text-kumo-warning" />,
+  warning: <WarningIcon weight="fill" className="size-4 shrink-0 text-kumo-warning" />,
   danger: <WarningCircleIcon weight="fill" className="size-4 shrink-0 text-kumo-danger" />,
 };
 
@@ -124,7 +126,8 @@ function RailItem({ item }: { item: AppflareRailItem }) {
  * The bottom of the sidebar, above the footer: Appflare's own update. No
  * card while Appflare is up to date (the footer shows the version). When a
  * newer release is known, a card with the version and, for admins,
- * "Update", which starts the self-update right here. The card then follows
+ * "Update", which asks first in the same confirmation as Settings, Updates,
+ * then starts the self-update right here. The card then follows
  * the job (its newest log line), waits for the new version to answer, and
  * reloads the page onto it; the reloaded page says it was updated (until
  * dismissed, the next health poll, or 30 seconds), and a failure is shown in
@@ -166,20 +169,12 @@ export function AppflareCard({
     onArrived,
   });
   const updatedTo = useUpdatedTo();
-  const [starting, setStarting] = useState(false);
-  const [error, setError] = useState<string | null>(null);
 
+  /** Starts the self-update and follows it; throws for the confirmation to show. */
   async function onUpdate(version: string) {
-    setStarting(true);
-    setError(null);
-    try {
-      const started = await startSelfUpdate({ data: { version } });
-      setJobId(started.jobId);
-      setUpdatedDone(false);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Could not start the update.");
-    }
-    setStarting(false);
+    const started = await startSelfUpdate({ data: { version } });
+    setJobId(started.jobId);
+    setUpdatedDone(false);
   }
 
   const state = appflareCardState({
@@ -199,10 +194,9 @@ export function AppflareCard({
   return (
     <CardBody
       state={state}
+      current={manager.current}
       jobId={jobId}
-      starting={starting}
-      error={error}
-      onUpdate={(version) => void onUpdate(version)}
+      onUpdate={onUpdate}
       onDismiss={endUpdated}
       isAdmin={isAdmin}
       reportedAt={job?.reportedAt ?? null}
@@ -212,24 +206,42 @@ export function AppflareCard({
 
 function CardBody({
   state,
+  current,
   jobId,
-  starting,
-  error,
   onUpdate,
   onDismiss,
   isAdmin,
   reportedAt,
 }: {
   state: AppflareCardState;
+  /** The version serving now, for the confirmation. */
+  current: string;
   jobId: string | null;
-  starting: boolean;
-  error: string | null;
-  onUpdate(version: string): void;
+  onUpdate(version: string): Promise<void>;
   onDismiss(): void;
   isAdmin: boolean;
   /** When the followed job's failure was reported to the Appflare team. */
   reportedAt: string | null;
 }) {
+  // The confirmation stays mounted with the card, so it animates from the
+  // first opening; once the update starts, the card shows its progress in
+  // place of the button that opened it.
+  const [confirmOpen, setConfirmOpen] = useState(false);
+  const [confirming, setConfirming] = useState<string | null>(null);
+  const card = useRef<HTMLDivElement>(null);
+  /** The button that opened the confirmation, for the focus to return to. */
+  const opener = useRef<HTMLElement | null>(null);
+  /** Set once the confirmed update started: the card then takes the focus. */
+  const started = useRef(false);
+  function confirm(version: string, from: HTMLElement) {
+    opener.current = from;
+    started.current = false;
+    setConfirming(version);
+    setConfirmOpen(true);
+  }
+  const dialogVersion =
+    confirming ??
+    (state.kind === "available" ? state.latest : state.kind === "failed" ? state.retry : null);
   // Up to date: no card; the footer shows the version (AppflareVersion).
   if (state.kind === "current") return null;
   const logLink =
@@ -241,7 +253,29 @@ function CardBody({
   return (
     // The wrapper holds the sidebar's inset: a layered LayerCard is `w-full`,
     // so a margin on the card itself pushed it past the sidebar's right edge.
-    <div className="shrink-0 px-3 pb-3">
+    <div ref={card} tabIndex={-1} className="shrink-0 px-3 pb-3 outline-none">
+      {dialogVersion !== null && (
+        <SelfUpdateDialog
+          from={current}
+          version={dialogVersion}
+          open={confirmOpen}
+          onOpenChange={setConfirmOpen}
+          onOpenChangeComplete={(opened) => {
+            if (opened) return;
+            // Once the update started, the button that opened the dialog is
+            // gone: the focus goes to the card, which now follows the update.
+            // Otherwise (Cancel, Escape) it goes back to that button.
+            if (started.current) card.current?.focus();
+            else if (opener.current?.isConnected) opener.current.focus();
+            started.current = false;
+            opener.current = null;
+          }}
+          onConfirm={async () => {
+            await onUpdate(dialogVersion);
+            started.current = true;
+          }}
+        />
+      )}
       <LayerCard>
         <LayerCard.Primary className="grid gap-2 px-3 py-2.5 whitespace-normal">
           {state.kind === "updated" && (
@@ -265,16 +299,15 @@ function CardBody({
               {/* No "running" line: the footer right below shows the current version. */}
               <Text bold>Appflare {state.latest} is available</Text>
               {state.canUpdate && (
-                <BusyButton
-                  pending={starting}
+                <Button
                   className="justify-self-start"
                   size="sm"
                   variant="primary"
                   icon={<ArrowCircleUpIcon />}
-                  onClick={() => onUpdate(state.latest)}
+                  onClick={(event) => confirm(state.latest, event.currentTarget)}
                 >
                   Update
-                </BusyButton>
+                </Button>
               )}
             </>
           )}
@@ -299,23 +332,22 @@ function CardBody({
           {state.kind === "stalled" && (
             <>
               <div className="flex items-center gap-2">
-                <WarningCircleIcon weight="fill" className="shrink-0 text-kumo-warning" />
+                <WarningIcon weight="fill" className="shrink-0 text-kumo-warning" />
                 <Text bold>Updated to {state.target}</Text>
               </div>
               <Text size="sm" variant="secondary">
-                The new version did not answer yet.{" "}
-                <Link
-                  href="#"
-                  variant="inline"
-                  onClick={(event) => {
-                    event.preventDefault();
-                    window.location.reload();
-                  }}
-                >
-                  Reload
-                </Link>
+                The new version did not answer yet.
               </Text>
               {logLink}
+              <Button
+                className="justify-self-start"
+                size="sm"
+                variant="ghost"
+                icon={<ArrowClockwiseIcon />}
+                onClick={() => window.location.reload()}
+              >
+                Reload
+              </Button>
             </>
           )}
           {state.kind === "failed" && (
@@ -335,16 +367,17 @@ function CardBody({
               </div>
               {logLink}
               {state.retry !== null && (
-                <BusyButton
-                  pending={starting}
+                <Button
                   className="justify-self-start"
                   size="sm"
                   variant="secondary"
                   icon={<ArrowCircleUpIcon />}
-                  onClick={() => state.retry !== null && onUpdate(state.retry)}
+                  onClick={(event) =>
+                    state.retry !== null && confirm(state.retry, event.currentTarget)
+                  }
                 >
                   Try again
-                </BusyButton>
+                </Button>
               )}
               {isAdmin && jobId !== null && (
                 <div className="justify-self-start">
@@ -352,11 +385,6 @@ function CardBody({
                 </div>
               )}
             </>
-          )}
-          {error !== null && (
-            <Text size="sm" variant="error">
-              {error}
-            </Text>
           )}
         </LayerCard.Primary>
       </LayerCard>

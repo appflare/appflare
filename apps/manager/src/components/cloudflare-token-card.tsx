@@ -1,5 +1,5 @@
-import { Badge, Banner, Button, LayerDialog, Link, Text } from "@cloudflare/kumo";
-import { ArrowSquareOutIcon, ArrowsClockwiseIcon, CheckCircleIcon } from "@phosphor-icons/react";
+import { Badge, Button, LayerDialog, Link, Text } from "@cloudflare/kumo";
+import { ArrowSquareOutIcon, ArrowsClockwiseIcon } from "@phosphor-icons/react";
 import { useRouter } from "@tanstack/react-router";
 import { useState } from "react";
 import type { TokenStatus } from "../server/token.functions";
@@ -7,6 +7,7 @@ import { appflareDevLink } from "./appflare-dev-link";
 import { CloudflareTokenForm, type SavedToken } from "./cloudflare-token-form";
 import { DescriptionItem, DescriptionList } from "./description-list";
 import { DocsLink } from "./docs-link";
+import { SuccessBanner } from "./message-text";
 import { Section, SectionBody } from "./section";
 import { settingsSection } from "./settings-links";
 import { Timestamp } from "./timestamp";
@@ -113,15 +114,18 @@ function RotateTokenDialog() {
           token in the Cloudflare dashboard afterwards.
         </LayerDialog.Description>
         <LayerDialog.Body>
-          {saved === null ? (
-            <CloudflareTokenForm mode="rotate" onSaved={onSaved} />
-          ) : (
-            <Banner
-              icon={<CheckCircleIcon weight="fill" />}
-              title="Token rotated"
-              description={`The new token is stored on "${saved.workerName}". Appflare redeploys itself to pick it up.`}
-            />
-          )}
+          {saved === null && <CloudflareTokenForm mode="rotate" onSaved={onSaved} />}
+          {/* Mounted with the form, so screen readers announce the banner that replaces it. */}
+          <div role="status">
+            {saved !== null && (
+              <SuccessBanner
+                // The status around it announces it; "none" drops the banner's own.
+                role="none"
+                title="Token rotated"
+                description={`The new token is stored on "${saved.workerName}". Appflare redeploys itself to pick it up.`}
+              />
+            )}
+          </div>
         </LayerDialog.Body>
         {saved !== null && (
           <LayerDialog.Actions>

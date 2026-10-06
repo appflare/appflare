@@ -167,6 +167,38 @@ describe("SandboxCard", () => {
     expect(hasButton("Update sandbox")).toBe(true);
   });
 
+  it("shows a running job with the moving loader, hidden from screen readers", () => {
+    show({ ...OFF, activeJob: { id: "01SANDBOXJOB00000000000001", kind: "sandbox_enable" } });
+    const banner = [...document.querySelectorAll("div")].find((d) =>
+      d.textContent?.startsWith("Enable sandbox builds is running"),
+    );
+    if (banner === undefined) throw new Error("no running banner");
+    const loader = banner.querySelector("svg");
+    expect(loader?.closest('[aria-hidden="true"]')).not.toBeNull();
+    expect(banner.querySelector('[role="status"]')).toBeNull();
+  });
+
+  it("announces Connect only's success through a status that was there before", async () => {
+    show({ ...OFF, workerExists: true });
+    const status = [...document.querySelectorAll('[role="status"]')];
+    expect(status.map((s) => s.textContent)).toEqual([""]);
+    await click(button("Connect only"));
+    expect(calls.connectSandbox).toHaveBeenCalled();
+    expect(status[0]?.isConnected).toBe(true);
+    // The status holds the visible banner itself: one announcement, not two.
+    expect(status[0]?.textContent).toContain("Sandbox builds are connected");
+    expect(status[0]?.textContent).toContain("It can take a few seconds to show here.");
+    expect(status[0]?.className).not.toContain("sr-only");
+    expect(document.querySelectorAll('[role="status"]')).toHaveLength(1);
+    expect(page().split("Sandbox builds are connected")).toHaveLength(2);
+  });
+
+  it("says, without a full stop, when it could not check for the sandbox Worker", () => {
+    show({ ...OFF, workerExists: null });
+    expect(page()).toContain("Appflare could not check whether the sandbox Worker exists");
+    expect(page()).not.toContain("sandbox Worker exists.");
+  });
+
   it("says Disable deletes first and disconnects last, and starts it with the typed name", async () => {
     show(LEFT_BOUND);
     await click(button("Disable sandbox builds"));

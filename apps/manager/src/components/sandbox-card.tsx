@@ -1,15 +1,6 @@
 import { SANDBOX_BUCKET_NAME } from "@appflare/schema";
 import { Badge, Banner, Button, Collapsible, Link, Text } from "@cloudflare/kumo";
-import {
-  ArrowCircleUpIcon,
-  CheckCircleIcon,
-  CubeIcon,
-  PlugsConnectedIcon,
-  PowerIcon,
-  SpinnerGapIcon,
-  WarningCircleIcon,
-  WarningIcon,
-} from "@phosphor-icons/react";
+import { ArrowCircleUpIcon, CubeIcon, PlugsConnectedIcon, PowerIcon } from "@phosphor-icons/react";
 import { useRouter } from "@tanstack/react-router";
 import { type ReactNode, useState } from "react";
 import type { CapabilitiesView } from "../capabilities/capabilities";
@@ -20,6 +11,7 @@ import {
   type SandboxCardState,
   startSandboxJob,
 } from "../server/sandbox.functions";
+import { AppflareLoader } from "./appflare-loader";
 import { BusyButton } from "./busy-button";
 import { ConfirmDialog } from "./confirm-dialog";
 import { DescriptionItem, DescriptionList } from "./description-list";
@@ -27,7 +19,13 @@ import { DocsLink } from "./docs-link";
 import { jobKindLabel } from "./format";
 import { SendReportButton } from "./job-report-dialog";
 import { useJobStarted } from "./job-started";
-import { ErrorMessageBanner, MessageText } from "./message-text";
+import {
+  BANNER_ICON,
+  bannerRole,
+  ErrorMessageBanner,
+  MessageText,
+  SuccessBanner,
+} from "./message-text";
 import { Section, SectionBody } from "./section";
 import { settingsSection } from "./settings-links";
 
@@ -98,7 +96,8 @@ function StateBadge({ status }: { status: SandboxCardState }) {
 function RunningJob({ job }: { job: { id: string; kind: string } }) {
   return (
     <Banner
-      icon={<SpinnerGapIcon />}
+      // The loader is a status of its own; the banner's title says what runs.
+      icon={<AppflareLoader size="sm" aria-hidden />}
       title={`${jobKindLabel(job)} is running`}
       description={
         <>
@@ -121,7 +120,8 @@ function LastFailure({
   return (
     <Banner
       variant="error"
-      icon={<WarningCircleIcon weight="fill" />}
+      icon={BANNER_ICON.error}
+      role={bannerRole("error")}
       title={`${jobKindLabel(failure)} failed`}
       description={
         <span className="grid gap-1">
@@ -271,7 +271,8 @@ function Connected({ status, isAdmin }: { status: SandboxCardState; isAdmin: boo
       {status.info === null ? (
         <Banner
           variant="error"
-          icon={<WarningCircleIcon weight="fill" />}
+          icon={BANNER_ICON.error}
+          role={bannerRole("error")}
           title="The sandbox Worker does not answer as expected"
           description={
             status.problem === null ? undefined : <MessageText message={status.problem} />
@@ -289,7 +290,7 @@ function Connected({ status, isAdmin }: { status: SandboxCardState; isAdmin: boo
       )}
       {status.updateAvailable && (
         <Banner
-          icon={<ArrowCircleUpIcon />}
+          icon={<ArrowCircleUpIcon weight="fill" />}
           title={`Sandbox Worker ${status.pinnedVersion} is available`}
           description="This Appflare version comes with a newer sandbox Worker. Updating uploads it and rolls its container applications to its image; builds wait until it is done."
         />
@@ -354,7 +355,7 @@ function NotConnected({
       {problems.length > 0 && (
         <Banner
           variant="alert"
-          icon={<WarningIcon weight="fill" />}
+          icon={BANNER_ICON.alert}
           title="Fix this first"
           description={
             <span className="grid gap-1">
@@ -371,8 +372,8 @@ function NotConnected({
       {status.workerExists === null && isAdmin && (
         <Banner
           variant="alert"
-          icon={<WarningIcon weight="fill" />}
-          title="Appflare could not check whether the sandbox Worker exists."
+          icon={BANNER_ICON.alert}
+          title="Appflare could not check whether the sandbox Worker exists"
         />
       )}
       {isAdmin ? (
@@ -400,7 +401,7 @@ function DanglingBindingNote() {
   return (
     <Banner
       variant="alert"
-      icon={<WarningIcon weight="fill" />}
+      icon={BANNER_ICON.alert}
       title="Appflare still has a binding to a deleted sandbox Worker"
       description="Sandbox builds are off. Disabling them removes the binding, and enabling them replaces it."
     />
@@ -422,31 +423,41 @@ function LeftoverWorker({ status, disabled }: { status: SandboxCardState; disabl
   );
 }
 
+const CONNECTED = "Sandbox builds are connected";
+
 /** Connects to a sandbox Worker that is already there (deployed by the CLI, for example). */
 function ConnectButton({ disabled }: { disabled: boolean }) {
   const router = useRouter();
   const [done, setDone] = useState(false);
-  if (done) {
-    return (
-      <Banner
-        icon={<CheckCircleIcon weight="fill" />}
-        title="Sandbox builds are connected"
-        description="Appflare now runs with its binding to the sandbox Worker. It can take a few seconds to show here."
-      />
-    );
-  }
   return (
-    <ActionButton
-      label="Connect only"
-      icon={<PlugsConnectedIcon />}
-      variant="secondary"
-      disabled={disabled}
-      action={async () => {
-        await connectSandbox();
-        setDone(true);
-        await router.invalidate();
-      }}
-    />
+    <>
+      {/* Mounted before the click, so screen readers announce the banner it then
+          gets. While empty it stays out of the row's flow (an empty item would
+          add a gap), still in the accessibility tree. */}
+      <div role="status" className={done ? undefined : "sr-only"}>
+        {done && (
+          <SuccessBanner
+            // The status around it announces it; "none" drops the banner's own.
+            role="none"
+            title={CONNECTED}
+            description="Appflare now runs with its binding to the sandbox Worker. It can take a few seconds to show here."
+          />
+        )}
+      </div>
+      {!done && (
+        <ActionButton
+          label="Connect only"
+          icon={<PlugsConnectedIcon />}
+          variant="secondary"
+          disabled={disabled}
+          action={async () => {
+            await connectSandbox();
+            setDone(true);
+            await router.invalidate();
+          }}
+        />
+      )}
+    </>
   );
 }
 
@@ -470,7 +481,7 @@ function DisableDialog({ status, disabled }: { status: SandboxCardState; disable
       {inUse ? (
         <Banner
           variant="alert"
-          icon={<WarningIcon weight="fill" />}
+          icon={BANNER_ICON.alert}
           title="Apps still need the sandbox Worker"
           description={`${status.inUseBy.join(", ")} ${status.inUseBy.length === 1 ? "was" : "were"} built or deployed in it, and ${status.inUseBy.length === 1 ? "its" : "their"} updates and uninstall run there. Uninstall ${status.inUseBy.length === 1 ? "it" : "them"} first.`}
         />

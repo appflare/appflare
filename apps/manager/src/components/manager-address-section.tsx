@@ -1,10 +1,5 @@
 import { Banner, Button, LayerDialog, Link, LinkButton, Text } from "@cloudflare/kumo";
-import {
-  ArrowSquareOutIcon,
-  ArrowUUpLeftIcon,
-  GlobeIcon,
-  WarningIcon,
-} from "@phosphor-icons/react";
+import { ArrowSquareOutIcon, ArrowUUpLeftIcon, GlobeIcon } from "@phosphor-icons/react";
 import { useRouter } from "@tanstack/react-router";
 import { type FormEvent, useEffect, useId, useRef, useState } from "react";
 import { dashboardLinks } from "../cloudflare/dashboard-links";
@@ -31,7 +26,7 @@ import {
   useAddressFields,
   useAddressMove,
 } from "./manager-address-move";
-import { ErrorMessageBanner } from "./message-text";
+import { BANNER_ICON, ErrorMessageBanner } from "./message-text";
 import { Section, SectionBody, SectionRow, SectionRows } from "./section";
 import { settingsSection } from "./settings-links";
 import { Timestamp } from "./timestamp";
@@ -113,7 +108,7 @@ export function ManagerAddressSection({ view }: { view: AddressView }) {
             <SectionBody>
               <Banner
                 variant="alert"
-                icon={<WarningIcon weight="fill" />}
+                icon={BANNER_ICON.alert}
                 title={`${address.hostname} no longer points at Appflare`}
                 description="Cloudflare no longer lists it among the domains of Appflare's Worker. Appflare goes back to its workers.dev address at its next check."
               />
@@ -258,7 +253,7 @@ function RevertDialog({
           Go back to workers.dev
         </Button>
       )}
-      title="Go back to workers.dev?"
+      title="Go back to workers.dev"
       description={`Appflare moves back to ${target}, which stops sending visits to ${hostname}, and ${hostname} is removed from Appflare's Worker. Passkeys added at ${hostname} work only there: sign in at workers.dev with your password or a passkey added there.`}
       actionLabel="Go back to workers.dev"
       destructive={false}

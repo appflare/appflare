@@ -35,7 +35,7 @@ too, but never removed. It is always verified with the keys built into Appflare.
 
 ## Add a catalog
 
-Select **Add a catalog** and fill in:
+Select **Add catalog** and fill in:
 
 - **Index URL**: the address of the catalog's `index.json`. It must start with
   `https://`.
@@ -83,13 +83,15 @@ verifies them.
 
 ## Edit or remove a catalog
 
-Select **Edit** on an added catalog to change its **Label**, **Colour**, **Index
-URL** and **Public key**. When you change the index URL or the key, the manager
-runs the same checks as when you added it before it saves the change.
+Open an added catalog's actions menu (**⋯**, next to its switch) and select
+**Edit** to change its **Label**, **Colour**, **Index URL** and **Public key**.
+When you change the index URL or the key, the manager runs the same checks as
+when you added it before it saves the change.
 
-**Remove** is refused while any app installed from the catalog is still
-installed: their updates and checks come from that catalog, and its key verifies
-them. [Uninstall](/guides/uninstall/) those apps first, or turn the catalog off
+To remove a catalog, open the same menu and select **Remove**. Removing is
+refused while any app installed from the catalog is still installed: their
+updates and checks come from that catalog, and its key verifies them.
+[Uninstall](/guides/uninstall/) those apps first, or turn the catalog off
 instead.
 
 ## Usage data

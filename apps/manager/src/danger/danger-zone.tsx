@@ -1,11 +1,11 @@
 import { SANDBOX_CONTAINERS } from "@appflare/schema";
 import { Banner, Button, Collapsible, Link, Text } from "@cloudflare/kumo";
-import { KeyIcon, TrashIcon, WarningCircleIcon, WarningIcon } from "@phosphor-icons/react";
+import { KeyIcon, TrashIcon } from "@phosphor-icons/react";
 import { type ReactNode, useState } from "react";
 import { appLink } from "../components/app-links";
 import { AppflareLoader } from "../components/appflare-loader";
 import { ConfirmDialog } from "../components/confirm-dialog";
-import { MessageText } from "../components/message-text";
+import { BANNER_ICON, bannerRole, MessageText } from "../components/message-text";
 import { Section, SectionRow, SectionRows } from "../components/section";
 import { settingsSection } from "../components/settings-links";
 import { Timestamp } from "../components/timestamp";
@@ -75,7 +75,7 @@ function RotateAuthSecretDialog() {
   return (
     <ConfirmDialog
       trigger={(p) => (
-        <Button {...p} variant="destructive" icon={<KeyIcon />}>
+        <Button {...p} variant="secondary-destructive" icon={<KeyIcon />}>
           Rotate auth secret
         </Button>
       )}
@@ -87,7 +87,7 @@ function RotateAuthSecretDialog() {
     >
       <Banner
         variant="alert"
-        icon={<WarningIcon weight="fill" />}
+        icon={BANNER_ICON.alert}
         title="Everyone is signed out, you included"
         description="Every session ends at once. Passwords and passkeys stay as they are, so everyone can sign in again."
       />
@@ -139,7 +139,7 @@ function RemoveAppflareDialog() {
     <ConfirmDialog
       size="lg"
       trigger={(p) => (
-        <Button {...p} variant="destructive" icon={<TrashIcon />}>
+        <Button {...p} variant="secondary-destructive" icon={<TrashIcon />}>
           Remove Appflare
         </Button>
       )}
@@ -160,7 +160,8 @@ function RemoveAppflareDialog() {
       {state.kind === "error" && (
         <Banner
           variant="error"
-          icon={<WarningCircleIcon weight="fill" />}
+          icon={BANNER_ICON.error}
+          role={bannerRole("error")}
           title="Appflare could not read what it would remove"
           description={<MessageText message={state.message} newTab />}
         />
@@ -193,7 +194,8 @@ function RemovalReviewBody({ review }: { review: RemovalReview }) {
       {activeJobs.length > 0 && (
         <Banner
           variant="error"
-          icon={<WarningCircleIcon weight="fill" />}
+          icon={BANNER_ICON.error}
+          role={bannerRole("error")}
           title={
             activeJobs.length === 1 ? "A job is running" : `${activeJobs.length} jobs are running`
           }
@@ -267,7 +269,7 @@ function RemovalReviewBody({ review }: { review: RemovalReview }) {
       {sandbox.worker === "sandbox" && sandbox.appTokens > 0 && (
         <Banner
           variant="alert"
-          icon={<WarningIcon weight="fill" />}
+          icon={BANNER_ICON.alert}
           title={`${sandbox.appTokens} self-deploying app${sandbox.appTokens === 1 ? "" : "s"} lose${sandbox.appTokens === 1 ? "s" : ""} the installer token`}
           description="The sandbox Worker keeps the Cloudflare token each self-deploying app's installer runs with. It is deleted with the sandbox Worker. The apps keep running, but nothing can update or destroy them through their installer any more. Revoke those tokens in the Cloudflare dashboard if you no longer need them."
         />
@@ -357,7 +359,8 @@ function ExternalDomainsBanner({ domains }: { domains: RemovalReview["externalDo
   return (
     <Banner
       variant="error"
-      icon={<WarningCircleIcon weight="fill" />}
+      icon={BANNER_ICON.error}
+      role={bannerRole("error")}
       title="Remove these external domains first, or their visitors lose the site"
       description={
         <>
