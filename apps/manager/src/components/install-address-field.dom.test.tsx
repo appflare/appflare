@@ -92,8 +92,12 @@ describe("the address's domain dropdown", () => {
   it("is not inside the text field's label, which took its pointer clicks", async () => {
     await show();
     expect(trigger().closest("label")).toBeNull();
-    // The visible "Address" names the whole control; the field keeps its own name.
-    expect(container.querySelector("legend")?.textContent).toBe("Address");
+    // The visible "Address" heads and names the whole control, as the form's other
+    // groups are headed; the field keeps its own name.
+    const group = container.querySelector("fieldset");
+    const heading = container.querySelector("h3");
+    expect(heading?.textContent).toBe("Address");
+    expect(group?.getAttribute("aria-labelledby")).toBe(heading?.id);
     expect(container.querySelector('input[aria-label="Worker name"]')).not.toBeNull();
   });
 
@@ -237,6 +241,102 @@ describe("the Worker name field on a domain", () => {
       ),
     );
     expect(field()).not.toBeNull();
+  });
+});
+
+describe("the tray under the address", () => {
+  const reason =
+    "This name is taken by another Worker in the account, so the install would replace it.";
+
+  /** Renders a taken name's reason, then hovers it (or focuses it, as a keyboard does). */
+  async function showReason(openBy: "pointer" | "focus" = "pointer") {
+    await act(async () =>
+      root.render(
+        <TooltipProvider delay={0}>
+          <InstallAddressField
+            appName="Cut"
+            workerName="links"
+            onWorkerNameChange={() => {}}
+            check={{ state: "taken", message: reason }}
+            fixedWorkerName={false}
+            subdomain="acme"
+            withDomains={false}
+            wildcard={null}
+            otherWorkers={[]}
+            disabled={false}
+            onDomainChange={() => {}}
+          />
+        </TooltipProvider>,
+      ),
+    );
+    const text = container.querySelector<HTMLElement>("[data-address-status-text]");
+    // The whole reason is in the page, for a screen reader, however many lines show.
+    expect(text?.textContent).toBe(reason);
+    expect(container.querySelector("[title]")).toBeNull();
+    await act(async () => {
+      if (openBy === "focus") {
+        text?.focus();
+      } else {
+        text?.dispatchEvent(
+          new PointerEvent("pointerenter", { bubbles: true, pointerType: "mouse" }),
+        );
+        text?.dispatchEvent(new MouseEvent("mouseenter", { bubbles: true }));
+        text?.dispatchEvent(new MouseEvent("mousemove", { bubbles: true }));
+      }
+      await new Promise((done) => setTimeout(done, 50));
+    });
+    return [...document.body.querySelectorAll("[data-side]")].find((el) =>
+      el.textContent?.includes(reason),
+    );
+  }
+
+  it("shows a reason its lines cut in Kumo's tooltip, below it, not the browser's own", async () => {
+    // Taller than its two lines: the clamp cuts it.
+    const scroll = vi.spyOn(HTMLElement.prototype, "scrollHeight", "get").mockReturnValue(60);
+    const client = vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(40);
+    try {
+      const popup = await showReason();
+      expect(popup?.getAttribute("data-side")).toBe("bottom");
+      // A keyboard reaches it too.
+      const text = container.querySelector("[data-address-status-text]");
+      expect(text?.getAttribute("tabindex")).toBe("0");
+    } finally {
+      scroll.mockRestore();
+      client.mockRestore();
+    }
+  });
+
+  it("opens a cut reason's tooltip from the keyboard too", async () => {
+    const scroll = vi.spyOn(HTMLElement.prototype, "scrollHeight", "get").mockReturnValue(60);
+    const client = vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(40);
+    try {
+      const popup = await showReason("focus");
+      expect(document.activeElement).toBe(container.querySelector("[data-address-status-text]"));
+      expect(popup?.getAttribute("data-side")).toBe("bottom");
+    } finally {
+      scroll.mockRestore();
+      client.mockRestore();
+    }
+  });
+
+  it("has no tooltip for a reason that fits", async () => {
+    expect(await showReason()).toBeUndefined();
+    // Nothing to open, so no tab stop either.
+    expect(container.querySelector("[data-address-status-text]")?.hasAttribute("tabindex")).toBe(
+      false,
+    );
+  });
+
+  it("has no tooltip for a reason that fits but measures a rounded pixel over", async () => {
+    // Chromium's numbers for a one-line reason at a line height of 15.29px.
+    const scroll = vi.spyOn(HTMLElement.prototype, "scrollHeight", "get").mockReturnValue(16);
+    const client = vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(15);
+    try {
+      expect(await showReason()).toBeUndefined();
+    } finally {
+      scroll.mockRestore();
+      client.mockRestore();
+    }
   });
 });
 

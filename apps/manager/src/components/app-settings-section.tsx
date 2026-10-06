@@ -8,7 +8,6 @@ import {
   Input,
   Label,
   LinkButton,
-  SensitiveInput,
   Text,
 } from "@cloudflare/kumo";
 import {
@@ -17,10 +16,8 @@ import {
   ArrowUUpLeftIcon,
   DatabaseIcon,
   EnvelopeSimpleIcon,
-  InfoIcon,
   KeyIcon,
   TrashIcon,
-  WarningIcon,
 } from "@phosphor-icons/react";
 import { type FormEvent, type ReactNode, useState } from "react";
 import { enteredVarFields, missingRequiredVar, varValueProblem } from "../installs/install-vars";
@@ -45,10 +42,10 @@ import {
 } from "./field-label";
 import { FLUSH_RING_CLASS } from "./hash-target";
 import { useJobStarted } from "./job-started";
-import { ErrorMessageBanner, MessageBanner } from "./message-text";
+import { BANNER_ICON, ErrorMessageBanner, MessageBanner } from "./message-text";
 import { placeholderOptions } from "./placeholder-chips";
 import { SandboxBuildConfirmation } from "./sandbox-build-confirmation";
-import { generatedSecret, MultilineSecretInput } from "./secret-fields";
+import { GeneratedValueField, generatedSecret, MultilineSecretInput } from "./secret-fields";
 import { Section, SectionBody } from "./section";
 import { type PlaceholderChips, VarField } from "./var-field";
 
@@ -224,14 +221,14 @@ export function AppSettingsSection({
           {notice === "members" && (
             <Banner
               variant="secondary"
-              icon={<InfoIcon weight="fill" />}
-              title="Only admins can change settings."
+              icon={BANNER_ICON.secondary}
+              title="Only admins can change settings"
             />
           )}
           {notice === "busy" && (
             <Banner
               variant="secondary"
-              icon={<InfoIcon weight="fill" />}
+              icon={BANNER_ICON.secondary}
               title="A job of this app is running"
               description="Settings can be saved once it has finished."
               action={
@@ -246,11 +243,7 @@ export function AppSettingsSection({
             />
           )}
           {notice === "unavailable" && settings.unavailable !== null && (
-            <MessageBanner
-              message={settings.unavailable}
-              variant="secondary"
-              icon={<InfoIcon weight="fill" />}
-            />
+            <MessageBanner message={settings.unavailable} variant="secondary" />
           )}
           {nothingToEdit ? (
             <Text variant="secondary">This app has no settings or secrets to change.</Text>
@@ -422,7 +415,7 @@ export function AppSettingsSection({
                   {leftover.length > 0 && (
                     <Banner
                       variant="alert"
-                      icon={<WarningIcon weight="fill" />}
+                      icon={BANNER_ICON.alert}
                       title="Moving email did not finish"
                       description={`Routing rules the app no longer needs are still set up on ${leftover.join(", ")}. Finishing the move checks ${settings.email.zoneName ?? "the new domain"} again and removes them; the Worker is not deployed again.`}
                       action={
@@ -500,7 +493,7 @@ export function AppSettingsSection({
                 <div className="grid gap-3">
                   <Banner
                     variant="alert"
-                    icon={<WarningIcon weight="fill" />}
+                    icon={BANNER_ICON.alert}
                     title="No preview check for this change"
                     description={`${settings.skipsPreview}.`}
                   />
@@ -567,7 +560,7 @@ function Group({
   return (
     <div id={id} className={cn("grid scroll-mt-6 gap-4", FLUSH_RING_CLASS)}>
       <div className="grid gap-1.5">
-        <Text bold as="h3">
+        <Text variant="heading" as="h3">
           {title}
         </Text>
         <Text variant="secondary" size="sm">
@@ -714,7 +707,7 @@ function SecretRow({
           </Label>
           {!slot.present && <Badge variant={slot.optional ? "outline" : "warning"}>Not set</Badge>}
           {!slot.declared && <Badge variant="outline">Not used by this version</Badge>}
-          {removed && <Badge variant="red">Will be removed</Badge>}
+          {removed && <Badge variant="error">Will be removed</Badge>}
         </div>
         <div className="flex flex-wrap items-center gap-2">
           {value === undefined && !removed && (
@@ -762,26 +755,22 @@ function SecretRow({
       )}
       {value !== undefined &&
         (slot.generate ? (
-          <div className="grid gap-2">
-            <SensitiveInput
-              label={<ShortLabel text="New value" of={slot.label} />}
-              value={value}
-              onValueChange={(next: string) => onValueChange(next)}
-              description="Generated for you. Copy it now if you need it: it cannot be shown again once saved."
-            />
-            <div>
-              <Button
-                type="button"
-                variant="secondary"
-                size="sm"
-                icon={<ArrowsClockwiseIcon />}
-                disabled={disabled}
-                onClick={() => onValueChange(generatedSecret(slot.generate))}
-              >
-                Regenerate
-              </Button>
-            </div>
-          </div>
+          // Regenerated from the "Generated" badge beside its label, as in the install form.
+          <GeneratedValueField
+            label={<ShortLabel text="New value" of={slot.label} />}
+            fieldLabel={slot.label}
+            value={value}
+            onChange={(next) => onValueChange(next)}
+            regenerate={() => {
+              if (!disabled) onValueChange(generatedSecret(slot.generate));
+            }}
+            disabled={disabled}
+            help={
+              value.length > 0
+                ? "Generated for you. Copy it now if you need it: it cannot be shown again once saved."
+                : "The current value stays until the new one is saved."
+            }
+          />
         ) : slot.multiline === true ? (
           <MultilineSecretInput
             label={<ShortLabel text="New value" of={slot.label} />}

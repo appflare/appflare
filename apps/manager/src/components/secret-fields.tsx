@@ -359,12 +359,7 @@ function SecretField({
   );
 }
 
-/**
- * A generated secret's field, laid out as Kumo's Field lays one out (label,
- * control, help), with its label row built here so the "Generated" badge
- * and the refresh button inside it sit beside the label, not inside it: a
- * button inside a `<label>` would take the label's clicks.
- */
+/** A generated secret's field in the install and update forms (`GeneratedValueField`). */
 function GeneratedSecretField({
   secret,
   value,
@@ -382,16 +377,77 @@ function GeneratedSecretField({
   regenerate(): void;
   disabled?: boolean;
 }) {
+  return (
+    <GeneratedValueField
+      label={<FieldLabel label={secret.label} name={secret.name} />}
+      fieldLabel={secret.label}
+      value={value}
+      onChange={onChange}
+      optional={optional}
+      help={help}
+      regenerate={regenerate}
+      disabled={disabled}
+      badges={isSeedOnly(secret) && <Badge variant="secondary">Used once</Badge>}
+    />
+  );
+}
+
+/**
+ * What Kumo's Input sets with `passwordManagerIgnore`, which SensitiveInput
+ * has no prop for: a generated value is not a login, so password managers
+ * should neither fill nor offer to save it. SensitiveInput passes these on
+ * to its inner input (its className goes to the outer box, so Keeper's
+ * class is left out).
+ */
+const PASSWORD_MANAGER_IGNORE = {
+  "data-1p-ignore": "true",
+  "data-bwignore": "true",
+  "data-form-type": "other",
+  "data-lpignore": "true",
+} as const;
+
+/**
+ * The field of a value Appflare generated, laid out as Kumo's Field lays one
+ * out (label, control, help), with its label row built here so the
+ * "Generated" badge and the refresh button inside it sit beside the label,
+ * not inside it: a button inside a `<label>` would take the label's clicks.
+ * Emptied, it offers Generate instead of the badge. Shared by the install
+ * and update forms and the app's settings.
+ */
+export function GeneratedValueField({
+  label,
+  fieldLabel,
+  value,
+  onChange,
+  optional = false,
+  help,
+  regenerate,
+  disabled = false,
+  badges,
+}: {
+  label: ReactNode;
+  /** The field's name in words, for the refresh button's name ("Regenerate Session key"). */
+  fieldLabel: string;
+  value: string;
+  onChange(value: string): void;
+  /** Marked "(optional)"; empty means not set. */
+  optional?: boolean;
+  help: ReactNode;
+  regenerate(): void;
+  disabled?: boolean;
+  /** More badges after the "Generated" one. */
+  badges?: ReactNode;
+}) {
   const inputId = useId();
   const helpId = useId();
   return (
     <div data-generated-field="" className="grid gap-2">
       <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
         <Label htmlFor={inputId} showOptional={optional}>
-          <FieldLabel label={secret.label} name={secret.name} />
+          {label}
         </Label>
         {value.length > 0 ? (
-          <GeneratedBadge fieldLabel={secret.label} onRegenerate={regenerate} />
+          <GeneratedBadge fieldLabel={fieldLabel} onRegenerate={regenerate} />
         ) : (
           // An optional generated secret starts empty: generating it is the way to set one.
           <Button
@@ -405,7 +461,7 @@ function GeneratedSecretField({
             Generate
           </Button>
         )}
-        {isSeedOnly(secret) && <Badge variant="secondary">Used once</Badge>}
+        {badges}
       </div>
       <SensitiveInput
         id={inputId}
@@ -414,6 +470,7 @@ function GeneratedSecretField({
         required={!optional}
         disabled={disabled}
         onValueChange={(next: string) => onChange(next)}
+        {...PASSWORD_MANAGER_IGNORE}
       />
       {help !== undefined && (
         <p id={helpId} className="m-0 text-kumo-subtle text-sm leading-snug">

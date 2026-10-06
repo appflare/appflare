@@ -15,12 +15,7 @@ import {
   secretKey,
 } from "@appflare/schema";
 import { Banner, Collapsible, cn, Input, Link, Text } from "@cloudflare/kumo";
-import {
-  CaretDownIcon,
-  CheckCircleIcon,
-  DownloadSimpleIcon,
-  InfoIcon,
-} from "@phosphor-icons/react";
+import { CaretDownIcon, CheckCircleIcon, DownloadSimpleIcon } from "@phosphor-icons/react";
 import { type FormEvent, type ReactNode, useCallback, useId, useState } from "react";
 import { storedAccessProblem } from "../access/app-access";
 import type { AccountPlan } from "../account/plan";
@@ -51,7 +46,7 @@ import { InstallAccessField, useAppAccessCheck } from "./install-access-field";
 import { InstallAddressField } from "./install-address-field";
 import { foldStartsOpen, foldSummary, installFormGroups } from "./install-form-groups";
 import { useJobStarted } from "./job-started";
-import { ErrorMessageBanner, MessageText, messageHasLinks } from "./message-text";
+import { BANNER_ICON, ErrorMessageBanner, MessageText, messageHasLinks } from "./message-text";
 import { hasChips, placeholderOptions } from "./placeholder-chips";
 import { SandboxBuildConfirmation } from "./sandbox-build-confirmation";
 import {
@@ -78,7 +73,7 @@ export function installFormNotice(
   blockedLink: { href: string; label: string } | null = null,
 ): { title: string; link: { href: string; label: string } | null } | null {
   if (blockedReason !== null) return { title: blockedReason, link: blockedLink };
-  if (!canInstall) return { title: "Only admins can install apps.", link: null };
+  if (!canInstall) return { title: "Only admins can install apps", link: null };
   return null;
 }
 
@@ -98,7 +93,7 @@ function InstallFormNoticeBanner({
   return (
     <Banner
       variant="secondary"
-      icon={<InfoIcon weight="fill" />}
+      icon={BANNER_ICON.secondary}
       {...(messageHasLinks(notice.title)
         ? {
             description: (
@@ -569,11 +564,11 @@ export function InstallForm({
                   ), so several installs never share one.
                 </Text>
               ) : (
-                // The address is what the app's page shows first; here it is the one
-                // raised panel, with who can open it under it.
+                // The address is what the app's page shows first; here it leads the
+                // form, with who can open it under it.
                 <div
                   data-address-panel=""
-                  className="grid min-w-0 gap-4 rounded-xl bg-kumo-recessed p-4 ring-1 ring-kumo-hairline sm:p-5"
+                  className="grid min-w-0 gap-4 rounded-xl bg-kumo-recessed p-4 ring ring-kumo-hairline sm:p-5"
                 >
                   <InstallAddressField
                     appName={catalog.name}
@@ -720,7 +715,7 @@ export function InstallForm({
               {confirms && (
                 <fieldset
                   aria-label="Plan and cost"
-                  className="grid gap-3 rounded-xl p-4 ring-1 ring-kumo-hairline"
+                  className="grid gap-3 rounded-xl bg-kumo-recessed p-4 ring ring-kumo-hairline"
                 >
                   {confirmsCost !== null && (
                     <SandboxBuildConfirmation
@@ -906,16 +901,16 @@ function FoldedGroup({
     <Collapsible.Root
       open={open}
       onOpenChange={onOpenChange}
-      // The border is the box's own edge and its content is clipped to it, so the
-      // header's hover fill follows the inner curve (outer radius minus the border).
+      // The ring sits outside the box and its content is clipped to the box, so the
+      // header's hover fill follows the same curve as the ring.
       data-fold=""
-      className="grid min-w-0 overflow-hidden rounded-xl border border-kumo-hairline"
+      className="grid min-w-0 overflow-hidden rounded-xl bg-kumo-recessed ring ring-kumo-hairline"
     >
       <h3 className="m-0">
         <Collapsible.Trigger
           className={cn(
             "group flex w-full min-w-0 items-center gap-3 px-4 py-3 text-left",
-            "hover:bg-kumo-tint focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-kumo-focus/50 focus-visible:ring-inset",
+            "hover:bg-kumo-tint focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-kumo-brand focus-visible:ring-inset",
           )}
         >
           <span className="grid min-w-0 flex-1 gap-0.5">

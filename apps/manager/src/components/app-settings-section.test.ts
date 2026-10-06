@@ -166,6 +166,9 @@ describe("the app's settings form", () => {
     } as InstallDetail);
     expect(busy).toContain("A job of this app is running");
     expect(busy).not.toContain("Not now.");
-    expect(render(settings(), false)).toContain("Only admins can change settings.");
+    const members = render(settings(), false);
+    expect(members).toContain("Only admins can change settings");
+    // A banner title is a label, without a full stop.
+    expect(members).not.toContain("Only admins can change settings.");
   });
 });

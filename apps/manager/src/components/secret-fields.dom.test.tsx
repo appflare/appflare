@@ -121,6 +121,26 @@ describe("a generated secret", () => {
     expect(onChange.mock.calls.at(-1)?.[0]).toBe("SESSION");
     expect(onChange.mock.calls.at(-1)?.[1]).toHaveLength(32);
   });
+
+  it("is a field password managers leave alone, as Kumo's Input marks one", () => {
+    act(() =>
+      root.render(
+        <SecretFields
+          secrets={secretsOf([{ name: "SESSION", label: "Session key", generate: "password" }])}
+          values={{ SESSION: "x".repeat(32) }}
+          onChange={vi.fn()}
+          after="the install"
+        />,
+      ),
+    );
+    const input = inputOf("Session key");
+    expect(input.closest("[data-generated-field]")).not.toBeNull();
+    expect(input.getAttribute("data-1p-ignore")).toBe("true");
+    expect(input.getAttribute("data-bwignore")).toBe("true");
+    expect(input.getAttribute("data-lpignore")).toBe("true");
+    expect(input.getAttribute("data-form-type")).toBe("other");
+    expect(input.getAttribute("autocomplete")).toBe("off");
+  });
 });
 
 describe("two secrets of one name for different Workers", () => {

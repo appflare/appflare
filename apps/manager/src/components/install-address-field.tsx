@@ -47,6 +47,7 @@ import { AppflareLoader } from "./appflare-loader";
 import { MoreText, useTechnicalNames } from "./field-label";
 import { ErrorMessageBanner } from "./message-text";
 import { settingsLink } from "./settings-links";
+import { Tooltip } from "./tooltip";
 import { WildcardNotes } from "./wildcard-notes";
 import { UNCHECKED_NOTE } from "./worker-name-field";
 
@@ -265,6 +266,7 @@ export function InstallAddressField({
     initial?.kind === "wildcard" && initial.wholeDomain === true,
   );
   const [editingName, setEditingName] = useState(false);
+  const headingId = useId();
   const inputId = useId();
   const statusId = useId();
   const noteId = useId();
@@ -446,8 +448,11 @@ export function InstallAddressField({
   };
 
   return (
-    <fieldset className="grid min-w-0 gap-2">
-      <legend className="mb-2 font-semibold text-kumo-default text-lg">Address</legend>
+    // Headed like the install form's other groups, which name their fieldset the same way.
+    <fieldset aria-labelledby={headingId} className="grid min-w-0 gap-2">
+      <Text variant="heading" as="h3" id={headingId}>
+        Address
+      </Text>
       {/* One field in three parts: the scheme, the name you type, and the domain,
           a dropdown pinned at the right edge. The parts are siblings, so the
           dropdown is never inside the text field's label. */}
@@ -598,7 +603,7 @@ export function InstallAddressField({
         />
       )}
       {place === "external" && gateway !== null && (
-        <div className="mt-1 grid gap-2 rounded-lg border border-kumo-hairline bg-kumo-base p-3">
+        <div className="mt-1 grid gap-2 rounded-lg bg-kumo-recessed p-3 ring ring-kumo-hairline">
           <Radio.Group
             legend="Is the hostname in use already?"
             value={method}
@@ -744,7 +749,7 @@ function DomainPicker({
           // On a phone it takes at most two thirds of the field and truncates.
           "flex h-full w-max min-w-0 shrink-0 cursor-pointer items-center gap-1.5 border-0 border-kumo-hairline border-l bg-kumo-base px-3 max-sm:max-w-[65%]",
           "text-base text-kumo-subtle max-sm:text-sm",
-          "hover:bg-kumo-tint hover:text-kumo-default focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-kumo-focus/50 focus-visible:ring-inset",
+          "hover:bg-kumo-tint hover:text-kumo-default focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-kumo-brand focus-visible:ring-inset",
           "data-[disabled]:cursor-not-allowed data-[disabled]:opacity-70",
         )}
       >
@@ -848,19 +853,60 @@ function TrayLine({ status, url }: { status: AddressStatus | null; url: string |
       >
         {icon[status.tone]}
         {/* A reason may take a second line on a phone; the tray keeps room for it. */}
-        <span
-          data-address-status-text=""
-          className={cn("min-w-0", reason ? "line-clamp-2" : "truncate")}
-          title={reason ? status.text : undefined}
-        >
-          {status.text}
-        </span>
+        {reason ? (
+          <ClampedReason text={status.text} />
+        ) : (
+          <span data-address-status-text="" className="min-w-0 truncate">
+            {status.text}
+          </span>
+        )}
       </span>
       {/* The address beside a short state; a reason or a note keeps the whole line. */}
       {(status.tone === "success" || status.tone === "pending") && address !== null && (
         <span className="flex min-w-0 max-sm:hidden">{address}</span>
       )}
     </span>
+  );
+}
+
+/**
+ * A reason in at most two lines. Where the lines cut it, the whole reason
+ * shows in Kumo's tooltip on hover or keyboard focus, below the tray so it never covers the
+ * name being typed; a reason that fits gets no tooltip. The element always
+ * holds the whole text, so a screen reader reads all of it.
+ */
+function ClampedReason({ text }: { text: string }) {
+  const ref = useRef<HTMLSpanElement>(null);
+  const [clamped, setClamped] = useState(false);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: `text` re-measures when a new reason fills the same two lines, which the ResizeObserver does not see
+  useEffect(() => {
+    const element = ref.current;
+    if (element === null) return;
+    // Both heights are rounded, so a reason that fits can measure a pixel over.
+    const measure = () => setClamped(element.scrollHeight > element.clientHeight + 1);
+    measure();
+    // The lines move with the tray's width (a phone turned, a window resized).
+    const observer = new ResizeObserver(measure);
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, [text]);
+  return (
+    <Tooltip
+      content={text}
+      side="bottom"
+      disabled={!clamped}
+      render={
+        <span
+          ref={ref}
+          data-address-status-text=""
+          // A cut reason takes focus, so a keyboard can open its tooltip too.
+          tabIndex={clamped ? 0 : undefined}
+          className="min-w-0 line-clamp-2 rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-kumo-brand"
+        />
+      }
+    >
+      {text}
+    </Tooltip>
   );
 }
 
