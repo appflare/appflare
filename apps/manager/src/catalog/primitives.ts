@@ -10,6 +10,7 @@ import {
 } from "@appflare/schema";
 import { storedAccessProblem } from "../access/app-access";
 import type { CapabilitiesView } from "../capabilities/capabilities";
+import type { ConnectionKind } from "../cloudflare/connection-view";
 
 /**
  * The Cloudflare primitives an app uses, as the catalog shows them: one icon
@@ -141,7 +142,7 @@ function accessStatus(view: CapabilitiesView | null): PrimitiveStatus {
       return {
         id,
         availability: "unknown",
-        reason: `Detected: Zero Trust is set up, team domain ${probe.teamDomain}. Appflare could not check yet whether the token can manage Access service tokens.`,
+        reason: `Detected: Zero Trust is set up, team domain ${probe.teamDomain}. Appflare could not check yet whether it may manage Access service tokens.`,
       };
     }
     return {
@@ -157,6 +158,12 @@ function accessStatus(view: CapabilitiesView | null): PrimitiveStatus {
   };
 }
 
+/** The other reading of an empty zone list: Appflare may not see the account's domains. */
+const NO_ZONE_OR_NOT_SEEN: Record<ConnectionKind, string> = {
+  api_token: "or the token lacks Zone: Read",
+  oauth: "or Appflare was not allowed to see domains when you signed in with Cloudflare",
+};
+
 /** A domain on the account, as the zone probe found it. */
 function zoneStatus(view: CapabilitiesView | null): PrimitiveStatus {
   const id = "zone";
@@ -168,7 +175,7 @@ function zoneStatus(view: CapabilitiesView | null): PrimitiveStatus {
     return {
       id,
       availability: "unavailable",
-      reason: "No active zone in this account (or the token lacks Zone: Read).",
+      reason: `No active zone in this account (${NO_ZONE_OR_NOT_SEEN[view?.connection ?? "api_token"]}).`,
     };
   }
   return {
@@ -193,8 +200,7 @@ function emailRoutingStatus(view: CapabilitiesView | null): PrimitiveStatus {
     return {
       id,
       availability: "unavailable",
-      reason:
-        "Needs Email Routing on an active zone: no active zone in this account (or the token lacks Zone: Read).",
+      reason: `Needs Email Routing on an active zone: no active zone in this account (${NO_ZONE_OR_NOT_SEEN[view?.connection ?? "api_token"]}).`,
     };
   }
   return {

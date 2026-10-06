@@ -1,6 +1,7 @@
 import type { AccessOffer } from "@appflare/schema";
 import type { CapabilitiesView } from "../capabilities/capabilities";
 import { capabilityAnchor } from "../capabilities/capability-rows";
+import { inConnectionWords } from "../cloudflare/sign-in-words";
 import { settingsLink } from "../components/settings-links";
 import { ACCESS_MESSAGES, INSTALL_ACCESS_MESSAGES } from "./messages";
 
@@ -132,18 +133,26 @@ export function accessRepairOf(record: {
 
 /** What the stored capability probes already show to stand in the way; null when they show nothing. */
 export function storedAccessProblem(
-  view: Pick<CapabilitiesView, "zeroTrust" | "accessServiceTokens"> | null,
+  view:
+    | (Pick<CapabilitiesView, "zeroTrust" | "accessServiceTokens"> &
+        Partial<Pick<CapabilitiesView, "connection">>)
+    | null,
 ): AppAccessProblem | null {
+  // A refused permission is fixed by editing the token, or reconnecting a sign-in.
+  const words = (message: string) => inConnectionWords(view?.connection ?? "api_token", message);
   const zeroTrust = view?.zeroTrust ?? null;
   if (zeroTrust?.state === "none") {
     return { kind: "no-organization", message: ACCESS_MESSAGES.noOrganization };
   }
   if (zeroTrust?.state === "unknown" && zeroTrust.reason === "no-permission") {
-    return { kind: "organization-permission", message: ACCESS_MESSAGES.organizationPermission };
+    return {
+      kind: "organization-permission",
+      message: words(ACCESS_MESSAGES.organizationPermission),
+    };
   }
   const tokens = view?.accessServiceTokens ?? null;
   if (tokens?.state === "unknown" && tokens.reason === "no-permission") {
-    return { kind: "tokens-permission", message: INSTALL_ACCESS_MESSAGES.tokensPermission };
+    return { kind: "tokens-permission", message: words(INSTALL_ACCESS_MESSAGES.tokensPermission) };
   }
   return null;
 }

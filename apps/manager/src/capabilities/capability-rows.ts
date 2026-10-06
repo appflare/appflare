@@ -17,7 +17,12 @@ import {
   sandboxReadinessOf,
   withSandboxJobs,
 } from "../sandbox/readiness";
-import { type CapabilitiesView, PLAN_LABELS, unknownSentence } from "./capabilities";
+import {
+  type CapabilitiesView,
+  PLAN_LABELS,
+  SIGN_IN_PLAN_COPY,
+  unknownSentence,
+} from "./capabilities";
 
 /**
  * "What this account can run": one row per thing apps rely on in the
@@ -380,7 +385,11 @@ function planRow(input: CapabilityRowsInput): CapabilityRow {
       : probe === null
         ? NOT_CHECKED
         : isUnknown(probe)
-          ? unknownSentence(probe, "plan", connectionKind(input))
+          ? source === "set-by-you" &&
+            probe.reason === "no-permission" &&
+            connectionKind(input) === "oauth"
+            ? SIGN_IN_PLAN_COPY.chosen
+            : unknownSentence(probe, "plan", connectionKind(input))
           : null;
   if (source !== "default") {
     return {

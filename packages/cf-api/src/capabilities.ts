@@ -179,6 +179,12 @@ export interface DomainCapabilities {
   emailRouting: EmailRoutingCapability;
 }
 
+/** Every probe by name, as the account's answers are kept. */
+export type CapabilityProbe =
+  | keyof AccountCapabilities
+  | keyof DomainCapabilities
+  | keyof AccountSetupCapabilities;
+
 /** Cloudflare's code for "no workers.dev subdomain registered" on `GET /workers/subdomain`. */
 export const WORKERS_DEV_NOT_REGISTERED_CODE = 10007;
 

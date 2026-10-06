@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
 import { dashboardLinks } from "../cloudflare/dashboard-links";
-import { type CapabilitiesView, capabilitiesView, type StoredCapabilities } from "./capabilities";
+import {
+  type CapabilitiesView,
+  capabilitiesView,
+  SIGN_IN_PLAN_COPY,
+  type StoredCapabilities,
+} from "./capabilities";
 import {
   ANALYTICS_ENGINE_CAPABILITY_LINK,
   type CapabilityId,
@@ -602,15 +607,61 @@ describe("capabilityRows", () => {
         expect(shown(row)).not.toMatch(NEVER_TOKEN);
         expect(row.action?.kind).not.toBe("edit-token");
       }
-      expect(byId["workers-plan"].details.problem).toBe(
-        "Cloudflare sign-in does not let apps read the account's plan, so Appflare cannot detect it. Choose the plan instead.",
-      );
+      expect(byId["workers-plan"].details.problem).toBe(SIGN_IN_PLAN_COPY.ask);
       expect(byId.zone.details.note).toContain(
         "Appflare was not allowed to see domains when you signed in with Cloudflare.",
       );
       expect(byId["zero-trust"].details.problem).toBe(
         "Cloudflare did not let Appflare read this with its sign-in. Reconnect Cloudflare and allow every permission Appflare asks for.",
       );
+    });
+
+    describe("the Workers plan, which a sign-in cannot read", () => {
+      const NOT_SHARED = {
+        state: "unknown",
+        reason: "no-permission",
+        detail: "Cloudflare sign-in has no permission to read the plan",
+      } as const;
+
+      it("asks once with Choose plan, saying Containers count as Paid", () => {
+        const plan = rows(
+          { ...FREE, workersPlan: NOT_SHARED, containers: NO_PERMISSION },
+          { connection: SIGNED_IN },
+        )["workers-plan"];
+        expect(plan).toMatchObject({ state: "needs-action", action: { kind: "choose-plan" } });
+        expect(plan.details.problem).toBe(SIGN_IN_PLAN_COPY.ask);
+        expect(plan.details.problem).toContain("choose it once");
+        expect(plan.details.problem).toContain("Containers");
+        expect(plan.details.problem).not.toMatch(NEVER_TOKEN);
+      });
+
+      it("uses the chosen plan, saying why in a note that does not ask again", () => {
+        const plan = rows(
+          { ...FREE, workersPlan: NOT_SHARED, containers: NO_PERMISSION },
+          { connection: SIGNED_IN, manual: "free" },
+        )["workers-plan"];
+        expect(plan).toMatchObject({ state: "ready", details: { source: "set-by-you" } });
+        expect(plan.details.note).toBe(SIGN_IN_PLAN_COPY.chosen);
+      });
+
+      it("is detected without asking when Containers answer, or refuse for the plan", () => {
+        const paid = rows({ ...EVERYTHING, workersPlan: NOT_SHARED }, { connection: SIGNED_IN })[
+          "workers-plan"
+        ];
+        expect(paid).toMatchObject({
+          state: "ready",
+          action: null,
+          details: { found: "Workers Paid", source: "detected", note: null },
+        });
+        const free = rows({ ...FREE, workersPlan: NOT_SHARED }, { connection: SIGNED_IN })[
+          "workers-plan"
+        ];
+        expect(free).toMatchObject({
+          state: "ready",
+          action: null,
+          details: { found: "Workers Free", source: "detected" },
+        });
+      });
     });
 
     it("leaves a domain note out when the sign-in may see domains", () => {

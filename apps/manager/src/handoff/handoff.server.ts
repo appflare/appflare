@@ -10,6 +10,7 @@ import { apiBaseOption } from "../cloudflare/api-base";
 import type { ConnectionMemo } from "../cloudflare/connection.server";
 import { CloudflareConnectionError } from "../cloudflare/connection-errors";
 import { GrantStoreError } from "../cloudflare/grant.server";
+import { readGrant } from "../cloudflare/grant-store.server";
 import { createDb } from "../db/client";
 import { completeAddressMove } from "../domains/manager-address.server";
 import { selfUnits } from "../jobs/units/client";
@@ -425,13 +426,20 @@ async function firstHandoff(
     `handoff: Cloudflare connected for Worker ${connection.workerName}${connection.resumed ? " (resumed)" : ""}`,
   );
   // What the account can run, for setup's last step; never fails the handoff.
+  // The stored grant's scopes say which probes the sign-in may make.
   deps.waitUntil?.(
-    refreshCapabilities(createDb(env.DB), connection.api, { version: runningVersion(env) }).catch(
-      (error: unknown) =>
+    readGrant(env.DB)
+      .then((grant) =>
+        refreshCapabilities(createDb(env.DB), connection.api, {
+          version: runningVersion(env),
+          signInScopes: grant?.scopes ?? null,
+        }),
+      )
+      .catch((error: unknown) =>
         console.error("capability check after the handoff failed", {
           error: error instanceof Error ? error.message : String(error),
         }),
-    ),
+      ),
   );
   return json({ ok: true, ownerSetupUrl: ownerSetupUrl(url, code) }, 200, cors);
 }

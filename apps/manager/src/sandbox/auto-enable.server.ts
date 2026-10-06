@@ -2,6 +2,7 @@ import type { CloudflareClient } from "@appflare/cf-api";
 import { probeContainers, probeR2 } from "@appflare/cf-api/capabilities";
 import { and, eq, inArray, isNull } from "drizzle-orm";
 import type { AccountPlan } from "../account/plan";
+import { connectionKindOf } from "../cloudflare/connection.server";
 import { messageLink } from "../components/message-links";
 import { NO_REMOVAL_IN_PROGRESS_SQL } from "../danger/removal-flag";
 import { createDb } from "../db/client";
@@ -123,13 +124,18 @@ export async function planSandboxFirst(
   if (active.length > 0) throw new SandboxAutoEnableError(CHANGING);
 
   const client = await deps.client();
-  const [r2, containers] = await Promise.all([probeR2(client), probeContainers(client)]);
+  const [r2, containers, connection] = await Promise.all([
+    probeR2(client),
+    probeContainers(client),
+    connectionKindOf(db),
+  ]);
   const readiness = sandboxReadiness({
     connected: false,
     r2,
     containers,
     plan: opts.plan,
     accountId: client.accountId,
+    connection,
   });
   if (readiness.missing !== null) {
     throw new SandboxAutoEnableError(

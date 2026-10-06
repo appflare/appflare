@@ -15,7 +15,7 @@ import {
   CONNECTION_MESSAGES,
   needsReconnecting,
 } from "./connection-errors";
-import type { ConnectionView } from "./connection-view";
+import type { ConnectionKind, ConnectionView } from "./connection-view";
 import { type GrantKey, importGrantKey, openValue, sealContext, sealValue } from "./grant-seal";
 import {
   type GrantRenewal,
@@ -638,6 +638,8 @@ export function cloudflareConnection(
         if (new Headers(init?.headers).get("Authorization") !== `Bearer ${refused}`) {
           return response;
         }
+        // Containers on Workers Free: a 401 about the plan, not the token.
+        if (await refusesForPlan(input, response)) return response;
         const last = ctx.memo.rejected;
         if (
           last !== null &&
@@ -659,6 +661,41 @@ export function cloudflareConnection(
       };
     },
   };
+}
+
+/**
+ * Whether a 401 is Cloudflare refusing something the account's Workers plan
+ * lacks rather than the access token. Only the Containers API answers so
+ * (any other 401 is the token's): on Workers Free it
+ * answers 401, code 1000, "… Deploying containers requires the Workers Paid
+ * plan" to every credential (recorded live, 2026-09-24), the same words the
+ * Containers probe reads. Renewing could not change that answer, and would
+ * spend a refresh of the grant on every capability check of a Free account.
+ * Reads a copy of the body; the response itself is left for the caller.
+ */
+async function refusesForPlan(url: string, response: Response): Promise<boolean> {
+  let path: string;
+  try {
+    path = new URL(url).pathname;
+  } catch {
+    return false;
+  }
+  if (!path.includes("/containers/")) return false;
+  try {
+    const body = (await response.clone().json()) as { errors?: unknown };
+    return (
+      Array.isArray(body.errors) &&
+      body.errors.some(
+        (e: unknown) =>
+          typeof e === "object" &&
+          e !== null &&
+          typeof (e as { message?: unknown }).message === "string" &&
+          /workers paid/i.test((e as { message: string }).message),
+      )
+    );
+  } catch {
+    return false;
+  }
 }
 
 /** {@link cloudflareConnection}'s token alone, for a client that needs no 401 handling. */
@@ -709,6 +746,15 @@ export async function connectionReadiness(
 export async function connectionNeedsReconnecting(env: ConnectionEnv): Promise<boolean> {
   const problem = await connectionProblem(env);
   return problem !== null && needsReconnecting(problem.problem);
+}
+
+/**
+ * How the manager connects to Cloudflare now, the way every client decides
+ * it: a stored grant is Cloudflare sign-in (even one that needs
+ * reconnecting), anything else the API token. One D1 read, no Cloudflare call.
+ */
+export async function connectionKindOf(db: D1Database): Promise<ConnectionKind> {
+  return (await readGrant(db)) === null ? "api_token" : "oauth";
 }
 
 /** Throws what {@link connectionProblem} finds. */

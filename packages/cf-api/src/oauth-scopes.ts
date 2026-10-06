@@ -15,6 +15,8 @@
  * the deploy page can all import it.
  */
 
+import type { CapabilityProbe } from "./capabilities";
+
 /**
  * Manager permission group key -> OAuth scope id, or `null` for a group the
  * OAuth catalog has no scope for. Every manager group must appear here; the
@@ -45,6 +47,7 @@ export const MANAGER_OAUTH_SCOPE_BY_GROUP = {
   // HTTP 403 (code 10000) from `GET /subscriptions` when tried. Over
   // OAuth the manager cannot detect the Workers plan; it keeps its other
   // ways (capability probes, an admin's saved choice, Free limits otherwise).
+  // When the catalog gains a Billing Read scope, put its id here: every grant then asks for it, and the plan probe runs for grants that have it.
   billing: null,
   // "Workers Containers Write" in the catalog.
   containers: "containers.write",
@@ -92,6 +95,48 @@ export const MANAGER_OAUTH_SCOPES: readonly string[] = Object.freeze([
   ...MANAGER_OAUTH_API_SCOPES,
   OFFLINE_ACCESS_SCOPE,
 ]);
+
+/**
+ * The OAuth scopes each capability probe's read needs, by the probe's name
+ * (`./capabilities.ts`). `null`: no scope in the catalog covers the read, so
+ * a Cloudflare sign-in can never make it. An empty list: the read answered
+ * live without a scope of its own.
+ *
+ * Recorded live (2026-10-06) with a Cloudflare sign-in holding every scope
+ * of {@link MANAGER_OAUTH_API_SCOPES}: each probe answered except the plan's
+ * `GET /subscriptions` (403, code 10000). The Zero Trust probe's
+ * `GET /access/organizations` answered with `access-acct.read` ("Access:
+ * Organizations, Identity Providers, and Groups Read"; the catalog's
+ * separate `access-org.read` is not needed), and the Analytics Engine
+ * `SHOW TABLES` query answered without `account-analytics.read`, as it does
+ * for an API token without "Account Analytics".
+ *
+ * Written as scope ids, not as references to the group map: the manager's
+ * tests fail when a probe needs a scope Appflare does not request.
+ */
+export const MANAGER_OAUTH_SCOPES_BY_PROBE = {
+  r2: ["workers-r2.write"],
+  containers: ["containers.write"],
+  workersPlan: null,
+  zone: ["zone.read"],
+  // The zone list, then Email Routing's settings on the first zone.
+  emailRouting: ["zone.read", "zone-settings.write"],
+  workersDev: ["workers-scripts.write"],
+  zeroTrust: ["access-acct.read"],
+  analyticsEngine: [],
+  accessServiceTokens: ["access-service-token.write"],
+} as const satisfies Record<CapabilityProbe, readonly string[] | null>;
+
+/**
+ * Whether a Cloudflare sign-in holding `granted` can make `probe`'s read:
+ * false when no scope covers it, or when a scope it needs was not granted.
+ */
+export function signInCanProbe(probe: CapabilityProbe, granted: readonly string[]): boolean {
+  const needs: readonly string[] | null = MANAGER_OAUTH_SCOPES_BY_PROBE[probe];
+  if (needs === null) return false;
+  const have = new Set(granted);
+  return needs.every((scope) => have.has(scope));
+}
 
 /**
  * The manager API scopes a grant lacks, in {@link MANAGER_OAUTH_API_SCOPES}

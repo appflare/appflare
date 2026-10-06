@@ -14,6 +14,7 @@ export type {
   AccountSetupCapabilities,
   AnalyticsEngineCapability,
   CapabilityClient,
+  CapabilityProbe,
   CapabilityUnknown,
   CapabilityUnknownReason,
   ContainersCapability,
@@ -193,6 +194,7 @@ export {
   MANAGER_OAUTH_API_SCOPES,
   MANAGER_OAUTH_SCOPE_BY_GROUP,
   MANAGER_OAUTH_SCOPES,
+  MANAGER_OAUTH_SCOPES_BY_PROBE,
   missingManagerScopes,
   OAUTH_INVALID_RESPONSE,
   OAUTH_NETWORK_ERROR,
@@ -200,6 +202,7 @@ export {
   pkceChallenge,
   refreshGrant,
   revokeToken,
+  signInCanProbe,
 } from "./oauth";
 
 export type * from "./types";

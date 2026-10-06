@@ -3,6 +3,7 @@ import { type CloudflareClient, createClient, type FetchLike } from "@appflare/c
 import { probeCredentials, zoneNamesVia } from "../access/probe-credentials.server";
 import { apiBaseOption } from "../cloudflare/api-base";
 import { type CloudflareConnection, cloudflareConnection } from "../cloudflare/connection.server";
+import { inConnectionWordsOf } from "../cloudflare/sign-in-words.server";
 import { createDb, type Database } from "../db/client";
 import { errorMessage, JobError, toStepError } from "./errors";
 import { isSubrequestLimitError } from "./install/budget";
@@ -234,6 +235,15 @@ export function createJobSteps(ctx: JobContext, jobId: string): JobSteps {
     },
   };
 
+  /**
+   * A refusal written for an API token says, on a manager connected with
+   * Cloudflare sign-in, what the sign-in needs instead. Reads the connection
+   * only for such a message.
+   */
+  async function inSignInWords(error: unknown): Promise<void> {
+    if (error instanceof Error) error.message = await inConnectionWordsOf(db, error.message);
+  }
+
   async function runStep<T extends object>(
     name: string,
     body: (tools: StepTools) => Promise<T>,
@@ -266,6 +276,7 @@ export function createJobSteps(ctx: JobContext, jobId: string): JobSteps {
         await log.flush(db, jobId);
         return value;
       } catch (error) {
+        await inSignInWords(error);
         const failure = toStepError(error);
         // The job's own invocation ran out (not a unit's): said so, for the rerun above.
         const own =

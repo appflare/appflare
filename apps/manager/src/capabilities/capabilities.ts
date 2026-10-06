@@ -196,12 +196,18 @@ export interface CapabilitiesView {
   manualPlan: AccountPlan | null;
   /** The account Appflare runs in, for dashboard links; null before a token is saved. */
   accountId: string | null;
+  /**
+   * How Appflare connects to Cloudflare: what to do about a refused
+   * permission depends on it (a token is edited, a sign-in is done again).
+   */
+  connection: ConnectionKind;
 }
 
 export function capabilitiesView(
   manual: string | null | undefined,
   stored: StoredCapabilities | null,
   accountId: string | null | undefined = null,
+  connection: ConnectionKind = "api_token",
 ): CapabilitiesView {
   return {
     checkedAt: stored?.checkedAt ?? null,
@@ -217,6 +223,7 @@ export function capabilitiesView(
     plan: resolveAccountPlan(manual, stored),
     manualPlan: manual === "free" || manual === "paid" ? manual : null,
     accountId: accountId || null,
+    connection,
   };
 }
 
@@ -264,6 +271,17 @@ export const SOURCE_LABELS = {
   "set-by-you": "Set by you",
 } as const satisfies Record<Exclude<AccountPlanSource, "default">, string>;
 
+/**
+ * The Workers plan over Cloudflare sign-in, which has no permission for it
+ * (Cloudflare's sign-in scopes include no Billing one): asked once, unless
+ * Containers answer, which only Workers Paid has.
+ */
+export const SIGN_IN_PLAN_COPY = {
+  ask: "Cloudflare sign-in cannot share the account's Workers plan with Appflare, so choose it once here. If the account can use Containers, Appflare counts it as Workers Paid by itself.",
+  chosen:
+    "Cloudflare sign-in cannot share the account's Workers plan with Appflare, so Appflare uses the one you chose. If the account can use Containers, Appflare counts it as Workers Paid by itself.",
+} as const;
+
 /** Why a probe could not tell, in one sentence. */
 export function unknownSentence(
   value: CapabilityUnknown,
@@ -280,9 +298,7 @@ export function unknownSentence(
   connection: ConnectionKind = "api_token",
 ): string {
   if (value.reason === "no-permission" && connection === "oauth") {
-    if (what === "plan") {
-      return "Cloudflare sign-in does not let apps read the account's plan, so Appflare cannot detect it. Choose the plan instead.";
-    }
+    if (what === "plan") return SIGN_IN_PLAN_COPY.ask;
     if (what === "analytics-engine") {
       return "Cloudflare refused Appflare's Analytics Engine query, so Appflare cannot tell whether it is on.";
     }

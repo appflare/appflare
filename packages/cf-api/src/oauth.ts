@@ -26,9 +26,11 @@ export {
   MANAGER_OAUTH_API_SCOPES,
   MANAGER_OAUTH_SCOPE_BY_GROUP,
   MANAGER_OAUTH_SCOPES,
+  MANAGER_OAUTH_SCOPES_BY_PROBE,
   type ManagerOAuthGroupKey,
   missingManagerScopes,
   OFFLINE_ACCESS_SCOPE,
+  signInCanProbe,
 } from "./oauth-scopes";
 
 /** Where the user grants access (the browser goes here). */

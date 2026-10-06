@@ -326,6 +326,61 @@ describe("an access token the API refuses (401)", () => {
     expect(oauth.refreshes).toHaveLength(1);
   });
 
+  it("does not renew for Containers' refusal on Workers Free, which is about the plan", async () => {
+    await seedGrant({ access: "cf-access-SECRET-good" });
+    const calls: string[] = [];
+    // As recorded live on a Workers Free account, for any credential.
+    const containers: FetchLike = async (_input, init) => {
+      calls.push(new Headers(init?.headers).get("Authorization") ?? "");
+      return Response.json(
+        {
+          success: false,
+          errors: [
+            {
+              code: 1000,
+              message:
+                '{"error":"Unauthorized: You do not have access to Cloudflare Containers. Deploying containers requires the Workers Paid plan."}',
+            },
+          ],
+          result: null,
+        },
+        { status: 401 },
+      );
+    };
+    const oauth = fakeOAuth(containers);
+    const error = await client(oauth.fetch)
+      .containers.listApplications({ name: "probe" })
+      .catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(CloudflareApiError);
+    expect((error as CloudflareApiError).errors[0]?.message).toContain("Workers Paid");
+    expect(calls).toEqual(["Bearer cf-access-SECRET-good"]);
+    expect(oauth.refreshes).toHaveLength(0);
+  });
+
+  it("still renews once for a 401 naming Workers Paid outside the Containers API", async () => {
+    await seedGrant({ access: "cf-access-SECRET-withdrawn" });
+    const calls: string[] = [];
+    const rest: FetchLike = async (_input, init) => {
+      const auth = new Headers(init?.headers).get("Authorization") ?? "";
+      calls.push(auth);
+      if (auth === "Bearer cf-access-SECRET-withdrawn") {
+        return Response.json(
+          {
+            success: false,
+            errors: [{ code: 1000, message: "This needs the Workers Paid plan." }],
+            result: null,
+          },
+          { status: 401 },
+        );
+      }
+      return Response.json({ success: true, errors: [], messages: [], result: [] });
+    };
+    const oauth = fakeOAuth(rest);
+    await client(oauth.fetch).workers.listScripts();
+    expect(calls).toEqual(["Bearer cf-access-SECRET-withdrawn", "Bearer cf-access-SECRET-1"]);
+    expect(oauth.refreshes).toHaveLength(1);
+  });
+
   it("ends in the reconnect message when the grant itself was withdrawn", async () => {
     await seedGrant({ access: "cf-access-SECRET-withdrawn" });
     const rest = api(["cf-access-SECRET-withdrawn"]);

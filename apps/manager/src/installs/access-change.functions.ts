@@ -31,7 +31,7 @@ export const startAccessChange = createServerFn({ method: "POST" })
           workflows: env.JOBS,
           sandboxConnected: sandboxBinding(env) !== undefined,
           createJob: jobCreator(env.JOBS),
-          accessPreflight: async () => accessCapabilityProblem(await getCfClient(env)),
+          accessPreflight: async () => accessCapabilityProblem(await getCfClient(env), env.DB),
         },
         data,
       );

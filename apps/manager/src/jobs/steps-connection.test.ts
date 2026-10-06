@@ -5,14 +5,16 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { isolateConnectionMemo } from "../cloudflare/connection.server";
 import { generateGrantKey, importGrantKey, sealContext, sealValue } from "../cloudflare/grant-seal";
 import { type GrantRow, replaceGrantStatements } from "../cloudflare/grant-store.server";
+import { SIGN_IN_WORDS } from "../cloudflare/sign-in-words";
 import { createMigrator } from "../db/migrate";
 import { migrations } from "../db/migrations/index";
+import { NO_CONTAINERS_PERMISSION_REASON } from "../sandbox/preflight";
 import { ACC } from "../test/fake-account";
 import { fakeCloudflare } from "../test/fake-cloudflare";
 import { fakeOAuth } from "../test/fake-oauth";
 import { fakeStep } from "../test/fake-step";
 import type { JobEnv, JobParams } from "./run-job";
-import { createJobSteps } from "./steps";
+import { createJobSteps, JobError } from "./steps";
 import { runUnit } from "./units/result";
 
 /**
@@ -141,6 +143,20 @@ describe("a job on an OAuth connection", () => {
     expect((error as Error).message).toContain("Your apps keep running.");
     expect(oauth.refreshes).toHaveLength(1);
     expect(api.calls).toEqual([]);
+  });
+
+  it("says what the sign-in needs where a step's refusal was written for a token", async () => {
+    await seedGrant();
+    const api = fakeCloudflare({ [SCRIPTS]: { result: [] } });
+    const error = await jobSteps(fakeOAuth(api.fetch).fetch)
+      .run("check containers", async () => {
+        throw new JobError(NO_CONTAINERS_PERMISSION_REASON);
+      })
+      .catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(NonRetryableError);
+    expect((error as Error).message).toBe(SIGN_IN_WORDS.get(NO_CONTAINERS_PERMISSION_REASON));
+    expect(await jobLogs()).toContain("Reconnect Cloudflare");
+    expect(await jobLogs()).not.toContain("API token");
   });
 
   it("retries a step while the new version with the key is still rolling out", async () => {

@@ -363,7 +363,7 @@ export const installSourceBuild = createServerFn({ method: "POST" })
           async listAccountWorkers() {
             return (await (await getCfClient(env)).workers.listScripts()).map((s) => s.id);
           },
-          accessPreflight: async () => accessCapabilityProblem(await getCfClient(env)),
+          accessPreflight: async () => accessCapabilityProblem(await getCfClient(env), env.DB),
           buildFiles: sandboxBuildFiles(env),
           ...(binding === undefined
             ? {}

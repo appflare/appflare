@@ -270,6 +270,7 @@ describe("capabilitiesView", () => {
       plan: { plan: "paid", source: "detected" },
       manualPlan: "free",
       accountId: "acc1",
+      connection: "api_token",
     });
     expect(capabilitiesView(undefined, null)).toMatchObject({
       checkedAt: null,
@@ -277,7 +278,9 @@ describe("capabilitiesView", () => {
       plan: { plan: "free", source: "default" },
       manualPlan: null,
       accountId: null,
+      connection: "api_token",
     });
+    expect(capabilitiesView(undefined, null, "acc1", "oauth").connection).toBe("oauth");
   });
 });
 

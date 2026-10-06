@@ -7,11 +7,13 @@ import { createMigrator } from "../db/migrate";
 import { migrations } from "../db/migrations/index";
 import { readSettings, SETTING, writeSettings } from "../db/settings";
 import { type FakeRoute, FORBIDDEN, fakeCloudflare } from "../test/fake-cloudflare";
+import { seedSignIn } from "../test/seed-sign-in";
 import {
   readCapabilitiesView,
   refreshCapabilitiesAfterVersionChange,
   refreshCapabilitiesForNewToken,
   refreshCapabilitiesIfStale,
+  SIGN_IN_PLAN,
 } from "./capabilities.server";
 
 const TOKEN = "cfat_TEST-token-value-DO-NOT-LEAK";
@@ -246,6 +248,68 @@ describe("the cron's check", () => {
       await refreshCapabilitiesIfStale({ DB: env.DB }, createDb(env.DB), { fetch: api.fetch }),
     ).toBe("no-token");
     expect(api.calls).toHaveLength(0);
+  });
+});
+
+describe("on a manager connected with Cloudflare sign-in", () => {
+  const ACCESS = "cf-access-DO-NOT-LEAK";
+
+  async function signedIn() {
+    await writeSettings(createDb(env.DB), { [SETTING.accountId]: ACC });
+    return { DB: env.DB, CF_GRANT_KEY: await seedSignIn(env.DB, { accessToken: ACCESS }) };
+  }
+
+  /** What the sign-in got live: every probe answered but the plan's, refused (403, code 10000). */
+  const SIGNED_IN = { ...PAID_ACCOUNT, [`GET ${A}/subscriptions`]: FORBIDDEN };
+
+  it("asks every probe but the plan, which no sign-in may read, and detects Paid from Containers", async () => {
+    const db = createDb(env.DB);
+    const api = fakeCloudflare(SIGNED_IN);
+    expect(
+      await refreshCapabilitiesIfStale(await signedIn(), db, { now: MORNING, fetch: api.fetch }),
+    ).toBe("checked");
+    expect(api.calls.map((c) => c.key)).not.toContain(`GET ${A}/subscriptions`);
+    // Eight reads less the plan's: no zone, so no Email Routing read either.
+    expect(api.calls).toHaveLength(7);
+    expect(new Set(api.calls.map((c) => c.authorization))).toEqual(new Set([`Bearer ${ACCESS}`]));
+    const view = await readCapabilitiesView(db);
+    expect(view.connection).toBe("oauth");
+    expect(view.workersPlan).toEqual(SIGN_IN_PLAN);
+    expect(view.plan).toEqual({ plan: "paid", source: "detected" });
+    expect(view.zeroTrust).toEqual({
+      state: "exists",
+      teamDomain: "paid-team.cloudflareaccess.com",
+    });
+    expect(view.accessServiceTokens).toEqual({ state: "readable" });
+  });
+
+  it("detects Free from Containers' plan refusal, and leaves the plan to the admin otherwise", async () => {
+    const db = createDb(env.DB);
+    const cf = await signedIn();
+    await refreshCapabilitiesIfStale(cf, db, {
+      now: MORNING,
+      fetch: fakeCloudflare(FREE_ACCOUNT).fetch,
+    });
+    expect(await readCapabilitiesView(db)).toMatchObject({
+      workersPlan: SIGN_IN_PLAN,
+      plan: { plan: "free", source: "detected" },
+    });
+    await writeAccountPlan(db, "paid");
+    await refreshCapabilitiesIfStale(cf, db, {
+      now: NEXT_DAY,
+      fetch: fakeCloudflare(WITHOUT_OPTIONAL_GROUPS).fetch,
+    });
+    expect((await readCapabilitiesView(db)).plan).toEqual({ plan: "paid", source: "set-by-you" });
+  });
+
+  it("asks for the plan with an API token, as before", async () => {
+    const api = fakeCloudflare(PAID_ACCOUNT);
+    await refreshCapabilitiesIfStale(await configured(), createDb(env.DB), {
+      now: MORNING,
+      fetch: api.fetch,
+    });
+    expect(api.calls.map((c) => c.key)).toContain(`GET ${A}/subscriptions`);
+    expect((await readCapabilitiesView(createDb(env.DB))).connection).toBe("api_token");
   });
 });
 

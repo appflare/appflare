@@ -72,7 +72,7 @@ export const startInstall = createServerFn({ method: "POST" })
             const api = await getCfClient(env);
             return (await api.workers.listScripts()).map((s) => s.id);
           },
-          accessPreflight: async () => accessCapabilityProblem(await getCfClient(env)),
+          accessPreflight: async () => accessCapabilityProblem(await getCfClient(env), env.DB),
         },
         data,
       );
