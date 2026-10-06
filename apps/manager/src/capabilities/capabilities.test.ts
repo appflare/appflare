@@ -313,6 +313,15 @@ describe("the manual Workers plan choice", () => {
     });
   });
 
+  it("shows without the Billing: Read hint on a manager connected with Cloudflare sign-in", () => {
+    for (const probes of [stored(), null]) {
+      expect(manualPlanControl(capabilitiesView(null, probes), "oauth")).toEqual({
+        show: true,
+        billingHint: false,
+      });
+    }
+  });
+
   it("shows with the hint before the first check", () => {
     expect(manualPlanControl(capabilitiesView(null, null))).toEqual({
       show: true,

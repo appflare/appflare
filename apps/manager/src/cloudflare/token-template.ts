@@ -24,6 +24,7 @@
  * where each key comes from.
  */
 
+import { MANAGER_OAUTH_SCOPE_BY_GROUP } from "@appflare/cf-api/oauth";
 import {
   appTokenPermissionGroup,
   type TokenPermission,
@@ -249,6 +250,18 @@ export const TOKEN_PERMISSION_GROUPS = [
 
 /** The token name the dashboard form is prefilled with. */
 export const TOKEN_NAME = "Appflare";
+
+/**
+ * Each OAuth scope Appflare asks for, named like the token permission group
+ * it stands for ("Workers Scripts"), so a sign-in that lacks one is
+ * described in the same words as a token that does.
+ */
+export const MANAGER_SCOPE_LABELS: Readonly<Record<string, string>> = Object.fromEntries(
+  TOKEN_PERMISSION_GROUPS.flatMap((group) => {
+    const scope = (MANAGER_OAUTH_SCOPE_BY_GROUP as Record<string, string | null>)[group.key];
+    return scope === null || scope === undefined ? [] : [[scope, group.label]];
+  }),
+);
 
 /** The groups every install needs, and the ones only an optional feature uses. */
 export function splitPermissionGroups(

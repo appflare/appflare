@@ -9,10 +9,11 @@ import {
 import { useRouter } from "@tanstack/react-router";
 import { type ReactNode, useState } from "react";
 import { RECONNECT_COPY } from "../cloudflare/connection-view";
+import { reconnectDialogHref } from "../cloudflare/reconnect-outcome";
 import { appLink } from "../components/app-links";
 import { BusyButton } from "../components/busy-button";
 import { Section, SectionRows } from "../components/section";
-import { SETTINGS_SECTIONS, settingsLink } from "../components/settings-links";
+import { settingsLink } from "../components/settings-links";
 import type { StartUpdateHandle } from "../components/update-banner";
 import { useOptimisticDismiss } from "../components/use-optimistic-dismiss";
 import { dismissDeployCopy } from "../deploy-button/deploy-copy.functions";
@@ -31,7 +32,7 @@ import {
 import { attentionCopy } from "./attention-copy";
 
 /** Reconnect Cloudflare on the connection settings, opened at once. */
-const RECONNECT_HREF = `${SETTINGS_SECTIONS.account.path}?reconnect=1#connection`;
+const RECONNECT_HREF = reconnectDialogHref();
 
 /**
  * Home's "Needs attention": one card of rows, most severe first (see
@@ -218,15 +219,21 @@ function AttentionRow({
     case "account":
       action = (
         <>
-          {/* Never for what every app needs, such as the token's permissions. */}
+          {/* Never for what every app needs, such as Appflare's own permissions. */}
           {item.row.dismissible && (
             <Button variant="ghost" onClick={() => onDismissAccountRow(item.row)}>
               Not needed
             </Button>
           )}
-          <LinkButton href={accountRowLink(item.row)} variant="secondary">
-            Go to Your account
-          </LinkButton>
+          {item.row.reconnect === true ? (
+            <LinkButton href={RECONNECT_HREF} variant="secondary">
+              {RECONNECT_COPY.action}
+            </LinkButton>
+          ) : (
+            <LinkButton href={accountRowLink(item.row)} variant="secondary">
+              Go to Your account
+            </LinkButton>
+          )}
         </>
       );
       break;

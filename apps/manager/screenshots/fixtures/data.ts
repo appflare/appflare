@@ -8,8 +8,10 @@ import {
   readIndexJson,
 } from "@appflare/schema";
 import type { AppAccessCheck, InstallAccessView } from "../../src/access/app-access";
+import type { CapabilityRowsInput, RowsConnection } from "../../src/capabilities/capability-rows";
 import type { CatalogDetail } from "../../src/catalog/catalog.functions";
 import type { ConnectionView } from "../../src/cloudflare/connection-view";
+import { accountAttentionRows } from "../../src/home/account-attention";
 import { installVarFields } from "../../src/installs/install-vars";
 import type { InstallSettings } from "../../src/installs/reconfigure.server";
 import type { StartUpdateResult } from "../../src/installs/versions.server";
@@ -431,10 +433,14 @@ const managerAddress =
 /**
  * Appflare's Cloudflare connection: an API token, or (`?fixture=connection-oauth`)
  * Cloudflare sign-in, which (`?fixture=connection-needs-reconnect`) Cloudflare
- * no longer accepts.
+ * no longer accepts, or which (`?fixture=connection-missing-permission`) was
+ * not allowed R2 storage.
  */
+const signInMissing = variant === "connection-missing-permission" ? ["workers-r2.write"] : [];
 const connection: ConnectionView =
-  variant === "connection-oauth" || variant === "connection-needs-reconnect"
+  variant === "connection-oauth" ||
+  variant === "connection-needs-reconnect" ||
+  variant === "connection-missing-permission"
     ? {
         kind: "oauth",
         state: variant === "connection-needs-reconnect" ? "needs_reconnect" : "connected",
@@ -447,8 +453,8 @@ const connection: ConnectionView =
         ready: variant !== "connection-needs-reconnect",
         oauth: {
           clientId: "b99863433175d812f9595af56dd1b71d",
-          scopes: [...MANAGER_OAUTH_SCOPES],
-          missingScopes: [],
+          scopes: MANAGER_OAUTH_SCOPES.filter((s) => !signInMissing.includes(s)),
+          missingScopes: signInMissing,
           renewedAt: now,
         },
       }
@@ -461,6 +467,26 @@ const connection: ConnectionView =
         ready: true,
         oauth: null,
       };
+
+/** The connection as "What this account can run" reads it. */
+const rowsConnection: RowsConnection = {
+  kind: connection.kind,
+  missingScopes: connection.oauth?.missingScopes ?? [],
+};
+
+/**
+ * Home's account rows: none, but for a sign-in missing a permission, whose
+ * row (Reconnect Cloudflare) is the one pictured.
+ */
+function accountRowsFixture() {
+  return variant === "connection-missing-permission"
+    ? accountAttentionRows(
+        // The fixture's capabilities are plain literals; the server functions return them as is.
+        { ...capabilityRows, connection: rowsConnection } as unknown as CapabilityRowsInput,
+        [],
+      ).filter((row) => row.id === "token-permissions")
+    : [];
+}
 
 const installSettings: InstallSettings = {
   slug: "cut",
@@ -555,7 +581,7 @@ export function fixture(name: string, args: unknown[]): unknown {
       removedApps: 0,
       apps,
       failedJobs: [],
-      accountRows: [],
+      accountRows: accountRowsFixture(),
       deployCopy: null,
       downgrade: null,
       reconnectNeeded: connection.state === "needs_reconnect",
@@ -622,7 +648,7 @@ export function fixture(name: string, args: unknown[]): unknown {
         finishedAt: null,
       },
     ],
-    getCapabilityRowsData: () => capabilityRows,
+    getCapabilityRowsData: () => ({ ...capabilityRows, connection: rowsConnection }),
     getAutoUpdateSettings: () => ({ apps: false, manager: false, devBuild: false }),
     getManagerUpdate: () => ({
       current: "0.1.0",

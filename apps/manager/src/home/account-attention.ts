@@ -12,14 +12,14 @@ import type { AccountAttentionRow } from "./attention";
 /**
  * The account rows of "Needs attention": the rows of "What this account can
  * run" that need action, which they do only when an app in the account
- * relies on what is missing (or, for the token's permissions, the
+ * relies on what is missing (or, for Appflare's own permissions, the
  * workers.dev address and the Workers plan, always). Rows that are merely
  * not set up, or need a paid plan, stay on Your account. Client-safe.
  */
 
 /**
  * What each row counts of the apps' needs; null for a row every app needs
- * whatever it is (the token's permissions), which "Not needed" never hides.
+ * whatever it is (Appflare's own permissions), which "Not needed" never hides.
  */
 const NEED_OF: Record<CapabilityId, keyof CatalogNeeds | null> = {
   "workers-dev": "total",
@@ -51,6 +51,7 @@ export function accountAttentionRows(
       found: row.details.found,
       why: row.why,
       dismissible: need !== null,
+      ...(row.action?.kind === "reconnect" ? { reconnect: true } : {}),
       neededBy:
         need === null
           ? []

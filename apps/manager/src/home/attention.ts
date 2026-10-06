@@ -116,8 +116,10 @@ export interface AccountAttentionRow {
   found: string | null;
   /** Why apps need it. */
   why: string;
-  /** Whether "Not needed" may hide it; never for what every app needs, such as the token's permissions. */
+  /** Whether "Not needed" may hide it; never for what every app needs, such as Appflare's own permissions. */
   dismissible: boolean;
+  /** Its fix is Reconnect Cloudflare (a Cloudflare sign-in missing permissions), not a visit to its row. */
+  reconnect?: boolean;
   /** The installs that need it, by id, sorted. */
   neededBy: string[];
 }

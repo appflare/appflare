@@ -83,6 +83,29 @@ describe("accountAttentionRows", () => {
     expect(token?.neededBy).toEqual([]);
   });
 
+  it("offers Reconnect Cloudflare for a Cloudflare sign-in missing a permission", () => {
+    const signedIn = {
+      ...input({}),
+      connection: { kind: "oauth" as const, missingScopes: ["workers-scripts.write"] },
+    };
+    const row = accountAttentionRows(signedIn, []).find((r) => r.id === "token-permissions");
+    expect(row).toMatchObject({
+      name: "Sign-in permissions",
+      found: "Some permissions are missing",
+      dismissible: false,
+      reconnect: true,
+    });
+    // Every other row keeps its own place on Your account.
+    const r2 = accountAttentionRows({ ...signedIn, inUse: { ...NONE, r2: 1 } }, []).find(
+      (r) => r.id === "r2",
+    );
+    expect(r2?.reconnect).toBeUndefined();
+    // All allowed: nothing to do.
+    expect(
+      accountAttentionRows({ ...input({}), connection: { kind: "oauth", missingScopes: [] } }, []),
+    ).toEqual([]);
+  });
+
   it("links each row to its own place on Your account", () => {
     expect(accountRowLink({ id: "r2" })).toBe("/settings/account#capability-r2");
   });

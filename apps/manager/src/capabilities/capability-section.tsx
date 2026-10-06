@@ -19,6 +19,7 @@ import {
   accountPlanSchema,
 } from "../account/plan";
 import { setAccountPlan } from "../account/plan.functions";
+import type { ConnectionKind } from "../cloudflare/connection-view";
 import { BusyButton } from "../components/busy-button";
 import { ConfirmDialog } from "../components/confirm-dialog";
 import { DocsLink } from "../components/docs-link";
@@ -97,13 +98,15 @@ export function CheckedAt({ iso }: { iso: string | null }) {
  */
 function ChoosePlanDialog({
   view,
+  connection,
   onSaved,
 }: {
   view: CapabilitiesView;
+  connection: ConnectionKind;
   onSaved: () => Promise<void>;
 }) {
   const [choice, setChoice] = useState<AccountPlan | null>(view.manualPlan);
-  const control = manualPlanControl(view);
+  const control = manualPlanControl(view, connection);
   return (
     <ConfirmDialog
       trigger={(p) => (
@@ -152,6 +155,8 @@ function ChoosePlanDialog({
 interface RowOptions {
   isAdmin: boolean;
   view: CapabilitiesView;
+  /** How Appflare connects, for the plan choice's hint. */
+  connection: ConnectionKind;
   /** After the admin chose a plan: read the rows again. */
   onPlanSaved: () => Promise<void>;
   newTab: boolean;
@@ -171,6 +176,7 @@ function RowAction({ row, options }: { row: CapabilityRow; options: RowOptions }
           <ArrowSquareOutIcon aria-hidden />
         </LinkButton>
       );
+    case "reconnect":
     case "set-up":
       return (
         <LinkButton
@@ -184,7 +190,11 @@ function RowAction({ row, options }: { row: CapabilityRow; options: RowOptions }
       );
     case "choose-plan":
       return options.isAdmin ? (
-        <ChoosePlanDialog view={options.view} onSaved={options.onPlanSaved} />
+        <ChoosePlanDialog
+          view={options.view}
+          connection={options.connection}
+          onSaved={options.onPlanSaved}
+        />
       ) : null;
   }
 }
@@ -357,7 +367,13 @@ export function CapabilitiesSection({
     >
       <CapabilityRowList
         rows={rows}
-        options={{ isAdmin, view: data.view, onPlanSaved: reload, newTab: false }}
+        options={{
+          isAdmin,
+          view: data.view,
+          connection: data.connection?.kind ?? "api_token",
+          onPlanSaved: reload,
+          newTab: false,
+        }}
       />
     </Section>
   );
@@ -391,6 +407,7 @@ export function SetupCapabilities({
         options={{
           isAdmin: true,
           view: data.view,
+          connection: data.connection?.kind ?? "api_token",
           onPlanSaved: async () => onChanged(await getCapabilityRowsData()),
           newTab: true,
         }}

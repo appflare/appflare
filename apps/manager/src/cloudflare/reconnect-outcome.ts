@@ -56,6 +56,12 @@ export function reconnectOutcomeHref(outcome: ReconnectOutcome): string {
   return `${path}?${RECONNECT_OUTCOME_PARAM}=${outcome}#${hash}`;
 }
 
+/** The connection settings with Reconnect Cloudflare already open (`?reconnect=1`). */
+export function reconnectDialogHref(): string {
+  const [path, hash] = settingsLink("account", "connection").split("#");
+  return `${path}?reconnect=1#${hash}`;
+}
+
 export interface ReconnectOutcomeCopy {
   /** `success` when Appflare is connected; `notice` when it is, but not as asked; `error` for the rest. */
   variant: "success" | "notice" | "error";

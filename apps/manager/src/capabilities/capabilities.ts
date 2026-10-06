@@ -17,6 +17,7 @@ import {
 import { z } from "zod";
 import { type AccountPlan, parseAccountPlan } from "../account/plan";
 import { isUpdateAvailable } from "../catalog/versions";
+import type { ConnectionKind } from "../cloudflare/connection-view";
 
 /**
  * Account capabilities as the manager keeps them: what the probes in
@@ -237,12 +238,18 @@ export type ManualPlanControl =
  * The manual Workers plan choice is only a fallback: hidden while the plan is
  * detected (a choice there would change nothing), shown otherwise.
  */
-export function manualPlanControl(view: CapabilitiesView): ManualPlanControl {
+export function manualPlanControl(
+  view: CapabilitiesView,
+  /** Cloudflare sign-in has no permission for the plan, so no hint helps then. */
+  connection: ConnectionKind = "api_token",
+): ManualPlanControl {
   if (view.plan.source === "detected") return { show: false };
   const plan = view.workersPlan;
   return {
     show: true,
-    billingHint: plan === null || (plan.state === "unknown" && plan.reason === "no-permission"),
+    billingHint:
+      connection === "api_token" &&
+      (plan === null || (plan.state === "unknown" && plan.reason === "no-permission")),
   };
 }
 
@@ -269,7 +276,18 @@ export function unknownSentence(
     | "workers-dev"
     | "zero-trust"
     | "analytics-engine",
+  /** How Appflare connects: a token is edited in the dashboard, a sign-in is done again. */
+  connection: ConnectionKind = "api_token",
 ): string {
+  if (value.reason === "no-permission" && connection === "oauth") {
+    if (what === "plan") {
+      return "Cloudflare sign-in does not let apps read the account's plan, so Appflare cannot detect it. Choose the plan instead.";
+    }
+    if (what === "analytics-engine") {
+      return "Cloudflare refused Appflare's Analytics Engine query, so Appflare cannot tell whether it is on.";
+    }
+    return "Cloudflare did not let Appflare read this with its sign-in. Reconnect Cloudflare and allow every permission Appflare asks for.";
+  }
   if (value.reason === "no-permission") {
     return {
       "workers-dev":
