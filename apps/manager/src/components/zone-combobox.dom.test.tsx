@@ -80,6 +80,17 @@ async function search(text: string) {
   });
 }
 
+/** A key press on whatever has focus, as the keyboard sends it. */
+async function key(name: string) {
+  await act(async () => {
+    const target = document.activeElement ?? document.body;
+    for (const type of ["keydown", "keyup"] as const) {
+      target.dispatchEvent(new KeyboardEvent(type, { key: name, bubbles: true, cancelable: true }));
+    }
+    await new Promise((done) => setTimeout(done, 50));
+  });
+}
+
 function options(): string[] {
   return [...document.querySelectorAll('[role="option"]')].map((o) => o.textContent?.trim() ?? "");
 }
@@ -105,6 +116,28 @@ describe("ZoneCombobox", () => {
     await press(option as Element);
     expect(onChange).toHaveBeenLastCalledWith("z2");
     expect(trigger().textContent).toContain("example.org");
+  });
+
+  it("works from the keyboard alone and gives focus back to its button", async () => {
+    const onChange = await show();
+    await act(async () => trigger().focus());
+    await key("ArrowDown");
+    expect(options()).toEqual(["example.com", "example.org", "acme.dev"]);
+    await key("ArrowDown");
+    await key("Enter");
+    expect(onChange).toHaveBeenCalledTimes(1);
+    const chosen = ZONES.find((z) => z.id === onChange.mock.lastCall?.[0]);
+    expect(chosen).toBeDefined();
+    expect(trigger().textContent).toContain(chosen?.name);
+    expect(options()).toEqual([]);
+    expect(document.activeElement).toBe(trigger());
+
+    await key("ArrowDown");
+    expect(options()).not.toEqual([]);
+    await key("Escape");
+    expect(options()).toEqual([]);
+    expect(document.activeElement).toBe(trigger());
+    expect(onChange).toHaveBeenCalledTimes(1);
   });
 
   it("filters the domains by what is typed in its search", async () => {
