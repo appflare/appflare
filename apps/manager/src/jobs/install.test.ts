@@ -54,6 +54,10 @@ const SINK_TOKEN = "sink-token-DO-NOT-LEAK";
 const HEALTH_URL = "https://cut.appflare-dev.workers.dev/";
 const WORKER_ORIGIN = "https://cut.appflare-dev.workers.dev";
 const VERSION_HEX = "0123456789abcdef0123456789abcdef";
+/** `VERSION_HEX` as Cloudflare lists versions: the version a script upload deploys. */
+const UPLOADED_VERSION = "01234567-89ab-cdef-0123-456789abcdef";
+/** The version the `n`th secret put of a test deploys. */
+const secretVersionId = (n: number) => `5ec7e700-0000-4000-8000-${String(n).padStart(12, "0")}`;
 /** The rule Cloudflare gives every new bucket. */
 const DEFAULT_MULTIPART_RULE = {
   id: "Default Multipart Abort Rule",
@@ -151,6 +155,15 @@ interface FakeState {
   consumers: Record<string, Array<Record<string, unknown> & { consumer_id: string }>>;
   /** The app's other Workers (`cut-<name>`), each with what its calls set. */
   others: Record<string, OtherScript>;
+  /**
+   * The version each Worker serves, by name. As on Cloudflare, the script
+   * upload deploys one, and every secret put deploys another, made from it.
+   */
+  serving: Record<string, string>;
+  /** Versions secret puts deployed so far, across Workers. */
+  secretVersions: number;
+  /** `GET .../deployments` answers 403, as for a token that may not read them. */
+  deploymentsRefused?: boolean;
   /** The account's Access objects: `/access/*` calls go to this fake. */
   access?: ReturnType<typeof fakeAccessAccount>;
   /** Answers the Worker's own URL instead of `health`, from the request's headers. */
@@ -210,8 +223,15 @@ function fakeWorld(fixture: ArtifactFixture, over: Partial<FakeState> = {}) {
     queues: [],
     consumers: {},
     others: {},
+    serving: {},
+    secretVersions: 0,
     ...over,
   };
+  /** A secret put deploys a new version of the Worker, as Cloudflare does. */
+  function deploySecretVersion(script: string): void {
+    state.secretVersions += 1;
+    state.serving[script] = secretVersionId(state.secretVersions);
+  }
   const host = redirectingArtifactHost(fixture);
   const sessionJwt = state.singleUploads
     ? `e30.${btoa(JSON.stringify({ wrangler_single_asset_uploads: true })).replace(/=+$/, "")}.sig`
@@ -348,11 +368,13 @@ function fakeWorld(fixture: ArtifactFixture, over: Partial<FakeState> = {}) {
           const form = await request.formData();
           w.metadata = JSON.parse(String(form.get("metadata")));
           state.scripts.push(name);
+          state.serving[name] = UPLOADED_VERSION;
           return ok({ id: name, deployment_id: VERSION_HEX, tag: `tag-${name}` });
         }
         case "secrets": {
           const body = (await request.json()) as { name: string; text: string };
           w.secrets[body.name] = body.text;
+          deploySecretVersion(name);
           return ok({ name: body.name, type: "secret_text" });
         }
         case "schedules": {
@@ -496,11 +518,13 @@ function fakeWorld(fixture: ArtifactFixture, over: Partial<FakeState> = {}) {
         state.metadata = JSON.parse(String(form.get("metadata")));
         state.modules = [...form.keys()].filter((k) => k !== "metadata");
         state.scripts.push("cut");
+        state.serving.cut = UPLOADED_VERSION;
         return ok({ id: "cut", deployment_id: VERSION_HEX, tag: "tag-cut" });
       }
       case "PUT /workers/scripts/cut/secrets": {
         const body = (await request.json()) as { name: string; text: string };
         state.secrets[body.name] = body.text;
+        deploySecretVersion("cut");
         return ok({ name: body.name, type: "secret_text" });
       }
       case "PUT /workers/scripts/cut/schedules": {
@@ -563,6 +587,22 @@ function fakeWorld(fixture: ArtifactFixture, over: Partial<FakeState> = {}) {
             },
             { status: 404 },
           );
+    }
+    const deployments = /^GET \/workers\/scripts\/([^/]+)\/deployments$/.exec(key);
+    if (deployments?.[1] !== undefined && state.deploymentsRefused === true) {
+      return Response.json(
+        { success: false, errors: [{ code: 10000, message: "Authentication error" }] },
+        { status: 403 },
+      );
+    }
+    if (deployments?.[1] !== undefined && state.scripts.includes(deployments[1])) {
+      const serving = state.serving[deployments[1]];
+      return ok({
+        deployments:
+          serving === undefined
+            ? []
+            : [{ id: `dep-${serving}`, versions: [{ version_id: serving, percentage: 100 }] }],
+      });
     }
     const schedules = /^GET \/workers\/scripts\/([^/]+)\/schedules$/.exec(key);
     if (schedules?.[1] !== undefined && state.scripts.includes(schedules[1])) {
@@ -892,7 +932,10 @@ describe("install job", () => {
     expect(r.job?.started_at).not.toBeNull();
     expect(r.job?.finished_at).not.toBeNull();
     expect(r.installRow?.status).toBe("installed");
-    expect(r.installRow?.current_version_id).toBe("01234567-89ab-cdef-0123-456789abcdef");
+    // The secret put deployed a version of its own after the upload's: that
+    // one serves, and is the one recorded.
+    expect(r.fake.state.serving.cut).toBe(secretVersionId(1));
+    expect(r.installRow?.current_version_id).toBe(secretVersionId(1));
     expect(r.installRow?.manifest_json).toBe(new TextDecoder().decode(r.fixture.manifestBytes));
 
     expect(r.step.names).toEqual([
@@ -916,6 +959,8 @@ describe("install job", () => {
       "record Worker script",
       "D1 DB: apply migrations",
       "set secret ADMIN_PASSWORD",
+      "read serving version",
+      "record serving version",
       "set cron triggers",
       "enable workers.dev route",
       "health check 1",
@@ -2316,6 +2361,116 @@ describe("install job", () => {
     });
   });
 
+  describe("an app that lists manager features in requires", () => {
+    const features = ["secret-keys", "service-props", "config-patch-values"] as const;
+
+    it("logs none of them as the account's requirements, and asks nothing for them", async () => {
+      const r = await install(
+        { catalog: { requires: [...features] } },
+        {},
+        { requirementsConfirmed: true },
+      );
+      expect(r.error).toBeNull();
+      const messages = r.logs.map((l) => l.message);
+      expect(messages.filter((m) => m.startsWith("Requires "))).toEqual([]);
+      expect(messages).not.toContain("The admin confirmed this account meets these requirements.");
+    });
+
+    it("logs only what the account must offer next to them", async () => {
+      const r = await install(
+        {
+          catalog: { requires: ["r2", ...features] },
+          bindings: [
+            { type: "kv_namespace", name: "CUT_KV" },
+            { type: "r2_bucket", name: "FILES" },
+          ],
+        },
+        {},
+        { requirementsConfirmed: true },
+      );
+      expect(r.error).toBeNull();
+      const messages = r.logs.map((l) => l.message);
+      expect(messages.filter((m) => m.startsWith("Requires "))).toEqual([
+        "Requires R2: R2 must be enabled on the account, which needs a payment method on file even on the free tier.",
+      ]);
+      expect(messages).toContain("The admin confirmed this account meets these requirements.");
+    });
+
+    it("installs without the confirmation when they are all it lists", async () => {
+      const r = await install(
+        { catalog: { requires: [...features] } },
+        {},
+        { requirementsConfirmed: true },
+        { requirementsConfirmed: false },
+      );
+      expect(r.error).toBeNull();
+      expect(r.job?.status).toBe("succeeded");
+    });
+  });
+
+  describe("the version it records", () => {
+    const twoSecrets: ArtifactFixtureOptions = {
+      catalog: {
+        secrets: [
+          { name: "ADMIN_PASSWORD", label: "Admin password", generate: "password" },
+          { name: "API_KEY", label: "API key", generate: "password" },
+        ],
+      },
+    };
+    const values = { secrets: { ADMIN_PASSWORD: PASSWORD, API_KEY: "api-key" } };
+
+    it("is the one the last secret deployed, read once after it", async () => {
+      const r = await install(twoSecrets, {}, values);
+      expect(r.error).toBeNull();
+      // Each secret put deployed a version; the second one serves.
+      expect(r.fake.state.secretVersions).toBe(2);
+      expect(r.fake.state.serving.cut).toBe(secretVersionId(2));
+      expect(r.installRow?.current_version_id).toBe(secretVersionId(2));
+      const calls = r.fake.state.calls;
+      const reads = calls.filter((c) => c === "GET /workers/scripts/cut/deployments");
+      expect(reads).toHaveLength(1);
+      expect(calls.indexOf("GET /workers/scripts/cut/deployments")).toBeGreaterThan(
+        calls.lastIndexOf("PUT /workers/scripts/cut/secrets"),
+      );
+      expect(r.fake.state.requestsByStep["read serving version"]).toHaveLength(1);
+      expect(r.logs.map((l) => l.message)).toContain(
+        `Version ${secretVersionId(2)} serves all traffic, with its secrets.`,
+      );
+    });
+
+    it("is the uploaded one when no secret is set, with no read", async () => {
+      const r = await install({ catalog: { secrets: [] } }, {}, { secrets: {} });
+      expect(r.error).toBeNull();
+      expect(r.fake.state.secretVersions).toBe(0);
+      expect(r.installRow?.current_version_id).toBe(UPLOADED_VERSION);
+      expect(r.fake.state.calls).not.toContain("GET /workers/scripts/cut/deployments");
+      expect(r.step.names).not.toContain("read serving version");
+    });
+
+    it("stays the uploaded one, with a warning, when Cloudflare refuses the read", async () => {
+      const r = await install(twoSecrets, { deploymentsRefused: true }, values);
+      expect(r.error).toBeNull();
+      expect(r.job?.status).toBe("succeeded");
+      expect(r.installRow?.current_version_id).toBe(UPLOADED_VERSION);
+      expect(r.logs.filter((l) => l.level === "warn").map((l) => l.message)).toContainEqual(
+        expect.stringContaining(`Could not read which version serves now that its secrets are set`),
+      );
+    });
+
+    it("is read once more by a step that runs again after its answer was lost", async () => {
+      const r = await install(
+        twoSecrets,
+        { failAfter: new Set(["GET /workers/scripts/cut/deployments"]) },
+        values,
+      );
+      expect(r.error).toBeNull();
+      expect(r.step.retried["read serving version"]).toBe(2);
+      expect(r.installRow?.current_version_id).toBe(secretVersionId(2));
+      // The read changed nothing: no new version, the same one recorded.
+      expect(r.fake.state.secretVersions).toBe(2);
+    });
+  });
+
   describe("an app with cron triggers on a free account", () => {
     const cronApp: ArtifactFixtureOptions = { crons: ["0 1 * * *", "*/15 * * * *"] };
     /** The manager and two apps: 4 cron triggers on Workers with a scheduled handler. */
@@ -2987,9 +3142,13 @@ describe("install job, an app of several Workers", () => {
     const recorded = await env.DB.prepare("SELECT worker_versions_json FROM installs").first<{
       worker_versions_json: string;
     }>();
+    // Each Worker's version is the one its last secret deployed, which serves.
     expect(JSON.parse(recorded?.worker_versions_json ?? "null")).toEqual({
-      "cut-jobs": "01234567-89ab-cdef-0123-456789abcdef",
+      "cut-jobs": secretVersionId(1),
     });
+    expect(r.fake.state.serving["cut-jobs"]).toBe(secretVersionId(1));
+    expect(r.installRow?.current_version_id).toBe(secretVersionId(3));
+    expect(r.fake.state.serving.cut).toBe(secretVersionId(3));
     expect(r.resources.filter((row) => row.kind === "durable_object")).toEqual([
       { kind: "durable_object", binding: "ROOM", name: "Room", cf_id: null },
     ]);
@@ -3474,7 +3633,13 @@ describe("install job, an app of many Workers", () => {
     const recorded = await env.DB.prepare("SELECT worker_versions_json FROM installs").first<{
       worker_versions_json: string;
     }>();
-    expect(Object.keys(JSON.parse(recorded?.worker_versions_json ?? "{}"))).toHaveLength(17);
+    // Each other Worker's version is the one its secret deployed, which serves.
+    const versions = JSON.parse(recorded?.worker_versions_json ?? "{}") as Record<string, string>;
+    expect(Object.keys(versions)).toHaveLength(17);
+    for (const [name, version] of Object.entries(versions)) {
+      expect(version).toBe(r.fake.state.serving[name]);
+      expect(version).not.toBe(UPLOADED_VERSION);
+    }
 
     // Every Worker's upload is a step of its own, as are its assets and address.
     const names = r.step.names;
@@ -3489,6 +3654,7 @@ describe("install job, an app of many Workers", () => {
         `upload Worker script${label}`,
         `record Worker script${label}`,
         `set secret ADMIN_PASSWORD${label}`,
+        `read serving version${label}`,
         `enable workers.dev route${label}`,
       ]);
       expect(own.length).toBeLessThanOrEqual(otherWorkerCost(w, "install", 0).steps);

@@ -49,8 +49,9 @@ describe("entry job budget", () => {
     const other = workers.find((w) => !w.primary);
     if (primary === undefined || other === undefined) throw new Error("no Workers");
     // Assets (session + one part), record name, upload, record script, route,
-    // two secrets, the cron triggers and one consumer.
-    expect(otherWorkerCost(other, "install", 0).steps).toBe(2 + 3 + 1 + 2 + 1 + 1);
+    // two secrets, the read of the version they left serving, the cron
+    // triggers and one consumer.
+    expect(otherWorkerCost(other, "install", 0).steps).toBe(2 + 3 + 1 + 2 + 1 + 1 + 1);
     // The update's canary adds a probe and a sleep per attempt.
     const update = otherWorkerCost(other, "update", CANARY_MAX_ATTEMPTS);
     expect(update.steps).toBe(otherWorkerCost(other, "update", 0).steps + 2 * CANARY_MAX_ATTEMPTS);

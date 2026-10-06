@@ -342,28 +342,80 @@ async function rollbackAccessPlan(
   };
 }
 
+/** One Worker's version to check for stale address values, with the vars it was deployed with. */
+interface AddressSettingsRead {
+  scriptName: string;
+  versionId: string;
+  /** Its `plain_text` and `json` bindings; null when they could not be read. */
+  deployed: unknown[] | null;
+}
+
 /**
- * Once the snapshot's version serves again: the address values (`appUrl`,
- * `wildcardHostname`) its settings were filled in with that differ from the
- * app's address now, read back from each Worker's version in `checks` (one
- * step and one request per Worker) and compared with the vars the install's
- * settings render to now. Never throws: a version that cannot be read is
- * a warning, and counts as current.
+ * Once the snapshot's version serves again, before the job's final line: the
+ * var bindings each Worker's version in `checks` was deployed with, for
+ * {@link staleAddressPhase}. One step and one request per Worker whose version
+ * was not read already (`known`). Read here rather than after the final line
+ * because a step that logs nothing still writes its API calls, which would
+ * then follow the line that says how the rollback ended. Never throws: a
+ * version that cannot be read is a warning, and counts as current.
+ */
+async function readAddressSettingsPhase(
+  steps: JobSteps,
+  checks: ReadonlyArray<{ scriptName: string; versionId: string }>,
+  /** Var bindings of versions read already, by version id. */
+  known: Readonly<Record<string, unknown[]>>,
+): Promise<AddressSettingsRead[]> {
+  const reads: AddressSettingsRead[] = [];
+  for (const check of checks) {
+    const vars = known[check.versionId];
+    if (vars !== undefined) {
+      reads.push({ ...check, deployed: vars });
+      continue;
+    }
+    const got = await steps
+      .run(`read the address settings of version ${check.versionId}`, async ({ log, cf }) => {
+        try {
+          const version = await cf().versions.getVersion(check.scriptName, check.versionId);
+          return { deployed: versionVarBindings(version) };
+        } catch (error) {
+          log.warn(
+            `Could not read the settings of version ${check.versionId} (${errorMessage(error)}); if the app's address changed since it was deployed, save the app's settings to fill in the current one.`,
+          );
+          return { deployed: null };
+        }
+      })
+      .catch(() => ({ deployed: null }));
+    reads.push({ ...check, deployed: got.deployed });
+  }
+  return reads;
+}
+
+/**
+ * Once the rollback is done: the address values (`appUrl`,
+ * `wildcardHostname`) the versions in `reads` were filled in with that
+ * differ from the app's address now, compared with the vars the install's
+ * settings render to now, and that address (`appUrl`, null when nothing
+ * differs). Compared this late so a domain that went live or was removed
+ * while the rollback ran (whose own settings refresh is refused meanwhile)
+ * is the address compared with. One step per version, reading D1 only and
+ * logging nothing: the job's final line stays its last but for the
+ * settings change this may start, whose line says why. Never throws.
  */
 async function staleAddressPhase(
   steps: JobSteps,
   installId: string,
   workerName: string,
   subdomain: string,
-  checks: ReadonlyArray<{ scriptName: string; versionId: string }>,
-  /** Var bindings of versions read already, by version id. */
-  known: Readonly<Record<string, unknown[]>>,
-): Promise<VarsRefreshReason[]> {
+  reads: readonly AddressSettingsRead[],
+): Promise<{ stale: VarsRefreshReason[]; appUrl: string | null }> {
   const reasons = new Set<VarsRefreshReason>();
-  for (const check of checks) {
+  let appUrl: string | null = null;
+  for (const check of reads) {
+    const deployed = check.deployed;
+    if (deployed === null) continue;
     const found = await steps
-      .run(`check the address settings of version ${check.versionId}`, async ({ log, cf, orm }) => {
-        const none = { stale: [] as VarsRefreshReason[] };
+      .run(`check the address settings of version ${check.versionId}`, async ({ orm }) => {
+        const none = { stale: [] as VarsRefreshReason[], appUrl: null as string | null };
         const [install] = await orm
           .select({
             manifest_json: installs.manifest_json,
@@ -382,17 +434,6 @@ async function staleAddressPhase(
             : entryWorkers(manifest, workerName).find((w) => w.scriptName === check.scriptName);
         const address = await readAppAddress(orm, installId, subdomain);
         if (manifest === null || worker === undefined || address === null) return none;
-        let deployed: unknown[];
-        try {
-          deployed =
-            known[check.versionId] ??
-            versionVarBindings(await cf().versions.getVersion(check.scriptName, check.versionId));
-        } catch (error) {
-          log.warn(
-            `Could not read the settings of version ${check.versionId} (${errorMessage(error)}); if the app's address changed since it was deployed, save the app's settings to fill in the current one.`,
-          );
-          return none;
-        }
         const stale = staleAddressValues({
           manifest,
           worker,
@@ -404,17 +445,13 @@ async function staleAddressPhase(
           address,
           deployed,
         });
-        if (stale.length > 0) {
-          log.info(
-            `Version ${check.versionId} of "${check.scriptName}" was deployed with another ${describeValues(stale)} than the app has now (${address.appUrl}).`,
-          );
-        }
-        return { stale };
+        return { stale, appUrl: stale.length > 0 ? address.appUrl : null };
       })
-      .catch(() => ({ stale: [] as VarsRefreshReason[] }));
+      .catch(() => ({ stale: [] as VarsRefreshReason[], appUrl: null }));
     for (const reason of found.stale) reasons.add(reason);
+    appUrl ??= found.appUrl;
   }
-  return [...reasons];
+  return { stale: [...reasons], appUrl };
 }
 
 export async function runRollback(ctx: JobContext): Promise<void> {
@@ -1114,6 +1151,15 @@ export async function runRollback(ctx: JobContext): Promise<void> {
     }
 
     const subdomain = await subdomainOf();
+    // The settings each version was deployed with, for the address check
+    // once the rollback is done, read before its final line. Never throws.
+    const addressSettings = await readAddressSettingsPhase(
+      steps,
+      started.addressChecks ?? [],
+      "vars" in secretNames && secretNames.vars !== undefined
+        ? { [started.versionId]: secretNames.vars }
+        : {},
+    );
     const url = `${appBaseUrl({ workerName, subdomain, workersDev: started.workersDev, domains: started.domains, served: started.servedDomain })}${started.healthPath}`;
     // Recorded rather than fatal: the snapshot's version already serves. A
     // job started before health modes existed has none recorded.
@@ -1156,15 +1202,12 @@ export async function runRollback(ctx: JobContext): Promise<void> {
     // The snapshot's version was deployed with the address the app had then
     // (or another protection than it has now): its settings get the current
     // values again, in one settings change. Never throws.
-    const stale = await staleAddressPhase(
+    const { stale, appUrl } = await staleAddressPhase(
       steps,
       params.installId,
       workerName,
       subdomain,
-      started.addressChecks ?? [],
-      "vars" in secretNames && secretNames.vars !== undefined
-        ? { [started.versionId]: secretNames.vars }
-        : {},
+      addressSettings,
     );
     if (stale.length > 0) {
       const withAccess = access?.refreshValues === true;
@@ -1173,7 +1216,7 @@ export async function runRollback(ctx: JobContext): Promise<void> {
         env,
         params.installId,
         withAccess ? ["access", ...stale] : stale,
-        `This version's settings were filled in with another ${describeValues(stale)} than the app has now${withAccess ? ", and with another Cloudflare Access protection" : ""}`,
+        `This version's settings were filled in with another ${describeValues(stale)} than the app has now${appUrl === null ? "" : ` (${appUrl})`}${withAccess ? ", and with another Cloudflare Access protection" : ""}`,
       );
     } else if (access?.refreshValues === true) {
       await accessValuesRefreshPhase(steps, env, params.installId);

@@ -110,7 +110,7 @@ function assetParts(worker: EntryWorker): number {
  *
  * Install: its assets (the session and the parts), the steps that record it,
  * its upload (a unit call), its workers.dev route, one step per secret it
- * gets, its cron triggers and one step per queue it consumes (a list and a
+ * gets and one that reads the version they left serving, its cron triggers and one step per queue it consumes (a list and a
  * create each), and for each Workflow it defines a step that checks the name
  * is free and one that creates it after its upload (a call each).
  *
@@ -139,9 +139,11 @@ export function otherWorkerCost(
   const consumers = worker.manifest.worker.queueConsumers?.length ?? 0;
   const workflows = worker.manifest.worker.bindings.filter(definesWorkflow).length;
   if (kind === "install") {
-    const steps = assets + 3 + 1 + secrets + crons + consumers + 2 * workflows;
+    // After its secrets, one read of the version they left serving.
+    const serving = secrets > 0 ? 1 : 0;
+    const steps = assets + 3 + 1 + secrets + serving + crons + consumers + 2 * workflows;
     // Each Workflow: the name check's call and the call that creates it.
-    const calls = assets + 1 + 1 + secrets + crons + 2 * consumers + 2 * workflows;
+    const calls = assets + 1 + 1 + secrets + serving + crons + 2 * consumers + 2 * workflows;
     return spend(steps, 0, calls, units);
   }
   const canary = 1 + canaryAttempts;

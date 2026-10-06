@@ -102,6 +102,23 @@ describe("reviewBuild", () => {
     expect(review.requires).toEqual(["zone", "r2"]);
   });
 
+  it("leaves out the manager features the catalog lists, which ask nothing of the account", () => {
+    const built = manifest([{ type: "kv_namespace", name: "CUT_KV" }]);
+    const review = reviewBuild(
+      {
+        ...built,
+        catalog: {
+          ...built.catalog,
+          requires: ["containers", "secret-keys", "service-props", "config-patch-values", "zone"],
+        },
+      },
+      null,
+      "cut",
+      "source",
+    );
+    expect(review.requires).toEqual(["zone"]);
+  });
+
   it("refuses what the install would refuse, in the install plan's own words", () => {
     const bindings: WorkerBinding[] = [
       { type: "hyperdrive", name: "PG" },
