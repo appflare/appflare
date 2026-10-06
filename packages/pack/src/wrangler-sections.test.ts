@@ -7,17 +7,22 @@ import {
   UNSUPPORTED_WRANGLER_SECTIONS,
 } from "@appflare/schema";
 import { describe, expect, it } from "vitest";
+import { unstable_readConfig } from "wrangler";
 import {
   AllowedSectionError,
   allowedSections,
   collectBindings,
+  GENERATED_WRANGLER_KEYS,
   IGNORED_WRANGLER_KEYS,
   PipelineDeclarationError,
   READ_WRANGLER_KEYS,
   type ResolvedWranglerConfig,
+  refuseUnknownWranglerKeys,
   SECTIONS_READ_WITH_CATALOG,
+  UnknownWranglerKeyError,
   UnsafeBindingError,
   UnsupportedSectionError,
+  unknownWranglerKeys,
   unsupportedWranglerSections,
   uploadPlacement,
 } from "./wrangler-config.ts";
@@ -58,6 +63,63 @@ describe("the wrangler config keys the packer knows", () => {
   });
 });
 
+describe("keys the packer does not know", () => {
+  it("lets through every key it reads, ignores, refuses, or a build writes", () => {
+    const raw = Object.fromEntries(
+      [
+        ...READ_WRANGLER_KEYS,
+        ...Object.keys(IGNORED_WRANGLER_KEYS),
+        ...UNSUPPORTED_WRANGLER_SECTIONS,
+        ...Object.keys(GENERATED_WRANGLER_KEYS),
+      ].map((key) => [key, {}]),
+    );
+    expect(unknownWranglerKeys(raw)).toEqual([]);
+  });
+
+  it("knows every key wrangler's reader adds to a config it resolves", () => {
+    // A build writes the config it resolved (the Cloudflare Vite plugin does),
+    // these keys included; the packer must not mistake them for the app's.
+    const schemaKeys = new Set(wranglerConfigKeys());
+    const resolved = unstable_readConfig({
+      config: path.resolve(import.meta.dirname, "..", "fixtures", "hello", "wrangler.jsonc"),
+    });
+    const added = Object.keys(resolved).filter((key) => !schemaKeys.has(key));
+    expect(added.length).toBeGreaterThan(0);
+    expect(added.filter((key) => !Object.hasOwn(GENERATED_WRANGLER_KEYS, key))).toEqual([]);
+  });
+
+  it("finds keys wrangler 4.136.2 does not know, such as k2 and analytics from 4.147", () => {
+    const raw = {
+      name: "app",
+      main: "src/index.ts",
+      k2: [{ binding: "STREAM" }],
+      analytics: { binding: "SQL" },
+      // Declares nothing, so nothing would be dropped.
+      later: null,
+    };
+    expect(unknownWranglerKeys(raw)).toEqual(["k2", "analytics"]);
+    expect(() => refuseUnknownWranglerKeys(raw, "apps/api/wrangler.jsonc", "4.136.2")).toThrow(
+      UnknownWranglerKeyError,
+    );
+    expect(() => refuseUnknownWranglerKeys(raw, "apps/api/wrangler.jsonc", "4.136.2")).toThrow(
+      'the wrangler config apps/api/wrangler.jsonc sets "k2" and "analytics", which the packer does not know: ' +
+        "wrangler 4.136.2, which it builds with, would drop them with no more than a warning, and the app would " +
+        "run without them. A key wrangler added since needs a newer Appflare that reads or refuses it; if the app " +
+        'works without them, drop them with the catalog manifest\'s config patch { "k2": null, "analytics": null }',
+    );
+  });
+
+  it("passes an unknown key a Vite-written config fills with an empty list or object", () => {
+    const raw = { name: "app", main: "index.js", k2: [], analytics: {}, later: { items: [] } };
+    expect(unknownWranglerKeys(raw)).toEqual([]);
+    expect(unknownWranglerKeys({ ...raw, k2: [{ binding: "STREAM" }] })).toEqual(["k2"]);
+  });
+
+  it("does not look inside an environment, which the packer never builds", () => {
+    expect(unknownWranglerKeys({ name: "app", env: { production: { k2: [] } } })).toEqual([]);
+  });
+});
+
 describe("collectBindings and the sections it does not read", () => {
   const base = { name: "app", main: "index.js" } as const;
 
@@ -82,6 +144,22 @@ describe("collectBindings and the sections it does not read", () => {
     expect(() => collectBindings(config)).toThrow(
       /tail_consumers \(Tail Workers\), secrets_store_secrets \(Secrets Store secrets\), media \(Media Transformations\).*\{ "tail_consumers": null, "secrets_store_secrets": null, "media": null \}/,
     );
+  });
+
+  it("refuses mTLS certificates, which an artifact cannot bring, naming how to drop them", () => {
+    const config = {
+      ...base,
+      mtls_certificates: [{ binding: "CERT", certificate_id: "0199" }],
+    } as unknown as ResolvedWranglerConfig;
+    expect(unsupportedWranglerSections(config)).toEqual(["mtls_certificates"]);
+    expect(() => collectBindings(config)).toThrow(
+      'the wrangler config declares mtls_certificates (mTLS certificates), which Appflare cannot install, so the app would run without it; if the app works without it, drop it with the catalog manifest\'s config patch { "mtls_certificates": null }',
+    );
+  });
+
+  it("lets a config patch drop mTLS certificates", () => {
+    expect(configPatchSchema.safeParse({ mtls_certificates: null }).success).toBe(true);
+    expect(configPatchSchema.safeParse({ mtls_certificates: [] }).success).toBe(false);
   });
 
   it("does not count the empty sections wrangler fills in", () => {

@@ -89,7 +89,7 @@ describe("resolveWranglerConfig", () => {
       effectivePath: path.join(root, "wrangler.jsonc"),
       deployConfigPath: null,
     });
-    expect(dryRunInvocation(target, root)).toEqual({
+    expect(dryRunInvocation(target)).toEqual({
       cwd: root,
       configArgs: ["--config", path.join(root, "wrangler.jsonc")],
     });
@@ -107,7 +107,7 @@ describe("resolveWranglerConfig", () => {
     expect(target.effectivePath).toBe(path.join(root, "build/server/wrangler.json"));
     expect(target.deployConfigPath).toBe(path.join(root, DEPLOY_CONFIG_PATH));
     // wrangler reads a redirected config as one only without --config.
-    expect(dryRunInvocation(target, root)).toEqual({ cwd: root, configArgs: [] });
+    expect(dryRunInvocation(target)).toEqual({ cwd: root, configArgs: [] });
     expect(readConfigArgs(target)).toEqual({
       args: { script: path.join(root, "wrangler.jsonc") },
       options: { useRedirectIfAvailable: true },
@@ -156,7 +156,7 @@ describe("resolveWranglerConfig", () => {
         deployConfigPath: null,
         auxiliaryOf: path.join(root, DEPLOY_CONFIG_PATH),
       });
-      expect(dryRunInvocation(target, root)).toEqual({
+      expect(dryRunInvocation(target)).toEqual({
         cwd: root,
         configArgs: ["--config", path.join(root, "dist/audit/wrangler.json")],
       });
@@ -192,7 +192,17 @@ describe("resolveWranglerConfig", () => {
     redirect("apps/web", "../../dist/web/wrangler.json");
     const target = resolveWranglerConfig(root, "apps/web/wrangler.jsonc");
     expect(target.effectivePath).toBe(path.join(root, "apps/web/dist/web/wrangler.json"));
-    expect(dryRunInvocation(target, root).cwd).toBe(path.join(root, "apps/web"));
+    expect(dryRunInvocation(target).cwd).toBe(path.join(root, "apps/web"));
+  });
+
+  it("runs wrangler in the directory of a config in a subdirectory, as the app runs it", () => {
+    write("apps/api/wrangler.jsonc", "{}");
+    const target = resolveWranglerConfig(root, "apps/api/wrangler.jsonc");
+    // wrangler runs build.command where it is started; the app starts it beside its config.
+    expect(dryRunInvocation(target)).toEqual({
+      cwd: path.join(root, "apps/api"),
+      configArgs: ["--config", path.join(root, "apps/api/wrangler.jsonc")],
+    });
   });
 
   it("ignores a redirect at the checkout root when the config lives elsewhere", () => {

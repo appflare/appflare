@@ -15,7 +15,11 @@ import {
  * storage bindings without ids so they are provisioned, or Durable Object
  * classes that must be SQLite-backed on the Free plan. It may also drop a
  * section the packer refuses (`"vpc_services": null`, see
- * {@link UNSUPPORTED_WRANGLER_SECTIONS}) from an app that works without it.
+ * {@link UNSUPPORTED_WRANGLER_SECTIONS}) from an app that works without it,
+ * and a key the packer's wrangler does not know (`"email": null`), which the
+ * packer refuses rather than let wrangler drop it with a warning. Which keys
+ * those are is the packer's to say, so it checks them when it applies the
+ * patch.
  *
  * The patch is allowlisted by key, and some keys only in one direction (see
  * {@link configPatchProblems}), so a patch can never point the app at
@@ -250,26 +254,40 @@ export const configPatchSchema = z
       // Checked by the shape below: only null, which drops the section.
       if (isUnsupportedWranglerSection(key)) continue;
       const reason = REFUSED_KEY_REASONS.get(key);
+      // Null drops a key wrangler does not know; the packer checks it is one.
+      if (reason === undefined && patch[key] === null) continue;
       ctx.addIssue({
         code: "custom",
         path: [key],
         message:
           `a config patch may not set ${key}${reason === undefined ? "" : `: ${reason}`}; ` +
           `it may set only ${CONFIG_PATCH_KEYS.join(", ")}, or null to drop a section Appflare ` +
-          "cannot install",
+          "cannot install or a key wrangler does not know",
       });
     }
     if (Object.keys(patch).length === 0) {
       ctx.addIssue({ code: "custom", message: "a config patch changes at least one key" });
     }
   })
-  .pipe(z.strictObject({ ...configPatchShape, ...droppedSectionsShape }))
+  .pipe(
+    z
+      .object({ ...configPatchShape, ...droppedSectionsShape })
+      .catchall(
+        z
+          .null()
+          .describe(
+            "Only null: drops a key the packer's wrangler does not know, which the packer " +
+              "refuses, from the config.",
+          ),
+      ),
+  )
   .meta({ minProperties: 1 })
   .describe(
     `Changes to the app's wrangler config, applied before wrangler reads it, as ${RFC_7386}. ` +
       `Allowed keys: ${CONFIG_PATCH_KEYS.join(", ")}; a section Appflare cannot install ` +
-      "(such as `vpc_services`) may be set to null, which drops it, when the app works " +
-      "without it. Prefer a pull request upstream and link " +
+      "(such as `vpc_services`), or a key the packer's wrangler does not know, may be set " +
+      "to null, which drops it, when the app works without it. Prefer a pull request " +
+      "upstream and link " +
       "it in a comment beside the patch; the patch is for the time until it is merged.",
   );
 export type ConfigPatch = z.infer<typeof configPatchSchema>;

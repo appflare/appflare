@@ -10,7 +10,6 @@ import {
   renameSync,
   rmSync,
   type Stats,
-  statSync,
   writeFileSync,
 } from "node:fs";
 import { createRequire } from "node:module";
@@ -33,6 +32,7 @@ import {
   type DoMigration,
   installDirList,
   LATEST_ARTIFACT_FORMAT,
+  type ModuleType,
   PATCHED_WRANGLER_CONFIG,
   scheduledWorkflowPlanProblem,
   secretTargets,
@@ -48,6 +48,7 @@ import { DEFAULT_BUILD_TIMEOUT_MS, runBuildCommands } from "./build-command.ts";
 import {
   applyConfigPatches,
   readableWranglerConfig,
+  readRawWranglerConfig,
   workerSpecs,
   writeInlineConfigs,
 } from "./config-patch.ts";
@@ -65,6 +66,7 @@ import { issueLines, readCatalogManifest } from "./manifest.ts";
 import { scrubEnv } from "./scrub-env.ts";
 import { seedOnlyConfigProblems, seedStatementCount } from "./seed.ts";
 import { signBytes, UNSIGNED_KEY_ID } from "./signing.ts";
+import { readUploadForm } from "./upload-form.ts";
 import { deriveVersionWithOrigin, formatBuildDate, type VersionOrigin } from "./version.ts";
 import { type WorkerSize, workerSize } from "./worker-size.ts";
 import {
@@ -73,14 +75,13 @@ import {
   checkPipelineDeclarations,
   checkR2Declarations,
   checkVectorizeDeclarations,
-  classifyModuleType,
   collectBindings,
   collectQueueConsumers,
   collectWorkerSettings,
   collectWorkflowSettings,
-  mainModuleName,
   queueProducerBindings,
   type ResolvedWranglerConfig,
+  refuseUnknownWranglerKeys,
   unknownWorkflowSettingFields,
   unsupportedWranglerSections,
   uploadPlacement,
@@ -180,6 +181,7 @@ interface CollectedFile {
   bytes: Buffer;
 }
 interface CollectedModule extends CollectedFile {
+  type: ModuleType;
   isMain: boolean;
 }
 
@@ -200,24 +202,33 @@ function resolveWranglerBin(): string {
   return path.join(path.dirname(pkgPath), rel);
 }
 
+/** The version of the packer's own wrangler. */
+function wranglerVersion(): string {
+  const pkg = require("wrangler/package.json") as { version?: unknown };
+  return typeof pkg.version === "string" ? pkg.version : "(unknown version)";
+}
+
 /**
- * Runs `wrangler deploy --dry-run --outdir` with the packer's own wrangler and a
- * scrubbed environment so nothing can reach any account. The wrangler
- * config's own `build.command`, if any, runs as part of this.
+ * Runs `wrangler deploy --dry-run --outdir --outfile` with the packer's own
+ * wrangler and a scrubbed environment so nothing can reach any account.
+ * `outfile` receives the script upload wrangler would send (its multipart
+ * form), which {@link readUploadForm} reads the modules from. The wrangler
+ * config's own `build.command`, if any, runs as part of this, in the
+ * config's directory ({@link dryRunInvocation}).
  */
 function runDryRun(
   target: WranglerConfigTarget,
-  checkoutDir: string,
   outdir: string,
+  outfile: string,
   childEnv: NodeJS.ProcessEnv,
   logger: (m: string) => void,
 ): void {
   const wranglerBin = resolveWranglerBin();
-  const { cwd, configArgs } = dryRunInvocation(target, checkoutDir);
+  const { cwd, configArgs } = dryRunInvocation(target);
   logger("running wrangler deploy --dry-run (scrubbed environment)");
   const res = spawnSync(
     process.execPath,
-    [wranglerBin, "deploy", "--dry-run", "--outdir", outdir, ...configArgs],
+    [wranglerBin, "deploy", "--dry-run", "--outdir", outdir, "--outfile", outfile, ...configArgs],
     {
       cwd,
       env: childEnv,
@@ -233,57 +244,6 @@ function runDryRun(
       `wrangler deploy --dry-run failed (exit ${res.status}):\n${res.stdout ?? ""}\n${res.stderr ?? ""}`,
     );
   }
-}
-
-/** Relative (posix) paths of every regular file under `dir`, recursively. */
-function walkFiles(dir: string): string[] {
-  const entries = readdirSync(dir, { recursive: true }) as string[];
-  const files: string[] = [];
-  for (const rel of entries) {
-    if (statSync(path.join(dir, rel)).isFile()) {
-      files.push(rel.split(path.sep).join("/"));
-    }
-  }
-  return files;
-}
-
-/**
- * Collects the emitted worker modules from the dry-run outdir. None for a
- * config without `main` (a Worker of static assets only): wrangler still
- * writes its no-op placeholder Worker there, which it never uploads for one.
- */
-function collectModules(outdir: string, config: ResolvedWranglerConfig): CollectedModule[] {
-  if (!config.main) return [];
-  const all = walkFiles(outdir);
-  // Skip wrangler's own README.md description and every sourcemap.
-  const candidates = all.filter(
-    (rel) => rel !== "README.md" && !rel.toLowerCase().endsWith(".map"),
-  );
-  if (candidates.length === 0) {
-    throw new Error(`no worker modules were emitted to ${outdir}`);
-  }
-  const expected = config.main ? mainModuleName(config.main, config.no_bundle === true) : undefined;
-  let mainRel: string | undefined;
-  if (expected && candidates.includes(expected)) {
-    mainRel = expected;
-  } else if (candidates.length === 1) {
-    mainRel = candidates[0];
-  } else if (expected) {
-    mainRel = candidates.find((c) => (c.split("/").pop() ?? c) === expected);
-  }
-  if (!mainRel) {
-    throw new Error(
-      `could not identify the main worker module in ${outdir}; candidates: ${candidates.join(", ")}`,
-    );
-  }
-  const additional = candidates.filter((c) => c !== mainRel).sort((a, b) => (a < b ? -1 : 1));
-  const ordered = [mainRel, ...additional];
-  return ordered.map((rel) => ({
-    name: rel,
-    path: `worker/${rel}`,
-    bytes: readFileSync(path.join(outdir, rel)),
-    isMain: rel === mainRel,
-  }));
 }
 
 /** Builds the wrangler-compatible `.assetsignore` matcher for `dir`. */
@@ -526,6 +486,15 @@ function readWorkerConfig(
         "a wrangler config or redirect in a parent directory of the declared config is in the way",
     );
   }
+  // wrangler drops a key it does not know with a warning; the packer
+  // refuses one it does not know rather than pack the app without it.
+  refuseUnknownWranglerKeys(
+    readRawWranglerConfig(target.effectivePath),
+    wranglerConfig.effective === wranglerConfig.declared
+      ? wranglerConfig.declared
+      : `${wranglerConfig.effective} (read for ${wranglerConfig.declared})`,
+    wranglerVersion(),
+  );
   const { name, compatibility_date } = config;
   const main = config.main || undefined;
   if (main === undefined && !config.assets?.directory) {
@@ -552,20 +521,35 @@ function readWorkerConfig(
   };
 }
 
-/** Bundles one Worker with a scrubbed dry run into a temp outdir and collects its modules. */
-function bundleWorker(
+/**
+ * Bundles one Worker with a scrubbed dry run into a temp dir and collects its
+ * modules from the upload wrangler would send: their names, bytes and types
+ * as wrangler would upload them. None for a config without `main` (a Worker
+ * of static assets only), which wrangler uploads without modules.
+ */
+async function bundleWorker(
   target: WranglerConfigTarget,
-  checkoutDir: string,
   config: ResolvedWranglerConfig,
   childEnv: NodeJS.ProcessEnv,
   logger: (m: string) => void,
-): CollectedModule[] {
-  const outdir = mkdtempSync(path.join(tmpdir(), "appflare-pack-"));
+): Promise<CollectedModule[]> {
+  const dir = mkdtempSync(path.join(tmpdir(), "appflare-pack-"));
+  const outfile = path.join(dir, "upload.form");
   try {
-    runDryRun(target, checkoutDir, outdir, childEnv, logger);
-    return collectModules(outdir, config);
+    runDryRun(target, path.join(dir, "out"), outfile, childEnv, logger);
+    if (!config.main) return [];
+    if (!existsSync(outfile)) {
+      throw new Error(
+        "wrangler deploy --dry-run wrote no upload to read the Worker's modules from",
+      );
+    }
+    const modules = await readUploadForm(outfile);
+    if (modules.length === 0) {
+      throw new Error("wrangler deploy --dry-run uploads no modules for the Worker");
+    }
+    return modules.map((m) => ({ ...m, path: `worker/${m.name}` }));
   } finally {
-    rmSync(outdir, { recursive: true, force: true });
+    rmSync(dir, { recursive: true, force: true });
   }
 }
 
@@ -930,21 +914,20 @@ export async function pack(options: PackOptions): Promise<PackResult> {
   // modules and (f) its static assets. The primary Worker's files keep the
   // paths of a one-Worker artifact; every other Worker's go under
   // `workers/<name>/`.
-  const built = collected.map((c) => {
+  const built = [];
+  for (const c of collected) {
     if (c.name !== null) logger(`bundling the Worker "${c.name}"`);
     const prefix = c.primary || c.name === null ? "" : `workers/${c.name}/`;
-    const modules = bundleWorker(c.target, checkoutDir, c.config, buildChildEnv, logger).map(
-      (m) => ({
-        ...m,
-        path: `${prefix}${m.path}`,
-      }),
-    );
-    return {
+    const modules = (await bundleWorker(c.target, c.config, buildChildEnv, logger)).map((m) => ({
+      ...m,
+      path: `${prefix}${m.path}`,
+    }));
+    built.push({
       ...c,
       modules,
       assets: collectAssets(c.config, c.configDir, logger, prefix),
-    };
-  });
+    });
+  }
 
   // Lay the zip out so byte offsets are recorded as each file is added. Order:
   // worker/, assets/, each other Worker's workers/<name>/, the D1
@@ -957,7 +940,7 @@ export async function pack(options: PackOptions): Promise<PackResult> {
       const { dataOffset } = zip.addFile(m.path, m.bytes);
       return {
         name: m.name,
-        type: classifyModuleType(m.name, m.isMain),
+        type: m.type,
         path: m.path,
         size: m.bytes.length,
         sha256: sha256Hex(m.bytes),

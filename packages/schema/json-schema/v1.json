@@ -397,7 +397,7 @@
         },
         "configPatch": {
           "minProperties": 1,
-          "description": "Changes to the app's wrangler config, applied before wrangler reads it, as a JSON merge patch (RFC 7386): an object merges key by key, null removes a key, and anything else, arrays included, replaces the value. Allowed keys: main, assets, build, services, kv_namespaces, r2_buckets, d1_databases, vars, migrations, ratelimits; a section Appflare cannot install (such as `vpc_services`) may be set to null, which drops it, when the app works without it. Prefer a pull request upstream and link it in a comment beside the patch; the patch is for the time until it is merged.",
+          "description": "Changes to the app's wrangler config, applied before wrangler reads it, as a JSON merge patch (RFC 7386): an object merges key by key, null removes a key, and anything else, arrays included, replaces the value. Allowed keys: main, assets, build, services, kv_namespaces, r2_buckets, d1_databases, vars, migrations, ratelimits; a section Appflare cannot install (such as `vpc_services`), or a key the packer's wrangler does not know, may be set to null, which drops it, when the app works without it. Prefer a pull request upstream and link it in a comment beside the patch; the patch is for the time until it is merged.",
           "type": "object",
           "properties": {
             "main": {
@@ -687,6 +687,10 @@
               "type": "null",
               "description": "Only null: drops `dispatch_namespaces`, which Appflare cannot install, from the config."
             },
+            "mtls_certificates": {
+              "type": "null",
+              "description": "Only null: drops `mtls_certificates`, which Appflare cannot install, from the config."
+            },
             "tail_consumers": {
               "type": "null",
               "description": "Only null: drops `tail_consumers`, which Appflare cannot install, from the config."
@@ -780,7 +784,10 @@
               "description": "Only null: drops `data_blobs`, which Appflare cannot install, from the config."
             }
           },
-          "additionalProperties": false
+          "additionalProperties": {
+            "type": "null",
+            "description": "Only null: drops a key the packer's wrangler does not know, which the packer refuses, from the config."
+          }
         },
         "wranglerConfigInline": {
           "description": "The wrangler config of an app whose repository ships none, which the packer writes as `.appflare.wrangler.jsonc` where `wranglerConfig` names (for example `.appflare.wrangler.jsonc`, or `server/.appflare.wrangler.jsonc`) and reads like any other config. Not beside `configPatch` or `workers`. Prefer a pull request upstream that adds a config, and link it in a comment beside this one.",
@@ -1742,6 +1749,10 @@
                     "type": "null",
                     "description": "Only null: drops `dispatch_namespaces`, which Appflare cannot install, from the config."
                   },
+                  "mtls_certificates": {
+                    "type": "null",
+                    "description": "Only null: drops `mtls_certificates`, which Appflare cannot install, from the config."
+                  },
                   "tail_consumers": {
                     "type": "null",
                     "description": "Only null: drops `tail_consumers`, which Appflare cannot install, from the config."
@@ -1835,7 +1846,10 @@
                     "description": "Only null: drops `data_blobs`, which Appflare cannot install, from the config."
                   }
                 },
-                "additionalProperties": false
+                "additionalProperties": {
+                  "type": "null",
+                  "description": "Only null: drops a key the packer's wrangler does not know, which the packer refuses, from the config."
+                }
               },
               "wranglerConfigInline": {
                 "description": "This Worker's wrangler config, for a repository that ships none; the same rules as `install.wranglerConfigInline`, and `wranglerConfig` names where it is written.",

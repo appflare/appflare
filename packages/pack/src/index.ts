@@ -83,6 +83,7 @@ export { describeVersionOrigin, mergeD1Migrations, pack } from "./pack.ts";
 export type { SignOptions, SignResult } from "./sign.ts";
 export { sign } from "./sign.ts";
 export { UNSIGNED_KEY_ID } from "./signing.ts";
+export { readUploadForm, UploadFormError, type UploadModule } from "./upload-form.ts";
 export type { VerifyOptions, VerifyResult } from "./verify.ts";
 export { verify } from "./verify.ts";
 export {
@@ -108,24 +109,26 @@ export {
   checkPipelineDeclarations,
   checkR2Declarations,
   checkVectorizeDeclarations,
-  classifyModuleType,
   collectBindings,
   collectQueueConsumers,
   collectWorkflowSettings,
+  GENERATED_WRANGLER_KEYS,
   HyperdriveDeclarationError,
   IGNORED_WRANGLER_KEYS,
-  mainModuleName,
   PipelineDeclarationError,
   QueueConsumerError,
   queueProducerBindings,
   R2DeclarationError,
   READ_WRANGLER_KEYS,
   type ResolvedWranglerConfig,
+  refuseUnknownWranglerKeys,
   SECTIONS_READ_WITH_CATALOG,
   ServiceBindingError,
+  UnknownWranglerKeyError,
   UnsafeBindingError,
   UnsupportedSectionError,
   unknownWorkflowSettingFields,
+  unknownWranglerKeys,
   unsafeRateLimits,
   unsupportedWranglerSections,
   uploadPlacement,

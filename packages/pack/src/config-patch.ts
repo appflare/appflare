@@ -2,8 +2,10 @@ import { existsSync, lstatSync, readFileSync, statSync, writeFileSync } from "no
 import path from "node:path";
 import {
   type CatalogInstall,
+  CONFIG_PATCH_KEYS,
   type ConfigPatch,
   inlineWranglerConfig,
+  isUnsupportedWranglerSection,
   PATCHED_WRANGLER_CONFIG,
   patchWranglerConfig,
   WRANGLER_CONFIG_TEMPLATE_SUFFIXES,
@@ -19,6 +21,7 @@ import {
   resolveWranglerConfig,
   type WranglerConfigTarget,
 } from "./config-redirect.ts";
+import { unknownWranglerKeys } from "./wrangler-config.ts";
 
 /**
  * The catalog manifest's config patches, applied to the app's wrangler
@@ -227,6 +230,33 @@ function generatedConfigPatchProblems(patch: ConfigPatch): string[] {
   return problems;
 }
 
+/**
+ * What is wrong with the keys `patch` drops that it may not otherwise set:
+ * beyond a section the packer refuses, a patch may drop only a key `raw`
+ * sets that the packer does not know ({@link unknownWranglerKeys}), which
+ * it would refuse. One it reads, or leaves out on purpose, stays as the app
+ * wrote it, and one the config does not set is a misspelling.
+ */
+export function droppedKeyProblems(
+  raw: Readonly<Record<string, unknown>>,
+  patch: ConfigPatch,
+): string[] {
+  const patchKeys: readonly string[] = CONFIG_PATCH_KEYS;
+  const problems: string[] = [];
+  for (const key of Object.keys(patch)) {
+    if (patchKeys.includes(key) || isUnsupportedWranglerSection(key)) continue;
+    if (raw[key] === undefined || raw[key] === null) {
+      problems.push(`it drops ${key}, which the config does not set`);
+    } else if (unknownWranglerKeys({ [key]: raw[key] }).length === 0) {
+      problems.push(
+        `it drops ${key}, which the packer knows and does not refuse; a config patch drops ` +
+          "only a section Appflare cannot install or a key wrangler does not know",
+      );
+    }
+  }
+  return problems;
+}
+
 /** Options for {@link applyConfigPatches}. */
 export interface ApplyConfigPatchesOptions {
   checkoutDir: string;
@@ -305,6 +335,12 @@ export function applyConfigPatches(
     // no redirect is (see readableWranglerConfig).
     const read = readRawWranglerConfig(target.effectivePath);
     const raw = generated ? withoutRedirectOnlyFields(read).config : read;
+    const dropped = droppedKeyProblems(raw, patch);
+    if (dropped.length > 0) {
+      throw new ConfigPatchError(
+        `${label} for ${shown}: the config patch cannot be applied: ${dropped.join("; ")}`,
+      );
+    }
     let result: ReturnType<typeof patchWranglerConfig>;
     try {
       result = patchWranglerConfig(

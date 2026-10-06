@@ -68,13 +68,25 @@ describe("configPatchSchema", () => {
     expect(issues({ name: "other" })).toEqual([
       "name: a config patch may not set name: the Worker's name comes from the install, not " +
         "the config; it may set only main, assets, build, services, kv_namespaces, r2_buckets, " +
-        "d1_databases, vars, migrations, ratelimits, or null to drop a section Appflare cannot install",
+        "d1_databases, vars, migrations, ratelimits, or null to drop a section Appflare cannot install or a key wrangler does not know",
     ]);
     expect(issues({ durable_objects: { bindings: [] } })[0]).toContain(
       "rename new_classes to new_sqlite_classes in migrations",
     );
     expect(issues({ queues: {} })[0]).toMatch(/^queues: a config patch may not set queues; it/);
     expect(issues({ main: "x.js", account_id: "abc" })).toHaveLength(1);
+  });
+
+  it("lets null drop a key wrangler does not know, and nothing else take its place", () => {
+    // Which keys wrangler does not know is the packer's to check, when it applies the patch.
+    expect(issues({ email: null })).toEqual([]);
+    expect(issues({ email: { action: "drop" } })[0]).toMatch(
+      /^email: a config patch may not set email; it may set only .*, or null to drop a section Appflare cannot install or a key wrangler does not know$/,
+    );
+    // A key refused for a reason stays refused, null or not.
+    expect(issues({ name: null })[0]).toMatch(/^name: a config patch may not set name: /);
+    expect(issues({ routes: null })[0]).toMatch(/^routes: a config patch may not set routes: /);
+    expect(issues({ mtls_certificates: null })).toEqual([]);
   });
 
   it("allows build only as null, vars only as removals, storage only as a list", () => {
@@ -93,7 +105,7 @@ describe("configPatchSchema", () => {
     expect(issues(JSON.parse('{"main":"dist/index.js","__proto__":{"name":"x"}}'))).toEqual([
       "__proto__: a config patch may not set __proto__: it is not a wrangler config key; it " +
         "may set only main, assets, build, services, kv_namespaces, r2_buckets, d1_databases, " +
-        "vars, migrations, ratelimits, or null to drop a section Appflare cannot install",
+        "vars, migrations, ratelimits, or null to drop a section Appflare cannot install or a key wrangler does not know",
     ]);
   });
 
