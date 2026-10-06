@@ -11,6 +11,7 @@ import { listSnapshotsCore, startRollbackCore } from "../installs/versions.serve
 import { buildArtifactFixture } from "../test/artifact-fixture";
 import { fakeAccessAccount } from "../test/fake-access-account";
 import { type FakeAccount, fakeAccount, NEW_VERSION, TOKEN } from "../test/fake-account";
+import { type FakeEngine, fakeEngine } from "../test/fake-invocations";
 import { fakeStep } from "../test/fake-step";
 import { recordProtectedInstall } from "../test/protected-install";
 import { recordFixtureRevision } from "../test/recorded-revision";
@@ -63,6 +64,8 @@ async function rollback(
   extraEnv: Partial<JobEnv> = {},
   /** Runs once the rollback is started, before its job runs. */
   beforeRun?: () => Promise<void>,
+  /** Runs the job in the engine that keeps Workers Free's 50 requests per invocation. */
+  engine?: FakeEngine,
 ) {
   const fake = fakeAccount(null, {
     deployments: [
@@ -87,14 +90,27 @@ async function rollback(
   if (params === null) throw new Error("no Workflow params");
   await beforeRun?.();
   const step = fakeStep();
+  const jobParams = params;
+  const fetch = wrapFetch?.(fake) ?? fake.fetch;
   let error: unknown = null;
   try {
-    await runRollback({
-      params,
-      step,
-      env: { DB: env.DB, KV: env.KV, CF_API_TOKEN: TOKEN, ...extraEnv },
-      deps: { fetch: wrapFetch?.(fake) ?? fake.fetch },
-    });
+    if (engine === undefined) {
+      await runRollback({
+        params: jobParams,
+        step,
+        env: { DB: env.DB, KV: env.KV, CF_API_TOKEN: TOKEN, ...extraEnv },
+        deps: { fetch },
+      });
+    } else {
+      await engine.run(() =>
+        runRollback({
+          params: jobParams,
+          step: engine.step,
+          env: { DB: env.DB, KV: env.KV, CF_API_TOKEN: TOKEN, ...extraEnv },
+          deps: { fetch: engine.fetch(fetch) },
+        }),
+      );
+    }
   } catch (e) {
     error = e;
   }
@@ -665,6 +681,97 @@ describe("rollback job, an app of several Workers", () => {
     ]);
     // Both versions keep it on workers.dev: its address is left alone.
     expect(jobs.state.subdomainCalls).toEqual([]);
+  });
+
+  it("puts 17 other Workers back on Workers Free, spread over invocations of 50 requests", async () => {
+    const names = Array.from({ length: 17 }, (_, i) => `gk-${i + 1}`);
+    const others = (crons: string[], workersDev: boolean) =>
+      names.map((name) => ({
+        name,
+        bindings: [{ type: "kv_namespace", name: "CUT_KV" }],
+        crons,
+        ...(workersDev ? {} : { workersDev }),
+      }));
+    const before = await buildArtifactFixture({
+      otherWorkers: others(["*/5 * * * *"], false),
+      catalog: { plan: "free" },
+    });
+    const after = await buildArtifactFixture({
+      version: "1.1.0",
+      otherWorkers: others(["*/15 * * * *"], true),
+      catalog: { plan: "free" },
+    });
+    const versionOf = (prefix: string, i: number) =>
+      `${prefix}-0000-4000-8000-${String(i).padStart(12, "0")}`;
+    const record = (prefix: string) =>
+      JSON.stringify(Object.fromEntries(names.map((n, i) => [`cut-${n}`, versionOf(prefix, i)])));
+    await env.DB.prepare(
+      "UPDATE installs SET manifest_json = ?1, worker_versions_json = ?2 WHERE id = ?3",
+    )
+      .bind(JSON.stringify(after.manifest), record("44444444"), INSTALL_ID)
+      .run();
+    await env.DB.prepare(
+      "UPDATE snapshots SET manifest_json = ?1, worker_versions_json = ?2 WHERE id = 'upd1'",
+    )
+      .bind(JSON.stringify(before.manifest), record("33333333"))
+      .run();
+    const accounts = new Map(
+      names.map((n, i) => [
+        `cut-${n}`,
+        fakeAccount(null, {
+          worker: `cut-${n}`,
+          deployments: [
+            {
+              id: `dep-${i}-2`,
+              versions: [{ version_id: versionOf("44444444", i), percentage: 100 }],
+            },
+            {
+              id: `dep-${i}-1`,
+              versions: [{ version_id: versionOf("33333333", i), percentage: 100 }],
+            },
+          ],
+          schedules: ["*/15 * * * *"],
+        }),
+      ]),
+    );
+    const engine = fakeEngine();
+    const r = await rollback(
+      {},
+      (fake) => async (input, init) => {
+        const name = /\/workers\/scripts\/(cut-[a-z0-9-]+)/.exec(input)?.[1];
+        return ((name === undefined ? undefined : accounts.get(name)) ?? fake).fetch(input, init);
+      },
+      {},
+      undefined,
+      engine,
+    );
+    expect(r.error).toBeNull();
+    expect(r.job?.status).toBe("succeeded");
+    expect(engine.invocations.length).toBeGreaterThan(1);
+    expect(Math.max(...engine.invocations)).toBeLessThanOrEqual(50);
+    const ran = engine.ran.map((s) => s.name);
+    expect(new Set(ran).size).toBe(ran.length);
+    for (const [i, n] of names.entries()) {
+      const account = accounts.get(`cut-${n}`);
+      // Off workers.dev before its snapshot version serves, then on it, with its crons back.
+      expect(account?.state.deployments[0]?.versions).toEqual([
+        { version_id: versionOf("33333333", i), percentage: 100 },
+      ]);
+      expect(account?.state.schedules).toEqual(["*/5 * * * *"]);
+      expect(ran.indexOf(`deploy snapshot version (Worker "cut-${n}")`)).toBeLessThan(
+        ran.indexOf("deploy snapshot version"),
+      );
+    }
+    expect(r.fake.state.deployments[0]?.versions).toEqual([
+      { version_id: OLD_VERSION, percentage: 100 },
+    ]);
+    // Every Worker back on its version in one invocation, the primary one last.
+    const moves = engine.ran.filter(
+      (s) =>
+        s.name.startsWith("deploy snapshot version") || s.name.startsWith("turn off workers.dev"),
+    );
+    expect(moves).toHaveLength(2 * names.length + 1);
+    expect(new Set(moves.map((s) => s.invocation)).size).toBe(1);
   });
 
   /** Rolls back from a version with `jobs` on workers.dev as `now` says to one as `then` says. */

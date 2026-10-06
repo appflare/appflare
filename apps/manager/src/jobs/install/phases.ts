@@ -714,6 +714,20 @@ export async function probeUntilHealthy(
   opts: ProbePhaseOptions,
 ): Promise<number | null> {
   const maxAttempts = opts.maxAttempts ?? HEALTH_MAX_ATTEMPTS;
+  // In one invocation: a wait for a fresh one between probes would count
+  // against the check's grace for server errors. Each probe is at most two
+  // requests (once more with the app's Access token), plus a zone lookup.
+  return steps.reserve(opts.label, 2 * maxAttempts + 1, () =>
+    probeLoop(steps, step, opts, maxAttempts),
+  );
+}
+
+async function probeLoop(
+  steps: JobSteps,
+  step: StepRunner,
+  opts: ProbePhaseOptions,
+  maxAttempts: number,
+): Promise<number | null> {
   let firstProbeAt: number | null = null;
   // The install's token for this URL, looked up once for the whole phase.
   let credentials: (() => Promise<Record<string, string> | undefined>) | undefined;
@@ -815,6 +829,27 @@ export async function checkLiveHealthPhase(
      */
     access?: "on" | "off";
   } = {},
+): Promise<LiveHealthResult> {
+  // In one invocation: a wait for a fresh one between probes would use up
+  // the check's 90 seconds. Each probe is at most two requests, plus a zone
+  // lookup.
+  return steps.reserve("health check", 2 * LIVE_HEALTH_PROBES + 1, () =>
+    liveHealthLoop(steps, step, url, mode, opts),
+  );
+}
+
+/**
+ * The most probes a live health check makes: one at once, then one after
+ * each wait of 2, 3, 5, 8 and then 10 seconds within its 90 (12).
+ */
+export const LIVE_HEALTH_PROBES = 12;
+
+async function liveHealthLoop(
+  steps: JobSteps,
+  step: StepRunner,
+  url: string,
+  mode: HealthMode,
+  opts: { routeWasLive?: boolean; installId?: string; access?: "on" | "off" },
 ): Promise<LiveHealthResult> {
   const checkAgain =
     opts.installId === undefined

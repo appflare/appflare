@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { type IndexApp, type IndexJson, indexJsonSchema } from "@appflare/schema";
+import { type IndexApp, type IndexJson, indexJsonSchema, readIndexJson } from "@appflare/schema";
 import { type OgPicture, pngPicture } from "../og/picture.ts";
 import {
   type AppLinks,
@@ -172,7 +172,9 @@ export async function fetchCatalogSnapshot(
       `${indexUrl} is not a valid catalog index:\n  ${snapshotProblems(parsedIndex.error).join("\n  ")}`,
     );
   }
-  const index: IndexJson = parsedIndex.data;
+  // The manager features rows name are the site's concern no more than a
+  // manager's that has them: dropped.
+  const index: IndexJson = readIndexJson(parsedIndex.data);
 
   const publishedStats = index.stats === undefined ? null : await jsonOf(index.stats);
   const stats =

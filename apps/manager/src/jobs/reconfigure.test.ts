@@ -31,6 +31,7 @@ import {
   TOKEN,
 } from "../test/fake-account";
 import { fakeEmailRouting, ZONE_ID } from "../test/fake-email-routing";
+import { type FakeEngine, fakeEngine } from "../test/fake-invocations";
 import { type FakeSandbox, fakeSandbox } from "../test/fake-sandbox";
 import { fakeSelf } from "../test/fake-self";
 import { type FakeStep, fakeStep } from "../test/fake-step";
@@ -154,6 +155,8 @@ interface RunOptions {
   workersDev?: boolean;
   /** Runs once the install is seeded, before the change is started. */
   afterSeed?: () => Promise<void>;
+  /** Runs the job in the engine that keeps Workers Free's 50 requests per invocation. */
+  engine?: FakeEngine;
 }
 
 async function reconfigure(opts: RunOptions = {}) {
@@ -220,13 +223,27 @@ async function reconfigure(opts: RunOptions = {}) {
   const step = opts.step ?? fakeStep();
   const self = fakeSelf(jobEnv, { fetch: fake.fetch });
   let error: unknown = null;
+  const jobParams = params;
+  const engine = opts.engine;
   try {
-    await runReconfigure({
-      params,
-      step,
-      env: { ...jobEnv, SELF: self },
-      deps: { fetch: fake.fetch, signingKeys: fixture.keys },
-    });
+    if (engine === undefined) {
+      await runReconfigure({
+        params: jobParams,
+        step,
+        env: { ...jobEnv, SELF: self },
+        deps: { fetch: fake.fetch, signingKeys: fixture.keys },
+      });
+    } else {
+      // The units run in invocations of their own: only each call counts for the job.
+      await engine.run(() =>
+        runReconfigure({
+          params: jobParams,
+          step: engine.step,
+          env: { ...jobEnv, SELF: engine.units(self) },
+          deps: { fetch: engine.fetch(fake.fetch), signingKeys: fixture.keys },
+        }),
+      );
+    }
   } catch (e) {
     error = e;
   }
@@ -1744,6 +1761,73 @@ describe("settings change job, an app of several Workers", () => {
       names.indexOf("promote version"),
     );
     expect(JSON.stringify(r.logs)).not.toContain(JOBS_KEY);
+  });
+
+  it("changes the settings of 13 Workers on Workers Free, promoting them all in one invocation", async () => {
+    const names = Array.from({ length: 12 }, (_, i) => `w-${i + 1}`);
+    const old = (i: number) => `55555555-0000-4000-8000-${String(i).padStart(12, "0")}`;
+    const accounts = new Map(
+      names.map((n, i) => [
+        `cut-${n}`,
+        fakeAccount(null, {
+          worker: `cut-${n}`,
+          deployments: [{ id: `dep-${i}`, versions: [{ version_id: old(i), percentage: 100 }] }],
+        }),
+      ]),
+    );
+    const engine = fakeEngine();
+    const r = await reconfigure({
+      app: {
+        ...APP,
+        otherWorkers: names.map((name) => ({
+          name,
+          bindings: [{ type: "kv_namespace", name: "CUT_KV" }],
+        })),
+        catalog: {
+          ...APP.catalog,
+          plan: "free",
+          secrets: [
+            {
+              name: "ADMIN_PASSWORD",
+              label: "Admin password",
+              generate: "password",
+              workers: ["app"],
+            },
+            { name: "SHARED_KEY", label: "Shared key" },
+          ],
+        },
+      },
+      resources: [
+        ...RESOURCES,
+        ...names.map((n) => ({ kind: "worker", name: `cut-${n}`, cfId: `cut-${n}` })),
+        { kind: "secret", binding: "SHARED_KEY", name: "SHARED_KEY" },
+      ],
+      request: {
+        vars: { HOME_PAGE: "links", TITLE: "My links" },
+        secrets: { set: { SHARED_KEY: "shared-DO-NOT-LEAK" }, unset: [] },
+      },
+      front: async (request) => {
+        const name =
+          /\/workers\/(?:scripts|workers)\/(cut-w-\d+)\b/.exec(request.url)?.[1] ??
+          /^https:\/\/[0-9a-f]{8}-(cut-w-\d+)\./.exec(request.url)?.[1];
+        const account = name === undefined ? undefined : accounts.get(name);
+        return account === undefined ? null : account.fetch(request.url, request);
+      },
+      engine,
+    });
+    expect(r.error).toBeNull();
+    expect(r.job?.status).toBe("succeeded");
+    expect(engine.invocations.length).toBeGreaterThan(1);
+    expect(Math.max(...engine.invocations)).toBeLessThanOrEqual(50);
+    for (const [i, n] of names.entries()) {
+      const account = accounts.get(`cut-${n}`);
+      expect(account?.state.deployments[0]?.versions[0]?.version_id).not.toBe(old(i));
+    }
+    // Every promotion, the primary Worker's last, in one invocation.
+    const promotions = engine.ran.filter((s) => s.name.startsWith("promote version"));
+    expect(promotions).toHaveLength(13);
+    expect(promotions.at(-1)?.name).toBe("promote version");
+    expect(new Set(promotions.map((s) => s.invocation)).size).toBe(1);
   });
 
   it("sends both Workers the recorded name of a Workflow one runs and the other defines", async () => {

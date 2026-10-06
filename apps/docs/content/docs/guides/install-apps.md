@@ -264,12 +264,14 @@ runs as `<worker-name>-<name>` on its own `workers.dev` address; an app installe
 Workers call can be kept off `workers.dev` by its catalog entry: it then has no
 address at all and is not reachable from the internet.
 
-On Workers Free an app may have at most three Workers: each one adds requests
-to the install job, which the free plan limits to 50, so the manager refuses a
-larger app there before creating anything. On Workers Paid an app may have up to
-24. Each Worker counts toward the account's limit (100 Workers on Workers Free, 500
-on Workers Paid), and the install stops before creating anything when the account
-has no room for all of them.
+An app may have up to 24 Workers, on Workers Free as on Workers Paid. On Workers
+Free, Cloudflare lets a job make 50 requests at a time, and each Worker adds a few,
+so the install, update, rollback or uninstall job of a larger app pauses for 5
+minutes whenever it needs a fresh allowance, then carries on by itself. Its log says
+so each time. An app of a dozen Workers takes a few of these pauses; nothing is
+wrong while it waits. Each Worker counts toward the account's limit (100 Workers on
+Workers Free, 500 on Workers Paid), and the install stops before creating anything
+when the account has no room for all of them.
 
 The form asks for each secret and setting once. The manager sets it on the Workers
 of the app that use it. Post-install steps and settings can mention any of the

@@ -16,6 +16,7 @@ import {
   accessPlaceholderValues,
   readAccessPlaceholderValues,
 } from "../access/placeholder-values.server";
+import { readAccountPlan } from "../account/plan.server";
 import { effectiveManifest } from "../catalog/revisions.server";
 import { appPlace } from "../components/app-links";
 import { createDb, type Database } from "../db/client";
@@ -422,6 +423,8 @@ export async function runReconfigure(ctx: JobContext): Promise<void> {
       );
       return {
         accountId: settings.account_id,
+        // Absent in a step output recorded before it was read: not known to be paid.
+        accountPaid: (await readAccountPlan(orm)) === "paid",
         slug: install.app_slug,
         workerName: install.worker_name,
         version: install.catalog_version,
@@ -499,6 +502,9 @@ export async function runReconfigure(ctx: JobContext): Promise<void> {
     const primary = workers.find((w) => w.primary);
     if (primary === undefined) throw new JobError("the artifact has no primary Worker");
     const primaryManifest = primary.manifest;
+    // An app of several Workers may need more requests than one invocation
+    // makes on Workers Free: its steps then spread over invocations.
+    if (workers.length > 1 && started.accountPaid !== true) steps.spreadOverInvocations();
     const entryNames = entryScriptNamesOf(manifest, workerName);
     const databases = hyperdriveDeclarations(manifest.catalog.resources?.hyperdrive);
     const diff = diffBindings(
@@ -928,26 +934,29 @@ export async function runReconfigure(ctx: JobContext): Promise<void> {
         });
       }
 
-      // The other Workers first, the primary one last.
-      for (const other of otherVersions) {
-        attemptedOthers.push(other.worker.scriptName);
-        promotedVersions[other.worker.scriptName] = await promoteOtherWorkerPhase(
-          steps,
-          entryContext,
-          other,
-          started.version,
-          "Appflare: settings change",
-        );
-        promotedOthers.push(other.worker.scriptName);
-      }
-
-      await run("promote version", async ({ log, cf }) => {
-        await cf().versions.createDeployment(workerName, {
-          versions: [{ version_id: final.versionId, percentage: 100 }],
-          annotations: { "workers/message": "Appflare: settings change" },
+      // The other Workers first, the primary one last, in one invocation so
+      // that no wait for a fresh one leaves them on different settings for
+      // minutes (one call each).
+      await steps.reserve("the promotion", otherVersions.length + 1, async () => {
+        for (const other of otherVersions) {
+          attemptedOthers.push(other.worker.scriptName);
+          promotedVersions[other.worker.scriptName] = await promoteOtherWorkerPhase(
+            steps,
+            entryContext,
+            other,
+            started.version,
+            "Appflare: settings change",
+          );
+          promotedOthers.push(other.worker.scriptName);
+        }
+        await run("promote version", async ({ log, cf }) => {
+          await cf().versions.createDeployment(workerName, {
+            versions: [{ version_id: final.versionId, percentage: 100 }],
+            annotations: { "workers/message": "Appflare: settings change" },
+          });
+          log.info(`Version ${final.versionId} now serves all traffic.`);
+          return {};
         });
-        log.info(`Version ${final.versionId} now serves all traffic.`);
-        return {};
       });
       servingVersionId = final.versionId;
 
@@ -1130,20 +1139,27 @@ export async function runReconfigure(ctx: JobContext): Promise<void> {
     // kept (one deployment call each, harmless when repeated).
     const othersLeft: Record<string, string | null> = {};
     if (serving === null) {
-      for (const name of attemptedOthers) {
-        const back = snapshotOthers[name];
-        try {
-          if (back === undefined) throw new Error("the snapshot has no version of it");
-          await deployOtherWorkerVersionPhase(
-            steps,
-            { primary: false, scriptName: name },
-            back,
-            "the previous settings",
-          );
-        } catch {
-          othersLeft[name] = promotedVersions[name] ?? null;
-        }
-      }
+      // In one invocation, as the promotion was.
+      await steps.reserve(
+        "the return to the previous settings",
+        attemptedOthers.length,
+        async () => {
+          for (const name of attemptedOthers) {
+            const back = snapshotOthers[name];
+            try {
+              if (back === undefined) throw new Error("the snapshot has no version of it");
+              await deployOtherWorkerVersionPhase(
+                steps,
+                { primary: false, scriptName: name },
+                back,
+                "the previous settings",
+              );
+            } catch {
+              othersLeft[name] = promotedVersions[name] ?? null;
+            }
+          }
+        },
+      );
     }
     const othersRecorded = serving !== null ? promotedVersions : othersLeft;
     await step.do("mark settings change failed", async () => {

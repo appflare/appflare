@@ -48,7 +48,6 @@ import {
   entryScriptNamesOf,
   entryWorkers,
   otherEntryWorkers,
-  workerCountProblem,
 } from "./entry-workers";
 import {
   coverWorkersPhase,
@@ -460,17 +459,13 @@ export async function runInstall(ctx: JobContext): Promise<void> {
       // Free only when detected or set so, not by default: the account's
       // Worker limit is checked against the free plan's only then.
       const accountFree = resolved.plan === "free" && resolved.source !== "default";
-      const tooManyWorkers = workerCountProblem(
-        workers.length,
-        accountPaid || params.paidConfirmed,
-      );
-      if (tooManyWorkers !== null) throw new InstallError(tooManyWorkers);
-      // Every step of the job shares one Workflow instance's step and
-      // subrequest limits, so the app's Workers are counted against them
-      // before anything is created.
+      // Every step of the job shares one Workflow instance's step limit, and
+      // on Workers Paid one invocation's subrequests, so the app's Workers are
+      // counted against them before anything is created. On Workers Free the
+      // job spreads its requests over invocations (below).
       if (workers.length > 1) {
         const paid = accountPaid || params.paidConfirmed;
-        const cost = entryJobCost(workers, "install", 0);
+        const cost = entryJobCost(workers, "install", 0, !paid);
         const overBudget = entryBudgetProblem(cost, paid, workers.length);
         if (overBudget !== null) throw new InstallError(overBudget);
         log.info(entryBudgetLine(cost, paid, workers.length));
@@ -481,6 +476,11 @@ export async function runInstall(ctx: JobContext): Promise<void> {
       return { accountId: settings.account_id, accountPaid, accountFree };
     });
     steps.setAccountId(preflight.accountId);
+    // An app of several Workers may need more requests than one invocation
+    // makes on Workers Free: its steps then spread over invocations.
+    if (workers.length > 1 && !preflight.accountPaid && !params.paidConfirmed) {
+      steps.spreadOverInvocations();
+    }
 
     await run("verify API token", async ({ log, cf }) => {
       const api = cf();

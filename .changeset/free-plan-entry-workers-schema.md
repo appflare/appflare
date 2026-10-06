@@ -1,0 +1,7 @@
+---
+"@appflare/schema": minor
+---
+
+A catalog entry with `"plan": "free"` may list up to 24 Workers in `install.workers`, like any entry: the rule that an entry of more than three Workers must say `"plan": "paid"` is gone from the schema, its JSON Schema and the descriptions there. `MAX_FREE_PLAN_ENTRY_WORKERS` now equals `MAX_ENTRY_WORKERS` and is deprecated; it stays for one release for tools that read it by name.
+
+Managers from before this release refuse such an entry's release and install at most three Workers per app on Workers Free, so an index row can now name a manager feature in `requires` besides account capabilities: `MANAGER_FEATURES.spreadJobs` (`"manager:spread-jobs"`). Code that writes a catalog index should write `indexRequires(manifest)` instead of the manifest's `requires`; it adds the feature for a `"free"` entry of more than `ONE_INVOCATION_FREE_WORKERS` (three) Workers. Managers from before this release leave such a row out of their catalog and ask to be updated, as for any value they do not know. `indexAppSchema` and `indexJsonSchema` keep the value, so an index parsed and written again still carries it (their parsed types are now `PublishedIndexApp` and `PublishedIndexJson`); a reader drops the features it has with `readIndexApp` or `readIndexJson`, whose `IndexApp` and `IndexJson` list account capabilities only in `requires`, as before. A manager feature never goes in a catalog manifest.

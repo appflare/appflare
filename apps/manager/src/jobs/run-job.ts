@@ -9,6 +9,7 @@ import { notifyJobEnd } from "../notifications/job-end";
 import { runSandboxDisable } from "../sandbox/disable-job";
 import { runSandboxEnable } from "../sandbox/enable-job";
 import { runInstall } from "./install";
+import { countedEnv, InvocationBudget } from "./invocation-budget";
 import { runReconfigure } from "./reconfigure";
 import { runRollback } from "./rollback";
 import { runSelfUpdate } from "./self-update";
@@ -113,6 +114,12 @@ export interface JobContext {
   step: StepRunner;
   env: JobEnv;
   deps: JobDeps;
+  /**
+   * What this run of the job has spent of its invocation's subrequests,
+   * shared by every step runner of the run; `env`'s `SANDBOX` and `JOBS`
+   * count against it. A step runner made without one counts on its own.
+   */
+  budget?: InvocationBudget;
 }
 
 export type JobHandler = (ctx: JobContext) => Promise<void>;
@@ -144,7 +151,16 @@ export async function runJob(
 ): Promise<void> {
   const parsed = jobParams.safeParse(payload);
   if (!parsed.success) throw new NonRetryableError("invalid job payload");
-  const ctx: JobContext = { params: parsed.data, step, env, deps };
+  // One count per run of the job (a run resumed after a long sleep starts a
+  // new one), with the bindings the job calls directly counted in it.
+  const budget = new InvocationBudget();
+  const ctx: JobContext = {
+    params: parsed.data,
+    step,
+    env: countedEnv(env, budget),
+    deps,
+    budget,
+  };
   // A job may add, remove or rename Workers: the Worker names this isolate
   // keeps for the catalog pages are dropped as it runs and when it ends.
   invalidateScriptsCache();

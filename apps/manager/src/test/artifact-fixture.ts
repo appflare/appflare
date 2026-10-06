@@ -9,7 +9,6 @@ import {
   catalogVarSchema,
   type IndexApp,
   LATEST_ARTIFACT_FORMAT,
-  MAX_FREE_PLAN_ENTRY_WORKERS,
   type SigningKey,
 } from "@appflare/schema";
 import type { z } from "zod";
@@ -325,10 +324,6 @@ export async function buildArtifactFixture(
         })),
       ],
     };
-  }
-  // An entry of many Workers is a paid one unless the test says otherwise.
-  if (others.length + 1 > MAX_FREE_PLAN_ENTRY_WORKERS && opts.catalog?.plan === undefined) {
-    catalogInput.plan = "paid";
   }
   const catalog = catalogManifestSchema.parse(catalogInput);
   const fields = {

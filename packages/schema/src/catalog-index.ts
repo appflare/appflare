@@ -2,6 +2,7 @@ import { z } from "zod";
 import { ACCESS_REQUIREMENT, type AccessOffer, accessOfferOf, type CatalogAccess } from "./access";
 import { sha256Schema } from "./artifact";
 import {
+  type CatalogManifest,
   catalogAuthorSchema,
   catalogRevisionSchema,
   catalogSlugSchema,
@@ -9,6 +10,7 @@ import {
   gitShaSchema,
   installTierSchema,
   planSchema,
+  type Requirement,
   requirementSchema,
   sandboxInstanceTypeSchema,
 } from "./catalog";
@@ -114,6 +116,51 @@ export const indexCatalogManifestSchema = z.object({
 export type IndexCatalogManifest = z.infer<typeof indexCatalogManifestSchema>;
 
 /**
+ * What an index row's `requires` may list besides the account capabilities
+ * of the entry's own `requires`: a feature the manager needs to install the
+ * entry. A manager reads `requires` against the values it knows and leaves
+ * out a row with one it does not, asking to be updated ("could not be
+ * shown"), so a manager from before a feature never offers an entry that
+ * needs it. The schema keeps the value, so an index parsed and written again
+ * still carries it; a manager or site that reads the index drops the
+ * features it has with {@link readIndexApp}. Only index rows carry these; a
+ * catalog manifest never does.
+ */
+export const MANAGER_FEATURES = {
+  /**
+   * The manager spreads one job over several Worker invocations: an entry of
+   * more than {@link ONE_INVOCATION_FREE_WORKERS} Workers with
+   * `"plan": "free"`. Managers before it ran a job in one invocation of the
+   * 50 requests Workers Free allows, refused such an entry's release, and
+   * refused to install more than three Workers on Workers Free.
+   */
+  spreadJobs: "manager:spread-jobs",
+} as const;
+
+export type ManagerFeature = (typeof MANAGER_FEATURES)[keyof typeof MANAGER_FEATURES];
+
+const managerFeatureSchema = z.enum(Object.values(MANAGER_FEATURES) as [ManagerFeature]);
+
+/** The most Workers of an entry with `"plan": "free"` a manager without `MANAGER_FEATURES.spreadJobs` installs. */
+export const ONE_INVOCATION_FREE_WORKERS = 3;
+
+/**
+ * An index row's `requires` for a catalog manifest (the current one, which is
+ * the revised one when the entry has a revision): the entry's own, then the
+ * manager features it needs ({@link MANAGER_FEATURES}). Code that writes a
+ * catalog index writes this, not the manifest's `requires` alone.
+ */
+export function indexRequires(manifest: {
+  plan: CatalogManifest["plan"];
+  requires: readonly string[];
+  install: { workers?: readonly unknown[] | undefined };
+}): string[] {
+  const workers = manifest.install.workers?.length ?? 1;
+  const spread = manifest.plan === "free" && workers > ONE_INVOCATION_FREE_WORKERS;
+  return [...manifest.requires, ...(spread ? [MANAGER_FEATURES.spreadJobs] : [])];
+}
+
+/**
  * One app entry in the published catalog index. `artifact` tier entries
  * carry the release URLs and the manifest digest (`artifacts`); `sandbox` and
  * `self-deploying` tier entries carry `build` instead and may omit both (a
@@ -137,7 +184,13 @@ export const indexAppSchema = z
     artifacts: indexArtifactsSchema.optional(),
     tier: installTierSchema,
     plan: planSchema,
-    requires: z.array(requirementSchema),
+    /**
+     * The entry's account capabilities ({@link requirementSchema}), and the
+     * manager features it needs ({@link MANAGER_FEATURES}). Kept as written,
+     * so a catalog that parses its index and writes it again keeps them; a
+     * reader drops the features with {@link readIndexApp}.
+     */
+    requires: z.array(z.union([requirementSchema, managerFeatureSchema])),
     lastVerified: z.iso.datetime().nullable(),
     /**
      * Who wrote the app: the catalog manifest's `authors`, or the owner of its
@@ -232,7 +285,26 @@ export const indexAppSchema = z
       });
     }
   });
-export type IndexApp = z.infer<typeof indexAppSchema>;
+/** An index row as published, manager features in `requires` included. */
+export type PublishedIndexApp = z.infer<typeof indexAppSchema>;
+
+/**
+ * An index row as a manager or the site reads it: `requires` lists the
+ * entry's account capabilities only ({@link readIndexApp}).
+ */
+export type IndexApp = Omit<PublishedIndexApp, "requires"> & { requires: Requirement[] };
+
+/**
+ * A parsed row as its reader uses it: the manager features in `requires`
+ * dropped. Parsing already refused a feature this release does not know, so
+ * every one left is one it has.
+ */
+export function readIndexApp(row: PublishedIndexApp): IndexApp {
+  return {
+    ...row,
+    requires: row.requires.filter((v): v is Requirement => requirementSchema.safeParse(v).success),
+  };
+}
 
 /**
  * The index row's `accessOffer` for a catalog manifest (the revised one when
@@ -360,4 +432,13 @@ export const indexJsonSchema = z
       }
     });
   });
-export type IndexJson = z.infer<typeof indexJsonSchema>;
+/** The index as published. */
+export type PublishedIndexJson = z.infer<typeof indexJsonSchema>;
+
+/** The index as a manager or the site reads it ({@link readIndexApp} for each row). */
+export type IndexJson = Omit<PublishedIndexJson, "apps"> & { apps: IndexApp[] };
+
+/** A parsed index as its reader uses it. */
+export function readIndexJson(index: PublishedIndexJson): IndexJson {
+  return { ...index, apps: index.apps.map(readIndexApp) };
+}

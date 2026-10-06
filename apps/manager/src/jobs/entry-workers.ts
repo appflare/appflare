@@ -8,7 +8,6 @@ import {
   entryScriptName,
   entryScriptNames,
   entryWorkerRefName,
-  MAX_FREE_PLAN_ENTRY_WORKERS,
   sameDurableObjectExports,
   secondaryWorkers,
   type WorkerBinding,
@@ -261,20 +260,4 @@ export function durableObjectExportsDiffer(
         now.find((w) => w.scriptName === name)?.manifest.worker.exports,
       ),
   );
-}
-
-/**
- * The most Workers an app may have to install or update on Workers Free: each
- * Worker besides the primary one adds its own subrequests to the job's one
- * invocation, which may make 50 there (the count is in ./units/client.ts).
- * Workers Paid has no count of its own below the catalog's
- * `MAX_ENTRY_WORKERS`; the job's steps and subrequests are totalled instead
- * (./entry-budget.ts).
- */
-export const MAX_FREE_PLAN_WORKERS = MAX_FREE_PLAN_ENTRY_WORKERS;
-
-/** Why the app has too many Workers for one job on Workers Free, or null. */
-export function workerCountProblem(count: number, paid: boolean): string | null {
-  if (paid || count <= MAX_FREE_PLAN_WORKERS) return null;
-  return `This app has ${count} Workers; more than ${MAX_FREE_PLAN_WORKERS} Workers exceed the free plan's request budget for one install or update job (50 subrequests), so it needs an account on Workers Paid.`;
 }

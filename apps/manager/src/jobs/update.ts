@@ -35,7 +35,6 @@ import {
   entryScriptNamesOf,
   entryWorkers,
   storedOtherWorkers,
-  workerCountProblem,
   workerLabel,
 } from "./entry-workers";
 import { publicPathsBackPhase, syncAccessPhase } from "./install/access";
@@ -624,11 +623,11 @@ export async function runUpdate(ctx: JobContext): Promise<void> {
       }
       const paid =
         started.accountPaid || params.paidConfirmed === true || manifest.catalog.plan === "paid";
-      const tooManyWorkers = workerCountProblem(workers.length, paid);
-      if (tooManyWorkers !== null) problems.push(tooManyWorkers);
-      // Every step of the job shares one Workflow instance's limits.
+      // Every step of the job shares one Workflow instance's step limit, and
+      // on Workers Paid one invocation's subrequests; on Workers Free the job
+      // spreads its requests over invocations (below).
       const budget =
-        workers.length > 1 ? entryJobCost(workers, "update", CANARY_MAX_ATTEMPTS) : null;
+        workers.length > 1 ? entryJobCost(workers, "update", CANARY_MAX_ATTEMPTS, !paid) : null;
       const overBudget = budget === null ? null : entryBudgetProblem(budget, paid, workers.length);
       if (overBudget !== null) problems.push(overBudget);
       // A Worker new in this version would need every secret it gets, and
@@ -685,6 +684,17 @@ export async function runUpdate(ctx: JobContext): Promise<void> {
       );
       return {};
     });
+
+    // An app of several Workers may need more requests than one invocation
+    // makes on Workers Free: its steps then spread over invocations.
+    if (
+      others.length > 0 &&
+      !started.accountPaid &&
+      params.paidConfirmed !== true &&
+      manifest.catalog.plan !== "paid"
+    ) {
+      steps.spreadOverInvocations();
+    }
 
     // The account's cron trigger limit, when this version sets more cron
     // triggers than the Worker has, before anything changes. Skipped on
@@ -1046,17 +1056,19 @@ export async function runUpdate(ctx: JobContext): Promise<void> {
       // serving code knows them.
       await narrowPublicPaths();
       await migrateDatabases();
-      await promoteOthers();
-
-      // 8. Promote. The API call is a step of its own, so the moment it
-      // returns the job knows the new version serves traffic.
-      await run("promote version", async ({ log, cf }) => {
-        await cf().versions.createDeployment(workerName, {
-          versions: [{ version_id: uploaded.versionId, percentage: 100 }],
-          annotations: { "workers/message": `Appflare: update to ${params.version}` },
+      // 8. Promote, the other Workers first, all in one invocation.
+      await steps.reserve("the promotion", otherUpdates.length + 1, async () => {
+        await promoteOthers();
+        // The API call is a step of its own, so the moment it returns the
+        // job knows the new version serves traffic.
+        await run("promote version", async ({ log, cf }) => {
+          await cf().versions.createDeployment(workerName, {
+            versions: [{ version_id: uploaded.versionId, percentage: 100 }],
+            annotations: { "workers/message": `Appflare: update to ${params.version}` },
+          });
+          log.info(`Version ${uploaded.versionId} now serves all traffic.`);
+          return {};
         });
-        log.info(`Version ${uploaded.versionId} now serves all traffic.`);
-        return {};
       });
       promoted = true;
       servingRecord = servingState(uploaded.versionId);
@@ -1065,26 +1077,29 @@ export async function runUpdate(ctx: JobContext): Promise<void> {
       // The public paths before D1, as above.
       await narrowPublicPaths();
       await migrateDatabases();
-      await promoteOthers();
-      await run("skip canary", async ({ log }) => {
-        log.warn(`${fullDeploy !== null ? FULL_DEPLOY_REASON : EXPORTS_DEPLOY_REASON}.`);
-        return {};
-      });
-      scriptDeployStarted = true;
-      const deployed = await run("deploy Worker script", async ({ log }) => {
-        for (const warning of vars.warnings) log.warn(warning);
-        const metadata = uploadMetadata();
-        const result = await uploadWorker(log, metadata, "script");
-        if (result.versionId === null) {
-          throw new JobError("Cloudflare did not report the id of the deployed version");
-        }
-        log.info(
-          fullDeploy !== null
-            ? `Deployed version ${result.versionId} to all traffic with Durable Object migrations up to "${fullDeploy.new_tag}".`
-            : `Deployed version ${result.versionId} to all traffic with its new Durable Object exports.`,
-          { versionId: result.versionId, bindings: bindingList(metadata) },
-        );
-        return { versionId: result.versionId };
+      // The other Workers, then the primary one, all in one invocation.
+      const deployed = await steps.reserve("the promotion", otherUpdates.length + 1, async () => {
+        await promoteOthers();
+        await run("skip canary", async ({ log }) => {
+          log.warn(`${fullDeploy !== null ? FULL_DEPLOY_REASON : EXPORTS_DEPLOY_REASON}.`);
+          return {};
+        });
+        scriptDeployStarted = true;
+        return run("deploy Worker script", async ({ log }) => {
+          for (const warning of vars.warnings) log.warn(warning);
+          const metadata = uploadMetadata();
+          const result = await uploadWorker(log, metadata, "script");
+          if (result.versionId === null) {
+            throw new JobError("Cloudflare did not report the id of the deployed version");
+          }
+          log.info(
+            fullDeploy !== null
+              ? `Deployed version ${result.versionId} to all traffic with Durable Object migrations up to "${fullDeploy.new_tag}".`
+              : `Deployed version ${result.versionId} to all traffic with its new Durable Object exports.`,
+            { versionId: result.versionId, bindings: bindingList(metadata) },
+          );
+          return { versionId: result.versionId };
+        });
       });
       uploadedVersionId = deployed.versionId;
       promoted = true;
@@ -1349,25 +1364,32 @@ export async function runUpdate(ctx: JobContext): Promise<void> {
     if (!wasPromoted && snapshotOthers !== null && attemptedOthers.length > 0) {
       const kept = snapshotOthers;
       const record: Record<string, string> = { ...kept };
-      for (const name of attemptedOthers) {
-        const back = kept[name];
-        try {
-          if (back === undefined) throw new Error("the snapshot has no version of it");
-          await deployOtherWorkerVersionPhase(
-            steps,
-            { primary: false, scriptName: name },
-            back,
-            previousVersion,
-          );
-          returned.push(name);
-        } catch {
-          othersPromoted.push(name);
-          // Serving the new version when its promotion finished; unknown otherwise.
-          const now = promotedVersions[name];
-          if (now === undefined) delete record[name];
-          else record[name] = now;
-        }
-      }
+      // In one invocation, as the promotion was (one call each).
+      await steps.reserve(
+        "the return to the snapshot's versions",
+        attemptedOthers.length,
+        async () => {
+          for (const name of attemptedOthers) {
+            const back = kept[name];
+            try {
+              if (back === undefined) throw new Error("the snapshot has no version of it");
+              await deployOtherWorkerVersionPhase(
+                steps,
+                { primary: false, scriptName: name },
+                back,
+                previousVersion,
+              );
+              returned.push(name);
+            } catch {
+              othersPromoted.push(name);
+              // Serving the new version when its promotion finished; unknown otherwise.
+              const now = promotedVersions[name];
+              if (now === undefined) delete record[name];
+              else record[name] = now;
+            }
+          }
+        },
+      );
       othersRecord = record;
     }
     // A Worker taken off workers.dev for this version gets its address back

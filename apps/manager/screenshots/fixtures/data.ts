@@ -4,6 +4,7 @@ import {
   type IndexApp,
   type IndexJson,
   indexJsonSchema,
+  readIndexJson,
 } from "@appflare/schema";
 import type { AppAccessCheck, InstallAccessView } from "../../src/access/app-access";
 import type { CatalogDetail } from "../../src/catalog/catalog.functions";
@@ -18,16 +19,18 @@ import formAppsJson from "./form-apps.json";
 
 // Parsed as the manager reads them, so a fixture in an outdated shape fails
 // here instead of rendering a page the manager would never show.
-const catalogIndex: IndexJson = indexJsonSchema.parse(catalogIndexJson);
+const catalogIndex: IndexJson = readIndexJson(indexJsonSchema.parse(catalogIndexJson));
 /**
  * Apps whose install forms are pictured, besides the catalog's: kept out of
  * the catalog list, opened only by their own page (`/catalog/open-seo`). Their
  * rows and manifests came from the public catalog on 2026-10-04.
  */
-const formApps: IndexJson = indexJsonSchema.parse({
-  generatedAt: formAppsJson.generatedAt,
-  apps: formAppsJson.apps,
-});
+const formApps: IndexJson = readIndexJson(
+  indexJsonSchema.parse({
+    generatedAt: formAppsJson.generatedAt,
+    apps: formAppsJson.apps,
+  }),
+);
 const manifests: Record<string, CatalogManifest> = {
   cut: catalogManifestSchema.parse(cutManifest.catalog),
   cloudmark: catalogManifestSchema.parse(cloudmarkManifest.catalog),

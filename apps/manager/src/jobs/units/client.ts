@@ -58,8 +58,9 @@ import { createJobUnits, type JobUnitsApi } from "./units";
  *   - D1: each step's log write (one batch per step, however many lines a
  *     unit brought back) and job updates; each step that stores or deletes
  *     a self-deploying app's secret on the sandbox Worker also reads the job
- *     log once (whether this job already did it). D1 binding calls did not
- *     count toward the limit when this was measured, but plan as if they do.
+ *     log once (whether this job already did it). D1 and KV binding calls
+ *     do not count toward the limit (measured again 2026-10-06, see
+ *     ../invocation-budget.ts), but are listed in case that changes.
  *
  * Worked example, FlareMo: a D1 database with 30 migrations, an R2 bucket,
  * 2 queues with a consumer each, 2 Vectorize indexes, a rate limit, 3 asset
@@ -84,14 +85,15 @@ import { createJobUnits, type JobUnitsApi } from "./units";
  * up to 6) and the promotion (1): 7 or more. A typical app (three resources,
  * two secrets, assets in one part, a D1 database) spends about 21 before its
  * live health check, which takes 1 to 12: 50 - 21 - 12 leaves 17, room for
- * two other Workers at an update's 7 each (an install's 6 would fit a third,
- * but the same app must also update). Hence at most 3 Workers per app on
- * Workers Free (`MAX_FREE_PLAN_WORKERS`);
- * the install and update plans refuse more there before anything changes.
- * Workers Paid allows 10,000 subrequests and 10,000 steps per Workflow
- * instance by default; there the plans total what the app's Workers add
- * (../entry-budget.ts) and refuse a job that would not fit, which no entry
- * of up to `MAX_ENTRY_WORKERS` Workers comes near.
+ * two other Workers at an update's 7 each. A job of more Workers on Workers
+ * Free therefore spreads its steps over several invocations: it counts what
+ * its invocation has made, and before a step that might not fit it sleeps 5
+ * minutes, which resumes it in a fresh invocation with a new 50
+ * (../invocation-budget.ts). Workers Paid allows 10,000 subrequests per
+ * invocation and 10,000 steps per Workflow instance by default; there the
+ * plans total what the app's Workers add (../entry-budget.ts) and refuse a
+ * job that would not fit, which no entry of up to `MAX_ENTRY_WORKERS`
+ * Workers comes near.
  */
 
 /**

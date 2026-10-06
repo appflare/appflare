@@ -4,6 +4,7 @@ import { and, eq, inArray, isNotNull, isNull, sql } from "drizzle-orm";
 import { z } from "zod";
 import { removeInstallProtectionLocked, removePublicPathsLocked } from "../access/protect.server";
 import { withAccessLock } from "../access/toggle.server";
+import { readAccountPlan } from "../account/plan.server";
 import { createDb } from "../db/client";
 import { installs, jobs, resources } from "../db/schema";
 import { readSettings, SETTING } from "../db/settings";
@@ -411,6 +412,8 @@ export async function runUninstall(ctx: JobContext): Promise<void> {
           .filter((r) => r.kind === "worker" && r.name !== install.workerName)
           .map((r) => ({ id: r.id, name: r.name })),
         accountId: settings.account_id,
+        // Absent in a step output recorded before it was read: not known to be paid.
+        accountPaid: (await readAccountPlan(orm)) === "paid",
         targets: dataTargets,
         pipelines,
         domains,
@@ -440,6 +443,11 @@ export async function runUninstall(ctx: JobContext): Promise<void> {
     });
     steps.setAccountId(started.accountId);
     const { workerName } = started;
+    // An app of several Workers may need more requests than one invocation
+    // makes on Workers Free: its steps then spread over invocations.
+    if ((started.otherWorkers ?? []).length > 0 && started.accountPaid !== true) {
+      steps.spreadOverInvocations();
+    }
 
     // A protected app's public paths go before any of its addresses is
     // released, so a hostname that serves something else later never keeps

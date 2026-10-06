@@ -5,6 +5,7 @@ import {
   type IndexApp,
   type IndexJson,
   indexAppSchema,
+  readIndexApp,
 } from "@appflare/schema";
 import { z } from "zod";
 import { CatalogError, fetchCatalogJson, storeIfChanged, validatorFor } from "./conditional-fetch";
@@ -112,7 +113,9 @@ export function parseCatalogIndex(json: unknown): ParsedCatalogIndex | null {
   for (const entry of envelope.data.apps) {
     const app = indexAppSchema.safeParse(entry);
     if (app.success) {
-      apps.push(app.data);
+      // A manager feature the row needs is one this manager has (the schema
+      // refuses those it does not know): dropped, leaving account capabilities.
+      apps.push(readIndexApp(app.data));
       continue;
     }
     unreadable.push({

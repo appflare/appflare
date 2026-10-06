@@ -13,6 +13,7 @@ import {
   type StartUninstallRequest,
   startUninstallCore,
 } from "../installs/start-uninstall.server";
+import { type FakeEngine, fakeEngine } from "../test/fake-invocations";
 import { fakeSaas, GATEWAY_ZONE } from "../test/fake-saas";
 import { fakeSelf } from "../test/fake-self";
 import { fakeStep } from "../test/fake-step";
@@ -271,9 +272,11 @@ async function uninstall(
   fake: ReturnType<typeof fakeWorld>,
   /** `local`: a manager without the `SELF` binding runs the units in the job's invocation. */
   units: "self" | "local" = "self",
+  /** Runs the job in the engine that keeps Workers Free's 50 requests per invocation. */
+  engine?: FakeEngine,
 ) {
   const { jobId, params } = await start(request);
-  return execute(jobId, params, fake, units);
+  return execute(jobId, params, fake, units, engine);
 }
 
 /** Starts deleting what install `i1` kept (the removed apps settings), then runs the job. */
@@ -304,17 +307,30 @@ async function execute(
   params: UninstallJobParams,
   fake: ReturnType<typeof fakeWorld>,
   units: "self" | "local",
+  engine?: FakeEngine,
 ) {
   const step = fakeStep();
   const self = fakeSelf(jobEnv(), { fetch: fake.fetch, now: () => NOW });
   let error: unknown = null;
   try {
-    await runUninstall({
-      params,
-      step,
-      env: units === "self" ? { ...jobEnv(), SELF: self } : jobEnv(),
-      deps: { fetch: fake.fetch, now: () => NOW },
-    });
+    if (engine === undefined) {
+      await runUninstall({
+        params,
+        step,
+        env: units === "self" ? { ...jobEnv(), SELF: self } : jobEnv(),
+        deps: { fetch: fake.fetch, now: () => NOW },
+      });
+    } else {
+      // The units run in invocations of their own: only each call counts for the job.
+      await engine.run(() =>
+        runUninstall({
+          params,
+          step: engine.step,
+          env: { ...jobEnv(), SELF: engine.units(self) },
+          deps: { fetch: engine.fetch(fake.fetch), now: () => NOW },
+        }),
+      );
+    }
   } catch (e) {
     error = e;
   }
@@ -1647,6 +1663,38 @@ describe("uninstall job, an app of several Workers", () => {
       "delete Worker cut-jobs",
       "delete Worker cut",
     ]);
+  });
+
+  it("deletes many Workers on Workers Free, spread over invocations of 50 requests", async () => {
+    await seedInstall();
+    const names = Array.from({ length: 45 }, (_, i) => `cut-part-${i + 1}`);
+    for (const name of names) {
+      await env.DB.prepare(
+        `INSERT INTO resources (id, install_id, kind, binding, name, cf_id, created_at)
+         VALUES (?1, 'i1', 'worker', NULL, ?2, ?2, 1)`,
+      )
+        .bind(`i1:worker:${name}`, name)
+        .run();
+    }
+    const fake = fakeWorld({ scripts: new Set(["appflare", "cut", ...names]) });
+    const engine = fakeEngine();
+    const r = await uninstall({ installId: "i1", deleteResources: ALL_DATA }, fake, "self", engine);
+    expect(r.error).toBeNull();
+    expect(r.job?.status).toBe("succeeded");
+    expect(engine.invocations.length).toBeGreaterThan(1);
+    expect(Math.max(...engine.invocations)).toBeLessThanOrEqual(50);
+    // Every Worker deleted once, the primary one last of them.
+    const calls = fake.world.calls;
+    for (const name of names) {
+      expect(calls.filter((c) => c === `DELETE /workers/scripts/${name}?force=true`)).toHaveLength(
+        1,
+      );
+      expect(r.state(`i1:worker:${name}`)).toBe("deleted");
+    }
+    expect(calls.indexOf("DELETE /workers/scripts/cut?force=true")).toBeGreaterThan(
+      calls.indexOf(`DELETE /workers/scripts/${names.at(-1)}?force=true`),
+    );
+    expect(fake.world.scripts).toEqual(new Set(["appflare"]));
   });
 
   it("deletes a Workflow another Worker defines once, by name, after every Worker", async () => {
