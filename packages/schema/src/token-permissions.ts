@@ -16,7 +16,7 @@ import type { ServiceId } from "./services";
  * for `dns`, `zone`, `zone_settings`, `analytics`, `firewall_services`,
  * `page_rules`, `ssl_and_certificates`, `account_settings`,
  * `account_analytics`, `billing`, `workers_scripts`, `workers_kv_storage`,
- * `workers_routes`, `workers_r2`, `d1`, `queues`, `logs`, `access`,
+ * `workers_routes`, `workers_r2`, `d1`, `queues`, `images`, `logs`, `access`,
  * `access_acct`, and `cache` (Cache Purge, whose one level the page's
  * `purge` type selects); the dashboard's own group labels (`<key>_read` /
  * `<key>_write`) for `email_routing_rule`, `email_routing_address`,
@@ -110,6 +110,7 @@ export const APP_TOKEN_PERMISSION_GROUPS = [
   { scope: "account", group: "D1", templateKey: "d1", service: "d1" },
   { scope: "account", group: "Queues", templateKey: "queues", service: "queues" },
   { scope: "account", group: "Vectorize", templateKey: "vectorize", service: "vectorize" },
+  { scope: "account", group: "Images", templateKey: "images", service: "images" },
   { scope: "account", group: "Hyperdrive", templateKey: "query_cache", service: "hyperdrive" },
   { scope: "account", group: "Pipelines", templateKey: "pipelines", service: "pipelines" },
   { scope: "account", group: "Secrets Store", templateKey: "secrets_store" },

@@ -3210,6 +3210,7 @@
               "D1",
               "Queues",
               "Vectorize",
+              "Images",
               "Hyperdrive",
               "Pipelines",
               "Secrets Store",
@@ -3218,7 +3219,7 @@
               "Access: Apps and Policies",
               "Access: Organizations, Identity Providers, and Groups"
             ],
-            "description": "The permission group, as the Cloudflare dashboard's token form names it, for example `\"DNS\"` or `\"Workers Scripts\"`. Zone groups: DNS, Zone, Zone Settings, Analytics, Page Rules, Cache Purge, SSL and Certificates, Firewall Services, Load Balancers, Logs, Workers Routes, Email Routing Rules. Account groups: Account Settings, Account Analytics, Billing, Logs, Magic Transit, Workers Scripts, Workers KV Storage, Workers R2 Storage, Workers R2 Data Catalog, Workers R2 SQL, Workers Tail, Workers Containers, D1, Queues, Vectorize, Hyperdrive, Pipelines, Secrets Store, Email Sending, Email Routing Addresses, Access: Apps and Policies, Access: Organizations, Identity Providers, and Groups."
+            "description": "The permission group, as the Cloudflare dashboard's token form names it, for example `\"DNS\"` or `\"Workers Scripts\"`. Zone groups: DNS, Zone, Zone Settings, Analytics, Page Rules, Cache Purge, SSL and Certificates, Firewall Services, Load Balancers, Logs, Workers Routes, Email Routing Rules. Account groups: Account Settings, Account Analytics, Billing, Logs, Magic Transit, Workers Scripts, Workers KV Storage, Workers R2 Storage, Workers R2 Data Catalog, Workers R2 SQL, Workers Tail, Workers Containers, D1, Queues, Vectorize, Images, Hyperdrive, Pipelines, Secrets Store, Email Sending, Email Routing Addresses, Access: Apps and Policies, Access: Organizations, Identity Providers, and Groups."
           },
           "scope": {
             "type": "string",
@@ -3274,6 +3275,7 @@
                   "D1",
                   "Queues",
                   "Vectorize",
+                  "Images",
                   "Hyperdrive",
                   "Pipelines",
                   "Secrets Store",
