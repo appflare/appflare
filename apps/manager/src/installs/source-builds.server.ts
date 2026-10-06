@@ -2,6 +2,7 @@ import {
   type ArtifactManifest,
   artifactManifestSchema,
   type BuildCommandChoice,
+  buildCleanupRequestSchema,
   buildCommandChoiceSchema,
   type CatalogManifest,
   type CatalogSecret,
@@ -17,7 +18,7 @@ import {
   sandboxObjectUrl,
   secretValueProblem,
 } from "@appflare/schema";
-import { and, desc, eq, inArray, isNotNull, isNull } from "drizzle-orm";
+import { and, desc, eq, inArray, isNull, lt, sql } from "drizzle-orm";
 import { ulid } from "ulidx";
 import { type AccessPreflightProblem, accessInstallRefusal } from "../access/preflight.server";
 import type { AccountPlan } from "../account/plan";
@@ -26,14 +27,7 @@ import { parseStoredCapabilities } from "../capabilities/capabilities";
 import { analyticsEngineRefusal } from "../catalog/requirement-checks";
 import { appKey, installAppKey, parseAppKey } from "../catalog/sources";
 import { createDb } from "../db/client";
-import {
-  type InstallOrigin,
-  installs,
-  jobs,
-  resources,
-  snapshots,
-  source_builds,
-} from "../db/schema";
+import { type InstallOrigin, installs, jobs, resources, source_builds } from "../db/schema";
 import { readSettings, SETTING } from "../db/settings";
 import type { UsedGithubToken } from "../github/access.server";
 import type { InstallJobParams } from "../jobs/install";
@@ -59,7 +53,7 @@ import {
   sandboxEnableClaim,
   sandboxFirstGuardSql,
 } from "../sandbox/auto-enable.server";
-import { buildsFromRepository } from "../sandbox/binding";
+import { buildsFromRepository, sandboxBinding } from "../sandbox/binding";
 import { ENABLE_SANDBOX_PLACE, UPDATE_SANDBOX_HINT } from "../sandbox/connect-copy";
 import {
   derivedVarValues,
@@ -70,6 +64,7 @@ import {
 } from "./derived-secrets";
 import { GitRefError, type RemoteRefs, resolveRef } from "./git-refs";
 import type { InstallDomainInput, StartInstallInput } from "./install-input";
+import { UNUSED_BUILD_MS } from "./source-builds-retention";
 import { repositoryAppSlug, reviewBuild } from "./source-review";
 import { resolveInstallInput, seedParams, withDerivedValues } from "./start-install.server";
 import {
@@ -198,18 +193,32 @@ async function lastBuildCommand(db: D1Database, installId: string): Promise<Buil
   }
 }
 
-/** Versions an install's builds use now: its own and its snapshots' (a rollback reads them). */
+/**
+ * Versions an install's builds use now: its own and its snapshots', newest
+ * snapshot first. A rollback itself deploys the snapshot's Worker version and
+ * reads no file, but it makes the snapshot's artifact the install's again,
+ * which a later reconfigure reads (`jobs/reconfigure.ts`), and any snapshot
+ * can be rolled back to. `limit` caps the snapshots read, for a list with a
+ * size limit of its own; deleting files never passes one, so no version a
+ * rollback can reach is left off.
+ */
 async function versionsInUse(
   db: D1Database,
   installId: string,
   current: string,
+  limit?: number,
 ): Promise<string[]> {
-  const rows = await createDb(db)
-    .selectDistinct({ version: snapshots.catalog_version })
-    .from(snapshots)
-    .where(and(eq(snapshots.install_id, installId), isNotNull(snapshots.catalog_version)))
-    .limit(15);
-  return [...new Set([current, ...rows.map((r) => r.version ?? "").filter((v) => v.length > 0)])];
+  const { results } = await db
+    .prepare(
+      `SELECT catalog_version AS version FROM snapshots
+       WHERE install_id = ?1 AND catalog_version IS NOT NULL AND catalog_version != ''
+       GROUP BY catalog_version
+       ORDER BY max(taken_at) DESC, catalog_version
+       LIMIT ?2`,
+    )
+    .bind(installId, limit ?? -1)
+    .all<{ version: string }>();
+  return [...new Set([current, ...results.map((r) => r.version)])];
 }
 
 interface BuildPlan {
@@ -304,7 +313,8 @@ async function planBuild(
     ref: install.source_ref,
     buildCommand: await lastBuildCommand(deps.db, install.id),
     ...(baseline === undefined ? {} : { baseline }),
-    avoidVersions: await versionsInUse(deps.db, install.id, install.catalog_version),
+    // The build request takes at most 16: the newest snapshots'.
+    avoidVersions: await versionsInUse(deps.db, install.id, install.catalog_version, 15),
   };
 }
 
@@ -568,7 +578,7 @@ function builtOf(record: SourceBuildRecord | null): {
         ? "The build is still running."
         : status === "used"
           ? "This build was already installed. Start a new build to install it again."
-          : status === "discarded"
+          : status === "discarded" || status === "discarding"
             ? "This build was thrown away. Start a new build."
             : "This build failed. Start a new build.",
     );
@@ -983,27 +993,91 @@ export async function updateFromSourceBuildCore(
   }
 }
 
-// TODO: a build nobody installs or throws away keeps its files in the
-// sandbox Worker's bucket (a few MB each) until an admin throws it away or,
-// for a rebuild, the install's next update clears its old builds. An R2
-// lifecycle rule on the bucket would expire them; the bucket is created by
-// the sandbox enable job, which does not set one yet.
+/** What throwing a build away needs. */
+export interface DiscardSourceBuildDeps {
+  db: D1Database;
+  /** Deletes an install's builds but `keepVersions`; absent without the `SANDBOX` binding. */
+  cleanup?: (installId: string, keepVersions: string[]) => Promise<void>;
+  now?: () => Date;
+}
+
+/** The `cleanup` of `DiscardSourceBuildDeps` through the `SANDBOX` binding; none without it. */
+export function sandboxBuildCleanup(env: {
+  SANDBOX?: unknown;
+}): Pick<DiscardSourceBuildDeps, "cleanup"> {
+  const binding = sandboxBinding(env);
+  if (binding === undefined) return {};
+  return {
+    cleanup: async (installId, keepVersions) => {
+      await binding.cleanup({ installId, keepVersions });
+    },
+  };
+}
 
 /**
- * Throws a build away: its record is kept as discarded and its objects are
- * deleted from the sandbox Worker's bucket (for an update's build, all but
- * the versions the install and its snapshots still use). A build still
- * running cannot be thrown away.
+ * How long after a build was taken for an install or update its version is
+ * kept regardless: the build is marked used a moment before its job's row
+ * exists, so no running job protects it yet.
+ */
+const TAKEN_RECENTLY_MS = 60 * 60 * 1000;
+
+/**
+ * How long a thrown-away build whose files are not deleted yet waits before
+ * the cron tries again, so one whose clean-up keeps failing does not take a
+ * turn in every run.
+ */
+const DISCARD_RETRY_MS = 60 * 60 * 1000;
+
+/**
+ * SQL condition on the `source_builds` row being written: no job of its
+ * install, nor its own job, is queued or running. Columns are named in full:
+ * unqualified, they would mean the `jobs` columns inside the subquery.
+ */
+const NO_ACTIVE_JOB_OF_BUILD_SQL = sql`NOT EXISTS (
+  SELECT 1 FROM jobs
+  WHERE (jobs.install_id = source_builds.install_id OR jobs.id = source_builds.id)
+    AND jobs.status IN ('queued', 'running')
+)`;
+
+/** What became of a thrown-away build's files. */
+export type DiscardedFiles =
+  /** Deleted, with whatever else of the install nothing uses. */
+  | "deleted"
+  /** No sandbox Worker to ask: turning sandbox builds off deletes the bucket, files and all. */
+  | "no-sandbox"
+  /** Not yet: a job of the install is queued or running. The cron deletes them once it ends. */
+  | "waiting"
+  /** The sandbox Worker could not delete them. The cron tries again later. */
+  | "failed"
+  /**
+   * More versions are in use than the sandbox Worker takes in one clean-up,
+   * so they are left to the install's next update (which keeps two versions)
+   * or its uninstall (which keeps none).
+   */
+  | "left";
+
+/**
+ * Throws a build away. Its record first becomes `discarding`: never offered
+ * again, its files not deleted yet. Once the files are deleted from the
+ * sandbox Worker's bucket (for an update's build, with every other version
+ * of the install except those the install and its snapshots use, those of
+ * other builds waiting for review, and that of one just taken for a job), it
+ * becomes `discarded`. A build still running cannot be thrown away. While a
+ * job of the install is queued or running, or when the clean-up fails, the
+ * build stays `discarding` and the cron finishes it later: an update may be
+ * reading the build it took, a rebuild writing its own. So a record that
+ * says `discarded` means the files are gone, and one the review offers has
+ * its files.
+ *
+ * `idleBefore` is the expiry of builds nobody used: the build is thrown away
+ * only if it has not changed since then and no job of its install is queued
+ * or running, checked in the same write that claims it.
  */
 export async function discardSourceBuildCore(
-  deps: {
-    db: D1Database;
-    /** Deletes an install's builds but `keepVersions`; absent without the `SANDBOX` binding. */
-    cleanup?: (installId: string, keepVersions: string[]) => Promise<void>;
-    now?: () => Date;
-  },
+  deps: DiscardSourceBuildDeps,
   buildId: string,
-): Promise<void> {
+  options: { idleBefore?: Date } = {},
+): Promise<DiscardedFiles> {
   const record = await readSourceBuild(deps.db, buildId);
   if (record === null) throw new SourceBuildError("There is no such build.");
   const status = effectiveStatus(record);
@@ -1017,41 +1091,256 @@ export async function discardSourceBuildCore(
     );
   }
   const now = (deps.now ?? (() => new Date()))();
-  const orm = createDb(deps.db);
-  const discarded = await orm
+  const idleBefore = options.idleBefore;
+  const claimed = await createDb(deps.db)
     .update(source_builds)
-    .set({ status: "discarded", updated_at: now })
+    .set({ status: deps.cleanup === undefined ? "discarded" : "discarding", updated_at: now })
     .where(
       and(
         eq(source_builds.id, buildId),
         inArray(source_builds.status, ["built", "failed", "building"]),
+        idleBefore === undefined ? undefined : lt(source_builds.updated_at, idleBefore),
+        idleBefore === undefined ? undefined : NO_ACTIVE_JOB_OF_BUILD_SQL,
       ),
     )
     .returning({ id: source_builds.id });
-  if (discarded.length === 0)
+  if (claimed.length === 0)
     throw new SourceBuildError("The build changed meanwhile. Reload the page.");
-  if (deps.cleanup === undefined) return;
-  const { row } = record;
-  const [install] = await orm
-    .select()
-    .from(installs)
-    .where(eq(installs.id, row.install_id))
+  if (deps.cleanup === undefined) return "no-sandbox";
+  return deleteDiscardedFiles(deps.db, deps.cleanup, buildId, record.row.install_id, now);
+}
+
+/** Records a `discarding` build as `discarded`. */
+async function markDiscarded(db: D1Database, buildId: string, now: Date): Promise<void> {
+  await createDb(db)
+    .update(source_builds)
+    .set({ status: "discarded", updated_at: now })
+    .where(and(eq(source_builds.id, buildId), eq(source_builds.status, "discarding")));
+}
+
+/** Deletes the files of a `discarding` build, then records it `discarded`. */
+async function deleteDiscardedFiles(
+  db: D1Database,
+  cleanup: NonNullable<DiscardSourceBuildDeps["cleanup"]>,
+  buildId: string,
+  installId: string,
+  now: Date,
+): Promise<DiscardedFiles> {
+  const orm = createDb(db);
+  const [active] = await orm
+    .select({ id: jobs.id })
+    .from(jobs)
+    .where(and(eq(jobs.install_id, installId), inArray(jobs.status, ["queued", "running"])))
     .limit(1);
+  if (active !== undefined) return "waiting";
+  const [install] = await orm.select().from(installs).where(eq(installs.id, installId)).limit(1);
   const keep =
     install === undefined || install.status === "uninstalled"
       ? []
-      : await versionsInUse(deps.db, install.id, install.catalog_version);
-  // Other builds of the install waiting for review keep their objects too.
-  const waiting = await orm
-    .select({ version: source_builds.version })
+      : await versionsInUse(db, install.id, install.catalog_version);
+  // Other builds of the install waiting for review keep their objects too,
+  // as does one taken just now by an install or update about to start.
+  const others = await orm
+    .select({
+      status: source_builds.status,
+      version: source_builds.version,
+      updatedAt: source_builds.updated_at,
+    })
     .from(source_builds)
-    .where(and(eq(source_builds.install_id, row.install_id), eq(source_builds.status, "built")));
-  for (const w of waiting) if (w.version !== null) keep.push(w.version);
-  try {
-    await deps.cleanup(row.install_id, [...new Set(keep)]);
-  } catch {
-    // Housekeeping: the objects stay in the bucket; nothing depends on them.
+    .where(
+      and(
+        eq(source_builds.install_id, installId),
+        inArray(source_builds.status, ["built", "used"]),
+      ),
+    );
+  for (const other of others) {
+    if (other.version === null) continue;
+    if (other.status === "built" || now.getTime() - other.updatedAt.getTime() < TAKEN_RECENTLY_MS) {
+      keep.push(other.version);
+    }
   }
+  const request = { installId, keepVersions: [...new Set(keep)] };
+  // What the sandbox Worker accepts, checked here so a refusal is not mistaken for a failure to retry.
+  const accepted = buildCleanupRequestSchema.safeParse(request);
+  if (!accepted.success) {
+    console.warn(
+      "source builds: a thrown-away build's files are left to the install's next update or uninstall",
+      {
+        installId,
+        keep: request.keepVersions.length,
+        error: accepted.error.issues[0]?.message ?? "refused",
+      },
+    );
+    await markDiscarded(db, buildId, now);
+    return "left";
+  }
+  try {
+    await cleanup(installId, request.keepVersions);
+  } catch (error) {
+    console.warn(
+      "source builds: could not delete a thrown-away build's files; trying again later",
+      {
+        installId,
+        keep: request.keepVersions.length,
+        error: error instanceof Error ? error.message : String(error),
+      },
+    );
+    // Waits `DISCARD_RETRY_MS` from now before the next try.
+    await orm
+      .update(source_builds)
+      .set({ updated_at: now })
+      .where(and(eq(source_builds.id, buildId), eq(source_builds.status, "discarding")));
+    return "failed";
+  }
+  await markDiscarded(db, buildId, now);
+  return "deleted";
+}
+
+/**
+ * At most this many builds are handled per cron run; the rest wait for the
+ * next run (every 30 minutes). The expiry runs in a unit of its own, whose
+ * invocation has 50 subrequests on Workers Free, and every D1 query and the
+ * sandbox Worker call count as one: the read of what is due, then up to 9
+ * per build (the build and its job, the claim, the job check, the install,
+ * its versions in use, its other builds, the clean-up, the final record), so
+ * 4 builds stay at 37. Workers Paid allows far more, but the account may
+ * have moved back to Free with builds left over.
+ */
+export const EXPIRED_BUILDS_PER_RUN = 4;
+
+/** What one run of the expiry did, by build id. */
+export interface ExpiredSourceBuilds {
+  /** Thrown away, files deleted (or no sandbox Worker holds them). */
+  discarded: string[];
+  /** Thrown away, files not deleted yet (a job of the install runs, or the clean-up failed); tried again later. */
+  pending: string[];
+  /** Thrown away, files left to the install's next update or uninstall. */
+  left: string[];
+  /** Changed between the read and the discard; left as they are. */
+  skipped: string[];
+  /** More builds are due than this run took. */
+  more: boolean;
+}
+
+interface DueBuild {
+  id: string;
+  status: string;
+  install_id: string;
+}
+
+/**
+ * Builds the expiry handles next, oldest first: thrown away earlier with
+ * their files not deleted yet (after `DISCARD_RETRY_MS`), and builds nobody
+ * used for `UNUSED_BUILD_DAYS`. Never one an install or a snapshot uses (by
+ * version, or by artifact), one still building, one an install or update
+ * has taken (`used`), or any build of an install with a job queued or
+ * running.
+ */
+async function dueSourceBuilds(db: D1Database, now: Date, limit: number): Promise<DueBuild[]> {
+  const { results } = await db
+    .prepare(
+      `SELECT b.id, b.status, b.install_id FROM source_builds b LEFT JOIN jobs j ON j.id = b.id
+       WHERE (
+           (b.status = 'discarding' AND b.updated_at < ?2)
+           OR (b.updated_at < ?1
+             AND (b.status IN ('built', 'failed')
+               OR (b.status = 'building' AND j.status IN ('failed', 'succeeded')))
+             AND NOT EXISTS (
+               SELECT 1 FROM installs i
+               WHERE i.status != 'uninstalled'
+                 AND ((i.id = b.install_id AND i.catalog_version = b.version)
+                   OR i.artifact_url = ?3 || b.artifact_key)
+             )
+             AND NOT EXISTS (
+               SELECT 1 FROM snapshots s JOIN installs i ON i.id = s.install_id
+               WHERE i.status != 'uninstalled'
+                 AND ((s.install_id = b.install_id AND s.catalog_version = b.version)
+                   OR s.artifact_url = ?3 || b.artifact_key)
+             ))
+         )
+         AND (j.status IS NULL OR j.status NOT IN ('queued', 'running'))
+         AND NOT EXISTS (
+           SELECT 1 FROM jobs a WHERE a.install_id = b.install_id AND a.status IN ('queued', 'running')
+         )
+       ORDER BY b.updated_at, b.id
+       LIMIT ?4`,
+    )
+    .bind(
+      now.getTime() - UNUSED_BUILD_MS,
+      now.getTime() - DISCARD_RETRY_MS,
+      sandboxObjectUrl(""),
+      limit,
+    )
+    .all<DueBuild>();
+  return results;
+}
+
+/** Whether the expiry has anything to do: one read, for the cron before it starts the unit. */
+export async function sourceBuildExpiryDue(db: D1Database, now = new Date()): Promise<boolean> {
+  return (await dueSourceBuilds(db, now, 1)).length > 0;
+}
+
+/**
+ * The cron's part (the `expireSourceBuilds` unit): throws away builds nobody
+ * installed, updated from or threw away within `UNUSED_BUILD_DAYS` of being
+ * built (or of failing), through `discardSourceBuildCore`, and finishes
+ * those whose files were left for later. At most `limit` per run.
+ */
+export async function expireUnusedSourceBuildsCore(
+  deps: DiscardSourceBuildDeps & { limit?: number },
+): Promise<ExpiredSourceBuilds> {
+  const now = (deps.now ?? (() => new Date()))();
+  const idleBefore = new Date(now.getTime() - UNUSED_BUILD_MS);
+  const limit = deps.limit ?? EXPIRED_BUILDS_PER_RUN;
+  const due = await dueSourceBuilds(deps.db, now, limit + 1);
+  const expired: ExpiredSourceBuilds = {
+    discarded: [],
+    pending: [],
+    left: [],
+    skipped: [],
+    more: due.length > limit,
+  };
+  for (const build of due.slice(0, limit)) {
+    let files: DiscardedFiles;
+    if (build.status !== "discarding") {
+      try {
+        files = await discardSourceBuildCore(deps, build.id, { idleBefore });
+      } catch (error) {
+        if (!(error instanceof SourceBuildError)) throw error;
+        expired.skipped.push(build.id);
+        continue;
+      }
+    } else if (deps.cleanup === undefined) {
+      await markDiscarded(deps.db, build.id, now);
+      files = "no-sandbox";
+    } else {
+      files = await deleteDiscardedFiles(deps.db, deps.cleanup, build.id, build.install_id, now);
+    }
+    if (files === "deleted" || files === "no-sandbox") expired.discarded.push(build.id);
+    else if (files === "left") expired.left.push(build.id);
+    else expired.pending.push(build.id);
+  }
+  return expired;
+}
+
+/** The cron's log line for an expiry run, or null when it did nothing. */
+export function expiredSourceBuildsLog(expired: ExpiredSourceBuilds): string | null {
+  const parts: string[] = [];
+  if (expired.discarded.length > 0) {
+    parts.push(`${expired.discarded.length} unused build(s) thrown away with their files`);
+  }
+  if (expired.pending.length > 0) {
+    parts.push(
+      `the files of ${expired.pending.length} not deleted yet (a job of the app runs, or the clean-up failed; tried again later)`,
+    );
+  }
+  if (expired.left.length > 0) {
+    parts.push(
+      `the files of ${expired.left.length} left to the app's next update or uninstall (too many versions in use)`,
+    );
+  }
+  if (parts.length === 0) return null;
+  return `source builds: ${parts.join("; ")}${expired.more ? "; more next run" : ""}`;
 }
 
 /** What "Check for changes" found. */

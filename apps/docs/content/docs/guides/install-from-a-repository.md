@@ -91,7 +91,10 @@ When the build finishes, its log offers **Review**. The review page shows:
 Below the review is the usual install form. Installing starts the ordinary install job
 with this build as its artifact: it is read back from the bucket and checked against
 what the review showed before anything is created. A build installs once. **Throw
-away** deletes a build you do not want, and its files.
+away** deletes a build you do not want, and its files. A build nobody installs, updates
+from or throws away is thrown away by Appflare 7 days after it was built (a failed one,
+7 days after it failed), so the sandbox Worker's bucket does not keep it forever. A
+build an app or one of its snapshots uses is never thrown away.
 
 ## Build a catalog app from source
 

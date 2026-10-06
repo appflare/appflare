@@ -21,6 +21,7 @@ import { createDb } from "./db/client";
 import { ensureMigrated } from "./db/migrate";
 import { addressRedirect, serveRequest } from "./domains/address-redirect";
 import { reconcileManagerAddress } from "./domains/manager-address.server";
+import { scheduledSourceBuildExpiry } from "./installs/source-builds-expiry.server";
 import { workflowRepairLog, workflowRepairNeeded } from "./installs/workflow-repair.server";
 import { finalizeSelfUpdates } from "./jobs/self-update/record";
 import { scheduledExternalDomainCheck, scheduledNotifications } from "./notifications/cron.server";
@@ -286,6 +287,11 @@ export default {
     }
     // Notification channels: conditions, missed job ends, deliveries; never fails the run.
     await scheduledNotifications(env);
+    // Builds for review nobody used for a week: thrown away with their files
+    // in the sandbox Worker's bucket, a few per run, as a SELF unit with its
+    // own budget (in place without the binding); one read when none is due;
+    // never fails the run.
+    await scheduledSourceBuildExpiry(env);
     // A recovery code secret that can no longer be used is deleted; never fails the run.
     try {
       const cleanup = await cleanUpRecoverySecret({

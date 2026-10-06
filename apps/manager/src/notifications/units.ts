@@ -14,6 +14,11 @@ import {
   checkExternalDomains,
   type DomainCheckReport,
 } from "../installs/external-domains-poll.server";
+import {
+  type ExpiredSourceBuilds,
+  expireUnusedSourceBuildsCore,
+  sandboxBuildCleanup,
+} from "../installs/source-builds.server";
 import { repairWorkflows, type WorkflowRepairReport } from "../installs/workflow-repair.server";
 import { type DeliveryReport, deliverDue } from "./deliver.server";
 import {
@@ -48,6 +53,8 @@ export interface NotificationUnitsApi {
   resyncAccessApps(input: unknown): Promise<NotificationUnitResult<AccessUpkeepReport>>;
   /** Creates the missing Workflows of installed apps (installs/workflow-repair.server.ts). */
   repairWorkflows(input: unknown): Promise<NotificationUnitResult<WorkflowRepairReport>>;
+  /** Throws away builds for review nobody used (installs/source-builds.server.ts). */
+  expireSourceBuilds(input: unknown): Promise<NotificationUnitResult<ExpiredSourceBuilds>>;
 }
 
 export interface NotificationUnitsEnv extends CfClientEnv {
@@ -56,6 +63,8 @@ export interface NotificationUnitsEnv extends CfClientEnv {
   /** The catalog caches, for the Access upkeep's revision check. */
   KV?: KVNamespace;
   CATALOG_INDEX_URL?: string;
+  /** The sandbox Worker, whose bucket holds builds for review; absent while sandbox builds are off. */
+  SANDBOX?: unknown;
 }
 
 export interface NotificationUnitsDeps {
@@ -73,6 +82,7 @@ const healthInput = z.object({
 const domainsInput = z.object({});
 const accessUpkeepInput = z.object({});
 const workflowRepairInput = z.object({});
+const sourceBuildExpiryInput = z.object({});
 
 async function settle<T>(run: () => Promise<T>): Promise<NotificationUnitResult<T>> {
   try {
@@ -143,6 +153,16 @@ export function createNotificationUnits(
           db: env.DB,
           api: async () =>
             deps.api ?? getCfClient(env, deps.fetch === undefined ? {} : { fetch: deps.fetch }),
+          ...(now === undefined ? {} : { now: () => new Date(now()) }),
+        });
+      }),
+    expireSourceBuilds: (input) =>
+      settle(async () => {
+        sourceBuildExpiryInput.parse(input);
+        const { now } = deps;
+        return expireUnusedSourceBuildsCore({
+          db: env.DB,
+          ...sandboxBuildCleanup(env),
           ...(now === undefined ? {} : { now: () => new Date(now()) }),
         });
       }),

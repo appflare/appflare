@@ -3,6 +3,7 @@ import type { RemovalRelease } from "../../access/install-access.server";
 import type { AccessUpkeepReport } from "../../access/upkeep-run.server";
 import type { EmailRoutingInspection } from "../../installs/email-routing.server";
 import type { DomainCheckReport } from "../../installs/external-domains-poll.server";
+import type { ExpiredSourceBuilds } from "../../installs/source-builds.server";
 import type { WorkflowRepairReport } from "../../installs/workflow-repair.server";
 import type { DeliveryReport } from "../../notifications/deliver.server";
 import type { HealthSweepReport } from "../../notifications/health-sweep.server";
@@ -148,5 +149,10 @@ export class JobUnits extends WorkerEntrypoint<Env> {
   // The scheduled repair of installed apps' missing Workflows.
   repairWorkflows(input: unknown): Promise<NotificationUnitResult<WorkflowRepairReport>> {
     return createNotificationUnits(this.env).repairWorkflows(input);
+  }
+
+  // The scheduled expiry of builds for review nobody used.
+  expireSourceBuilds(input: unknown): Promise<NotificationUnitResult<ExpiredSourceBuilds>> {
+    return createNotificationUnits(this.env).expireSourceBuilds(input);
   }
 }

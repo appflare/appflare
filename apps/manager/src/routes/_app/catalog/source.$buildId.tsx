@@ -43,6 +43,7 @@ import {
   type SourceBuildView,
   updateFromSourceBuild,
 } from "../../../installs/source-builds.functions";
+import { UNUSED_BUILD_DAYS, UNUSED_BUILD_NOTE } from "../../../installs/source-builds-retention";
 
 /**
  * `/catalog/source/$buildId`: the review of a build from a repository (or
@@ -203,13 +204,14 @@ function BuildState({ build, isAdmin }: { build: SourceBuildView; isAdmin: boole
           action={isAdmin ? <DiscardButton buildId={build.id} /> : undefined}
         />
       );
+    case "discarding":
     case "discarded":
       return (
         <Banner
           variant="secondary"
           icon={<TrashIcon />}
           title="This build was thrown away"
-          description="Its files are deleted from your sandbox Worker's bucket. Build again to install it."
+          description={`An admin threw it away, or nobody used it within ${UNUSED_BUILD_DAYS} days. Its files ${build.status === "discarding" ? "are being" : "are"} deleted from your sandbox Worker's bucket. Build again to install it.`}
         />
       );
     case "used":
@@ -337,7 +339,10 @@ function Review({
         <UpdateFromBuild build={build} review={review} canUpdate={isAdmin && !refused} />
       )}
       {waiting && isAdmin && (
-        <div className="flex justify-end">
+        <div className="flex flex-wrap items-center justify-end gap-x-4 gap-y-2">
+          <Text as="span" variant="secondary" size="sm">
+            {UNUSED_BUILD_NOTE}
+          </Text>
           <DiscardButton buildId={build.id} />
         </div>
       )}
