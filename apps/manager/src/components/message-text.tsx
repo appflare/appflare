@@ -8,15 +8,16 @@ const ADDRESS_END = "\\s\"'<>`)\\]}";
 
 /**
  * A Cloudflare dashboard address: the scheme and host exactly (lower case),
- * then a path up to `ADDRESS_END`, or nothing. The host must end there: next
- * comes a slash, the end of the text, `ADDRESS_END`, or sentence punctuation
- * followed by one of those, so `dash.cloudflare.com.example.com`,
+ * then the rest of the URL (a path, a query or a fragment, from its `/`, `?`
+ * or `#` up to `ADDRESS_END`), or nothing. The host must end there: next
+ * comes `/`, `?`, `#`, the end of the text, `ADDRESS_END`, or sentence
+ * punctuation followed by one of those, so `dash.cloudflare.com.example.com`,
  * `dash.cloudflare.com:443` and `dash.cloudflare.com@example.com` stay text.
  * Greedy, with nothing after it to backtrack into, so a long line costs one
  * pass (the punctuation check only scans the run right after a host).
  */
 const DASHBOARD_ADDRESS = new RegExp(
-  `https://(?:one\\.)?dash\\.cloudflare\\.com(?=/|$|[${ADDRESS_END}]|[.,;:!?]+(?:$|[${ADDRESS_END}]))(?:/[^${ADDRESS_END}]*)?`,
+  `https://(?:one\\.)?dash\\.cloudflare\\.com(?=[/?#]|$|[${ADDRESS_END}]|[.,;:!?]+(?:$|[${ADDRESS_END}]))(?:[/?#][^${ADDRESS_END}]*)?`,
   "g",
 );
 

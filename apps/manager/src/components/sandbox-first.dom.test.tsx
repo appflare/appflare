@@ -171,9 +171,8 @@ describe("dashboard addresses in messages", () => {
         `${host}x`,
         `${host}-x.example.com`,
         `${host}@example.com`,
-        `${host}?to=/x`,
-        `${host}#x`,
         `${host}...x`,
+        `${host},x`,
       ]) {
         const message = `Open ${lookAlike} now.`;
         act(() => root.render(<MessageText message={message} />));
@@ -181,6 +180,33 @@ describe("dashboard addresses in messages", () => {
         expect(messageHasLinks(message), lookAlike).toBe(false);
       }
     }
+  });
+
+  it("link the host with a path, a query or a fragment, without the sentence's punctuation", () => {
+    for (const host of ["https://dash.cloudflare.com", "https://one.dash.cloudflare.com"]) {
+      for (const rest of [
+        "/",
+        "/x/y",
+        "?to=/abc/workers/plans",
+        "#billing",
+        "/x?y=1#z",
+        "?a=1&b=2",
+      ]) {
+        const address = `${host}${rest}`;
+        for (const after of ["", ".", "?", "!.", ") then", "] then", '"}']) {
+          const message = `Open ${address}${after}`;
+          act(() => root.render(<MessageText message={message} />));
+          expect(links(), message).toEqual([{ text: address, href: address, target: "_blank" }]);
+          expect(container.textContent).toBe(message);
+        }
+      }
+    }
+  });
+
+  it("read a lone query or fragment mark after the host as the sentence's, not the address's", () => {
+    act(() => root.render(<MessageText message="Is it at https://dash.cloudflare.com?" />));
+    expect(links().map((l) => l.href)).toEqual(["https://dash.cloudflare.com"]);
+    expect(container.textContent).toBe("Is it at https://dash.cloudflare.com?");
   });
 
   it("check a bare host's punctuation in one pass", () => {
