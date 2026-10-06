@@ -456,9 +456,10 @@ Points that need care:
   which the app may also use for R2 SQL. `compaction` and `snapshotExpiration`
   (`{ "maxAge": "30d", "minSnapshotsToKeep": 5 }`) turn on the catalog's table
   maintenance. Pipelines is on Workers Paid only, so the entry needs `"plan": "paid"`.
-  Streams, sinks and pipelines cannot be changed once created: a new version that
-  changes the schema or the table keeps what the install created, and a version that
-  adds a stream needs a fresh install. The packer refuses a Pipelines binding the
+  Streams, sinks and pipelines cannot be changed once created: an update to a version
+  that changes the schema or the table is refused, so that version needs a fresh
+  install. A version that adds a stream gets it on update, which asks for the token in
+  `tokenSecret` again. The packer refuses a Pipelines binding the
   manifest does not describe, and a description the config does not bind.
   Self-deploying entries cannot declare streams.
 - **D1 SQL outside the migrations folder.** The packer reads each D1 binding's

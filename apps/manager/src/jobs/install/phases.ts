@@ -261,7 +261,7 @@ export async function createHyperdriveConfig(
     if (error instanceof CloudflareApiError && error.status < 500 && error.status !== 429) {
       const said = error.errors.map((e) => e.message).join("; ") || `HTTP ${error.status}`;
       throw new JobError(
-        `Cloudflare could not set up Hyperdrive for ${res.binding} (${said}). Check that the database accepts connections from the internet with the user, password and database name given, then install again`,
+        `Cloudflare could not set up Hyperdrive for ${res.binding} (${said}). Check that the database accepts connections from the internet with the user, password and database name given, then try again`,
       );
     }
     throw error;

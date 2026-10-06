@@ -6,6 +6,7 @@ import {
   type CatalogManifest,
   type CatalogSecret,
   type CatalogVar,
+  type HyperdriveDeclaration,
   type IndexApp,
   type IndexBuild,
   secretValueProblem,
@@ -62,6 +63,11 @@ import {
 import { emailRoutingOfManifest } from "./email-routing";
 import { snapshotHasSameCode } from "./rollback-copy";
 import { reinstallRefusal, tierChanged } from "./tier-change";
+import {
+  checkUpdateConnections,
+  UPDATE_CONNECTION_KINDS,
+  updateConnectionsOf,
+} from "./update-connections.server";
 
 /**
  * Starting updates and rollbacks, restoring a database to a snapshot's
@@ -217,6 +223,18 @@ export interface StartUpdateRequest {
   installId: string;
   /** Values of the secrets the new version introduces. */
   secrets?: Record<string, string>;
+  /**
+   * Connection strings by Hyperdrive binding, for the databases the new
+   * version connects to that the install has no configuration for
+   * (`UpdateNeeds.needsDatabases`). They go only into the Workflow params.
+   */
+  hyperdrive?: Record<string, string>;
+  /**
+   * The admin pressed Update: optional choices (a new connection string for
+   * a database an earlier update connected) are offered as well. Unattended
+   * starts (automatic updates, Update all) never set it.
+   */
+  offerChoices?: boolean;
   /** The admin saw that this update cannot check the new version before it serves traffic. */
   confirmNoPreview?: boolean;
   /** For a sandbox tier app: the admin confirmed the cost of building the new version. */
@@ -254,6 +272,25 @@ export interface UpdateNeeds {
   heldSecrets?: string[];
   /** The version's vars derived from `needsSecrets`, for the form's note on their source. */
   derivedVars?: Array<Pick<CatalogVar, "name" | "derive">>;
+  /**
+   * Names among `needsSecrets` that hold the token of a Pipelines sink the
+   * update makes for a stream new in this version (asked for again when the
+   * Worker has it: Cloudflare never gives a secret back).
+   */
+  streamTokens?: string[];
+  /**
+   * Databases the new version connects to through Hyperdrive that the
+   * install has no configuration for: the dialog asks for each one's
+   * connection string. Absent when there are none.
+   */
+  needsDatabases?: HyperdriveDeclaration[];
+  /**
+   * Databases whose Hyperdrive configuration an earlier update made although
+   * the installed version does not use them (it failed, or was rolled back):
+   * the dialog offers an optional new connection string for each, which
+   * replaces that configuration. Offered on an admin's own start only.
+   */
+  replaceableDatabases?: HyperdriveDeclaration[];
   /** Why the new version cannot be checked before it serves traffic; null when it can. */
   skipsPreview: string | null;
   /**
@@ -358,15 +395,19 @@ export async function startUpdateCore(
   });
   if (accessRefusal !== null) throw new AccessRequiredUpdateError(accessRefusal);
   const recorded = await createDb(deps.db)
-    .select({ kind: resources.kind, name: resources.name })
+    .select({ kind: resources.kind, binding: resources.binding, name: resources.name })
     .from(resources)
     .where(
       and(
         eq(resources.install_id, install.id),
-        inArray(resources.kind, ["secret", "cron"]),
+        inArray(resources.kind, ["secret", "cron", ...UPDATE_CONNECTION_KINDS]),
         isNull(resources.deleted_at),
       ),
     );
+  // A database the version connects to that the install has no Hyperdrive
+  // configuration for asks for its connection string; a stream the update
+  // makes asks for the token its sink writes with.
+  const { databases, replaceable, streamTokens } = updateConnectionsOf(install, catalog, recorded);
   // A derived secret the Worker lacks, or a derived var the install has no
   // value for, asks for its source.
   const needed = secretsToAskFor(
@@ -375,7 +416,10 @@ export async function startUpdateCore(
       catalog.secrets,
       recorded.filter((r) => r.kind === "secret").map((r) => r.name),
     ),
-    sourcesOfUnsetDerivedVars(catalog.vars, parseStoredVars(install.config_json)),
+    [
+      ...sourcesOfUnsetDerivedVars(catalog.vars, parseStoredVars(install.config_json)),
+      ...streamTokens,
+    ],
   );
   // The installed version's other Workers keep their cron triggers with them, not as rows.
   const recordedCrons =
@@ -402,6 +446,9 @@ export async function startUpdateCore(
   );
   if (
     (needed.length > 0 && request.secrets === undefined) ||
+    (databases.length > 0 && request.hyperdrive === undefined) ||
+    // Offered only to an admin who pressed Update; an unattended start keeps the configuration.
+    (replaceable.length > 0 && request.offerChoices === true && request.hyperdrive === undefined) ||
     (skipPreview !== null && request.confirmNoPreview !== true) ||
     (sandbox !== null && request.buildConfirmed !== true) ||
     (cronTriggers !== null && request.paidConfirmed === undefined) ||
@@ -421,6 +468,11 @@ export async function startUpdateCore(
       needsSecrets: needed,
       ...(held.length === 0 ? {} : { heldSecrets: held }),
       ...(derivedVars.length === 0 ? {} : { derivedVars }),
+      ...(streamTokens.length === 0
+        ? {}
+        : { streamTokens: streamTokens.filter((name) => needed.some((s) => s.name === name)) }),
+      ...(databases.length === 0 ? {} : { needsDatabases: databases }),
+      ...(replaceable.length === 0 ? {} : { replaceableDatabases: replaceable }),
       skipsPreview: skipPreview,
       build: sandbox,
       cronTriggers,
@@ -432,6 +484,9 @@ export async function startUpdateCore(
   if (unknown.length > 0) {
     throw new VersionActionError(`This update does not take: ${unknown.join(", ")}.`);
   }
+  const checked = checkUpdateConnections(databases, request.hyperdrive ?? {}, replaceable);
+  if (checked.problem !== null) throw new VersionActionError(checked.problem);
+  const hyperdrive = checked.connections;
   const entered: Record<string, string> = {};
   for (const secret of needed) {
     const value = given[secret.name] ?? "";
@@ -456,6 +511,8 @@ export async function startUpdateCore(
       fromVersion: install.catalog_version,
       version: app.version,
       secrets: Object.keys(secrets),
+      // Binding names only: connection strings hold database passwords.
+      ...(Object.keys(hyperdrive).length === 0 ? {} : { hyperdrive: Object.keys(hyperdrive) }),
       ...(Object.keys(vars).length === 0 ? {} : { vars: Object.keys(vars) }),
       ...(sandbox === null ? {} : { sandboxBuild: true, buildConfirmed: true }),
     }),
@@ -465,6 +522,7 @@ export async function startUpdateCore(
       installId: install.id,
       version: app.version,
       secrets,
+      ...(Object.keys(hyperdrive).length === 0 ? {} : { hyperdrive }),
       ...(Object.keys(vars).length === 0 ? {} : { vars }),
       ...(sandbox === null
         ? {}

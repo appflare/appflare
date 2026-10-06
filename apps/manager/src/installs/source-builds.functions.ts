@@ -4,6 +4,7 @@ import {
   type CatalogManifest,
   type CatalogSecret,
   catalogWorkerName,
+  type HyperdriveDeclaration,
   type RepositoryDetection,
   repositoryUrl,
   sandboxObjectUrl,
@@ -51,6 +52,7 @@ import {
   readSourceBuild,
   SourceBuildError,
   type SourceChanges,
+  type SourceUpdateNeeds,
   sandboxBuildCleanup,
   sourceUpdateNeeds,
   startSourceBuildCore,
@@ -134,6 +136,12 @@ export interface SourceBuildReview {
   needsSecrets: CatalogSecret[];
   /** Names among `needsSecrets` the Worker already has; their fields start empty. */
   heldSecrets: string[];
+  /** For an update: names among `needsSecrets` that a new stream's sink writes with. */
+  streamTokens: string[];
+  /** For an update: databases the build adds, whose connection strings it asks for. */
+  needsDatabases: HyperdriveDeclaration[];
+  /** For an update: databases an earlier update connected, whose connection it may replace. */
+  replaceableDatabases: HyperdriveDeclaration[];
   skipsPreview: string | null;
   /** How the update changes the app's Email Routing; null when its email stays the same. */
   emailRouting: string | null;
@@ -261,7 +269,7 @@ export const getSourceBuild = createServerFn({ method: "GET" })
         suggested,
         row.origin === "source" ? "source" : "repository",
       );
-      const needs = updating
+      const needs: SourceUpdateNeeds = updating
         ? await sourceUpdateNeeds(env.DB, install, manifest)
         : { needsSecrets: [], skipsPreview: null };
       review = {
@@ -293,6 +301,9 @@ export const getSourceBuild = createServerFn({ method: "GET" })
         baseline: release?.ok === true ? bindingChanges(release.manifest, manifest) : null,
         needsSecrets: needs.needsSecrets,
         heldSecrets: needs.heldSecrets ?? [],
+        streamTokens: needs.streamTokens ?? [],
+        needsDatabases: needs.needsDatabases ?? [],
+        replaceableDatabases: needs.replaceableDatabases ?? [],
         skipsPreview: needs.skipsPreview,
         emailRouting: ("emailRouting" in needs ? needs.emailRouting : undefined) ?? null,
         emailRoutingKey: ("emailRoutingKey" in needs ? needs.emailRoutingKey : undefined) ?? null,

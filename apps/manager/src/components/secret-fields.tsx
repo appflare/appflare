@@ -117,6 +117,7 @@ export function SecretFields({
   onChange,
   after,
   fieldExtras = {},
+  disabled = false,
 }: {
   secrets: readonly CatalogSecret[];
   /**
@@ -139,6 +140,8 @@ export function SecretFields({
    * Cloudflare token the app takes in that secret.
    */
   fieldExtras?: Readonly<Record<string, ReactNode>>;
+  /** While the form is being sent: nothing can be changed. */
+  disabled?: boolean;
 }) {
   return enteredSecrets(secrets)
     .filter((secret) => only === undefined || only.includes(secret.name))
@@ -158,6 +161,7 @@ export function SecretFields({
             }
             after={after}
             optional={optional}
+            disabled={disabled}
             note={
               [
                 derived,
@@ -268,6 +272,7 @@ function SecretField({
   after,
   optional = false,
   note,
+  disabled = false,
 }: {
   secret: CatalogSecret;
   value: string;
@@ -275,6 +280,7 @@ function SecretField({
   after: string;
   /** Marked "(optional)"; empty means not set. */
   optional?: boolean;
+  disabled?: boolean;
   /** A sentence after the help, such as which secrets are derived from this one. */
   note?: string | undefined;
 }) {
@@ -315,7 +321,10 @@ function SecretField({
         onChange={onChange}
         optional={optional}
         help={help}
-        regenerate={() => onChange(generatedSecret(secret.generate))}
+        disabled={disabled}
+        regenerate={() => {
+          if (!disabled) onChange(generatedSecret(secret.generate));
+        }}
       />
     );
   }
@@ -327,6 +336,7 @@ function SecretField({
         onChange={onChange}
         description={help}
         required={!optional}
+        disabled={disabled}
       />
     );
   }
@@ -338,6 +348,7 @@ function SecretField({
       spellCheck={false}
       passwordManagerIgnore
       required={!optional}
+      disabled={disabled}
       value={value}
       onChange={(e) => onChange(e.currentTarget.value)}
       description={help}
@@ -358,6 +369,7 @@ function GeneratedSecretField({
   optional,
   help,
   regenerate,
+  disabled = false,
 }: {
   secret: CatalogSecret;
   value: string;
@@ -365,6 +377,7 @@ function GeneratedSecretField({
   optional: boolean;
   help: ReactNode;
   regenerate(): void;
+  disabled?: boolean;
 }) {
   const inputId = useId();
   const helpId = useId();
@@ -384,6 +397,7 @@ function GeneratedSecretField({
             size="xs"
             icon={<ArrowsClockwiseIcon />}
             onClick={regenerate}
+            disabled={disabled}
           >
             Generate
           </Button>
@@ -395,6 +409,7 @@ function GeneratedSecretField({
         aria-describedby={help === undefined ? undefined : helpId}
         value={value}
         required={!optional}
+        disabled={disabled}
         onValueChange={(next: string) => onChange(next)}
       />
       {help !== undefined && (

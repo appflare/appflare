@@ -1,16 +1,14 @@
 import { Badge, Banner, Checkbox, Empty, Link, LinkButton, Table, Text } from "@cloudflare/kumo";
 import {
-  ArrowCircleUpIcon,
   ArrowRightIcon,
   CheckCircleIcon,
-  EnvelopeSimpleIcon,
   GitBranchIcon,
   TrashIcon,
   WarningCircleIcon,
   WarningIcon,
 } from "@phosphor-icons/react";
 import { createFileRoute, useRouter } from "@tanstack/react-router";
-import { type FormEvent, useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import { z } from "zod";
 import { requirementBadge } from "../../../capabilities/capabilities";
 import { CapabilityBadge } from "../../../capabilities/capability-badge";
@@ -28,18 +26,12 @@ import { resourceKindLabel } from "../../../components/format";
 import { InstallAgainBanner } from "../../../components/install-again-banner";
 import { InstallAgainBuildGone } from "../../../components/install-again-build-gone";
 import { InstallForm } from "../../../components/install-form";
-import { useJobStarted } from "../../../components/job-started";
-import { ErrorMessageBanner, MessageText } from "../../../components/message-text";
+import { MessageText } from "../../../components/message-text";
 import { OriginBadge } from "../../../components/origin-badge";
 import { PageHeader } from "../../../components/page-header";
-import {
-  initialSecretValues,
-  SecretFields,
-  secretsComplete,
-  withSecretValue,
-} from "../../../components/secret-fields";
 import { Section, SectionBody, SectionRows, SectionTable } from "../../../components/section";
 import { Timestamp } from "../../../components/timestamp";
+import { UpdateFromBuild } from "../../../components/update-from-build";
 import {
   type InstallAgainRecord,
   type InstallFormPrefill,
@@ -53,7 +45,6 @@ import {
   getSourceBuild,
   type SourceBuildReview,
   type SourceBuildView,
-  updateFromSourceBuild,
 } from "../../../installs/source-builds.functions";
 import { UNUSED_BUILD_DAYS, UNUSED_BUILD_NOTE } from "../../../installs/source-builds-retention";
 
@@ -770,122 +761,6 @@ function Requirements({
             </Text>
           )
         )}
-      </SectionBody>
-    </Section>
-  );
-}
-
-/** Updating an install from its reviewed rebuild: new secrets, the preview question, then the update job. */
-function UpdateFromBuild({
-  build,
-  review,
-  canUpdate,
-}: {
-  build: SourceBuildView;
-  review: SourceBuildReview;
-  canUpdate: boolean;
-}) {
-  const jobStarted = useJobStarted();
-  const [secrets, setSecrets] = useState(() =>
-    initialSecretValues(review.needsSecrets, review.heldSecrets),
-  );
-  const [noPreview, setNoPreview] = useState(false);
-  const [pending, setPending] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const ready =
-    canUpdate &&
-    !pending &&
-    secretsComplete(review.needsSecrets, secrets) &&
-    (review.skipsPreview === null || noPreview);
-
-  async function onSubmit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    if (!ready) return;
-    setPending(true);
-    setError(null);
-    try {
-      const { jobId } = await updateFromSourceBuild({
-        data: {
-          buildId: build.id,
-          secrets,
-          ...(review.skipsPreview === null ? {} : { confirmNoPreview: noPreview }),
-          ...(review.emailRoutingKey === null
-            ? {}
-            : { confirmEmailRouting: review.emailRoutingKey }),
-        },
-      });
-      await jobStarted(jobId, "Update started");
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Could not start the update.");
-      setPending(false);
-    }
-  }
-
-  return (
-    <Section title={`Update ${build.install?.label ?? "the install"}`}>
-      <SectionBody>
-        <form className="grid gap-5" onSubmit={onSubmit}>
-          <Text variant="secondary">
-            The update takes a snapshot of the current version and of each D1 database, checks the
-            new version before it serves traffic where Cloudflare allows it, and keeps the current
-            one for a rollback.
-          </Text>
-          {review.skipsPreview !== null && (
-            <div className="grid gap-3">
-              <Banner
-                variant="alert"
-                icon={<WarningIcon weight="fill" />}
-                title="No preview check for this update"
-                description={`${review.skipsPreview}.`}
-              />
-              <Checkbox
-                checked={noPreview}
-                onCheckedChange={(checked: boolean) => setNoPreview(checked)}
-                disabled={pending || !canUpdate}
-                label="Update without checking the new version first"
-              />
-            </div>
-          )}
-          {review.emailRouting !== null && (
-            <Banner
-              variant="secondary"
-              icon={<EnvelopeSimpleIcon />}
-              title="Email changes with this version"
-              description={review.emailRouting}
-            />
-          )}
-          {review.needsSecrets.length > 0 && (
-            <div className="grid gap-4">
-              <div className="grid gap-1.5">
-                <Text bold>New secrets</Text>
-                <Text variant="secondary" size="sm">
-                  This build needs secrets the app does not have yet. They are stored as encrypted
-                  secrets on the app's Worker; Appflare keeps only their names.
-                </Text>
-              </div>
-              <SecretFields
-                secrets={review.needsSecrets}
-                vars={review.catalog.vars}
-                held={review.heldSecrets}
-                values={secrets}
-                onChange={(name, value) => setSecrets((s) => withSecretValue(s, name, value))}
-                after="the update"
-              />
-            </div>
-          )}
-          {error !== null && <ErrorMessageBanner message={error} newTab />}
-          <div className="flex justify-end">
-            <BusyButton
-              pending={pending}
-              type="submit"
-              variant="primary"
-              icon={<ArrowCircleUpIcon />}
-              disabled={!ready}
-            >
-              Update
-            </BusyButton>
-          </div>
-        </form>
       </SectionBody>
     </Section>
   );

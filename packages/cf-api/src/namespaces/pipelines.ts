@@ -42,6 +42,8 @@ export interface PipelineStream {
   name: string;
   /** `https://<id>.ingest.cloudflare.com` while HTTP ingest is on. */
   endpoint?: string;
+  /** The stream's schema; null for an unstructured stream (wrangler 4's `Stream`). */
+  schema?: { fields: StreamSchemaField[] } | null;
   created_at?: string;
   modified_at?: string;
 }
@@ -70,6 +72,11 @@ export interface PipelineSink {
   id: string;
   name: string;
   type?: string;
+  /**
+   * Where it writes (wrangler 4's `Sink.config`). Only these fields are
+   * typed: the credential Cloudflare may return beside them is never read.
+   */
+  config?: { bucket?: string; namespace?: string; table_name?: string };
   created_at?: string;
   modified_at?: string;
 }
