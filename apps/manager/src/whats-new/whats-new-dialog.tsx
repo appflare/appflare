@@ -124,7 +124,7 @@ export function WhatsNewDialog({
           {releases.length === 0 ? (
             <Empty
               size="sm"
-              icon={<SparkleIcon size={32} />}
+              icon={<SparkleIcon size={32} className="text-kumo-inactive" />}
               title="No release notes yet"
               description="Appflare reads its releases every 30 minutes. Check back soon."
             />

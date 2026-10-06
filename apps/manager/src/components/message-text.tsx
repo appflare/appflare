@@ -1,6 +1,6 @@
 import { Banner, Link, LinkButton } from "@cloudflare/kumo";
-import { WarningCircleIcon } from "@phosphor-icons/react";
-import { type ComponentProps, Fragment, type ReactNode } from "react";
+import { CheckCircleIcon, InfoIcon, WarningCircleIcon, WarningIcon } from "@phosphor-icons/react";
+import { type ComponentProps, Fragment, type ReactElement, type ReactNode } from "react";
 import { messageSegments } from "./message-links";
 
 /** What ends an address: a space, a quote, an angle bracket, a backtick, a closing bracket. */
@@ -167,33 +167,74 @@ export function MessageText({
   );
 }
 
+/** Kumo's banner variants. */
+export type BannerTone = NonNullable<ComponentProps<typeof Banner>["variant"]>;
+
 /**
- * A banner for a message string. Kumo's banner title is plain text, so a
- * message with a link goes in the description instead.
+ * The icon for each banner variant, so one tone always looks the same: a
+ * circled warning for an error, a triangle for a warning, an "i" for
+ * information. Always the filled weight. An information banner may carry an
+ * icon of its subject instead (an envelope for email), also filled.
+ */
+export const BANNER_ICON: Readonly<Record<BannerTone, ReactElement>> = {
+  error: <WarningCircleIcon weight="fill" />,
+  alert: <WarningIcon weight="fill" />,
+  default: <InfoIcon weight="fill" />,
+  secondary: <InfoIcon weight="fill" />,
+};
+
+/**
+ * Kumo's banner has no live region, so a banner that appears after the
+ * admin did something would never reach a screen reader. An error is
+ * announced at once (`alert`). Anything else is a polite `status`, which
+ * screen readers announce reliably only when its text changes while it stays
+ * on the page; one that appears with its text already in it may be read only
+ * when reached. Inside a region that is already live, use a plain Banner.
+ */
+export function bannerRole(variant: BannerTone): "alert" | "status" {
+  return variant === "error" ? "alert" : "status";
+}
+
+/**
+ * A message string as a banner's text: its title, or, when it has a link,
+ * its description (Kumo's banner title is plain text). For
+ * `<SuccessBanner {...bannerMessage(notice)} />`.
+ */
+export function bannerMessage(
+  message: string,
+  newTab = false,
+): { title: string } | { description: ReactNode } {
+  return messageHasLinks(message)
+    ? { description: <MessageText message={message} newTab={newTab} /> }
+    : { title: message };
+}
+
+/**
+ * A banner for a message string (`bannerMessage`), with its variant's
+ * live-region role (`bannerRole`) and icon unless given another.
  */
 export function MessageBanner({
   message,
   variant,
-  icon,
+  icon = BANNER_ICON[variant],
   newTab = false,
 }: {
   message: string;
-  variant: ComponentProps<typeof Banner>["variant"];
-  icon: ReactNode;
+  variant: BannerTone;
+  icon?: ReactNode;
   newTab?: boolean;
 }) {
   return (
     <Banner
       variant={variant}
       icon={icon}
-      {...(messageHasLinks(message)
-        ? { description: <MessageText message={message} newTab={newTab} /> }
-        : { title: message })}
+      role={bannerRole(variant)}
+      {...bannerMessage(message, newTab)}
     />
   );
 }
 
-/** An error banner for a message string (`MessageBanner`). */
+/** An error banner for a message string (`MessageBanner`), announced as an alert. */
 export function ErrorMessageBanner({
   message,
   newTab = false,
@@ -201,12 +242,22 @@ export function ErrorMessageBanner({
   message: string;
   newTab?: boolean;
 }) {
+  return <MessageBanner message={message} variant="error" newTab={newTab} />;
+}
+
+/**
+ * Something the admin did worked ("Token rotated"). Kumo's banner has no
+ * success variant: this is the neutral one with a green check, so success
+ * never reads as information or as a warning. A polite `status` (see
+ * `bannerRole`). Takes Kumo's banner props but its variant and icon.
+ */
+export function SuccessBanner(props: Omit<ComponentProps<typeof Banner>, "variant" | "icon">) {
   return (
-    <MessageBanner
-      message={message}
-      variant="error"
-      icon={<WarningCircleIcon weight="fill" />}
-      newTab={newTab}
+    <Banner
+      role="status"
+      {...props}
+      variant="secondary"
+      icon={<CheckCircleIcon weight="fill" className="text-kumo-success" />}
     />
   );
 }

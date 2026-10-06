@@ -21,6 +21,7 @@ import { SettingsNavItem } from "./settings-nav";
 import { SidebarAppsGroup } from "./sidebar-apps";
 import type { SidebarApp } from "./sidebar-apps-list";
 import { MOBILE_BREAKPOINT, useIsNarrow, useSidebarRail } from "./sidebar-rail";
+import { Tooltip } from "./tooltip";
 import { useHashTarget } from "./use-hash-target";
 
 interface NavItem {
@@ -102,6 +103,9 @@ function useCloseDrawerOnNavigate(pathname: string): void {
   }, [pathname, isMobile, setOpenMobile]);
 }
 
+/** Kumo's tooltip gives its trigger the default cursor; the sidebar's button keeps its pointer. */
+const TRIGGER_CURSOR = "cursor-pointer";
+
 function ShellHeader() {
   const { isMobile } = useSidebar();
   const folded = useFolded();
@@ -110,13 +114,23 @@ function ShellHeader() {
     return (
       <Sidebar.Header className="justify-center px-[11px]">
         {/* The mark, turning into the sidebar icon under the pointer or keyboard focus. */}
-        <Sidebar.Trigger className="group/rail" title="Expand sidebar">
-          <LogoMark size={20} className="group-hover/rail:hidden group-focus-visible/rail:hidden" />
-          <SidebarSimpleIcon
-            size={18}
-            className="hidden group-hover/rail:block group-focus-visible/rail:block"
-          />
-        </Sidebar.Trigger>
+        <Tooltip
+          content="Expand sidebar"
+          side="right"
+          className={TRIGGER_CURSOR}
+          render={
+            <Sidebar.Trigger className="group/rail">
+              <LogoMark
+                size={20}
+                className="group-hover/rail:hidden group-focus-visible/rail:hidden"
+              />
+              <SidebarSimpleIcon
+                size={18}
+                className="hidden group-hover/rail:block group-focus-visible/rail:block"
+              />
+            </Sidebar.Trigger>
+          }
+        />
       </Sidebar.Header>
     );
   }
@@ -134,9 +148,16 @@ function ShellHeader() {
       {isMobile ? (
         <Sidebar.Close />
       ) : (
-        <Sidebar.Trigger title="Collapse sidebar">
-          <SidebarSimpleIcon size={18} />
-        </Sidebar.Trigger>
+        <Tooltip
+          content="Collapse sidebar"
+          side="bottom"
+          className={TRIGGER_CURSOR}
+          render={
+            <Sidebar.Trigger>
+              <SidebarSimpleIcon size={18} />
+            </Sidebar.Trigger>
+          }
+        />
       )}
     </Sidebar.Header>
   );

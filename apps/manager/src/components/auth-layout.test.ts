@@ -53,9 +53,10 @@ describe("AuthLayout", () => {
 });
 
 describe("auth screen parts", () => {
-  it("announces an error as an alert with the plain message only", () => {
+  it("announces an error once, as an alert with the plain message only", () => {
     const html = renderToStaticMarkup(createElement(AuthError, { message: "Try again." }));
-    expect(html).toMatch(/^<div role="alert">/);
+    expect(html).toMatch(/^<div [^>]*role="alert"/);
+    expect(html.match(/role="alert"/g)).toHaveLength(1);
     expect(html).toContain("Try again.");
   });
 
