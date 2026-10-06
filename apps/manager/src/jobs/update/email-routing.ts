@@ -245,8 +245,18 @@ export function describeEmailRoutingChange(change: EmailRoutingChange): string {
   return `Email Routing on ${zone}: ${parts.join(", then ")}.`;
 }
 
-/** What the log adds about a part left out: when it is tried again. */
-const LATER = "The next update or rollback of the app sets it up once that is resolved.";
+/**
+ * What the log adds about a part left out: when it is tried again, and how
+ * to sooner when the app's settings offer it (`again`: the part is missing
+ * from the records; a catch-all on record is checked again only by an update
+ * or a rollback).
+ */
+function later(installId: string, again: boolean): string {
+  const next = "The next update or rollback of the app sets it up once that is resolved";
+  return again
+    ? `${next}; to set it up sooner, select Set up email again under ${settingsPlace(installId)}.`
+    : `${next}.`;
+}
 
 /** Where the admin chooses another domain for the app's email. */
 function settingsPlace(installId: string): string {
@@ -265,9 +275,12 @@ async function checkAdditionsPhase(
     zone: EmailZone;
     addresses: string[];
     catchAll: boolean;
+    /** The catch-all is on record, and was found not delivering to the Worker. */
+    catchAllOnRecord: boolean;
     workerName: string;
   },
 ): Promise<EmailRoutingInspection | null> {
+  const offered = request.addresses.length > 0 || (request.catchAll && !request.catchAllOnRecord);
   const { inspection } = await steps.run(
     `check Email Routing on ${request.zone.zoneName}`,
     async ({ log }) => {
@@ -282,27 +295,31 @@ async function checkAdditionsPhase(
       );
       if (found.zoneName === null) {
         log.warn(
-          `Appflare cannot see ${request.zone.zoneName}, the domain the app receives email for: it may have been removed from Cloudflare, or the token lacks ${found.missing.join(", ") || "Zone: Read"}. Nothing new is set up for this version's email; choose another domain under ${settingsPlace(request.installId)}, or fix the token. ${LATER}`,
+          `Appflare cannot see ${request.zone.zoneName}, the domain the app receives email for: it may have been removed from Cloudflare, or the token lacks ${found.missing.join(", ") || "Zone: Read"}. Nothing new is set up for this version's email; choose another domain under ${settingsPlace(request.installId)}, or fix the token. ${later(request.installId, offered)}`,
         );
         return { inspection: null };
       }
       if (found.missing.length > 0) {
         log.warn(
-          `The Cloudflare token lacks ${found.missing.join(", ")}, which setting up this version's email needs, so nothing new is set up for it; add them to the token (for this zone). ${LATER}`,
+          `The Cloudflare token lacks ${found.missing.join(", ")}, which setting up this version's email needs, so nothing new is set up for it; add them to the token (for this zone). ${later(request.installId, offered)}`,
         );
         return { inspection: null };
       }
-      const partial = new Set<string>();
-      for (const a of found.addresses) if (a.conflict !== undefined) partial.add(a.conflict);
-      if (found.catchAll?.problem !== undefined) partial.add(found.catchAll.problem);
+      const partial = new Map<string, boolean>();
+      for (const a of found.addresses) if (a.conflict !== undefined) partial.set(a.conflict, true);
+      if (found.catchAll?.problem !== undefined) {
+        partial.set(found.catchAll.problem, !request.catchAllOnRecord);
+      }
       const blocking = found.problems.filter((p) => !partial.has(p));
       if (blocking.length > 0) {
         log.warn(
-          `${blocking.join(" ")} So nothing new is set up for this version's email; another domain can be chosen under ${settingsPlace(request.installId)}. ${LATER}`,
+          `${blocking.join(" ")} So nothing new is set up for this version's email; another domain can be chosen under ${settingsPlace(request.installId)}. ${later(request.installId, offered)}`,
         );
         return { inspection: null };
       }
-      for (const problem of partial) log.warn(`${problem} ${LATER}`);
+      for (const [problem, again] of partial) {
+        log.warn(`${problem} ${later(request.installId, again)}`);
+      }
       for (const warning of found.warnings) log.warn(warning);
       const kept: EmailRoutingInspection = {
         ...found,
@@ -373,6 +390,7 @@ export async function changeEmailRoutingPhase(
         zone,
         addresses: change.addresses,
         catchAll: change.catchAll,
+        catchAllOnRecord: change.verifyCatchAll === true,
         workerName: request.workerName,
       });
       if (inspection !== null) {
@@ -389,7 +407,7 @@ export async function changeEmailRoutingPhase(
     await steps
       .run("Email Routing not finished", async ({ log }) => {
         log.warn(
-          `Appflare could not finish changing the app's Email Routing (${errorMessage(error)}). The version serves all the same, and what was set up or removed so far is recorded; the next update or rollback of the app finishes the rest. To finish it sooner, make the change in the Cloudflare dashboard (Email Service, Email Routing).`,
+          `Appflare could not finish changing the app's Email Routing (${errorMessage(error)}). The version serves all the same, and what was set up or removed so far is recorded; the next update or rollback of the app finishes the rest. ${request.target === null ? "To finish it sooner, make the change in the Cloudflare dashboard (Email Service, Email Routing)." : `To finish it sooner, select Set up email again under ${settingsPlace(request.installId)} if the app's settings offer it.`}`,
         );
         return {};
       })

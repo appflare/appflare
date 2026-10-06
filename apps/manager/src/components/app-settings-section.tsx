@@ -30,6 +30,7 @@ import { AppTokenHelp } from "./app-token-permissions";
 import { BusyButton } from "./busy-button";
 import { connectionsComplete, DatabaseField } from "./database-fields";
 import { DocsLink } from "./docs-link";
+import { EmailAgainBanner } from "./email-again";
 import { EmailRoutingFields } from "./email-routing-fields";
 import {
   FieldHelp,
@@ -69,7 +70,8 @@ export function settingsNotice(
  * "Remove" for one the installed version declares optional or no longer
  * declares; the secret that takes the app's own Cloudflare token says how to
  * create one next to its new value); for an app that receives email, the
- * zone it receives for. "Save and redeploy" starts the settings change job
+ * zone it receives for, and what an update or a rollback left out of its
+ * email there, with "Set up email again". "Save and redeploy" starts the settings change job
  * and opens its log. Members see it read-only; while a job of the app runs,
  * nothing can be saved. At most one notice sits at the top.
  */
@@ -409,7 +411,9 @@ export function AppSettingsSection({
                   description={
                     settings.email.zoneName === null
                       ? "The app receives email through Cloudflare Email Routing; Appflare has no record of its domain."
-                      : `The app receives email for ${settings.email.zoneName} through Cloudflare Email Routing.`
+                      : install.emailRoutes.length === 0
+                        ? `The app receives email for ${settings.email.zoneName} through Cloudflare Email Routing, but none of its routes are set up there now.`
+                        : `The app receives email for ${settings.email.zoneName} through Cloudflare Email Routing.`
                   }
                 >
                   {leftover.length > 0 && (
@@ -432,6 +436,14 @@ export function AppSettingsSection({
                           </BusyButton>
                         ) : undefined
                       }
+                    />
+                  )}
+                  {settings.email.again !== null && leftover.length === 0 && (
+                    <EmailAgainBanner
+                      install={install}
+                      parts={settings.email.again}
+                      canStart={canEdit}
+                      disabled={dirty || pending}
                     />
                   )}
                   {movingEmail && canEdit ? (

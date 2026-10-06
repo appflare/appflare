@@ -92,6 +92,10 @@ If removing the old zone's rules stops part way, the tab shows **Moving email di
 not finish** with the zones that still have rules. Select **Finish moving email**: it
 checks the new zone again and removes what is left, without deploying the Worker.
 
+If an update or a rollback left part of the app's email out, the tab shows **Part of
+the app's email is not set up**, with **Set up email again** for admins; see
+[Set up email again](/guides/email-apps/#set-up-email-again).
+
 ## What the job does
 
 1. Checks that the version the app runs, and its resources, still fit together. The

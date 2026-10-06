@@ -21,6 +21,7 @@ import { type BuildKind, installs, resources } from "../db/schema";
 import { jobCreator } from "../jobs/create-job.server";
 import { entryWorkers, parseStoredManifest } from "../jobs/entry-workers";
 import type { ReconfigureJobParams } from "../jobs/reconfigure";
+import { type EmailAgainParts, emailLeftOut } from "../jobs/reconfigure/email-again";
 import {
   changedVarNames,
   changesSecrets,
@@ -36,6 +37,7 @@ import {
   secretSlots,
 } from "../jobs/reconfigure/plan";
 import { recordedCatalog, settingsRunId } from "../jobs/self-deploying/phases";
+import { emailZoneOnRecord, readEmailRouteRows } from "../jobs/update/email-routing";
 import { lastDurableObjectTagOf, updatePath } from "../jobs/update/plan";
 import { sandboxBinding } from "../sandbox/binding";
 import { activeSandboxJob, sandboxBusyMessage } from "../sandbox/busy";
@@ -59,7 +61,7 @@ import {
   varsNeedRefresh,
   varValueProblem,
 } from "./install-vars";
-import type { StartReconfigureInput } from "./reconfigure-input";
+import type { StartEmailAgainInput, StartReconfigureInput } from "./reconfigure-input";
 import { EMAIL_ROUTE_KIND, HYPERDRIVE_KIND, WILDCARD_DOMAIN_KIND } from "./resource-kinds";
 import { catalogOnlyManifest } from "./start-install.server";
 import type { RefreshVars } from "./vars-refresh.server";
@@ -129,10 +131,18 @@ export interface InstallSettings {
   /** Whether secrets the version does not need can be removed (not for a self-deploying app). */
   canRemoveSecrets: boolean;
   /**
-   * For an app that receives email: the zone it receives for (null if none is
-   * recorded), and zones an unfinished move left routes on; null otherwise.
+   * For an app that receives email: the zone it receives for (the zone on
+   * record, even when a version without email removed every route there;
+   * null if none is recorded), zones an unfinished move left routes on, and what an update or
+   * a rollback left out of the installed version's email there (`again`,
+   * null when nothing is, or while a job of the app runs); null otherwise.
    */
-  email: { zoneId: string | null; zoneName: string | null; leftover: string[] } | null;
+  email: {
+    zoneId: string | null;
+    zoneName: string | null;
+    leftover: string[];
+    again: EmailAgainParts | null;
+  } | null;
   /** Why the new settings cannot be checked on a preview before they serve; null when they can. */
   skipsPreview: string | null;
   /** A self-deploying app: the installer run whose cost the admin confirms; null otherwise. */
@@ -185,7 +195,7 @@ async function settingsContext(
 ): Promise<SettingsContext | null> {
   const signed =
     install.build_kind === "self-deploying" ? null : parseManifest(install.manifest_json);
-  const [rows, effective] = await Promise.all([
+  const [rows, effective, emailRows] = await Promise.all([
     createDb(db)
       .select({
         kind: resources.kind,
@@ -207,6 +217,9 @@ async function settingsContext(
       .orderBy(sql`rowid`),
     // The form of the newest revision recorded for the release, if any.
     signed === null ? null : effectiveManifest(createDb(db), signed, install.artifact_digest),
+    // Live and removed: the zone on record, and what an update or a
+    // rollback left out.
+    signed === null ? [] : readEmailRouteRows(createDb(db), install.id),
   ]);
   // Secret rows: `name` is the secret's key, `binding` the name the Worker reads.
   const secretRows = rows.filter((r) => r.kind === "secret");
@@ -247,7 +260,9 @@ async function settingsContext(
       .filter((r) => r.kind === EMAIL_ROUTE_KIND)
       .map((r) => ({ name: r.name, cfId: r.cfId, createdAt: r.createdAt.getTime() })),
   );
-  const zone = zones.current;
+  // The newest live route's zone, else the one routes a version without
+  // email removed from: setting the email up again happens there.
+  const zone = emailZoneOnRecord(emailRows);
   let problem: string | null = null;
   if (install.build_kind === "sandbox" && !sandboxConnected) {
     problem = `This app was built in the account's sandbox Worker, which holds its build, and Appflare is not connected to one. Connect sandbox builds in ${ENABLE_SANDBOX_PLACE} to change its settings.`;
@@ -271,6 +286,11 @@ async function settingsContext(
             zoneId: zone?.zoneId ?? null,
             zoneName: zone?.zoneName ?? null,
             leftover: zones.leftover.map((z) => z.zoneName),
+            // Only between jobs: while one runs, its own steps change the records.
+            again:
+              install.status === "installed"
+                ? emailLeftOut(manifest.catalog.install.emailRouting, emailRows, install.id)
+                : null,
           },
     skipsPreview: path.skipPreview,
     installer: null,
@@ -507,6 +527,77 @@ export async function startReconfigureCore(
       ...(zoneId === null ? {} : { emailRouting: { zoneId } }),
       ...(redeploy && ctx.skipsPreview !== null ? { confirmNoPreview: true } : {}),
       ...(selfDeploying ? { selfDeploying: true, buildConfirmed: true } : {}),
+    },
+  });
+}
+
+/** Whether two descriptions of setting the email up again name the same parts. */
+function sameEmailParts(a: StartEmailAgainInput["parts"], b: EmailAgainParts): boolean {
+  const key = (p: StartEmailAgainInput["parts"]) =>
+    JSON.stringify([
+      p.zoneId,
+      [...p.addresses].sort(),
+      p.catchAll,
+      p.remove.map((r) => `${r.kind}:${r.name}`).sort(),
+    ]);
+  return key(a) === key(b);
+}
+
+/**
+ * Starts the `reconfigure` job with `emailAgain`: sets the app's email up
+ * again on the domain it receives email for, finishing what an update or a
+ * rollback left out (see jobs/reconfigure/email-again.ts). `parts` are what
+ * the confirmation named; a page left open while they changed (another job
+ * set something up, a revision changed the version's email) is refused with
+ * a request to reload, so nobody confirms a change they did not see. Refused
+ * when nothing is left out, and while another job of the app runs. Returns
+ * the job id.
+ */
+export async function startEmailAgainCore(
+  deps: StartReconfigureDeps,
+  request: StartEmailAgainInput,
+): Promise<{ jobId: string }> {
+  const install = await readInstall(deps.db, request.installId);
+  const refusal = statusRefusal(install.status);
+  if (refusal !== null) throw new VersionActionError(refusal);
+  const ctx = await settingsContext(deps.db, install, deps.sandboxConnected === true);
+  if (ctx === null || install.build_kind === "self-deploying") {
+    throw new VersionActionError(
+      "Appflare has no readable record of this app's version; update or reinstall it to set up its email.",
+    );
+  }
+  if (ctx.email === null) {
+    throw new VersionActionError(`${ctx.catalog.name} does not receive email.`);
+  }
+  const parts = ctx.email.again;
+  if (parts === null) {
+    throw new VersionActionError(
+      `Nothing is left out of ${ctx.catalog.name}'s email: it is set up as its version asks.`,
+    );
+  }
+  if (!sameEmailParts(request.parts, parts)) {
+    throw new VersionActionError(
+      "What is left out of the app's email changed since this page was loaded. Reload it to see what setting it up again does now.",
+    );
+  }
+  const jobId = (deps.newId ?? (() => ulid()))();
+  return claim(deps, {
+    installId: install.id,
+    kind: "reconfigure",
+    inputJson: JSON.stringify({
+      installId: install.id,
+      version: install.catalog_version,
+      vars: [],
+      secrets: { set: [], unset: [] },
+      emailAgain: true,
+    }),
+    params: {
+      kind: "reconfigure",
+      jobId,
+      installId: install.id,
+      vars: parseStoredVars(install.config_json),
+      secrets: { set: {}, unset: [] },
+      emailAgain: true,
     },
   });
 }

@@ -65,6 +65,7 @@ import {
 } from "./install/phases";
 import { newSinkTokenPhase } from "./install/pipelines";
 import { assignRateLimitsPhase } from "./install/rate-limits";
+import { setUpEmailAgainPhase } from "./reconfigure/email-again";
 import {
   type ConnectionReplacement,
   createReplacementPhase,
@@ -145,6 +146,10 @@ import { takeSnapshotPhase } from "./update/snapshot";
  * run only when a setting uses them (`refreshVars: ["access"]`), and the
  * live health check always follows.
  *
+ * Setting the app's email up again (`emailAgain`) runs here too, so it
+ * takes the app's turn like any other job: after the start step, only the
+ * email steps of ./reconfigure/email-again.ts run, and nothing is deployed.
+ *
  * Steps 2 to 6 run only when settings, secrets or connections change: Email Routing rules
  * name the Worker, not a version, so moving email alone deploys nothing. A
  * move whose removal of the old routes failed is finished by asking for the
@@ -188,6 +193,14 @@ export const reconfigureJobParams = z.object({
   hyperdrive: connectionChangesSchema.optional(),
   /** The zone the app should receive email for instead of the current one. */
   emailRouting: emailRoutingJobInput.optional(),
+  /**
+   * Set the app's email up again on the domain it receives email for, so it
+   * matches the version that serves: the parts an update or a rollback left
+   * out, checked strictly first (./reconfigure/email-again.ts). Nothing else
+   * changes and nothing is deployed. Optional; a job started by an earlier
+   * manager version has none.
+   */
+  emailAgain: z.literal(true).optional(),
   /** The admin accepted that the new settings cannot be checked on a preview first. */
   confirmNoPreview: z.boolean().optional(),
   /**
@@ -351,6 +364,8 @@ export async function runReconfigure(ctx: JobContext): Promise<void> {
   let secretNames: ReadonlyMap<string, string> = new Map();
   /** The removal of the old zone's email routes began (a failure leaves a move to finish). */
   let emailMoveStarted = false;
+  /** Setting the app's email up again began (`emailAgain`). */
+  let emailAgainStarted = false;
   /** How far a change of Cloudflare Access protection got, for the failure report. */
   let accessChanged: "protected" | "unprotected" | null = null;
   /**
@@ -607,6 +622,41 @@ export async function runReconfigure(ctx: JobContext): Promise<void> {
     };
     const healthPath = manifest.catalog.install.health.path;
     const healthMode = manifest.catalog.install.health.mode;
+
+    if (params.emailAgain === true) {
+      // Only the email is set up again: anything else asked with it is refused.
+      if (redeploy || params.emailRouting !== undefined || params.access !== undefined) {
+        throw new JobError(
+          "setting up the app's email again changes nothing else; save other changes on their own",
+        );
+      }
+      emailAgainStarted = true;
+      const changed = await setUpEmailAgainPhase(steps, {
+        installId: params.installId,
+        workerName,
+        target: emailConfig ?? null,
+      });
+      await run("finish", async ({ log, orm }) => {
+        const at = new Date(now());
+        await orm.batch([
+          orm
+            .update(installs)
+            .set({ status: "installed", updated_at: at })
+            .where(and(eq(installs.id, params.installId), eq(installs.status, "updating"))),
+          orm
+            .update(jobs)
+            .set({ status: "succeeded", finished_at: at, error: null })
+            .where(eq(jobs.id, params.jobId)),
+        ]);
+        log.info(
+          changed
+            ? `Set up the email of ${started.slug} again; it matches version ${started.version}.`
+            : `The email of ${started.slug} already matches version ${started.version}; nothing was changed.`,
+        );
+        return {};
+      });
+      return;
+    }
 
     await run("plan settings change", async ({ log }) => {
       const problems = [
@@ -1219,7 +1269,11 @@ export async function runReconfigure(ctx: JobContext): Promise<void> {
         .set({ status: "installed", updated_at: at })
         .where(and(eq(installs.id, params.installId), eq(installs.status, "updating")));
       const log = new StepLog(now);
-      if (moveEmail) {
+      if (emailAgainStarted) {
+        log.error(
+          `Setting up the app's email again stopped at "${failedAt}". Nothing Appflare did not set up was changed, and the routes it set up before it stopped are recorded; set up the email again from ${appPlace(params.installId, "email-zone", "Email in the app's settings")} once the reason above is resolved.`,
+        );
+      } else if (moveEmail) {
         log.error(
           `Settings change failed at "${failedAt}" while removing the old zone's email routes. The new zone already receives the app's email; finish the move under ${appPlace(params.installId, "email-zone", "Email in the app's settings")} to remove what is left.${serving === null ? "" : ` Version ${serving} serves all traffic with the new settings, and they are recorded.`}`,
           serving === null ? undefined : { versionId: serving },

@@ -76,7 +76,8 @@ The update job:
 8. For an app that receives email, sets up the routing rules and catch-all the new
    version adds and removes the ones it no longer needs, on the app's domain (see
    [Updates and rollbacks](/guides/email-apps/#updates-and-rollbacks)). A part it
-   cannot do is noted in the job log; the update still finishes.
+   cannot do is noted in the job log; the update still finishes, and
+   [Set up email again](/guides/email-apps/#set-up-email-again) finishes it later.
 9. Runs a [health check](/guides/health/) and records the result.
 
 The current version keeps serving until the new one has passed its checks. If the

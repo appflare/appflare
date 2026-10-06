@@ -13,6 +13,7 @@ import {
   emailRouteName,
   emailRuleName,
   parseEmailRouteCfId,
+  routesAddressTo,
   workerAction,
 } from "../../installs/email-routing";
 import {
@@ -237,11 +238,8 @@ export async function provisionEmailRoutingPhase(
       let ruleId = existingRuleId;
       if (ruleId === null && attempt > 1) {
         // An earlier attempt may have created the rule before its answer was lost.
-        const found = (await api.emailRouting.listRules(zoneId)).find(
-          (r) =>
-            r.matchers.some((m) => m.type === "literal" && m.value?.toLowerCase() === address) &&
-            r.actions[0]?.type === "worker" &&
-            r.actions[0].value?.[0] === workerName,
+        const found = (await api.emailRouting.listRules(zoneId)).find((r) =>
+          routesAddressTo(r, address, workerName),
         );
         ruleId = found?.id ?? null;
       }
@@ -337,12 +335,15 @@ export interface EmailRouteRecord {
  * `keepInUseRouting` keeps the record that Appflare turned routing on when
  * something else still uses it, so the install stays the one to turn it off
  * (a rollback that needs it again finds it on, and records nothing itself).
+ * `onlyDelivering` reads each rule first (one more request) and leaves one
+ * that no longer delivers to the Worker, as the catch-all is left: setting
+ * the app's email up again only removes what is still the app's.
  */
 export async function removeEmailRoutesPhase(
   steps: JobSteps,
   routes: readonly EmailRouteRecord[],
   workerName: string,
-  options: { retry?: string; keepInUseRouting?: boolean } = {},
+  options: { retry?: string; keepInUseRouting?: boolean; onlyDelivering?: boolean } = {},
 ): Promise<void> {
   const retry = options.retry ?? "retry the uninstall";
   const now = () => new Date(steps.now());
@@ -374,12 +375,21 @@ export async function removeEmailRoutesPhase(
         );
       } else if (target.kind === "rule") {
         try {
-          const outcome = await removeEmailRule(cf(), target);
-          log.info(
-            outcome === "deleted"
-              ? `Deleted the routing rule for ${route.name}.`
-              : `The routing rule for ${route.name} was already gone.`,
-          );
+          const removal = await removeEmailRule(cf(), {
+            ...target,
+            ...(options.onlyDelivering === true ? { workerName, address: route.name } : {}),
+          });
+          if (removal.outcome === "not-ours") {
+            log.warn(
+              `The routing rule for ${route.name} was changed since Appflare set it up (it is ${removal.action} now), so it was left alone; Appflare no longer counts it as the app's.`,
+            );
+          } else {
+            log.info(
+              removal.outcome === "deleted"
+                ? `Deleted the routing rule for ${route.name}.`
+                : `The routing rule for ${route.name} was already gone.`,
+            );
+          }
         } catch (error) {
           denied(
             error,
