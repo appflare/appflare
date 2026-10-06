@@ -262,9 +262,9 @@ function BuildProgress({ build }: { build: BuildProgressView }) {
           <Text variant="mono-secondary">No output yet.</Text>
         ) : (
           // Kumo's code block, as a box that scrolls; focusable so a keyboard can scroll it.
+          // biome-ignore lint/a11y/useSemanticElements: a named, scrollable output box, not a group of form controls
           <div
             ref={output}
-            // biome-ignore lint/a11y/useSemanticElements: a named, scrollable output box, not a group of form controls
             role="group"
             aria-label={build.kind === "installer" ? "Installer output" : "Build output"}
             // biome-ignore lint/a11y/noNoninteractiveTabindex: a scrolling box must take focus to be scrolled by keyboard
