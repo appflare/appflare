@@ -142,6 +142,8 @@ export interface SourceBuildReview {
   skipsPreview: string | null;
   /** How the update changes the app's Email Routing; null when its email stays the same. */
   emailRouting: string | null;
+  /** The fingerprint of `emailRouting` the update's confirmation carries; null without one. */
+  emailRoutingKey: string | null;
   suggestedWorkerName: string;
   subdomain: string | null;
   accountPlan: AccountPlan;
@@ -285,6 +287,7 @@ export const getSourceBuild = createServerFn({ method: "GET" })
         heldSecrets: needs.heldSecrets ?? [],
         skipsPreview: needs.skipsPreview,
         emailRouting: ("emailRouting" in needs ? needs.emailRouting : undefined) ?? null,
+        emailRoutingKey: ("emailRoutingKey" in needs ? needs.emailRoutingKey : undefined) ?? null,
         suggestedWorkerName: suggested,
         subdomain: settings.account_subdomain || null,
         accountPlan: capabilities.plan.plan,

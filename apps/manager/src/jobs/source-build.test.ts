@@ -1007,9 +1007,47 @@ describe("checking for changes and rebuilding", () => {
       "Confirm this change to the app's email to update.",
     );
     expect(params).toBeNull();
+    expect(needs.emailRoutingKey).toMatch(/^[0-9a-f]{64}$/);
+
+    // The app's email changes after the review (an earlier update added a rule):
+    // the note the admin confirmed is not the one that would apply now.
+    await env.DB.prepare(
+      `INSERT INTO resources (id, install_id, kind, binding, name, cf_id, created_at)
+       VALUES (?1, ?2, 'email_route', NULL, 'alerts@example.com', ?3, 2)`,
+    )
+      .bind(
+        `${installId}:email_route:rule:alerts@example.com`,
+        installId,
+        `rule:${"0".repeat(32)}:r2`,
+      )
+      .run();
+    manifest.catalog.install.emailRouting = { rules: ["inbox", "alerts"], catchAll: false };
+    await env.DB.prepare("UPDATE installs SET manifest_json = ?2 WHERE id = ?1")
+      .bind(installId, JSON.stringify(manifest))
+      .run();
+    await expect(
+      updateFromSourceBuildCore(deps, {
+        buildId: rebuilt.jobId,
+        confirmEmailRouting: needs.emailRoutingKey ?? "",
+      }),
+    ).rejects.toThrow(
+      "The change to the app's email is different now (the app was updated, or its email moved, since this page was loaded); reload the page to review it.",
+    );
+    expect(params).toBeNull();
+
+    // Reviewed again: the new note's fingerprint starts the update.
+    const again = await sourceUpdateNeeds(
+      env.DB,
+      (await env.DB.prepare("SELECT * FROM installs WHERE id = ?1")
+        .bind(installId)
+        .first()) as Parameters<typeof sourceUpdateNeeds>[1],
+      next.manifest,
+    );
+    expect(again.emailRouting).toContain("alerts@example.com");
+    expect(again.emailRoutingKey).not.toBe(needs.emailRoutingKey);
     const started = await updateFromSourceBuildCore(deps, {
       buildId: rebuilt.jobId,
-      confirmEmailRouting: true,
+      confirmEmailRouting: again.emailRoutingKey ?? "",
     });
     expect(started.jobId).toBe("update-job");
     expect(params).not.toBeNull();

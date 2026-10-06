@@ -692,7 +692,9 @@ function UpdateFromBuild({
           buildId: build.id,
           secrets,
           ...(review.skipsPreview === null ? {} : { confirmNoPreview: noPreview }),
-          ...(review.emailRouting === null ? {} : { confirmEmailRouting: true }),
+          ...(review.emailRoutingKey === null
+            ? {}
+            : { confirmEmailRouting: review.emailRoutingKey }),
         },
       });
       await jobStarted(jobId, "Update started");
