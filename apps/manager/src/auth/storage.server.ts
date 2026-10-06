@@ -19,6 +19,14 @@ import {
  * forever with no error, until a new deployment replaces the isolate
  * (better-auth/better-auth#10315).
  *
+ * Still needed with Better Auth 1.7.7: the issue is open and 1.7.7 still
+ * starts that import when its modules are evaluated. Two fixes are proposed
+ * and unreleased: #10318 takes `AsyncLocalStorage` from `globalThis` without
+ * an import, and #11482 bounds and retries the cached initialization (and
+ * leaves the import as it is). Remove this file once a release no longer
+ * awaits a module-level `import("node:async_hooks")` in `@better-auth/core`'s
+ * `async_hooks` module.
+ *
  * So the first request an isolate serves creates all three storages itself,
  * before anything else runs, and keeps itself alive until they exist
  * (`waitUntil`, so a client that disconnects cannot cut it short). From then

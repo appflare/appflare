@@ -384,12 +384,13 @@ describe.skipIf(!existsSync(MANAGER_RELEASE_WRANGLER))(
     });
 
     it("holds the built Worker and client assets byte for byte", () => {
-      expect(readFileSync(path.join(outDir, "worker", "index.js"))).toEqual(
-        readFileSync(path.join(MANAGER_DIR, "dist", "server", "index.js")),
-      );
-      expect(readFileSync(path.join(outDir, "assets", "index.html"))).toEqual(
-        readFileSync(path.join(MANAGER_DIR, "dist", "client", "index.html")),
-      );
+      // `Buffer.equals` rather than `toEqual`: Vitest compares a Buffer byte by
+      // byte and then again as `Object.entries`, which for the manager's
+      // multi-megabyte Worker took half a minute and close to 3 GB of heap.
+      const same = (copy: string, built: string) =>
+        readFileSync(path.join(outDir, copy)).equals(readFileSync(path.join(MANAGER_DIR, built)));
+      expect(same("worker/index.js", "dist/server/index.js"), "worker/index.js").toBe(true);
+      expect(same("assets/index.html", "dist/client/index.html"), "assets/index.html").toBe(true);
       expect(existsSync(path.join(outDir, "assets", ".dev.vars"))).toBe(false);
       expect(existsSync(path.join(outDir, ".dev.vars.example"))).toBe(false);
     });

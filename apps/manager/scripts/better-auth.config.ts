@@ -1,6 +1,6 @@
 /**
- * Entry for Better Auth's schema generator only (never bundled):
- *   pnpm dlx auth@1.7.5 generate --config scripts/better-auth.config.ts --output src/db/auth-schema.ts
+ * Entry for Better Auth's schema generator only (never bundled), run by
+ * `pnpm auth:generate`, which loads workspace packages from source.
  * It builds the real `createAuth` options with inert stand-ins so the generated
  * tables always match the plugins the manager runs with.
  */
