@@ -158,7 +158,7 @@ export function orderTokensFor<
 }
 
 /** The help under the form's "Appflare release downloads" choice. */
-export const RELEASE_DOWNLOADS_HELP = `While Appflare's own repository on GitHub is private, updating Appflare needs a token that can read its releases. Such a token needs only read-only access to the contents of ${APPFLARE_REPOSITORY}; once that repository is public, no token is needed for this.`;
+export const RELEASE_DOWNLOADS_HELP = `Optional: Appflare's own repository on GitHub is public, so updates work without a token. With one, Appflare checks for new versions and release notes under the token's own GitHub limit instead of the one every Cloudflare Worker shares. It needs at most read-only access to the contents of ${APPFLARE_REPOSITORY}.`;
 
 /** The help under the form's optional repositories field. */
 export const REPOSITORIES_HELP =

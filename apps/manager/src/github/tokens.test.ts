@@ -117,9 +117,7 @@ describe("deleteTokenDescription", () => {
 
 describe("RELEASE_DOWNLOADS_HELP", () => {
   it("says what it is for, when it is needed, and the access the token needs", () => {
-    expect(RELEASE_DOWNLOADS_HELP).toContain(
-      "While Appflare's own repository on GitHub is private",
-    );
+    expect(RELEASE_DOWNLOADS_HELP).toContain("updates work without a token");
     expect(RELEASE_DOWNLOADS_HELP).toContain(
       "read-only access to the contents of appflare/appflare",
     );

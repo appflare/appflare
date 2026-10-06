@@ -13,6 +13,14 @@ import {
 } from "@appflare/schema";
 import { z } from "zod";
 import sandboxPackage from "../../../sandbox/package.json";
+import {
+  type GithubRepository,
+  rateLimitMessage,
+  rateLimitOf,
+  releaseDownloadUrl,
+  repositoryOfReleasesApi,
+  retryTime,
+} from "../catalog/github-releases";
 import { managerReleasesUrl } from "../catalog/manager-releases.server";
 import { type ReleaseAssets, releaseAssetsSchema } from "../catalog/release-assets";
 import { compareVersions } from "../catalog/versions";
@@ -100,9 +108,75 @@ export function sandboxReleaseAssets(
 }
 
 /**
- * Reads the release `version` from GitHub through `fetchImpl` (the release
- * feed's fetch, which carries the GitHub token only to GitHub). A missing
- * release is final; a GitHub outage is retried by the step.
+ * The repository whose public download URLs serve the sandbox Worker
+ * release when no token reads it through GitHub's API: the release feed's
+ * repository on GitHub. Null with a token, or for a feed that is not GitHub's.
+ */
+function downloadRepository(
+  env: { MANAGER_RELEASES_URL?: string },
+  opts: { viaApi: boolean },
+): GithubRepository | null {
+  return opts.viaApi ? null : repositoryOfReleasesApi(managerReleasesUrl(env));
+}
+
+/** The three assets of the sandbox Worker release `version` at their public download URLs. */
+export function sandboxDownloadAssets(
+  repository: GithubRepository,
+  version: string,
+): ReleaseAssets {
+  const tag = `${SANDBOX_RELEASE_TAG_PREFIX}${version}`;
+  return releaseAssetsSchema.parse({
+    zip: releaseDownloadUrl(repository, tag, `${SANDBOX_APP}-${version}.zip`),
+    manifest: releaseDownloadUrl(repository, tag, "manifest.json"),
+    sig: releaseDownloadUrl(repository, tag, "manifest.sig"),
+  });
+}
+
+/**
+ * The first byte of the release's `manifest.json` at its download URL: a
+ * published release serves it (a draft's assets are not public), a missing
+ * one answers 404. This is github.com, not the API, so the API's rate limit
+ * does not apply.
+ */
+async function askForManifest(fetchImpl: FetchLike, assets: ReleaseAssets): Promise<Response> {
+  return fetchImpl(assets.manifest, {
+    headers: { range: "bytes=0-0" },
+    signal: AbortSignal.timeout(15_000),
+  });
+}
+
+/**
+ * The retryable error for a refusal that does not mean "no such release",
+ * naming GitHub's rate limit when it is one. `via`: the API with or without a
+ * token, or a download URL (github.com, which the API's limit does not
+ * cover). Consumes the body.
+ */
+async function githubRefusal(
+  response: Response,
+  via: "token" | "no-token" | "download",
+): Promise<{ error: Error; rateLimited: boolean }> {
+  const now = Date.now();
+  const until = await rateLimitOf(response, now);
+  if (until === null) {
+    return {
+      error: new Error(`GitHub answered HTTP ${response.status} for the sandbox Worker release`),
+      rateLimited: false,
+    };
+  }
+  const message =
+    via === "download"
+      ? `GitHub is limiting downloads from Cloudflare's network right now (HTTP ${response.status}). Try again after ${retryTime(until, now)}.`
+      : rateLimitMessage(until, now, via === "token", "retry");
+  return { error: new Error(message), rateLimited: true };
+}
+
+/**
+ * Finds the release `version` on GitHub through `fetchImpl` (the release
+ * feed's fetch, which carries the GitHub token only to GitHub). Without a
+ * token its assets have fixed download URLs, and one request for the
+ * manifest proves it is published; with one, GitHub's API answers for the
+ * tag. A missing release is final; an outage or a rate limit is retried by
+ * the step.
  */
 export async function findSandboxRelease(
   fetchImpl: FetchLike,
@@ -110,22 +184,33 @@ export async function findSandboxRelease(
   version: string,
   opts: { viaApi: boolean },
 ): Promise<ReleaseAssets> {
-  const url = sandboxReleaseUrl(env, version);
-  const response = await fetchImpl(url, {
+  const tag = `${SANDBOX_RELEASE_TAG_PREFIX}${version}`;
+  const repository = downloadRepository(env, opts);
+  if (repository !== null) {
+    const assets = sandboxDownloadAssets(repository, version);
+    const response = await askForManifest(fetchImpl, assets);
+    if (response.ok || response.status === 404) await response.body?.cancel();
+    if (response.ok) return assets;
+    if (response.status === 404) {
+      throw new ArtifactError(`GitHub has no sandbox Worker release ${tag} (HTTP 404).`);
+    }
+    throw (await githubRefusal(response, "download")).error;
+  }
+  const response = await fetchImpl(sandboxReleaseUrl(env, version), {
     headers: { accept: "application/vnd.github+json", "x-github-api-version": "2022-11-28" },
     signal: AbortSignal.timeout(15_000),
   });
   if (!response.ok) {
-    await response.body?.cancel();
-    if (response.status === 429 || response.status >= 500) {
-      throw new Error(`GitHub answered HTTP ${response.status} for the sandbox Worker release`);
+    if (response.status === 404) {
+      await response.body?.cancel();
+      throw new ArtifactError(`GitHub has no sandbox Worker release ${tag} (HTTP 404).`);
     }
-    const hint =
-      response.status === 404 && !opts.viaApi
-        ? " While the appflare/appflare repository is private, Appflare needs a GITHUB_TOKEN secret to read it."
-        : "";
+    const refusal = await githubRefusal(response, opts.viaApi ? "token" : "no-token");
+    if (refusal.rateLimited || response.status === 429 || response.status >= 500) {
+      throw refusal.error;
+    }
     throw new ArtifactError(
-      `GitHub has no sandbox Worker release ${SANDBOX_RELEASE_TAG_PREFIX}${version} (HTTP ${response.status}).${hint}`,
+      `GitHub has no sandbox Worker release ${tag} (HTTP ${response.status}).`,
     );
   }
   return sandboxReleaseAssets(await response.json(), version, opts);
@@ -134,8 +219,10 @@ export async function findSandboxRelease(
 /**
  * Why the release `version` cannot be read, for a start that turns sandbox
  * builds on before an install or build: one GitHub call, the same one the
- * enable job makes first. Null when the release and its three assets are
- * there, and also when GitHub could not tell (a rate limit, an outage, a
+ * enable job makes first. Null when the release is there (with a token, the
+ * API's answer shows all three assets; without one, only `manifest.json`
+ * is asked for, and a missing zip or signature surfaces when the job reads
+ * them), and also when GitHub could not tell (a rate limit, an outage, a
  * network error), since the job's own step retries those.
  */
 export async function sandboxReleaseProblem(
@@ -144,6 +231,17 @@ export async function sandboxReleaseProblem(
   version: string,
   opts: { viaApi: boolean },
 ): Promise<string | null> {
+  const missing = `GitHub has no sandbox Worker release ${SANDBOX_RELEASE_TAG_PREFIX}${version}.`;
+  const repository = downloadRepository(env, opts);
+  if (repository !== null) {
+    try {
+      const response = await askForManifest(fetchImpl, sandboxDownloadAssets(repository, version));
+      await response.body?.cancel();
+      return response.status === 404 ? missing : null;
+    } catch {
+      return null;
+    }
+  }
   let response: Response;
   try {
     response = await fetchImpl(sandboxReleaseUrl(env, version), {
@@ -155,8 +253,7 @@ export async function sandboxReleaseProblem(
   }
   if (!response.ok) {
     await response.body?.cancel();
-    if (response.status !== 404) return null;
-    return `GitHub has no sandbox Worker release ${SANDBOX_RELEASE_TAG_PREFIX}${version}.${opts.viaApi ? "" : " While the appflare/appflare repository is private, Appflare needs a GITHUB_TOKEN secret to read it."}`;
+    return response.status === 404 ? missing : null;
   }
   try {
     sandboxReleaseAssets(await response.json(), version, opts);

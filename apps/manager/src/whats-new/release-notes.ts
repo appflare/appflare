@@ -43,18 +43,24 @@ const githubReleaseSchema = z.looseObject({
   published_at: z.string().nullable().optional(),
 });
 
+/** Ends a body cut at RELEASE_BODY_MAX_CHARS. */
+const CUT_MARK = "\n\n…";
+
 /**
  * Changesets writes each entry as `- <short commit>: <text>`; the commit id
  * means nothing to someone reading what changed, so it is dropped. Bodies
- * longer than RELEASE_BODY_MAX_CHARS are cut.
+ * longer than RELEASE_BODY_MAX_CHARS are cut. Cleaning a cleaned body
+ * changes nothing (the release check caches cleaned bodies).
  */
 export function cleanReleaseBody(body: string): string {
   const cleaned = body
     .replace(/\r\n/g, "\n")
     .replace(/^(\s*[-*] )[0-9a-f]{7,40}: /gm, "$1")
     .trim();
-  return cleaned.length > RELEASE_BODY_MAX_CHARS
-    ? `${cleaned.slice(0, RELEASE_BODY_MAX_CHARS).trimEnd()}\n\n…`
+  const alreadyCut =
+    cleaned.endsWith(CUT_MARK) && cleaned.length <= RELEASE_BODY_MAX_CHARS + CUT_MARK.length;
+  return cleaned.length > RELEASE_BODY_MAX_CHARS && !alreadyCut
+    ? `${cleaned.slice(0, RELEASE_BODY_MAX_CHARS).trimEnd()}${CUT_MARK}`
     : cleaned;
 }
 

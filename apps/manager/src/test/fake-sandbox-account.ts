@@ -408,6 +408,8 @@ export function fakeSandboxAccount(
     return fail(404, 7003, `no route ${key}`);
   }
 
+  /** Every github.com download request, in the order made. */
+  const githubDownloads: string[] = [];
   const fetch: FetchLike = async (input, init) => {
     const url = new URL(input);
     if (url.hostname === "api.github.com") {
@@ -421,6 +423,27 @@ export function fakeSandboxAccount(
       }
       return Response.json({ message: "Not Found" }, { status: 404 });
     }
+    // The public download URLs of the same release (read without a token).
+    if (url.hostname === "github.com") {
+      const download = /^\/appflare\/appflare\/releases\/download\/([^/]+)\/([^/]+)$/.exec(
+        url.pathname,
+      );
+      const version = release.manifest.version;
+      const files: Record<string, string> = {
+        [`appflare-sandbox-${version}.zip`]: ZIP_URL,
+        "manifest.json": MANIFEST_URL,
+        "manifest.sig": SIG_URL,
+      };
+      const file =
+        download !== null && decodeURIComponent(download[1] as string) === `sandbox@${version}`
+          ? files[decodeURIComponent(download[2] as string)]
+          : undefined;
+      githubDownloads.push(`${url.origin}${url.pathname}`);
+      return (
+        (file === undefined ? null : release.serve(file, init)) ??
+        new Response("Not Found", { status: 404 })
+      );
+    }
     if (input.startsWith("https://api.cloudflare.com/")) {
       const path = url.pathname.replace(`/client/v4/accounts/${ACC}`, "");
       order.push(`${init?.method ?? "GET"} ${path}`);
@@ -432,5 +455,5 @@ export function fakeSandboxAccount(
 
   /** Every Cloudflare call, the manager's and the sandbox's, in the order made. */
   const order: string[] = [];
-  return { state, manager, fetch, order, subdomain: SUBDOMAIN };
+  return { state, manager, fetch, order, githubDownloads, subdomain: SUBDOMAIN };
 }

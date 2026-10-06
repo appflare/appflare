@@ -75,7 +75,7 @@ export interface JobEnv {
   CF_API_BASE_URL?: string;
   /** The running manager's version; the self-update compares it with its target. */
   APPFLARE_VERSION?: string;
-  /** Reads the manager's release assets while its repository is private. Never logged. */
+  /** Optional token for the manager's release reads (see env.d.ts). Never logged. */
   GITHUB_TOKEN?: string;
   /** The releases API override (local dev, tests); the sandbox Worker release is read next to it. */
   MANAGER_RELEASES_URL?: string;

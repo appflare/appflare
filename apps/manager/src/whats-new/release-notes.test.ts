@@ -125,6 +125,13 @@ describe("cleanReleaseBody", () => {
     expect(cut.length).toBeLessThan(RELEASE_BODY_MAX_CHARS + 10);
     expect(cut.endsWith("…")).toBe(true);
   });
+
+  it("changes nothing in a body it cleaned already, cut or not", () => {
+    const cut = cleanReleaseBody(`- abc1234: ${"x".repeat(RELEASE_BODY_MAX_CHARS + 500)}`);
+    expect(cleanReleaseBody(cut)).toBe(cut);
+    const short = cleanReleaseBody("- abc1234: One.\n- Two.");
+    expect(cleanReleaseBody(short)).toBe(short);
+  });
 });
 
 describe("unread release notes", () => {

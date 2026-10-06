@@ -16,9 +16,14 @@ interface ManagerSecrets {
   SETUP_TOKEN?: string;
   CF_API_TOKEN?: string;
   /**
-   * Optional GitHub token that can read appflare/appflare's releases. Needed
-   * only while that repository is private; sent only to api.github.com and
-   * github.com, never logged.
+   * Optional GitHub token that can read appflare/appflare's releases (the
+   * repository is public, so a fine-grained token with no permissions
+   * will do). Not needed: without it the newest release comes from
+   * github.com and the API, limited to 60 requests an hour per shared
+   * Worker address, is asked only for release notes. With it the feed is
+   * read through the API under the token's own limit. A GitHub access token
+   * marked for release downloads takes its place. Sent only to
+   * api.github.com and github.com, never logged.
    */
   GITHUB_TOKEN?: string;
   /**
