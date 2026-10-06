@@ -1,3 +1,6 @@
+// First: takes the OAuth code and state out of the address bar on the
+// deploy callback before the router or the analytics see the address.
+import "../deploy/arrival.ts";
 import { RootProvider } from "@fumadocs/base-ui/provider/tanstack";
 import { createRootRoute, HeadContent, Outlet, Scripts, useRouter } from "@tanstack/react-router";
 import { useEffect } from "react";

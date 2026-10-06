@@ -1,4 +1,6 @@
 import type { CaptureResult, PostHog, PostHogConfig } from "posthog-js";
+import { openedAt } from "../deploy/arrival.ts";
+import { isDeployPath } from "../deploy/paths.ts";
 import { browserMemory } from "../install/memory.ts";
 import { SITE_URL } from "../lib/shared.ts";
 
@@ -18,6 +20,12 @@ import { SITE_URL } from "../lib/shared.ts";
  * {@link PRIVATE_CLASS}, which keeps them out of recordings, autocapture and
  * {@link SiteEvents.outbound_click}. URL fragments (where `/my/` receives
  * that address) are stripped from everything sent.
+ *
+ * The deploy page and its OAuth callback (`/deploy/…`) are never measured:
+ * PostHog is not even loaded in a page opened there (no page views,
+ * recordings, heatmaps or clicks), the router reloads the page when it moves
+ * to one from elsewhere (see the deploy routes), and anything still sent
+ * from such a path is dropped before it leaves.
  */
 
 /** The PostHog project's key. It is public by design: every page that reports carries it. */
@@ -101,7 +109,14 @@ export const posthogOptions: Partial<PostHogConfig> = {
   },
   // `/my/` receives the visitor's Appflare address in the fragment.
   disable_capture_url_hashes: true,
-  before_send: (event) => withoutManagerReferrer(event, browserMemory().manager()),
+  before_send: (event) =>
+    withoutManagerReferrer(
+      outsideDeployPages(
+        event,
+        typeof window === "undefined" ? null : (window.location?.href ?? null),
+      ),
+      browserMemory().manager(),
+    ),
   persistence: "localStorage+cookie",
   person_profiles: "always",
   respect_dnt: false,
@@ -144,6 +159,29 @@ export function withoutManagerReferrer(
   return event;
 }
 
+/** The path of `url`, or null when it is not an address. */
+function pathOf(url: unknown): string | null {
+  if (typeof url !== "string") return null;
+  try {
+    return new URL(url).pathname;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * `event`, or null when it comes from the deploy page or its callback: the
+ * page the browser is on now (`here`) or the one the event names.
+ */
+export function outsideDeployPages(
+  event: CaptureResult | null,
+  here: string | null,
+): CaptureResult | null {
+  if (event === null) return null;
+  const paths = [pathOf(here), pathOf(event.properties.$current_url), event.properties.$pathname];
+  return paths.some((path) => typeof path === "string" && isDeployPath(path)) ? null : event;
+}
+
 /** The part of the router this needs. */
 export interface NavigationSource {
   subscribe(
@@ -174,7 +212,8 @@ export function startAnalytics(router: NavigationSource): boolean {
   if (typeof window === "undefined") return false;
   if (client !== null) return true;
   const early = pending.splice(0);
-  if (!isReportingHost(window.location.hostname)) {
+  const deployPage = isDeployPath(window.location.pathname) || isDeployPath(openedAt ?? "");
+  if (!isReportingHost(window.location.hostname) || deployPage) {
     closed = true;
     return false;
   }
@@ -241,6 +280,8 @@ function pageview(pathname: string, search: string): void {
   // The apps page writes its search field into the address as it is typed:
   // that is one page, with its own `catalog_search` event.
   if (pathname === lastPath) return;
+  // The deploy routes reload the page instead of rendering here; nothing of them is sent.
+  if (isDeployPath(pathname)) return;
   const url = `${window.location.origin}${pathname}${search}`;
   if (lastUrl !== null) capture("$pageleave", { $current_url: lastUrl });
   capture("$pageview", { $current_url: url, $pathname: pathname });

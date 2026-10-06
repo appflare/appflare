@@ -2,6 +2,7 @@ import { env } from "cloudflare:workers";
 import type { SigningKey } from "@appflare/schema";
 import { handleRequest } from "../api";
 import { ensureMigrated } from "../db/migrate";
+import { ReleaseCache } from "../release/cache";
 import { ACCOUNT, type FakeWorld, TOKEN } from "./fake-world";
 
 /** The handoff secret the deploy page made, and its sha256 the installer receives. */
@@ -35,6 +36,8 @@ export interface AppOptions {
 /** Calls the installer the way the docs Worker forwards a request to it. */
 export function installerApp(world: FakeWorld, opts: AppOptions = {}) {
   const appEnv = { ...env, ...opts.env } as Env;
+  // One per app, as one per isolate in production.
+  const releaseCache = new ReleaseCache();
   return async function call<T = Record<string, unknown>>(
     path: string,
     body: unknown = {},
@@ -54,6 +57,7 @@ export function installerApp(world: FakeWorld, opts: AppOptions = {}) {
       {
         fetch: world.fetch,
         keys: opts.keys ?? world.release.keys,
+        releaseCache,
         ...(opts.now === undefined ? {} : { now: opts.now }),
       },
     );

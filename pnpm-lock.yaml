@@ -93,6 +93,9 @@ importers:
         specifier: 2.14.0
         version: 2.14.0(csstype@3.2.3)(preact@10.29.8)(react@19.3.0)
     devDependencies:
+      '@appflare/cf-api':
+        specifier: workspace:*
+        version: link:../../packages/cf-api
       '@appflare/schema':
         specifier: workspace:*
         version: link:../../packages/schema

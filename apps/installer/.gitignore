@@ -1,0 +1,2 @@
+# The production deploy writes this copy of wrangler.jsonc next to it.
+wrangler.production.json

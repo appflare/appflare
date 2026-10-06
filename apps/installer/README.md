@@ -78,6 +78,7 @@ All routes are `POST` with a JSON body. Errors are
 |---|---|---|
 | `accounts` | `{}` | `{ accounts: [{ id, name, workersDevSubdomain }] }` |
 | `zones` | `{ accountId }` | `{ zones: [{ id, name }] }`, active zones only |
+| `release` | `{}` | `{ release: { version } }`, the release a new installation would deploy now; for a token Cloudflare accepts, kept 5 minutes |
 | `check` | `{ accountId, workerName, hostname }` | `{ workerName: "free" \| "taken", hostname: null \| "free" \| { conflict, detail } }` |
 | `installations` | `{ accountId, workerName, hostname, handoffHash }` | `{ installationId, key, release: { version }, address }` |
 | `installations/find` | `{ accountId }` | `{ installations: [...] }`, never keys |

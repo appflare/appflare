@@ -6,6 +6,7 @@ import {
   isReportingHost,
   linkEvents,
   type NavigationSource,
+  outsideDeployPages,
   POSTHOG_HOST,
   POSTHOG_KEY,
   posthogOptions,
@@ -117,6 +118,56 @@ describe("startAnalytics", () => {
     });
     expect(POSTHOG_HOST).toBe("https://eu.i.posthog.com");
     expect(listeners).toHaveLength(1);
+  });
+});
+
+describe("the deploy page and its callback", () => {
+  it.each([
+    "https://appflare.dev/deploy/",
+    "https://appflare.dev/deploy",
+    "https://appflare.dev/deploy/callback",
+  ])("load nothing and send nothing at %s", async (url) => {
+    browserAt(url);
+    const { router, listeners } = fakeRouter();
+    track("category_viewed", { category: "tools" });
+    expect(startAnalytics(router)).toBe(false);
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(listeners).toHaveLength(0);
+    expect(posthog.init).not.toHaveBeenCalled();
+    expect(posthog.capture).not.toHaveBeenCalled();
+  });
+
+  it("get no page view when the router moves there from another page", async () => {
+    browserAt("https://appflare.dev/start/install/");
+    const { router, navigate } = fakeRouter();
+    startAnalytics(router);
+    navigate("/deploy/");
+    navigate("/deploy/callback", "?code=secret-code&state=s");
+    await vi.waitFor(() => expect(posthog.capture).toHaveBeenCalledTimes(1));
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(captured()).toEqual([["$pageview", "https://appflare.dev/start/install/"]]);
+    expect(JSON.stringify(posthog.capture.mock.calls)).not.toContain("secret-code");
+  });
+
+  it("have every event from them dropped before it is sent", () => {
+    const event = (url: string): CaptureResult => ({
+      uuid: "0",
+      event: "$autocapture",
+      properties: { $current_url: url },
+    });
+    const elsewhere = "https://appflare.dev/apps/";
+    expect(outsideDeployPages(event(elsewhere), elsewhere)).not.toBeNull();
+    expect(outsideDeployPages(event("https://appflare.dev/deploy/?x=1"), elsewhere)).toBeNull();
+    expect(outsideDeployPages(event(elsewhere), "https://appflare.dev/deploy/callback")).toBeNull();
+    expect(
+      outsideDeployPages(
+        { uuid: "0", event: "$snapshot", properties: { $pathname: "/deploy/" } },
+        elsewhere,
+      ),
+    ).toBeNull();
+    expect(outsideDeployPages(null, elsewhere)).toBeNull();
+    // A page whose name merely starts the same way is measured as usual.
+    expect(outsideDeployPages(event("https://appflare.dev/deployment/"), elsewhere)).not.toBeNull();
   });
 });
 

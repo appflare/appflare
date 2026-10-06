@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it } from "vitest";
+import { RELEASE_CACHE_MS } from "./release/cache";
 import { ACCOUNT, DEV_RELEASE_URL, FakeWorld, OTHER_ACCOUNT, ZONE_ID } from "./test/fake-world";
 import {
   type Call,
@@ -230,6 +231,51 @@ describe("POST check", () => {
     expect(pending.body).toMatchObject({ error: { code: "hostname_not_in_account" } });
     const invalid = await check("n", "https://app.example.com/x");
     expect(invalid.body).toMatchObject({ error: { code: "invalid_hostname" } });
+  });
+});
+
+describe("POST release", () => {
+  it("names the release a new installation would deploy, creating nothing", async () => {
+    const answer = await call("release");
+    expect(answer.status).toBe(200);
+    expect(answer.body).toEqual({ release: { version: "0.4.0" } });
+    expect(answer.subrequests).toBeLessThanOrEqual(40);
+  });
+
+  it("refuses a release the installer would refuse, in the same words", async () => {
+    world = new FakeWorld(await buildRelease({ version: "0.3.1" }));
+    call = installerApp(world);
+    const answer = await call("release");
+    expect(answer.status).toBe(409);
+    expect(answer.body).toMatchObject({ error: { code: "release_too_old" } });
+  });
+
+  it("needs the bearer token like every other route but complete", async () => {
+    expect((await call("release", {}, { token: null })).status).toBe(401);
+  });
+
+  const githubCalls = () => world.calls.filter((c) => c.includes("github")).length;
+
+  it("asks GitHub nothing for a token Cloudflare does not accept", async () => {
+    world.acceptedToken = "another-token-entirely-0000";
+    const answer = await call("release");
+    expect(answer.status).toBe(401);
+    expect(answer.body).toMatchObject({ error: { code: "cloudflare_auth" } });
+    expect(githubCalls()).toBe(0);
+  });
+
+  it("answers from its cache for a few minutes, then checks GitHub again", async () => {
+    let clock = 1_800_000_000_000;
+    const timed = installerApp(world, { now: () => clock });
+    expect((await timed("release")).status).toBe(200);
+    const first = githubCalls();
+    expect(first).toBeGreaterThan(0);
+    clock += 60_000;
+    expect((await timed("release")).body).toEqual({ release: { version: "0.4.0" } });
+    expect(githubCalls()).toBe(first);
+    clock += RELEASE_CACHE_MS;
+    await timed("release");
+    expect(githubCalls()).toBeGreaterThan(first);
   });
 });
 

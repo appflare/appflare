@@ -1,9 +1,49 @@
 # appflare.dev
 
-The public site: Appflare's documentation, the catalog's pages, the install pages
-and the Install badge. Fumadocs on TanStack Start, prerendered in full and served
-as static files only; no Worker code runs for a request. `_headers` sets the
-response headers.
+The public site: Appflare's documentation, the catalog's pages, the install pages,
+the Install badge, and the deploy page (`/deploy/`), which installs Appflare from the
+browser. Fumadocs on TanStack Start, prerendered in full and served as static
+files. `_headers` sets the response headers; the build adds the deploy pages' own
+(see below).
+
+One path runs Worker code: `worker/index.ts` forwards `/api/install/*`, unchanged,
+to the hosted installer (`apps/installer`, the Worker `appflare-installer`)
+through a service binding, so the deploy page and the installer's API share one
+origin. `run_worker_first` names only that path; everything else is answered by
+the static files as before. The Worker keeps no logs, since those requests carry
+the visitor's Cloudflare access token.
+
+## The deploy page
+
+`/deploy/` signs the visitor in to Cloudflare (OAuth with PKCE, Appflare's public
+client), lets them choose the account, name and address, then drives the hosted
+installer and hands the Cloudflare connection to the new Appflare from the
+browser. `/deploy/callback` is the OAuth return address. It also sends a
+manager's Reconnect Cloudflare back to that manager: it shows the manager's
+address, and only when the visitor confirms it is theirs does it post `code` and
+`state` (or Cloudflare's `error`) as a form to `<address>/api/cloudflare/oauth-return`,
+which reports the outcome. Without that confirmation anyone could start
+Appflare's genuine consent with their own address and collect the code. The logic
+is in `src/deploy/`, the steps' drawing in `src/components/deploy/`.
+
+- **Tokens.** The access and refresh token live in the tab's memory and
+  `sessionStorage` only. The refresh token goes to the new Appflare and nowhere
+  else; the installer gets the access token. `localStorage` keeps only the
+  unfinished installation (`{ installationId, key, handoffSecret, accountId }`).
+- **No analytics.** PostHog never loads in a page opened at `/deploy/…`, and the
+  router reloads the page rather than moving there from another page.
+- **Headers.** After prerendering, the build hashes each deploy page's inline
+  scripts into a strict Content-Security-Policy for its exact path (`/deploy/`,
+  `/deploy/callback`) and appends it to `dist/client/_headers`, with
+  `Referrer-Policy: no-referrer` (`src/build/deploy-headers.ts`). Only the
+  callback may submit a form elsewhere: to an https address, or a local one while
+  developing.
+- **Signing in while developing.** Cloudflare returns only to the client's
+  registered callbacks, `https://appflare.dev/deploy/callback` and the preview's,
+  so a local server (`localhost`) cannot finish a sign-in with the public client:
+  the page says so. To try the whole journey, deploy the preview, or build with
+  `VITE_APPFLARE_OAUTH_CLIENT_ID` and `VITE_APPFLARE_OAUTH_CALLBACK_URL` naming
+  another OAuth client whose registered callback is on the page's own origin.
 
 The site's address is `SITE_URL` in `@appflare/schema/links`. The manager, the
 installer and the site itself all link through it.
@@ -18,15 +58,22 @@ pnpm --filter @appflare/docs test
 
 ## Where it is deployed
 
-`.github/workflows/docs.yml` builds the site once and deploys the same files twice:
+`.github/workflows/docs.yml` builds the site once and deploys the same files twice,
+each time after deploying the hosted installer to the same account (the site's
+service binding points at it):
 
 1. **Preview**, to the development account at
    `https://appflare-docs.appflare-dev.workers.dev`. Every run. The workflow
-   checks that the preview answers before it goes on. Links inside the site are
-   relative, so the preview can be browsed; absolute links (OpenGraph, sitemap,
-   `llms.txt`) still name appflare.dev.
+   checks that the preview answers, `/deploy/` with its headers and
+   `/api/install/*` through to the installer included, before it goes on. Links
+   inside the site are relative, so the preview can be browsed; absolute links
+   (OpenGraph, sitemap, `llms.txt`) still name appflare.dev.
 2. **appflare.dev**, the wrangler environment `production`, to the account that
    owns the `appflare.dev` zone. Only after the preview deployed.
+
+The installer's `INSTALLER_ORIGIN` must be the origin of the site it sits behind
+(the preview at the top level of its config, `https://appflare.dev` in
+`production`); the workflow checks both.
 
 It runs on every push to `main` that touches the site, once a day, and when the
 catalog publishes. To deploy by hand:
@@ -36,14 +83,22 @@ gh workflow run docs.yml --ref main                # preview, then appflare.dev
 gh workflow run docs.yml --ref main -f target=dev  # preview only
 ```
 
+To deploy the preview by hand, from the repository root, installer first:
+
+```sh
+pnpm --filter @appflare/docs build
+pnpm wrangler -c apps/installer/wrangler.jsonc deploy --env=""
+pnpm wrangler -c apps/docs/wrangler.jsonc deploy --env=""
+```
+
 Nothing in this repository holds the production account's id or token. The
-checked-in `wrangler.jsonc` stays pinned to the development account, so a local
-`pnpm wrangler -c apps/docs/wrangler.jsonc deploy --env=""` can only reach the
-preview.
+checked-in `wrangler.jsonc` files stay pinned to the development account, so a
+local deploy can only reach the preview.
 Because wrangler prefers a config's `account_id` over `CLOUDFLARE_ACCOUNT_ID`, the
-production job deploys from a copy without that line
-(`apps/docs/wrangler.production.json`, written during the run and gitignored)
-and passes the account in `CLOUDFLARE_ACCOUNT_ID`.
+production job deploys from copies without that line
+(`apps/docs/wrangler.production.json` and `apps/installer/wrangler.production.json`,
+written during the run and gitignored) and passes the account in
+`CLOUDFLARE_ACCOUNT_ID`.
 
 ## Setting up appflare.dev
 
@@ -57,7 +112,9 @@ run still succeeds.
 2. **An API token** for that account (My Profile › API Tokens › Create Custom
    Token) with:
    - Account › **Workers Scripts** › Edit, for the production account: uploads
-     the site's files, and attaches the custom domain.
+     the site's files and the installer, and attaches the custom domain.
+   - Account › **D1** › Edit, for the production account: the installer's first
+     deploy creates its database, `appflare-installer`.
    - Zone › **Workers Routes** › Edit, for the zone `appflare.dev`: Cloudflare
      asks for it to add a custom domain to a zone, and wrangler lists the zone's
      Worker routes on every deploy.

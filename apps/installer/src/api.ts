@@ -48,6 +48,7 @@ import {
   releaseLease,
   updateRecord,
 } from "./records";
+import type { ReleaseCache } from "./release/cache";
 import { ReleaseError, ReleaseFetchError } from "./release/fetch";
 import { HANDOFF_SECRET } from "./release/manifest";
 import {
@@ -71,6 +72,8 @@ export interface AppDeps {
   /** Trusted release signing keys (the embedded Appflare keys). */
   keys: readonly SigningKey[];
   now?: () => number;
+  /** Keeps `POST release`'s answer for a few minutes; without one, every call asks GitHub. */
+  releaseCache?: ReleaseCache;
 }
 
 interface Ctx {
@@ -81,6 +84,7 @@ interface Ctx {
   budget: Budget;
   keys: readonly SigningKey[];
   now: number;
+  releaseCache: ReleaseCache | null;
 }
 
 const PREFIX = "/api/install/";
@@ -116,6 +120,7 @@ export async function handleRequest(request: Request, env: Env, deps: AppDeps): 
     budget,
     keys: deps.keys,
     now: (deps.now ?? Date.now)(),
+    releaseCache: deps.releaseCache ?? null,
   };
   try {
     await ensureMigrated(env.DB);
@@ -142,6 +147,7 @@ function route(parts: string[], ctx: Ctx): Promise<Response> {
     if (first === "accounts" && second === undefined) return accounts(ctx);
     if (first === "zones" && second === undefined) return zones(ctx);
     if (first === "check" && second === undefined) return check(ctx);
+    if (first === "release" && second === undefined) return latestRelease(ctx);
     if (first === "installations" && second === undefined) return create(ctx);
     if (first === "installations" && second === "find") return find(ctx);
   }
@@ -383,6 +389,32 @@ async function create(ctx: Ctx): Promise<Response> {
     updated_at: ctx.now,
   });
   return json({ installationId: id, key, release: { version: release.version }, address });
+}
+
+/**
+ * The release a new installation would deploy now, so the deploy page can
+ * name it before anything is created. Checked exactly as `installations`
+ * checks it (signature, minimum version, what it needs), and refused with the
+ * same plain messages.
+ *
+ * Only for a token Cloudflare accepts (one request lists its accounts), and
+ * from the isolate's cache for a few minutes after that, so callers cannot
+ * make the installer fetch from GitHub on demand.
+ */
+async function latestRelease(ctx: Ctx): Promise<Response> {
+  const token = bearerToken(ctx.request);
+  await readBody(ctx.request, z.object({}));
+  try {
+    await cloudflareFor(token, ctx.fetch, "").accounts.list({ maxPages: 1 });
+  } catch (error) {
+    throw cloudflareRequestError(error, "This sign-in cannot list your Cloudflare accounts.");
+  }
+  const source = ctx.config.devRelease?.url ?? "github";
+  const cached = ctx.releaseCache?.get(source, ctx.now) ?? null;
+  if (cached !== null) return json({ release: { version: cached } });
+  const release = await releaseOrError(ctx);
+  ctx.releaseCache?.set(source, release.version, ctx.now);
+  return json({ release: { version: release.version } });
 }
 
 async function releaseOrError(ctx: Ctx): Promise<ChosenRelease> {

@@ -20,6 +20,8 @@ import { Route as ApiSearchDotjsonRouteImport } from './routes/api/search[.]json
 import { Route as AppsIndexRouteImport } from './routes/apps/index'
 import { Route as AppsSlugRouteImport } from './routes/apps/$slug'
 import { Route as CategoriesIdRouteImport } from './routes/categories/$id'
+import { Route as DeployIndexRouteImport } from './routes/deploy/index'
+import { Route as DeployCallbackRouteImport } from './routes/deploy/callback'
 import { Route as InstallIndexRouteImport } from './routes/install/index'
 import { Route as InstallSlugRouteImport } from './routes/install/$slug'
 import { Route as MyIndexRouteImport } from './routes/my/index'
@@ -80,6 +82,16 @@ const CategoriesIdRoute = CategoriesIdRouteImport.update({
   path: '/categories/$id',
   getParentRoute: () => rootRouteImport,
 } as any)
+const DeployIndexRoute = DeployIndexRouteImport.update({
+  id: '/deploy/',
+  path: '/deploy/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const DeployCallbackRoute = DeployCallbackRouteImport.update({
+  id: '/deploy/callback',
+  path: '/deploy/callback',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const InstallIndexRoute = InstallIndexRouteImport.update({
   id: '/install/',
   path: '/install/',
@@ -112,9 +124,11 @@ export interface FileRoutesByFullPath {
   '/api/search.json': typeof ApiSearchDotjsonRoute
   '/apps/$slug': typeof AppsSlugRoute
   '/categories/$id': typeof CategoriesIdRoute
+  '/deploy/callback': typeof DeployCallbackRoute
   '/install/$slug': typeof InstallSlugRoute
   '/og/$': typeof OgSplatRoute
   '/apps/': typeof AppsIndexRoute
+  '/deploy/': typeof DeployIndexRoute
   '/install/': typeof InstallIndexRoute
   '/my/': typeof MyIndexRoute
 }
@@ -129,9 +143,11 @@ export interface FileRoutesByTo {
   '/api/search.json': typeof ApiSearchDotjsonRoute
   '/apps/$slug': typeof AppsSlugRoute
   '/categories/$id': typeof CategoriesIdRoute
+  '/deploy/callback': typeof DeployCallbackRoute
   '/install/$slug': typeof InstallSlugRoute
   '/og/$': typeof OgSplatRoute
   '/apps': typeof AppsIndexRoute
+  '/deploy': typeof DeployIndexRoute
   '/install': typeof InstallIndexRoute
   '/my': typeof MyIndexRoute
 }
@@ -147,9 +163,11 @@ export interface FileRoutesById {
   '/api/search.json': typeof ApiSearchDotjsonRoute
   '/apps/$slug': typeof AppsSlugRoute
   '/categories/$id': typeof CategoriesIdRoute
+  '/deploy/callback': typeof DeployCallbackRoute
   '/install/$slug': typeof InstallSlugRoute
   '/og/$': typeof OgSplatRoute
   '/apps/': typeof AppsIndexRoute
+  '/deploy/': typeof DeployIndexRoute
   '/install/': typeof InstallIndexRoute
   '/my/': typeof MyIndexRoute
 }
@@ -166,9 +184,11 @@ export interface FileRouteTypes {
     | '/api/search.json'
     | '/apps/$slug'
     | '/categories/$id'
+    | '/deploy/callback'
     | '/install/$slug'
     | '/og/$'
     | '/apps/'
+    | '/deploy/'
     | '/install/'
     | '/my/'
   fileRoutesByTo: FileRoutesByTo
@@ -183,9 +203,11 @@ export interface FileRouteTypes {
     | '/api/search.json'
     | '/apps/$slug'
     | '/categories/$id'
+    | '/deploy/callback'
     | '/install/$slug'
     | '/og/$'
     | '/apps'
+    | '/deploy'
     | '/install'
     | '/my'
   id:
@@ -200,9 +222,11 @@ export interface FileRouteTypes {
     | '/api/search.json'
     | '/apps/$slug'
     | '/categories/$id'
+    | '/deploy/callback'
     | '/install/$slug'
     | '/og/$'
     | '/apps/'
+    | '/deploy/'
     | '/install/'
     | '/my/'
   fileRoutesById: FileRoutesById
@@ -218,9 +242,11 @@ export interface RootRouteChildren {
   ApiSearchDotjsonRoute: typeof ApiSearchDotjsonRoute
   AppsSlugRoute: typeof AppsSlugRoute
   CategoriesIdRoute: typeof CategoriesIdRoute
+  DeployCallbackRoute: typeof DeployCallbackRoute
   InstallSlugRoute: typeof InstallSlugRoute
   OgSplatRoute: typeof OgSplatRoute
   AppsIndexRoute: typeof AppsIndexRoute
+  DeployIndexRoute: typeof DeployIndexRoute
   InstallIndexRoute: typeof InstallIndexRoute
   MyIndexRoute: typeof MyIndexRoute
 }
@@ -304,6 +330,20 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof CategoriesIdRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/deploy/': {
+      id: '/deploy/'
+      path: '/deploy'
+      fullPath: '/deploy/'
+      preLoaderRoute: typeof DeployIndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/deploy/callback': {
+      id: '/deploy/callback'
+      path: '/deploy/callback'
+      fullPath: '/deploy/callback'
+      preLoaderRoute: typeof DeployCallbackRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/install/': {
       id: '/install/'
       path: '/install'
@@ -346,9 +386,11 @@ const rootRouteChildren: RootRouteChildren = {
   ApiSearchDotjsonRoute: ApiSearchDotjsonRoute,
   AppsSlugRoute: AppsSlugRoute,
   CategoriesIdRoute: CategoriesIdRoute,
+  DeployCallbackRoute: DeployCallbackRoute,
   InstallSlugRoute: InstallSlugRoute,
   OgSplatRoute: OgSplatRoute,
   AppsIndexRoute: AppsIndexRoute,
+  DeployIndexRoute: DeployIndexRoute,
   InstallIndexRoute: InstallIndexRoute,
   MyIndexRoute: MyIndexRoute,
 }

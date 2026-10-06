@@ -26,6 +26,7 @@
     "takumi-js": "2.14.0"
   },
   "devDependencies": {
+    "@appflare/cf-api": "workspace:*",
     "@appflare/schema": "workspace:*",
     "@tailwindcss/vite": "4.3.3",
     "@types/mdx": "2.0.14",
