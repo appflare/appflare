@@ -555,6 +555,19 @@ describe("r2 / queues / vectorize", () => {
     expect(fake.last().query.get("page")).toBe("1");
   });
 
+  it("queues.listQueues follows every page", async () => {
+    const pages = makeFakeFetch((req) => {
+      const page = Number(req.query.get("page"));
+      return {
+        result: [{ queue_id: `q${page}`, queue_name: `queue-${page}` }],
+        result_info: { page, per_page: 100, total_pages: 2 },
+      };
+    });
+    const paged = createClient({ accountId: ACCOUNT, token: TOKEN, fetch: pages.fetch });
+    expect((await paged.queues.listQueues()).map((q) => q.queue_id)).toEqual(["q1", "q2"]);
+    expect(pages.calls.map((c) => c.query.get("page"))).toEqual(["1", "2"]);
+  });
+
   it("queues.createConsumer -> POST /queues/{id}/consumers with a Worker consumer body", async () => {
     const { fake, client } = make({
       result: { consumer_id: "c1", queue_name: "jobs", script_name: "app", type: "worker" },
