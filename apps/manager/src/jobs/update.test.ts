@@ -1095,8 +1095,14 @@ describe("update job", () => {
       previews: [{ status: 200, body: '{"ok":true,"version":"1.1.0"}' }],
     });
     expect(right.error).toBeNull();
-    expect(right.logs.at(-1)?.message).toContain(
-      "at https://cut.appflare-dev.workers.dev/api/health",
+    expect(
+      right.logs.some((l) =>
+        l.message.startsWith("GET https://cut.appflare-dev.workers.dev/api/health -> HTTP 200"),
+      ),
+    ).toBe(true);
+    // The last line names the app's address, as the install's does, not the path it checked.
+    expect(right.logs.at(-1)?.message).toBe(
+      "Updated cut from 1.0.0 to 1.1.0 at https://cut.appflare-dev.workers.dev/ (health: verified (HTTP 200)).",
     );
   });
 
@@ -1145,7 +1151,7 @@ describe("update job", () => {
     );
     expect(r.install).toMatchObject({ health_status: "unverified", health_access: 1 });
     expect(r.logs.at(-1)?.message).toBe(
-      `Updated cut from 1.0.0 to 1.1.0 at https://${live}/api/health (health: not verified yet (Cloudflare Access asked for a sign-in)).`,
+      `Updated cut from 1.0.0 to 1.1.0 at https://${live}/ (health: not verified yet (Cloudflare Access asked for a sign-in)).`,
     );
   });
 

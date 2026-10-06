@@ -211,6 +211,32 @@ describe("rollback job", () => {
     });
   });
 
+  it("names the app's address in its last line, not the health path it checked", async () => {
+    const old = await buildArtifactFixture({
+      tweak: (m) => {
+        m.catalog.install.health.path = "/api/health";
+      },
+    });
+    await env.DB.prepare("UPDATE snapshots SET manifest_json = ?1 WHERE id = 'upd1'")
+      .bind(JSON.stringify(old.manifest))
+      .run();
+    const r = await rollback();
+    expect(r.error).toBeNull();
+    const logs = (
+      await env.DB.prepare("SELECT message FROM job_logs WHERE job_id = 'rb1' ORDER BY id").all<{
+        message: string;
+      }>()
+    ).results.map((l) => l.message);
+    expect(
+      logs.some((m) =>
+        m.startsWith("GET https://cut.appflare-dev.workers.dev/api/health -> HTTP 200"),
+      ),
+    ).toBe(true);
+    expect(logs.at(-1)).toBe(
+      "Rolled back from 1.1.0 to 1.0.0 at https://cut.appflare-dev.workers.dev/ (health: verified (HTTP 200)).",
+    );
+  });
+
   describe("a Workflow on a schedule only the serving version defines", () => {
     // The serving version adds SWEEP, run hourly; the snapshot's version has JOBS only.
     const seed = async () => {

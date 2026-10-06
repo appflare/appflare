@@ -1,12 +1,18 @@
 import { reset } from "cloudflare:test";
 import { env } from "cloudflare:workers";
 import { TELEMETRY_BATCH_URL, TELEMETRY_PROJECT_KEY } from "@appflare/schema";
-import { beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createDb } from "../db/client";
 import { createMigrator } from "../db/migrate";
 import { migrations } from "../db/migrations/index";
 import { readSettings, SETTING, writeSettings } from "../db/settings";
-import { CURSOR_LAG_MS, previewHeartbeat, type ReportEnv, reportTelemetry } from "./report.server";
+import {
+  CURSOR_LAG_MS,
+  previewHeartbeat,
+  type ReportEnv,
+  reportTelemetry,
+  resetWithheldLog,
+} from "./report.server";
 import {
   markOpenedToday,
   readTelemetryStatus,
@@ -14,6 +20,7 @@ import {
   resetOpenedMemo,
   setTelemetryEnabled,
   TelemetryLockedError,
+  usageDataWithheld,
 } from "./state.server";
 
 /**
@@ -101,7 +108,12 @@ beforeEach(async () => {
   await reset();
   await createMigrator(migrations).ensure(env.DB);
   resetOpenedMemo();
+  resetWithheldLog();
   await seed();
+});
+
+afterEach(() => {
+  vi.restoreAllMocks();
 });
 
 describe("before anything is sent", () => {
@@ -114,6 +126,53 @@ describe("before anything is sent", () => {
       reason: "development build",
     });
     expect(ph.sent).toEqual([]);
+  });
+
+  it("a pre-release sends nothing, and says why in the log once", async () => {
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    const ph = posthog();
+    const e = managerEnv({ APPFLARE_VERSION: "0.4.0-rc.f7" });
+    await recordSetupFinished(e, new Date(NOW - 60 * MIN));
+    await markOpenedToday(e, "admin", NOW - 5 * MIN);
+    for (const at of [NOW, NOW + 30 * MIN]) {
+      expect(await reportTelemetry(e, { fetch: ph.fetch, now: () => at })).toEqual({
+        status: "skipped",
+        reason: "pre-release",
+      });
+    }
+    expect(ph.sent).toEqual([]);
+    expect(log.mock.calls).toEqual([
+      [
+        "usage data not sent: 0.4.0-rc.f7 is a pre-release, and only released versions send usage data, so test managers stay out of the usage stats",
+      ],
+    ]);
+    // Nothing is recorded for a report it will never send.
+    const opened = await readSettings(createDb(env.DB), [SETTING.telemetryOpenedDay]);
+    expect(opened).toEqual({});
+    expect(await readTelemetryStatus(e)).toMatchObject({
+      state: "on",
+      devBuild: false,
+      preRelease: true,
+    });
+
+    // The released version it becomes sends again.
+    const released = managerEnv({ APPFLARE_VERSION: "0.4.0" });
+    const out = await reportTelemetry(released, { fetch: ph.fetch, now: () => NOW + 60 * MIN });
+    expect(out.status).toBe("sent");
+    expect(ph.sent).toHaveLength(1);
+    expect(await readTelemetryStatus(released)).toMatchObject({ preRelease: false });
+  });
+
+  it("tells released versions from development builds and pre-releases", () => {
+    expect(usageDataWithheld("0.0.0-dev")).toBe("development build");
+    expect(usageDataWithheld("0.0.0")).toBe("development build");
+    for (const version of ["0.4.0-rc.f7", "1.0.0-beta.1", "0.3.1-0"]) {
+      expect(usageDataWithheld(version), version).toBe("pre-release");
+    }
+    // Build metadata is no pre-release part.
+    for (const version of ["0.4.0", "1.12.3", "0.4.0+sha.f7"]) {
+      expect(usageDataWithheld(version), version).toBeNull();
+    }
   });
 
   it("APPFLARE_TELEMETRY=off or DO_NOT_TRACK=1 on the Worker locks it off", async () => {

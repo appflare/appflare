@@ -29,7 +29,7 @@ import {
   utcDay,
   uuidV5,
 } from "./events";
-import { isDevBuild, lockOf, newInstallId, type TelemetryEnv } from "./state.server";
+import { lockOf, newInstallId, type TelemetryEnv, usageDataWithheld } from "./state.server";
 
 /**
  * The usage-data report, sent by the cron. Everything is read from D1 and
@@ -309,12 +309,34 @@ function jobRows(result: D1Result | undefined): JobRow[] {
   }));
 }
 
-/** Sends the report due now. Never throws: every failure is an outcome to log. */
+/** The version this isolate last said it sends no usage data for. */
+let withheldLoggedFor: string | null = null;
+
+/** Test-only: forget which version the skip was logged for. */
+export function resetWithheldLog(): void {
+  withheldLoggedFor = null;
+}
+
+/**
+ * Sends the report due now. Never throws: every failure is an outcome to log.
+ * A development build or a pre-release sends nothing and reads nothing, and
+ * says so in the Worker's log once (per isolate), not on every run.
+ */
 export async function reportTelemetry(
   env: ReportEnv,
   opts: ReportOptions = {},
 ): Promise<ReportOutcome> {
-  if (isDevBuild(runningVersion(env))) return { status: "skipped", reason: "development build" };
+  const version = runningVersion(env);
+  const withheld = usageDataWithheld(version);
+  if (withheld !== null) {
+    if (withheldLoggedFor !== version) {
+      withheldLoggedFor = version;
+      console.log(
+        `usage data not sent: ${version} is a ${withheld}, and only released versions send usage data, so test managers stay out of the usage stats`,
+      );
+    }
+    return { status: "skipped", reason: withheld };
+  }
   const lock = lockOf(env);
   if (lock !== null) return { status: "skipped", reason: `turned off by ${lock}` };
   try {

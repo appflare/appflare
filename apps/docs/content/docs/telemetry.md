@@ -9,7 +9,10 @@ scheduled run after setup finishes (or, on a manager updated from a version with
 usage data, after the update). No banner in the manager announces it: this page,
 **Settings > Usage data** in the manager, and the installer's notice when it
 starts are where it is disclosed, and nothing waits for an answer. A development
-build never sends anything.
+build never sends anything, and a pre-release of the manager (a version with a
+pre-release part, such as `0.4.0-rc.1`) sends no usage data, so test managers stay
+out of the numbers. **Settings > Usage data** says so on either, and the Worker's log
+notes the skipped report once.
 
 ## What it does for you
 

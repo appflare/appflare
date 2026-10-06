@@ -28,13 +28,12 @@ import {
   type GithubAccessState,
   getGithubAccess,
 } from "../github/tokens.functions";
-import { ENABLE_SANDBOX_PLACE, UPDATE_SANDBOX_HINT } from "../sandbox/connect-copy";
 import { AppflareLoader } from "./appflare-loader";
 import { BusyMark, busyActionProps } from "./busy-button";
 import { ConfirmDialog } from "./confirm-dialog";
 import { DocsLink } from "./docs-link";
 import { FieldHelp } from "./field-label";
-import { BANNER_ICON, ErrorMessageBanner, MessageText } from "./message-text";
+import { BANNER_ICON, ErrorMessageBanner } from "./message-text";
 import { Section, SectionBody, SectionEmpty, SectionTable } from "./section";
 import { settingsSection } from "./settings-links";
 import { Timestamp } from "./timestamp";
@@ -119,7 +118,12 @@ export function GithubAccessCard({ isAdmin }: { isAdmin: boolean }) {
   );
 }
 
-/** Why tokens cannot be added right now, when that is so; null when they can. */
+/**
+ * Why tokens cannot be added right now, when that is so; null when they can.
+ * This section sits below the sandbox builds one on the same page, so it
+ * points up at that section's buttons rather than linking to the page the
+ * reader is on.
+ */
 function accessNotice(state: GithubAccessState): ReactNode {
   if (!state.sandboxConnected) {
     return (
@@ -127,11 +131,7 @@ function accessNotice(state: GithubAccessState): ReactNode {
         variant="secondary"
         icon={BANNER_ICON.secondary}
         title="Sandbox builds are off"
-        description={
-          <MessageText
-            message={`Tokens are kept on the sandbox Worker, which also clones the repositories. Enable sandbox builds in ${ENABLE_SANDBOX_PLACE} to add one. Disabling sandbox builds removes every token.`}
-          />
-        }
+        description="Tokens are kept on the sandbox Worker, which also clones the repositories. Enable sandbox builds above to add one. Disabling sandbox builds removes every token."
       />
     );
   }
@@ -141,7 +141,7 @@ function accessNotice(state: GithubAccessState): ReactNode {
         variant="alert"
         icon={BANNER_ICON.alert}
         title="The sandbox Worker cannot use tokens yet"
-        description={<MessageText message={`To update it, ${UPDATE_SANDBOX_HINT}.`} />}
+        description="To update it, choose Update sandbox above."
       />
     );
   }
