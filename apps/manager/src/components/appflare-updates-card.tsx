@@ -1,4 +1,4 @@
-import { Badge, Button, LinkButton, Text } from "@cloudflare/kumo";
+import { Badge, Button, Link, LinkButton, Text } from "@cloudflare/kumo";
 import { ArrowCircleUpIcon, ArrowRightIcon, ArrowsClockwiseIcon } from "@phosphor-icons/react";
 import { useRouter } from "@tanstack/react-router";
 import { type ComponentProps, useState } from "react";
@@ -15,7 +15,7 @@ import { DescriptionItem, DescriptionList } from "./description-list";
 import { useJobStarted } from "./job-started";
 import { MessageBanner } from "./message-text";
 import { Section, SectionBody, SectionFormActions, SectionRows } from "./section";
-import { settingsSection } from "./settings-links";
+import { settingsLink, settingsSection, settingsSectionTitle } from "./settings-links";
 import { Timestamp } from "./timestamp";
 
 /**
@@ -216,7 +216,11 @@ export function SelfUpdateDialog({
       <Text variant="secondary">
         Nothing else runs during the update: installs, updates, and uninstalls wait until it
         finishes. If the new version fails its check, the current one keeps serving. To go back
-        later, roll back under Recent versions in Settings, Updates.
+        later, roll back under{" "}
+        <Link href={settingsLink("updates", "versions")}>
+          {settingsSectionTitle("updates", "versions")}
+        </Link>
+        .
       </Text>
     </ConfirmDialog>
   );
