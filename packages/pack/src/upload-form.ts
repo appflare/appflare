@@ -97,6 +97,7 @@ export async function readUploadForm(file: string): Promise<UploadModule[]> {
   }
   const main = typeof metadata.main_module === "string" ? moduleName(metadata.main_module) : null;
   const modules: UploadModule[] = [];
+  const seen = new Set<string>();
   for (const [rawName, part] of form.entries()) {
     if (rawName === "metadata") continue;
     if (typeof part === "string") {
@@ -112,6 +113,11 @@ export async function readUploadForm(file: string): Promise<UploadModule[]> {
       );
     }
     const name = moduleName(rawName);
+    // `./a.js` and `a.js` are one path in the artifact.
+    if (seen.has(name)) {
+      throw new UploadFormError(`the upload has two modules named ${name}`);
+    }
+    seen.add(name);
     modules.push({
       name,
       type,

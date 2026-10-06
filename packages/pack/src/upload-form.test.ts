@@ -94,6 +94,14 @@ describe("readUploadForm", () => {
     await expect(readUploadForm(file)).rejects.toThrow(/outside the Worker's own directory/);
   });
 
+  it("refuses two modules that name one path", async () => {
+    const file = await writeForm({ main_module: "index.js" }, [
+      { name: "index.js", type: "application/javascript+module", content: "" },
+      { name: "./index.js", type: "application/javascript+module", content: "" },
+    ]);
+    await expect(readUploadForm(file)).rejects.toThrow(/two modules named index\.js/);
+  });
+
   it("refuses an upload without the main module it names", async () => {
     const file = await writeForm({ main_module: "index.js" }, [
       { name: "other.js", type: "application/javascript+module", content: "" },
