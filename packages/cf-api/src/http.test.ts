@@ -9,6 +9,57 @@ const ACCOUNT = "acc-123";
 const BASE = "https://api.cloudflare.com/client/v4";
 
 describe("http core", () => {
+  it("resolves credentials again between pages of a long-lived client", async () => {
+    let generation = 0;
+    const fake = makeFakeFetch((req) => {
+      const page = Number(req.query.get("page"));
+      return { result: [{ id: `namespace-${page}` }], result_info: { total_pages: 2 } };
+    });
+    const client = createClient({
+      accountId: ACCOUNT,
+      token: async () => `access-${++generation}`,
+      fetch: fake.fetch,
+    });
+
+    await client.kv.listNamespaces();
+
+    expect(fake.calls.map((call) => call.authorization)).toEqual([
+      "Bearer access-1",
+      "Bearer access-2",
+    ]);
+  });
+
+  it("uses an asset-session JWT without resolving the account credential", async () => {
+    const fake = makeFakeFetch({ result: { jwt: "completion" } });
+    const client = createClient({
+      accountId: ACCOUNT,
+      token: async () => {
+        throw new Error("Account authorization needs reconnecting");
+      },
+      fetch: fake.fetch,
+    });
+
+    await client.assets.uploadFile("asset-session", { hash: "abc", body: "asset" });
+
+    expect(fake.last().authorization).toBe("Bearer asset-session");
+  });
+
+  it("does not send or retry a mutation when credential resolution fails", async () => {
+    const fake = makeFakeFetch({ result: null });
+    const client = createClient({
+      accountId: ACCOUNT,
+      token: async () => {
+        throw new Error("Cloudflare authorization needs reconnecting");
+      },
+      fetch: fake.fetch,
+    });
+
+    await expect(client.workers.deleteScript("app")).rejects.toThrow(
+      "Cloudflare authorization needs reconnecting",
+    );
+    expect(fake.calls).toHaveLength(0);
+  });
+
   it("sends bearer auth and Accept, and unwraps the envelope result", async () => {
     const fake = makeFakeFetch({ result: { id: "t1", status: "active" } });
     const client = createClient({ accountId: ACCOUNT, token: TOKEN, fetch: fake.fetch });
