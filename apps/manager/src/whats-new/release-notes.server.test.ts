@@ -65,7 +65,9 @@ describe("the release check", () => {
         if (key === RELEASE_NOTES_KEY) throw new Error("KV get failed");
         return kv.get(key);
       },
-      put: (key: string, value: string) => kv.put(key, value),
+      getWithMetadata: (key: string) => kv.getWithMetadata(key),
+      put: (key: string, value: string, options?: KVNamespacePutOptions) =>
+        kv.put(key, value, options),
     } as unknown as KVNamespace;
     const release = await refreshManagerReleases(
       { KV: failingKv, APPFLARE_VERSION: "0.4.0" },

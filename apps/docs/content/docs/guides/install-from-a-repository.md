@@ -162,12 +162,14 @@ every token with it.
 
 ### Appflare release downloads
 
-While Appflare's own repository on GitHub is private, updating Appflare needs a token
-that can read its releases. Tick **Appflare release downloads** under **Use it for** on
-such a token. It needs only **Contents: Read-only** on `appflare/appflare`; once that
-repository is public, no token is needed for this. A token for release downloads alone
-needs no repositories, and untick **Builds of private repositories** so builds never try
-it.
+Appflare's own repository on GitHub is public, so updating Appflare needs no token.
+Without one, Appflare finds new versions on github.com and asks GitHub's API only for
+release notes, because GitHub allows 60 API requests an hour to each address without a
+token and Cloudflare Workers share their addresses. If release notes are slow to
+appear, tick **Appflare release downloads** under **Use it for** on a token: the update
+check then uses the API with the token's own, much higher limit. A token for release
+downloads alone needs no repositories, and untick **Builds of private repositories** so
+builds never try it.
 
 Appflare then reads its own releases, and nothing else, with that token (for update
 checks, self-updates and updating the sandbox Worker) instead of the `GITHUB_TOKEN`

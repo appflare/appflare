@@ -3,11 +3,13 @@ import type { FetchLike } from "@appflare/cf-api";
 /**
  * Fetching from the manager's release feed and its release assets.
  *
- * While the appflare/appflare repository is private, its releases are only
- * readable with a GitHub token: a GitHub access token marked for release
- * downloads (held by the sandbox Worker, which adds it to the requests it
- * makes for the manager), or else the manager's optional `GITHUB_TOKEN`
- * secret. Either token is sent ONLY to `https://api.github.com`
+ * The appflare/appflare repository is public, so no token is needed; one
+ * moves the feed's API reads off the shared 60-an-hour limit of requests
+ * without a token (see github-releases.ts), and would make a private fork
+ * readable. It is a GitHub access token marked for release downloads (held
+ * by the sandbox Worker, which adds it to the requests it makes for the
+ * manager), or else the manager's optional `GITHUB_TOKEN` secret. Either
+ * token is sent ONLY to `https://api.github.com`
  * and `https://github.com`; redirects are followed here, one hop at a time,
  * so it never reaches the host a release asset redirects to (GitHub's
  * signed asset URLs also refuse a second credential). Other request headers,

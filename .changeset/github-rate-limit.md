@@ -1,0 +1,5 @@
+---
+"@appflare/manager": patch
+---
+
+Checking for Appflare updates no longer fails most of the time because of GitHub's rate limit. Without a token, GitHub's API allows 60 requests an hour to each address, and Cloudflare Workers share their addresses with many others, so the half-hourly check was refused (HTTP 403) even though Appflare itself asked twice an hour. Appflare now finds its newest version through github.com's latest-release page, which that limit does not cover, and asks the API only for release notes: once a day, and when a new release appears, sending the list's ETag. When GitHub refuses for its rate limit, Appflare waits until the time GitHub gives before asking again, and "Check now" says that GitHub is limiting requests and when Appflare will ask again, instead of a bare HTTP 403. Turning sandbox builds on or updating them reads the sandbox Worker release from its download addresses rather than the API, so a rate limit no longer ends that job with "GitHub has no sandbox Worker release". A GitHub access token marked for Appflare release downloads, or a `GITHUB_TOKEN` secret, still reads everything through the API under the token's own limit.

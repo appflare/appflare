@@ -1,10 +1,14 @@
+import type { FetchLike } from "@appflare/cf-api";
 import { describe, expect, it } from "vitest";
 import sandboxPackage from "../../../sandbox/package.json";
+import { ArtifactError } from "../jobs/install/artifact";
 import { buildArtifactFixture } from "../test/artifact-fixture";
 import { sandboxRelease } from "../test/fake-sandbox-account";
 import {
+  findSandboxRelease,
   PINNED_SANDBOX_VERSION,
   sandboxReleaseAssets,
+  sandboxReleaseProblem,
   sandboxReleaseUrl,
   sandboxUpdateAvailable,
   verifySandboxManifest,
@@ -63,6 +67,79 @@ describe("sandboxReleaseAssets", () => {
         viaApi: true,
       }),
     ).toThrow(/has no appflare-sandbox-0.1.2.zip/);
+  });
+});
+
+describe("finding the sandbox Worker release", () => {
+  const DOWNLOAD = "https://github.com/appflare/appflare/releases/download/sandbox%400.1.2";
+  /** Answers every request with `response`, recording the URLs and Range headers asked for. */
+  function github(response: () => Response) {
+    const seen: Array<{ url: string; range: string | null }> = [];
+    const fetch: FetchLike = async (input, init) => {
+      seen.push({ url: input, range: new Headers(init?.headers).get("range") });
+      return response();
+    };
+    return { fetch, seen };
+  }
+  const limited = () =>
+    new Response(JSON.stringify({ message: "API rate limit exceeded" }), {
+      status: 403,
+      headers: { "x-ratelimit-remaining": "0", "x-ratelimit-reset": "4102444800" },
+    });
+
+  it("without a token, uses the download URLs and asks only for the manifest's first byte", async () => {
+    const gh = github(() => new Response("{", { status: 206 }));
+    const assets = await findSandboxRelease(gh.fetch, {}, "0.1.2", { viaApi: false });
+    expect(assets).toEqual({
+      zip: `${DOWNLOAD}/appflare-sandbox-0.1.2.zip`,
+      manifest: `${DOWNLOAD}/manifest.json`,
+      sig: `${DOWNLOAD}/manifest.sig`,
+    });
+    expect(gh.seen).toEqual([{ url: `${DOWNLOAD}/manifest.json`, range: "bytes=0-0" }]);
+    expect(await sandboxReleaseProblem(gh.fetch, {}, "0.1.2", { viaApi: false })).toBeNull();
+    expect(gh.seen.every((s) => !s.url.startsWith("https://api.github.com/"))).toBe(true);
+  });
+
+  it("without a token, a missing release is final and anything else is retried", async () => {
+    const missing = github(() => new Response("Not Found", { status: 404 }));
+    const error = await findSandboxRelease(missing.fetch, {}, "0.1.2", { viaApi: false }).catch(
+      (e: unknown) => e,
+    );
+    expect(error).toBeInstanceOf(ArtifactError);
+    expect((error as Error).message).toBe(
+      "GitHub has no sandbox Worker release sandbox@0.1.2 (HTTP 404).",
+    );
+    expect(await sandboxReleaseProblem(missing.fetch, {}, "0.1.2", { viaApi: false })).toBe(
+      "GitHub has no sandbox Worker release sandbox@0.1.2.",
+    );
+    const outage = github(() => new Response(null, { status: 503 }));
+    const retried = await findSandboxRelease(outage.fetch, {}, "0.1.2", { viaApi: false }).catch(
+      (e: unknown) => e,
+    );
+    expect(retried).toBeInstanceOf(Error);
+    expect(retried).not.toBeInstanceOf(ArtifactError);
+    expect(await sandboxReleaseProblem(outage.fetch, {}, "0.1.2", { viaApi: false })).toBeNull();
+  });
+
+  it("with a token, a rate-limit refusal from the API is retried and says so", async () => {
+    const gh = github(limited);
+    const error = await findSandboxRelease(gh.fetch, {}, "0.1.2", { viaApi: true }).catch(
+      (e: unknown) => e,
+    );
+    expect(error).toBeInstanceOf(Error);
+    expect(error).not.toBeInstanceOf(ArtifactError);
+    expect((error as Error).message).toMatch(/^GitHub is limiting requests/);
+    expect(gh.seen.map((s) => s.url)).toEqual([sandboxReleaseUrl({}, "0.1.2")]);
+    expect(await sandboxReleaseProblem(gh.fetch, {}, "0.1.2", { viaApi: true })).toBeNull();
+  });
+
+  it("asks the API for a feed that is not GitHub's, token or not", async () => {
+    const env = { MANAGER_RELEASES_URL: "http://localhost:9/r" };
+    const gh = github(() => Response.json({ message: "Not Found" }, { status: 404 }));
+    await expect(findSandboxRelease(gh.fetch, env, "0.1.2", { viaApi: false })).rejects.toThrow(
+      "GitHub has no sandbox Worker release sandbox@0.1.2 (HTTP 404).",
+    );
+    expect(gh.seen.map((s) => s.url)).toEqual(["http://localhost:9/r/tags/sandbox%400.1.2"]);
   });
 });
 
