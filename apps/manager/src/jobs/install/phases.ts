@@ -684,7 +684,8 @@ export async function lookupSubdomainPhase(steps: JobSteps): Promise<string> {
  * Never fails the install, which has set everything up by then: when
  * Cloudflare refuses the read, or no single version serves all traffic (only
  * a deployment made outside Appflare splits it), the uploaded version stays
- * recorded, with a warning. `record` writes the version in the same step.
+ * recorded, with a warning. `record` writes a version read in a step of its
+ * own, so a failed write fails the job rather than leaving the old version.
  */
 export async function servingVersionPhase(
   steps: JobSteps,
@@ -701,7 +702,7 @@ export async function servingVersionPhase(
   const of = label === "" ? "" : ` of Worker "${input.workerName}"`;
   const kept = input.uploadedVersionId;
   const read = await steps
-    .run(`read serving version${label}`, async ({ log, cf, orm }) => {
+    .run(`read serving version${label}`, async ({ log, cf }) => {
       let versionId: string | null;
       try {
         versionId = activeVersionId(await cf().versions.listDeployments(input.workerName));
@@ -721,12 +722,19 @@ export async function servingVersionPhase(
         );
         return { versionId: kept };
       }
-      await input.record?.(orm, versionId);
       log.info(`Version ${versionId}${of} serves all traffic, with its secrets.`, { versionId });
       return { versionId };
     })
     // Retries ran out: the step logged why, and the uploaded version stays recorded.
     .catch(() => ({ versionId: kept }));
+  const { record } = input;
+  if (record !== undefined && read.versionId !== null && read.versionId !== kept) {
+    const versionId = read.versionId;
+    await steps.run(`record serving version${label}`, async ({ orm }) => {
+      await record(orm, versionId);
+      return {};
+    });
+  }
   return read.versionId;
 }
 

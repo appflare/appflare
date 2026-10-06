@@ -960,6 +960,7 @@ describe("install job", () => {
       "D1 DB: apply migrations",
       "set secret ADMIN_PASSWORD",
       "read serving version",
+      "record serving version",
       "set cron triggers",
       "enable workers.dev route",
       "health check 1",
