@@ -123,12 +123,13 @@ describe("ZoneCombobox", () => {
     await act(async () => trigger().focus());
     await key("ArrowDown");
     expect(options()).toEqual(["example.com", "example.org", "acme.dev"]);
+    // Opening highlights nothing; the next ArrowDown reaches the first domain.
+    await key("ArrowDown");
     await key("ArrowDown");
     await key("Enter");
     expect(onChange).toHaveBeenCalledTimes(1);
-    const chosen = ZONES.find((z) => z.id === onChange.mock.lastCall?.[0]);
-    expect(chosen).toBeDefined();
-    expect(trigger().textContent).toContain(chosen?.name);
+    expect(onChange).toHaveBeenCalledWith("z2");
+    expect(trigger().textContent).toContain("example.org");
     expect(options()).toEqual([]);
     expect(document.activeElement).toBe(trigger());
 
