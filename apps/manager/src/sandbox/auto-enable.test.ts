@@ -1,6 +1,7 @@
 import { reset } from "cloudflare:test";
 import { env } from "cloudflare:workers";
 import { createClient, type FetchLike } from "@appflare/cf-api";
+import { SANDBOX_PROTOCOL_VERSION } from "@appflare/schema";
 import { inArray } from "drizzle-orm";
 import { ulid } from "ulidx";
 import { beforeEach, describe, expect, it } from "vitest";
@@ -21,16 +22,19 @@ import type { JobEnv } from "../jobs/run-job";
 import { awaitSandboxEnabledPhase, SANDBOX_ENABLE_WAIT } from "../jobs/sandbox-enable-wait";
 import { createJobSteps } from "../jobs/steps";
 import { baseCatalog, buildArtifactFixture } from "../test/artifact-fixture";
-import { ACC, SUBDOMAIN, TOKEN } from "../test/fake-account";
+import { ACC, type FakeAccount, SUBDOMAIN, TOKEN } from "../test/fake-account";
 import { publishedCatalog, sandboxIndexApp } from "../test/fake-sandbox";
 import {
+  DANGLING_SANDBOX,
   fakeSandboxAccount,
   MANAGER,
+  MANAGER_SERVING,
   type SandboxAccountState,
   sandboxRelease,
 } from "../test/fake-sandbox-account";
 import { fakeStep } from "../test/fake-step";
 import { seedInstall } from "../test/seed-install";
+import { readSandboxConnection } from "./connection.server";
 import type { SandboxEnableJobParams } from "./enable-job";
 import { SANDBOX_CAPABILITY_HREF } from "./readiness";
 import { sandboxReleaseProblem } from "./release";
@@ -54,6 +58,21 @@ beforeEach(async () => {
     [SETTING.accountSubdomain]: SUBDOMAIN,
   });
 });
+
+/** A `SANDBOX` binding to the sandbox Worker, answering. */
+const answering = {
+  info: async () => ({
+    protocol: SANDBOX_PROTOCOL_VERSION,
+    sandboxVersion: VERSION,
+    image: `appflare/sandbox:${VERSION}`,
+  }),
+};
+/** One to a sandbox Worker that was deleted: there, but every call fails. */
+const deleted = {
+  info: async () => {
+    throw new Error("Network connection lost.");
+  },
+};
 
 /** Answers Containers as a free account does: refused, naming Workers Paid. */
 function freePlan(inner: FetchLike): FetchLike {
@@ -83,14 +102,22 @@ async function start(
     paid?: boolean;
     /** Runs while the start checks the release, as another request could. */
     duringPlan?: () => Promise<void>;
+    /**
+     * The manager's `SANDBOX` binding, read as the install start reads it;
+     * without it, sandbox builds are off.
+     */
+    sandbox?: unknown;
+    /** Appflare's own Worker (its serving version's bindings). */
+    manager?: Partial<FakeAccount>;
   } = {},
 ) {
   if (opts.paid === true) {
     await writeSettings(createDb(env.DB), { [SETTING.accountPlan]: "paid" });
   }
   const release = await sandboxRelease(opts.releaseVersion ?? VERSION);
-  const world = fakeSandboxAccount(release, opts.account ?? {});
+  const world = fakeSandboxAccount(release, opts.account ?? {}, opts.manager ?? {});
   const fetch = opts.wrapFetch?.(world.fetch) ?? world.fetch;
+  const client = async () => createClient({ accountId: ACC, token: TOKEN, fetch });
   const fixture = await buildArtifactFixture({
     keyId: "unsigned",
     catalog: { install: { ...baseCatalog().install, tier: "sandbox" } },
@@ -106,9 +133,11 @@ async function start(
       {
         db: env.DB,
         loadApp: async () => ({ app, manifest: catalogOnlyManifest(catalog) }),
-        sandboxConnected: false,
+        sandboxConnected: async () =>
+          opts.sandbox !== undefined &&
+          (await readSandboxConnection({ DB: env.DB, SANDBOX: opts.sandbox }, client)).connected,
         sandboxAutoEnable: {
-          client: async () => createClient({ accountId: ACC, token: TOKEN, fetch }),
+          client,
           releaseProblem: async (version) => {
             // After the start decided to turn sandbox builds on, before its batch.
             await opts.duringPlan?.();
@@ -185,6 +214,49 @@ describe("an install that needs sandbox builds while they are off", () => {
     } satisfies Partial<InstallJobParams>);
     // Two reads of the account, nothing changed.
     expect(s.world.state.calls.filter((c) => !c.startsWith("GET"))).toEqual([]);
+  });
+
+  it("turns them on first when Appflare is still bound to a sandbox Worker that was deleted", async () => {
+    const s = await start({
+      sandbox: deleted,
+      manager: { versionBindings: { [MANAGER_SERVING]: [DANGLING_SANDBOX] } },
+    });
+    await s.run();
+    expect((await jobRows()).map((r) => [r.id, r.kind])).toEqual([
+      ["id2", "install"],
+      ["id3", "sandbox_enable"],
+    ]);
+    expect(s.created[1]?.params).toMatchObject({ kind: "install", sandboxEnableJob: "id3" });
+  });
+
+  it("takes a binding that answers as connected, without asking Cloudflare", async () => {
+    const s = await start({ sandbox: answering });
+    await s.run();
+    expect((await jobRows()).map((r) => r.kind)).toEqual(["install"]);
+    expect(s.created[0]?.params).not.toHaveProperty("sandboxEnableJob");
+    expect(s.world.state.calls).toEqual([]);
+    expect(s.world.manager.state.calls).toEqual([]);
+  });
+
+  it("takes a binding to the sandbox Worker that does not answer as connected", async () => {
+    // What uses it reports the failure; turning sandbox builds on would not help.
+    const s = await start({
+      sandbox: deleted,
+      manager: {
+        versionBindings: {
+          [MANAGER_SERVING]: [
+            {
+              type: "service",
+              name: "SANDBOX",
+              service: "appflare-sandbox",
+              entrypoint: "SandboxBuilds",
+            },
+          ],
+        },
+      },
+    });
+    await s.run();
+    expect((await jobRows()).map((r) => r.kind)).toEqual(["install"]);
   });
 
   it("waits for an enable job already queued or running instead of starting another", async () => {
@@ -313,7 +385,7 @@ describe("an install that needs sandbox builds while they are off", () => {
             manifest: catalogOnlyManifest(catalog),
           };
         },
-        sandboxConnected: false,
+        sandboxConnected: async () => false,
         sandboxAutoEnable: {
           client: async () => createClient({ accountId: ACC, token: TOKEN, fetch: s.world.fetch }),
           releaseProblem: async () => null,
@@ -408,7 +480,7 @@ describe("waiting for sandbox builds to be turned on", () => {
   it("polls until the enable job succeeded, copying its progress into this job's log", async () => {
     await seedEnable("queued");
     let sleeps = 0;
-    const r = await wait({ DB: env.DB, SANDBOX: {} }, async () => {
+    const r = await wait({ DB: env.DB, SANDBOX: answering }, async () => {
       sleeps += 1;
       if (sleeps === 1) {
         await env.DB.prepare("UPDATE jobs SET status = 'running' WHERE id = 'en1'").run();
@@ -439,7 +511,7 @@ describe("waiting for sandbox builds to be turned on", () => {
 
   it("fails with the enable job's reason when it failed", async () => {
     await seedEnable("failed", "check account: R2 is not enabled on this account.\nmore");
-    const r = await wait({ DB: env.DB, SANDBOX: {} });
+    const r = await wait({ DB: env.DB, SANDBOX: answering });
     expect(String(r.error)).toMatch(
       /sandbox builds could not be turned on \(job en1\): check account: R2 is not enabled on this account\.; nothing of this job was started/,
     );
@@ -459,10 +531,30 @@ describe("waiting for sandbox builds to be turned on", () => {
     const jobEnv: JobEnv = { DB: env.DB };
     // The binding shows up once the instance resumed after its first sleep.
     const bound = await wait(jobEnv, async () => {
-      jobEnv.SANDBOX = {};
+      jobEnv.SANDBOX = answering;
     });
     expect(bound.error).toBeNull();
     expect(bound.step.sleepDurations).toEqual(["1 minute"]);
+  });
+
+  it("does not take a binding to a deleted sandbox Worker for the connected version", async () => {
+    await seedEnable("succeeded");
+    const jobEnv: JobEnv = { DB: env.DB, SANDBOX: deleted };
+    const stale = await wait(jobEnv);
+    expect(stale.step.sleepDurations).toEqual(
+      Array(SANDBOX_ENABLE_WAIT.bindingPolls).fill("1 minute"),
+    );
+    expect(String(stale.error)).toMatch(/start it again/);
+
+    await reset();
+    await createMigrator(migrations).ensure(env.DB);
+    await seedEnable("succeeded");
+    // The connected version's binding answers once the instance resumed on it.
+    const resumed = await wait(jobEnv, async () => {
+      jobEnv.SANDBOX = answering;
+    });
+    expect(resumed.error).toBeNull();
+    expect(resumed.step.sleepDurations).toEqual(["1 minute"]);
   });
 });
 

@@ -23,6 +23,18 @@ import { ACC, type FakeAccount, fakeAccount, SUBDOMAIN, TOKEN } from "./fake-acc
 export const MANAGER = "appflare";
 export const MANAGER_SERVING = "11111111-2222-4333-8444-555555555555";
 const SANDBOX = "appflare-sandbox";
+/**
+ * The manager's `SANDBOX` binding once the sandbox Worker is force-deleted,
+ * as Cloudflare reports it (recorded live): still there, its target gone.
+ */
+export const DANGLING_SANDBOX = {
+  entrypoint: null,
+  environment: "",
+  name: "SANDBOX",
+  service: "",
+  service_deleted: true,
+  type: "service",
+};
 const RELEASES = "https://api.github.com/repos/appflare/appflare/releases";
 /** What `GET /containers/applications` shows for each instance type (recorded live). */
 const SIZES: Record<string, Record<string, unknown>> = {
@@ -264,6 +276,18 @@ export function fakeSandboxAccount(
         }
         state.worker = null;
         state.namespaces = {};
+        // Every binding to it stays, pointing at nothing.
+        const dangle = (bindings: unknown[]) =>
+          bindings.map((raw) => {
+            const b = raw as Record<string, unknown>;
+            return b.type === "service" && b.service === SANDBOX
+              ? { ...DANGLING_SANDBOX, name: b.name }
+              : b;
+          });
+        for (const [id, bindings] of Object.entries(manager.state.versionBindings)) {
+          manager.state.versionBindings[id] = dangle(bindings);
+        }
+        manager.state.bindings = dangle(manager.state.bindings);
         return ok(null);
       }
       case `GET /workers/scripts/${SANDBOX}/bindings`:

@@ -14,6 +14,7 @@ import { R2_MAX_PAGES_PER_RUN, R2_OBJECTS_PER_STEP } from "../jobs/uninstall";
 import { settleUnit } from "../jobs/units/result";
 import { runningVersion } from "../server/build-version";
 import { installsNeedingSandbox, sandboxInUseMessage } from "./blockers";
+import { planSandboxBindingChange, SandboxConnectError } from "./connect.server";
 import { isSandboxWorker } from "./deploy-plan";
 import { requireSelf } from "./enable-job";
 import { NO_CONTAINERS_PERMISSION_REASON } from "./preflight";
@@ -21,8 +22,11 @@ import { NO_CONTAINERS_PERMISSION_REASON } from "./preflight";
 /**
  * The `sandbox_disable` job: removes sandbox builds from the account, leaving
  * it as it was before they were enabled. Refused while any install still
- * needs the sandbox Worker. Each removal first checks the thing is still
- * there, so a retried or repeated run converges.
+ * needs the sandbox Worker, and before anything is deleted when the
+ * disconnect at the end would be refused (no single version serving all of
+ * Appflare's traffic, or a newer upload that disconnecting would deploy
+ * too). Each removal first checks the thing is still there, so a retried or
+ * repeated run converges.
  *
  * 1. Delete the sandbox Worker with `?force=true`: Cloudflare refuses a
  *    plain delete (code 10142) while any version of another Worker binds it,
@@ -33,7 +37,9 @@ import { NO_CONTAINERS_PERMISSION_REASON } from "./preflight";
  * 3. Empty the build bucket, a page per job unit, and delete it.
  * 4. Disconnect the manager: a new version of its Worker without `SANDBOX`,
  *    checked on its preview, then deployed; the job is recorded as done in
- *    the same step.
+ *    the same step. By then Cloudflare reports that binding with no service
+ *    name (`service_deleted`), as it does every binding to a deleted Worker,
+ *    and it is removed all the same (see `sandboxBindingKind`).
  *
  * The disconnect is last because it deploys the manager's own Worker, which
  * this Workflow instance runs on: a step run after such a deploy was seen to
@@ -42,7 +48,9 @@ import { NO_CONTAINERS_PERMISSION_REASON } from "./preflight";
  * runs again, finds no binding, and records the job once more. Until then
  * the manager keeps a binding to a Worker that is gone, and a call through
  * it fails much as it would with no binding; disabling is refused while any
- * install needs the sandbox Worker, so no app depends on it meanwhile.
+ * install needs the sandbox Worker, so no app depends on it meanwhile. A run
+ * that stops in between leaves Settings reading sandbox builds as off, with
+ * Disable offered again to finish.
  */
 
 export const sandboxDisableJobParams = z.object({
@@ -63,7 +71,7 @@ export async function runSandboxDisable(ctx: JobContext): Promise<void> {
   const { run } = steps;
 
   try {
-    const started = await run("start", async ({ log, orm }) => {
+    const started = await run("start", async ({ log, orm, cf }) => {
       await orm
         .update(jobs)
         .set({ status: "running", started_at: new Date(now()) })
@@ -77,6 +85,18 @@ export async function runSandboxDisable(ctx: JobContext): Promise<void> {
       requireSelf(steps.units.remote);
       const blocking = await installsNeedingSandbox(orm);
       if (blocking.length > 0) throw new JobError(sandboxInUseMessage(blocking));
+      // What would stop the disconnect at the end stops the job now, before
+      // anything is deleted: a disable refused there would leave Appflare
+      // bound to a sandbox Worker that is gone.
+      steps.setAccountId(settings.account_id);
+      try {
+        await planSandboxBindingChange(cf(), settings.worker_name, false);
+      } catch (error) {
+        if (error instanceof SandboxConnectError) {
+          throw new JobError(`${error.message} Nothing was deleted.`);
+        }
+        throw error;
+      }
       log.info(
         `Disabling sandbox builds: the sandbox Worker "${SANDBOX_WORKER_NAME}", its container applications and the bucket ${SANDBOX_BUCKET_NAME} go.`,
       );

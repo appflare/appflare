@@ -634,6 +634,7 @@ export function fixture(name: string, args: unknown[]): unknown {
       info: { sandboxVersion: "0.1.0", image: "appflare/sandbox:0.1.0" },
       problem: null,
       workerExists: true,
+      danglingBinding: false,
       pinnedVersion: "0.1.0",
       updateAvailable: false,
       activeJob: null,

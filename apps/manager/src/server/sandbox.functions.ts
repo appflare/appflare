@@ -15,6 +15,7 @@ import {
   SandboxConnectError,
   type SandboxStatus,
 } from "../sandbox/connect.server";
+import { bindingDanglesWith } from "../sandbox/connection.server";
 import {
   activeSandboxWorkerJob,
   lastSandboxJobFailure,
@@ -32,8 +33,10 @@ export type { SandboxStatus } from "../sandbox/connect.server";
 
 /**
  * Settings, Building apps. Reading the state is open to every signed-in
- * user (admins also learn whether the sandbox Worker exists, which costs one
- * API call); enabling, updating, disabling and connecting are admin only.
+ * user. When the binding does not answer, telling whether it points at a
+ * deleted Worker costs two API calls; with sandbox builds off, admins also
+ * learn whether the sandbox Worker exists, which costs one. Enabling,
+ * updating, disabling and connecting are admin only.
  */
 
 export interface SandboxCardState extends SandboxStatus {
@@ -57,6 +60,7 @@ export const getSandboxStatus = createServerFn({ method: "GET" }).handler(
     const admin = hasRole(session.user.role, "admin");
     const status = await readSandboxStatus({
       binding: sandboxBinding(env),
+      bindingDangles: bindingDanglesWith(env.DB, () => getCfClient(env)),
       ...(admin
         ? {
             listWorkers: async () =>

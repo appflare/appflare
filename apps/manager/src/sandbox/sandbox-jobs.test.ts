@@ -9,8 +9,9 @@ import { migrations } from "../db/migrations/index";
 import { SETTING, writeSettings } from "../db/settings";
 import type { JobEnv } from "../jobs/run-job";
 import type { ArtifactFixture } from "../test/artifact-fixture";
-import { ACC, type FakeAccount, SUBDOMAIN, TOKEN } from "../test/fake-account";
+import { ACC, type FakeAccount, NEW_VERSION, SUBDOMAIN, TOKEN } from "../test/fake-account";
 import {
+  DANGLING_SANDBOX,
   type FakeContainerApp,
   fakeSandboxAccount,
   MANAGER,
@@ -55,6 +56,7 @@ beforeEach(async () => {
 async function start(
   world: ReturnType<typeof fakeSandboxAccount>,
   request: Parameters<typeof startSandboxJobCore>[1],
+  id = "job1",
 ) {
   let params: SandboxEnableJobParams | SandboxDisableJobParams | null = null;
   const { jobId } = await startSandboxJobCore(
@@ -68,7 +70,7 @@ async function start(
       },
       currentVersion: MANAGER_VERSION,
       sandboxVersion: VERSION,
-      newId: () => "job1",
+      newId: () => id,
     },
     request,
   );
@@ -109,16 +111,16 @@ async function runJob(
   } catch (e) {
     error = e;
   }
-  const job = await env.DB.prepare("SELECT * FROM jobs WHERE id = 'job1'").first<{
+  const job = await env.DB.prepare("SELECT * FROM jobs WHERE id = ?").bind(params.jobId).first<{
     kind: string;
     status: string;
     error: string | null;
     input_json: string;
   }>();
   const logs = (
-    await env.DB.prepare("SELECT message FROM job_logs WHERE job_id = 'job1' ORDER BY id").all<{
-      message: string;
-    }>()
+    await env.DB.prepare("SELECT message FROM job_logs WHERE job_id = ? ORDER BY id")
+      .bind(params.jobId)
+      .all<{ message: string }>()
   ).results.map((r) => r.message);
   return { error, job, logs, step, self, own };
 }
@@ -190,6 +192,17 @@ function enabledAt(version: string, classes: 2 | 4 = 4): Partial<SandboxAccountS
 }
 
 const connected = { versionBindings: { [MANAGER_SERVING]: [SANDBOX_SERVICE] } };
+
+/**
+ * What a disable that deleted everything but stopped short of disconnecting
+ * left: no sandbox Worker, applications or bucket, and the manager still
+ * serving its binding to the deleted Worker.
+ */
+const leftBound = {
+  versionBindings: {
+    [MANAGER_SERVING]: [{ type: "d1", name: "DB", id: "db-1" }, DANGLING_SANDBOX],
+  },
+};
 
 describe("enable sandbox builds", () => {
   it("deploys the verified release, its bucket and container applications, then connects Appflare", async () => {
@@ -329,6 +342,30 @@ describe("enable sandbox builds", () => {
     expect(r.world.state.rollouts).toEqual({});
     expect(r.world.manager.state.versionPatches).toEqual([]);
     expect(r.logs).toContain("The sandbox Worker already runs 0.1.2; it is not uploaded again.");
+  });
+
+  it("enables again after a disable that left Appflare bound to the deleted Worker, replacing that binding", async () => {
+    const r = await enable({}, leftBound);
+    expect(r.error).toBeNull();
+    expect(r.job).toMatchObject({ kind: "sandbox_enable", status: "succeeded", error: null });
+    expect(r.world.state.uploads).toHaveLength(1);
+    expect(r.world.manager.state.versionPatches).toEqual([
+      {
+        env: {
+          SANDBOX: { type: "service", service: "appflare-sandbox", entrypoint: "SandboxBuilds" },
+        },
+        annotations: {
+          "workers/message": "Appflare: connect sandbox builds",
+          "workers/tag": MANAGER_SERVING,
+        },
+      },
+    ]);
+    expect(r.world.manager.state.deployments[0]?.versions).toEqual([
+      { version_id: NEW_VERSION, percentage: 100 },
+    ]);
+    expect(r.logs).toContain(
+      `Version ${NEW_VERSION} of Appflare's Worker, connected to the sandbox Worker, passed its check and now serves all traffic.`,
+    );
   });
 
   it("updates an older sandbox Worker: re-uploads it without migrations and rolls every application", async () => {
@@ -555,7 +592,7 @@ describe("enable sandbox builds", () => {
 });
 
 describe("disable sandbox builds", () => {
-  it("disconnects Appflare, then force-deletes the Worker, every application and the emptied bucket", async () => {
+  it("force-deletes the Worker, every application and the emptied bucket, then disconnects Appflare", async () => {
     const release = await sandboxRelease(VERSION);
     const world = fakeSandboxAccount(
       release,
@@ -585,6 +622,14 @@ describe("disable sandbox builds", () => {
         },
       },
     ]);
+    // By then the binding pointed at the deleted Worker, and it was removed all the same.
+    expect(world.manager.state.versionBindings[MANAGER_SERVING]).toContainEqual(DANGLING_SANDBOX);
+    expect(world.manager.state.deployments[0]?.versions).toEqual([
+      { version_id: NEW_VERSION, percentage: 100 },
+    ]);
+    expect(r.logs).toContain(
+      `Version ${NEW_VERSION} of Appflare's Worker, disconnected from the sandbox Worker, passed its check and now serves all traffic.`,
+    );
     expect(world.state.deletes).toEqual([{ force: true }]);
     expect(world.state.worker).toBeNull();
     expect(world.state.apps).toEqual([]);
@@ -621,6 +666,90 @@ describe("disable sandbox builds", () => {
     expect(again.job?.status).toBe("succeeded");
     expect(world.manager.state.versionPatches).toHaveLength(1);
     expect(world.state.deletes).toEqual([{ force: true }]);
+  });
+
+  it.each([
+    [
+      "a newer upload is not deployed",
+      { versions: [{ id: "pending-version", metadata: {}, modules: [] }] },
+      /newest uploaded version of Appflare's Worker \(pending-version\) is not the one serving/,
+    ],
+    [
+      "a gradual deployment is in progress",
+      {
+        deployments: [
+          {
+            id: "dep-0",
+            versions: [
+              { version_id: MANAGER_SERVING, percentage: 50 },
+              { version_id: "pending-version", percentage: 50 },
+            ],
+          },
+        ],
+      },
+      /No single version serves all of Appflare's traffic/,
+    ],
+  ])(
+    "refuses before deleting anything when %s, as the disconnect would",
+    async (_what, over, message) => {
+      const release = await sandboxRelease(VERSION);
+      const world = fakeSandboxAccount(release, enabledAt(VERSION), {
+        previews: [healthy],
+        ...connected,
+        ...over,
+      });
+      const r = await runJob(
+        world,
+        (await start(world, { action: "disable", confirm: "appflare-sandbox" })).params,
+        release,
+      );
+      expect(r.job).toMatchObject({ kind: "sandbox_disable", status: "failed" });
+      expect(r.job?.error).toMatch(/^start: /);
+      expect(r.job?.error).toMatch(message);
+      expect(r.job?.error).toMatch(/Nothing was deleted\.$/);
+      expect(world.state.deletes).toEqual([]);
+      expect(world.state.worker).not.toBeNull();
+      expect(world.state.apps).not.toEqual([]);
+      expect(world.manager.state.versionPatches).toEqual([]);
+    },
+  );
+
+  it("removes the binding to the deleted Worker an earlier disable left, and a second disable changes nothing", async () => {
+    const release = await sandboxRelease(VERSION);
+    const world = fakeSandboxAccount(release, {}, { previews: [healthy], ...leftBound });
+    const first = await runJob(
+      world,
+      (await start(world, { action: "disable", confirm: "appflare-sandbox" })).params,
+      release,
+    );
+    expect(first.error).toBeNull();
+    expect(first.job?.status).toBe("succeeded");
+    expect(world.state.deletes).toEqual([]);
+    expect(world.manager.state.versionPatches).toEqual([
+      {
+        env: { SANDBOX: null },
+        annotations: {
+          "workers/message": "Appflare: disconnect sandbox builds",
+          "workers/tag": MANAGER_SERVING,
+        },
+      },
+    ]);
+    expect(world.manager.state.deployments[0]?.versions).toEqual([
+      { version_id: NEW_VERSION, percentage: 100 },
+    ]);
+
+    const second = await runJob(
+      world,
+      (await start(world, { action: "disable", confirm: "appflare-sandbox" }, "job2")).params,
+      release,
+    );
+    expect(second.error).toBeNull();
+    expect(second.job).toMatchObject({ kind: "sandbox_disable", status: "succeeded" });
+    expect(second.logs).toContain(
+      "Appflare's serving version is already disconnected from the sandbox Worker; nothing changed.",
+    );
+    expect(world.manager.state.versionPatches).toHaveLength(1);
+    expect(world.manager.state.deployments).toHaveLength(2);
   });
 
   it("finishes what an earlier run left, and needs nothing to be there", async () => {

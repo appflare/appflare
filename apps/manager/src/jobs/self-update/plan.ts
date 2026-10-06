@@ -9,7 +9,7 @@ import {
   verifyManifestSignature,
 } from "@appflare/schema";
 import { z } from "zod";
-import { SANDBOX_BINDING } from "../../sandbox/binding";
+import { SANDBOX_BINDING, sandboxBindingKind } from "../../sandbox/binding";
 import { ArtifactError } from "../install/artifact";
 import { PASSTHROUGH_BINDING_TYPES } from "../install/bindings";
 import {
@@ -153,8 +153,11 @@ function text(value: unknown): string | undefined {
  *   and left out, with a warning, once it is gone: a binding to a Worker that
  *   does not exist serves nothing. The release does not declare it, since
  *   the sandbox Worker is optional. When `sandboxWorker` is not known, a
- *   `SANDBOX` the running Worker has is kept as is. A `SANDBOX` that points
- *   at another Worker, or a binding of another type by that name, is refused.
+ *   `SANDBOX` the running Worker has is kept as is. One to a Worker that was
+ *   deleted (Cloudflare keeps it with no service name) is Appflare's
+ *   leftover: bound to the sandbox Worker when that exists, left out
+ *   otherwise, never kept as is. A `SANDBOX` that points at another Worker,
+ *   or a binding of another type by that name, is refused.
  * - Other `service` bindings are copied as reported.
  */
 export function selfUpdateBindings(input: {
@@ -173,8 +176,11 @@ export function selfUpdateBindings(input: {
   const assetsBinding = manifest.assets.binding;
   /** A foreign binding holds the name SELF (already reported as a problem). */
   let selfTaken = false;
-  /** The running Worker's SANDBOX: absent, Appflare's own, or someone else's (a problem). */
-  let sandbox: "none" | "ours" | "foreign" = "none";
+  /**
+   * The running Worker's SANDBOX: absent, Appflare's own, one to a deleted
+   * Worker, or someone else's (a problem).
+   */
+  let sandbox: "none" | "ours" | "dangling" | "foreign" = "none";
 
   for (const raw of input.current) {
     const parsed = currentBindingSchema.safeParse(raw);
@@ -242,8 +248,9 @@ export function selfUpdateBindings(input: {
         }
         if (b.name === SANDBOX_BINDING) {
           // Re-added below when the sandbox Worker still exists.
-          if (text(b.service) === SANDBOX_WORKER_NAME) {
-            sandbox = "ours";
+          const kind = sandboxBindingKind(b);
+          if (kind !== "foreign") {
+            sandbox = kind;
           } else {
             problems.push(
               `The running Worker's service binding ${SANDBOX_BINDING} points at "${text(b.service) ?? "(no service)"}", not at the sandbox Worker ("${SANDBOX_WORKER_NAME}"); Appflare needs ${SANDBOX_BINDING} for sandbox builds. Remove or rename that binding first.`,
@@ -352,7 +359,7 @@ export function selfUpdateBindings(input: {
     };
     out.push(binding);
     byName.set(SANDBOX_BINDING, binding);
-  } else if (sandbox === "ours") {
+  } else if (sandbox === "ours" || sandbox === "dangling") {
     warnings.push(
       `The sandbox Worker "${SANDBOX_WORKER_NAME}" no longer exists, so the new version has no ${SANDBOX_BINDING} binding; sandbox tier apps cannot be installed or updated until it is enabled again.`,
     );

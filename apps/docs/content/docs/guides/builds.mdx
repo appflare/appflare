@@ -112,12 +112,23 @@ log once the Worker is gone.
 
 **Disable sandbox builds** asks you to type `appflare-sandbox`. It is refused while any
 app built or deployed in the sandbox Worker is still installed; uninstall those apps
-first. The job then removes the `SANDBOX` binding from the manager (a checked new
-version, as above), deletes the sandbox Worker and its container applications, and
-empties and deletes the `appflare-builds` bucket, leaving the account as it was before.
-The [GitHub access tokens](/guides/install-from-a-repository/#private-repositories) are
+first. It is also refused, before anything is deleted, when the manager could not be
+disconnected at the end: while a gradual deployment of the manager is in progress, or
+when a newer version of the manager was uploaded but not deployed.
+
+The job deletes the sandbox Worker and its container applications, empties and deletes
+the `appflare-builds` bucket, and last removes the `SANDBOX` binding from the manager (a
+checked new version, as above), leaving the account as it was before. The binding goes
+last because removing it deploys the manager, which the job itself runs on. The
+[GitHub access tokens](/guides/install-from-a-repository/#private-repositories) are
 secrets of the sandbox Worker, so they go with it; add them again after enabling
 sandbox builds again.
+
+If the job stops after the sandbox Worker is deleted, the manager keeps a binding to a
+Worker that no longer exists. **Settings > Building apps** then reads sandbox builds as
+off and says **Appflare still has a binding to a deleted sandbox Worker**. **Disable
+sandbox builds** finishes the job and removes the binding; **Enable sandbox builds**
+replaces it with one to the new sandbox Worker.
 
 ## Install a sandbox tier app
 
@@ -312,6 +323,17 @@ uninstalling one app leaves it in place.
 
 **Appflare is not connected to a sandbox Worker.** Choose **Enable sandbox builds** in
 **Settings > Building apps > Build in your account**, or **Connect only** when the sandbox Worker is already there.
+
+**Appflare still has a binding to a deleted sandbox Worker.** A disable stopped after it
+deleted the sandbox Worker. Choose **Disable sandbox builds** to finish it, which removes
+the binding, or **Enable sandbox builds**, which replaces it.
+
+**Updating Appflare stops with `service binding SANDBOX points at "(no service)"`.** A
+disable in Appflare 0.3.1 or earlier deleted the sandbox Worker and left the manager's
+binding to it, and those versions refuse to update with it. Remove it once in the
+Cloudflare dashboard: open **Workers & Pages**, your Appflare Worker, **Settings >
+Bindings**, and delete `SANDBOX`. Then update Appflare. Later versions remove such a
+binding themselves.
 
 **The sandbox Worker speaks another protocol.** The manager and the sandbox Worker are
 from releases that do not match. Update whichever is older: **Update sandbox** in

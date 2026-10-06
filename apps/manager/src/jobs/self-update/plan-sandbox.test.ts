@@ -41,6 +41,16 @@ const SANDBOX = {
   entrypoint: "SandboxBuilds",
 };
 
+/** `SANDBOX` once the sandbox Worker was force-deleted, as Cloudflare reports it. */
+const DANGLING = {
+  entrypoint: null,
+  environment: "",
+  name: "SANDBOX",
+  service: "",
+  service_deleted: true,
+  type: "service",
+};
+
 function plan(current: unknown[], sandboxWorker?: boolean) {
   return selfUpdateBindings({
     current,
@@ -80,6 +90,20 @@ describe("selfUpdateBindings and the sandbox Worker", () => {
       'The sandbox Worker "appflare-sandbox" no longer exists, so the new version has no SANDBOX binding; sandbox tier apps cannot be installed or updated until it is enabled again.',
     ]);
     expect(p.problems).toEqual([]);
+  });
+
+  it("takes a SANDBOX to a deleted Worker as Appflare's: dropped, or bound to the sandbox Worker when there is one", () => {
+    const gone = plan([...CURRENT, DANGLING], false);
+    expect(gone.problems).toEqual([]);
+    expect(gone.bindings.some((b) => b.name === "SANDBOX")).toBe(false);
+    expect(gone.warnings).toEqual([
+      'The sandbox Worker "appflare-sandbox" no longer exists, so the new version has no SANDBOX binding; sandbox tier apps cannot be installed or updated until it is enabled again.',
+    ]);
+    const back = plan([...CURRENT, DANGLING], true);
+    expect(back.problems).toEqual([]);
+    expect(back.bindings.filter((b) => b.name === "SANDBOX")).toEqual([SANDBOX]);
+    // Never copied as Cloudflare reports it, since that names no Worker.
+    expect(plan([...CURRENT, DANGLING]).bindings.some((b) => b.name === "SANDBOX")).toBe(false);
   });
 
   it("refuses a SANDBOX that points at another Worker, or that is not a service binding", () => {

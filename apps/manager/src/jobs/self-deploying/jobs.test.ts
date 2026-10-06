@@ -227,7 +227,7 @@ async function startInstall(s: Setup, input: Partial<StartInstallInput> = {}) {
     {
       db: env.DB,
       loadApp: async () => ({ app, manifest: catalogOnlyManifest(s.catalog) }),
-      sandboxConnected: true,
+      sandboxConnected: async () => true,
       createJob: async (id, p) => {
         if (p.kind === "install") params = p;
         return { id };
@@ -324,7 +324,7 @@ describe("starting a self-deploying install", () => {
         {
           db: env.DB,
           loadApp: async () => ({ app, manifest: catalogOnlyManifest(s.catalog) }),
-          sandboxConnected: false,
+          sandboxConnected: async () => false,
           createJob: async (id) => ({ id }),
         },
         {
@@ -349,7 +349,7 @@ describe("starting a self-deploying install", () => {
         {
           db: env.DB,
           loadApp: async () => ({ app, manifest: catalogOnlyManifest(s.catalog) }),
-          sandboxConnected: true,
+          sandboxConnected: async () => true,
           createJob: async (id) => ({ id }),
           listAccountWorkers: async () => [JOBS],
           newId: (() => {
@@ -589,7 +589,7 @@ describe("updating a self-deploying app", () => {
         throw new Error("a self-deploying app has no artifact manifest");
       },
       loadCatalog: async () => next,
-      sandboxConnected: true,
+      sandboxConnected: async () => true,
       createJob: async (id: string, p: UpdateJobParams) => {
         params = p;
         return { id };
@@ -674,7 +674,7 @@ describe("updating a self-deploying app", () => {
           loadManifest: async () => {
             throw new Error("not reached");
           },
-          sandboxConnected: true,
+          sandboxConnected: async () => true,
           createJob: async (id: string) => {
             created.push(id);
             return { id };

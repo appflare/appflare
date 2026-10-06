@@ -1,0 +1,191 @@
+import { act } from "react";
+import { createRoot, type Root } from "react-dom/client";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { type CapabilitiesView, capabilitiesView } from "../capabilities/capabilities";
+import type { SandboxCardState } from "../server/sandbox.functions";
+
+/**
+ * Settings, Building apps, the sandbox builds section, with the server
+ * functions standing in: nothing here touches an account.
+ */
+const calls = vi.hoisted(() => ({
+  connectSandbox: vi.fn(async () => ({ alreadyConnected: false, versionId: "v2" })),
+  startSandboxJob: vi.fn(async () => ({ jobId: "01SANDBOXJOB00000000000001" })),
+  jobStarted: vi.fn(async () => {}),
+}));
+vi.mock("../server/sandbox.functions", () => ({
+  connectSandbox: calls.connectSandbox,
+  startSandboxJob: calls.startSandboxJob,
+}));
+vi.mock("../telemetry/telemetry.functions", () => ({
+  previewJobReport: vi.fn(),
+  sendJobReport: vi.fn(),
+}));
+vi.mock("./job-started", () => ({ useJobStarted: () => calls.jobStarted }));
+vi.mock("@tanstack/react-router", () => ({
+  useRouter: () => ({ invalidate: async () => {}, navigate: async () => {} }),
+}));
+
+const { SandboxCard } = await import("./sandbox-card");
+
+(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+
+const ACCOUNT = "0123456789abcdef0123456789abcdef";
+
+/** An account on Workers Paid, as the probes detected it, with R2 and Containers usable. */
+const PAID: CapabilitiesView = {
+  ...capabilitiesView(null, null, ACCOUNT),
+  plan: { plan: "paid", source: "detected" },
+};
+const NOT_DETECTED: CapabilitiesView = capabilitiesView(null, null, ACCOUNT);
+
+const OFF: SandboxCardState = {
+  connected: false,
+  info: null,
+  problem: null,
+  workerExists: false,
+  danglingBinding: false,
+  pinnedVersion: "0.1.3",
+  updateAvailable: false,
+  activeJob: null,
+  lastFailure: null,
+  inUseBy: [],
+  readiness: { state: "ready-auto", missing: null, confirmed: true },
+};
+
+/** What a disable that deleted everything but stopped short of disconnecting leaves. */
+const LEFT_BOUND: SandboxCardState = { ...OFF, danglingBinding: true };
+
+const NOTE = "Appflare still has a binding to a deleted sandbox Worker";
+
+let container: HTMLDivElement;
+let root: Root;
+
+beforeEach(() => {
+  container = document.createElement("div");
+  document.body.appendChild(container);
+  root = createRoot(container);
+  for (const call of Object.values(calls)) call.mockClear();
+});
+
+afterEach(() => {
+  act(() => root.unmount());
+  container.remove();
+  document.body.innerHTML = "";
+});
+
+function show(status: SandboxCardState, capabilities = PAID, isAdmin = true) {
+  act(() =>
+    root.render(<SandboxCard status={status} capabilities={capabilities} isAdmin={isAdmin} />),
+  );
+}
+
+function page(): string {
+  return document.body.textContent ?? "";
+}
+
+function button(label: string): HTMLButtonElement {
+  const found = [...document.querySelectorAll("button")].find(
+    (b) => b.textContent?.trim() === label,
+  );
+  if (found === undefined) throw new Error(`no button "${label}"`);
+  return found;
+}
+
+function hasButton(label: string): boolean {
+  return [...document.querySelectorAll("button")].some((b) => b.textContent?.trim() === label);
+}
+
+async function settle() {
+  await act(async () => new Promise((resolve) => setTimeout(resolve, 50)));
+}
+
+async function click(target: HTMLElement) {
+  await act(async () => target.click());
+  await settle();
+}
+
+function type(input: HTMLInputElement, value: string) {
+  const setValue = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
+  act(() => {
+    setValue?.call(input, value);
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+}
+
+describe("SandboxCard", () => {
+  it("reads a binding to a deleted sandbox Worker as off, and offers Disable and Enable", () => {
+    show(LEFT_BOUND);
+    expect(page()).toContain("Off");
+    expect(page()).not.toContain("Not answering");
+    expect(page()).toContain(NOTE);
+    expect(page()).toContain(
+      "Sandbox builds are off. Disabling them removes the binding, and enabling them replaces it.",
+    );
+    expect(hasButton("Disable sandbox builds")).toBe(true);
+    expect(hasButton("Enable sandbox builds")).toBe(true);
+    // There is no sandbox Worker to connect to.
+    expect(hasButton("Connect only")).toBe(false);
+  });
+
+  it("offers Connect only too when a sandbox Worker is there again", () => {
+    show({ ...LEFT_BOUND, workerExists: true });
+    expect(page()).toContain(NOTE);
+    expect(hasButton("Disable sandbox builds")).toBe(true);
+    expect(hasButton("Connect only")).toBe(true);
+  });
+
+  it("offers Disable for the binding without Workers Paid detected", () => {
+    show(LEFT_BOUND, NOT_DETECTED);
+    expect(page()).toContain(NOTE);
+    expect(hasButton("Disable sandbox builds")).toBe(true);
+    expect(hasButton("Enable sandbox builds")).toBe(false);
+  });
+
+  it("shows members sandbox builds as off, with nothing to do about the binding", () => {
+    show({ ...LEFT_BOUND, workerExists: null }, PAID, false);
+    expect(page()).toContain("Off");
+    expect(page()).not.toContain("Not answering");
+    expect(page()).not.toContain(NOTE);
+    expect(hasButton("Disable sandbox builds")).toBe(false);
+    expect(hasButton("Enable sandbox builds")).toBe(false);
+  });
+
+  it("offers no Disable when nothing of sandbox builds is left", () => {
+    show(OFF);
+    expect(page()).not.toContain(NOTE);
+    expect(hasButton("Disable sandbox builds")).toBe(false);
+    expect(hasButton("Enable sandbox builds")).toBe(true);
+  });
+
+  it("still says a connected sandbox Worker that does not answer is not answering", () => {
+    show({ ...OFF, connected: true, workerExists: null, problem: "Network connection lost." });
+    expect(page()).toContain("Not answering");
+    expect(page()).toContain("The sandbox Worker does not answer as expected");
+    expect(page()).not.toContain(NOTE);
+    expect(hasButton("Disable sandbox builds")).toBe(true);
+    expect(hasButton("Update sandbox")).toBe(true);
+  });
+
+  it("says Disable deletes first and disconnects last, and starts it with the typed name", async () => {
+    show(LEFT_BOUND);
+    await click(button("Disable sandbox builds"));
+    expect(page()).toContain(
+      "Appflare deletes the sandbox Worker with the containers it builds in and the storage that holds every build and its log, then disconnects from it.",
+    );
+    expect(page()).not.toContain("disconnects from the sandbox Worker, then deletes it");
+    const confirm = document.querySelector<HTMLInputElement>(
+      'input[placeholder="appflare-sandbox"]',
+    );
+    if (confirm === null) throw new Error("no confirmation field");
+    type(confirm, "appflare-sandbox");
+    await click(button("Disable and delete"));
+    expect(calls.startSandboxJob).toHaveBeenCalledWith({
+      data: { action: "disable", confirm: "appflare-sandbox" },
+    });
+    expect(calls.jobStarted).toHaveBeenCalledWith(
+      "01SANDBOXJOB00000000000001",
+      "Disabling sandbox builds",
+    );
+  });
+});

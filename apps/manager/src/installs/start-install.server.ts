@@ -143,8 +143,11 @@ export interface StartInstallDeps {
    * when absent or failing, the install job's own check refuses the name later.
    */
   listAccountWorkers?(): Promise<string[]>;
-  /** Whether this manager has its `SANDBOX` binding; sandbox tier apps need it. */
-  sandboxConnected?: boolean;
+  /**
+   * Whether this manager is connected to the sandbox Worker (see
+   * `readSandboxConnection`); asked only for an app that needs it.
+   */
+  sandboxConnected?: () => Promise<boolean>;
   /**
    * Turning sandbox builds on first when an app needs them and they are off.
    * Without it such an install is refused until they are enabled in Settings.
@@ -409,7 +412,7 @@ export async function startInstallCore(
   const inSandbox = build !== null || installer !== null;
   // Off: turned on first by a job of its own, when the account allows it
   // (checked below, once the form itself is known to be complete).
-  const sandboxFirstNeeded = inSandbox && deps.sandboxConnected !== true;
+  const sandboxFirstNeeded = inSandbox && (await deps.sandboxConnected?.()) !== true;
   if (sandboxFirstNeeded && deps.sandboxAutoEnable === undefined) {
     throw new StartInstallError(
       `${manifest.catalog.name} ${installer !== null ? "is deployed by its own installer in" : "is built in"} this account's sandbox Worker, and Appflare is not connected to one. Set up sandbox builds in ${ENABLE_SANDBOX_PLACE} first.`,
