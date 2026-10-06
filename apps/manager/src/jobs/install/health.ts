@@ -214,7 +214,10 @@ export function liveHealthScheduledMs(attempt: number): number {
  * serving), a plain 404 cannot be propagation, so it is the app's own answer
  * and passes at once. `blocked` settles the check too, as `unverified`:
  * Cloudflare Access answered in the app's place, and it keeps doing so for the
- * rest of the window, so probing on would only use the window up.
+ * rest of the window, so probing on would only use the window up. The
+ * exception is a check right after the app's protection was removed
+ * (`accessRemoved`): Access goes on answering for a few seconds until the
+ * removal takes effect, so its sign-in is retried like a route going live.
  */
 export type LiveProbeClass = "pass" | "retry" | "soft-404" | "blocked";
 
@@ -222,9 +225,10 @@ export function classifyLiveProbe(
   probe: HealthProbe,
   mode: HealthMode = DEFAULT_HEALTH_MODE,
   routeWasLive = false,
+  accessRemoved = false,
 ): LiveProbeClass {
   if (probe.kind === "error" || isEdge1042(probe)) return "retry";
-  if (isAccessChallenge(probe)) return "blocked";
+  if (isAccessChallenge(probe)) return accessRemoved ? "retry" : "blocked";
   if (probe.status === 404) return routeWasLive && !isEdgeErrorPage(probe) ? "pass" : "soft-404";
   if (anyResponsePass(probe, mode)) return "pass";
   if (probe.status >= 500) return "retry";
@@ -301,7 +305,8 @@ export type LiveHealthDecision =
 /**
  * The live check's next move after its `attempt`th probe (1-based), taken
  * `elapsedMs` after the first. A passing answer, or Cloudflare Access's
- * sign-in redirect (as `unverified`), settles at once; otherwise it
+ * sign-in redirect (as `unverified`; unless `accessRemoved`, see
+ * `classifyLiveProbe`), settles at once; otherwise it
  * waits the next backoff delay unless that would pass the window, in which
  * case the last answer settles the check. `elapsedMs` never counts less than
  * the waits already scheduled, so the window also ends when the clock does
@@ -315,8 +320,10 @@ export function decideLiveHealth(
   mode: HealthMode = DEFAULT_HEALTH_MODE,
   /** The URL served before the job, so a plain 404 is the app's answer (see `classifyLiveProbe`). */
   routeWasLive = false,
+  /** The app's protection was just removed, so Access's sign-in is waited out (see `classifyLiveProbe`). */
+  accessRemoved = false,
 ): LiveHealthDecision {
-  const kind = classifyLiveProbe(probe, mode, routeWasLive);
+  const kind = classifyLiveProbe(probe, mode, routeWasLive, accessRemoved);
   if (kind === "pass" || kind === "blocked") {
     return { done: true, ...settleHealthProbe(probe, mode) };
   }

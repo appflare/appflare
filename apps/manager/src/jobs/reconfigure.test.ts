@@ -388,6 +388,27 @@ describe("settings change job", () => {
     );
   });
 
+  it("names the app's address in its last line, not the health path it checked", async () => {
+    const r = await reconfigure({
+      app: {
+        ...APP,
+        tweak: (manifest) => {
+          manifest.catalog.install.health.path = "/api/health";
+        },
+      },
+      request: { vars: { TITLE: "Snip" }, secrets: { set: {}, unset: [] } },
+    });
+    expect(r.error).toBeNull();
+    expect(
+      r.logs.some((l) =>
+        l.message.startsWith(`GET https://cut.${SUBDOMAIN}.workers.dev/api/health -> HTTP 200`),
+      ),
+    ).toBe(true);
+    expect(r.logs.at(-1)?.message).toBe(
+      "Changed the settings of cut at https://cut.appflare-dev.workers.dev/ (health: verified (HTTP 200)).",
+    );
+  });
+
   it("takes a plain 404 from the app's own URL as serving at once, since that URL was live before", async () => {
     const liveHost = `cut.${SUBDOMAIN}.workers.dev`;
     const r = await reconfigure({

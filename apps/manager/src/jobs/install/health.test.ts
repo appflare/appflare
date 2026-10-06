@@ -394,6 +394,47 @@ describe("Cloudflare Access's sign-in redirect", () => {
     }
   });
 
+  it("waits out the Access answer after the protection was removed, through the same window", () => {
+    // Access goes on answering for a few seconds after its application is deleted.
+    for (const mode of ["no-server-errors", "any-response"] as const) {
+      expect(classifyLiveProbe(access, mode, true, true)).toBe("retry");
+    }
+    const answers = [access, access, res(200)];
+    let clock = 0;
+    for (let attempt = 1; ; attempt++) {
+      const decision = decideLiveHealth(
+        answers[attempt - 1] ?? access,
+        attempt,
+        clock,
+        undefined,
+        "no-server-errors",
+        true,
+        true,
+      );
+      if (decision.done) {
+        expect({ attempt, decision }).toEqual({
+          attempt: 3,
+          decision: { done: true, status: "verified", detail: "HTTP 200" },
+        });
+        break;
+      }
+      expect(decision.reason).toBe(ACCESS_CHALLENGE_DETAIL);
+      clock += decision.delaySeconds * 1000;
+    }
+    // Still Access when the window ends: recorded as Access answering.
+    expect(
+      decideLiveHealth(
+        access,
+        12,
+        LIVE_HEALTH_WINDOW_MS,
+        undefined,
+        "no-server-errors",
+        true,
+        true,
+      ),
+    ).toEqual({ done: true, status: "unverified", detail: ACCESS_CHALLENGE_DETAIL, access: true });
+  });
+
   it("is written to the install with its own flag, which a check that reaches the app clears", () => {
     const at = new Date(0);
     expect(healthColumns(settleHealthProbe(access), at)).toEqual({
