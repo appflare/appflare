@@ -21,6 +21,7 @@ import { hasRole } from "../auth/roles";
 import type { CapabilitiesView } from "../capabilities/capabilities";
 import { readCapabilitiesView } from "../capabilities/capabilities.server";
 import { getCfClient } from "../cloudflare/client.server";
+import { type GrantRow, readGrant } from "../cloudflare/grant-store.server";
 import { cachedScriptNames } from "../cloudflare/scripts-cache.server";
 import { createDb } from "../db/client";
 import { installs } from "../db/schema";
@@ -211,11 +212,12 @@ export interface CatalogDetail {
 async function accountWorkerNames(
   role: string | null | undefined,
   accountId: string | undefined,
+  grant: GrantRow | null,
 ): Promise<string[]> {
   if (!hasRole(role, "admin") || !accountId) return [];
   try {
     return await cachedScriptNames(accountId, async () =>
-      (await (await getCfClient(env, { accountId })).workers.listScripts()).map((s) => s.id),
+      (await (await getCfClient(env, { accountId, grant })).workers.listScripts()).map((s) => s.id),
     );
   } catch {
     return [];
@@ -231,11 +233,12 @@ async function accountSubdomain(
   role: string | null | undefined,
   cached: string | undefined,
   accountId: string | undefined,
+  grant: GrantRow | null,
 ): Promise<string | null> {
   if (cached) return cached;
   if (!hasRole(role, "admin")) return null;
   try {
-    const api = await getCfClient(env, accountId ? { accountId } : {});
+    const api = await getCfClient(env, accountId ? { accountId, grant } : { grant });
     const found = (await api.workers.getAccountSubdomain()).subdomain;
     await writeSettings(createDb(env.DB), { [SETTING.accountSubdomain]: found });
     return found;
@@ -272,7 +275,7 @@ export async function readCatalogEntry(
   const statsRead = official ? readCatalogStats(env.KV) : Promise.resolve(null);
   // Not left unhandled when the page ends before the stats are used.
   statsRead.catch(() => {});
-  const [session, capabilities, lookup, active, settings, bound] = await Promise.all([
+  const [session, capabilities, lookup, active, settings, bound, grant] = await Promise.all([
     loadSession(),
     readCapabilitiesView(db),
     // Reads only: a catalog not cached yet is fetched below, once the
@@ -281,6 +284,8 @@ export async function readCatalogEntry(
     activeInstalls(),
     readSettings(db, [SETTING.accountId, SETTING.accountSubdomain]),
     sandboxBound(env, db),
+    // The Cloudflare connection, read in this round so a call below adds none.
+    readGrant(env.DB),
   ]);
   // No I/O when the index was cached; one fetch when it was not.
   const read = await finishCatalogLookup(env, lookup);
@@ -341,8 +346,8 @@ export async function readCatalogEntry(
     getCatalogManifest(env, app, trust),
     // Listed before the manifest says whether the Worker name is fixed; an
     // app with a fixed name ignores them.
-    accountWorkerNames(role, settings.account_id),
-    accountSubdomain(role, settings.account_subdomain, settings.account_id),
+    accountWorkerNames(role, settings.account_id, grant),
+    accountSubdomain(role, settings.account_subdomain, settings.account_id, grant),
   ]);
   if (!manifest.ok) {
     return {

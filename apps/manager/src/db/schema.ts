@@ -660,3 +660,38 @@ export const install_access = sqliteTable("install_access", {
   created_at: timestamp("created_at").notNull(),
   updated_at: timestamp("updated_at").notNull(),
 });
+
+export const CLOUDFLARE_GRANT_STATUSES = ["connected", "needs_reconnect"] as const;
+export type CloudflareGrantStatus = (typeof CLOUDFLARE_GRANT_STATUSES)[number];
+
+/**
+ * The manager's Cloudflare connection when it is an OAuth grant
+ * (cloudflare/connection.server.ts): at most one row, present only while the
+ * manager connects with an authorization instead of its `CF_API_TOKEN`
+ * secret. The refresh token and the current access token are sealed with
+ * AES-GCM under the manager's own key, the `CF_GRANT_KEY` secret on its
+ * Worker (`key_id` names which key), and never stored in plain text.
+ * Switching to an API token deletes the row.
+ */
+export const cloudflare_grant = sqliteTable("cloudflare_grant", {
+  /** A random id, new for every grant stored; the sealed values are bound to it. */
+  id: text("id").primaryKey(),
+  /** The OAuth client the grant was issued to; refreshing must use the same one. */
+  client_id: text("client_id").notNull(),
+  /** JSON array of the scopes Cloudflare granted. */
+  scopes_json: text("scopes_json").notNull(),
+  /** The sealed refresh token. */
+  refresh_token: text("refresh_token").notNull(),
+  /** The sealed access token; null once the grant needs reconnecting. */
+  access_token: text("access_token"),
+  access_expires_at: timestamp("access_expires_at"),
+  /** Which `CF_GRANT_KEY` sealed the tokens (a fingerprint, not the key). */
+  key_id: text("key_id").notNull(),
+  status: text("status", { enum: CLOUDFLARE_GRANT_STATUSES }).notNull(),
+  /** The last problem renewing access, in plain words; null after a renewal succeeds. */
+  problem: text("problem"),
+  problem_at: timestamp("problem_at"),
+  connected_at: timestamp("connected_at").notNull(),
+  /** When the tokens were last renewed (at first, when the grant was stored). */
+  refreshed_at: timestamp("refreshed_at").notNull(),
+});

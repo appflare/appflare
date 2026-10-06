@@ -14,7 +14,19 @@ interface ManagerSecrets {
    * guards nothing now; the first token save deletes it.
    */
   SETUP_TOKEN?: string;
+  /**
+   * The Cloudflare API token, on a manager connected with one. A manager
+   * connected with a Cloudflare authorization (OAuth) keeps its grant in D1
+   * instead; read the connection through cloudflare/connection.server.ts.
+   */
   CF_API_TOKEN?: string;
+  /**
+   * The key the stored OAuth grant is sealed with (cloudflare/grant-seal.ts):
+   * 32 random bytes, base64url, generated and written by the manager itself
+   * the first time it stores a grant. Separate from `BETTER_AUTH_SECRET`, so
+   * rotating that never disconnects Cloudflare.
+   */
+  CF_GRANT_KEY?: string;
   /**
    * Optional GitHub token that can read appflare/appflare's releases (the
    * repository is public, so a fine-grained token with no permissions
@@ -41,6 +53,14 @@ interface ManagerOptionalVars {
   CATALOG_INDEX_URL?: string;
   /** Cloudflare API base override for tests and local dev against a fake API. */
   CF_API_BASE_URL?: string;
+  /**
+   * The OAuth client new Cloudflare connections use, instead of Appflare's
+   * public client (`APPFLARE_OAUTH_CLIENT_ID`), and its registered callback
+   * (`CF_OAUTH_CALLBACK_URL`), for development. A stored grant keeps its own
+   * client id whatever these say.
+   */
+  CF_OAUTH_CLIENT_ID?: string;
+  CF_OAUTH_CALLBACK_URL?: string;
   /** The manager's releases API; defaults to `DEFAULT_MANAGER_RELEASES_URL`. */
   MANAGER_RELEASES_URL?: string;
   /**

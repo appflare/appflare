@@ -6,13 +6,15 @@ import {
   type RequestLog,
 } from "@appflare/cf-api";
 import { constantTimeEquals } from "../auth/constant-time";
+import { withConnectionLock } from "../cloudflare/connection-lock.server";
+import { clearGrantForApiToken } from "../cloudflare/grant.server";
+import { readGrant } from "../cloudflare/grant-store.server";
 import { type TokenVerification, verifyCloudflareToken } from "../cloudflare/verify-token";
 import { discoverWorkerName } from "../cloudflare/worker-name";
 import { settingsPlace } from "../components/settings-links";
 import { AUTH_SECRET_NAME, generateAuthSecret } from "../danger/auth-secret.server";
 import { createDb } from "../db/client";
 import { readSettings, SETTING, writeSettings } from "../db/settings";
-import { releaseSettingsLock, tryAcquireSettingsLock } from "../db/settings-lock";
 
 /**
  * The Cloudflare token step: verify a pasted
@@ -24,14 +26,16 @@ import { releaseSettingsLock, tryAcquireSettingsLock } from "../db/settings-lock
  * Writing a secret deploys a new version of the manager itself. The request that
  * wrote it finishes on the old version (verified live), and nothing after the
  * write depends on the running code: only D1 writes and one more API call.
+ *
+ * On a manager connected with a Cloudflare authorization (OAuth), a token
+ * saved here replaces it: the stored grant is deleted, which makes the
+ * connection an API token again, and revoked at Cloudflare, best effort
+ * (cloudflare/grant.server.ts). Only an admin's save does that, never a
+ * failure.
  */
 
 export const CF_API_TOKEN_SECRET = "CF_API_TOKEN";
 export const SETUP_TOKEN_SECRET = "SETUP_TOKEN";
-
-/** Serializes concurrent saves and rotations. */
-const TOKEN_LOCK_KEY = "cf_token_lock";
-const TOKEN_LOCK_TTL_MS = 60_000;
 
 export interface TokenFlowDeps {
   db: D1Database;
@@ -47,6 +51,8 @@ export interface TokenFlowDeps {
    * first save removes it.
    */
   setupTokenBound?: boolean;
+  /** The running Worker's `CF_GRANT_KEY`, to revoke a stored grant the token replaces. */
+  grantKey?: string;
   fetch?: FetchLike;
   onRequest?: (log: RequestLog) => void;
   baseUrl?: string;
@@ -95,6 +101,8 @@ export interface SaveTokenResult {
   missing: string[];
   /** False when `SETUP_TOKEN` could not be deleted (it guards nothing any more). */
   setupTokenRemoved: boolean;
+  /** The token replaced a Cloudflare authorization (OAuth), which was revoked when Cloudflare let it. */
+  replacedAuthorization: boolean;
 }
 
 export interface SaveTokenOptions {
@@ -132,6 +140,7 @@ export async function saveTokenStep(
     const db = createDb(deps.db);
     const current = await readSettings(db, [SETTING.cfTokenConfigured, SETTING.accountId]);
     const configured = current.cf_token_configured === "1";
+    const grantStored = (await readGrant(deps.db)) !== null;
     if (configured && options.beforeOwner === undefined) {
       throw new TokenStepError(TOKEN_STEP_MESSAGES.alreadyConfigured);
     }
@@ -158,6 +167,7 @@ export async function saveTokenStep(
     }
     const unchanged =
       configured &&
+      !grantStored &&
       (await constantTimeEquals(deps.token, options.beforeOwner?.currentToken ?? null));
     if (!unchanged) {
       await client.workers.putSecret(workerName, {
@@ -178,6 +188,7 @@ export async function saveTokenStep(
       },
       now,
     );
+    const replaced = await clearGrantForApiToken(grantDeps(deps));
     const setupTokenRemoved =
       deps.setupTokenBound === true ? await deleteSetupToken(client, workerName) : true;
     return {
@@ -187,6 +198,7 @@ export async function saveTokenStep(
       workerName,
       missing: verified.missing,
       setupTokenRemoved,
+      replacedAuthorization: replaced.hadGrant,
     };
   });
 }
@@ -195,9 +207,15 @@ export interface RotateTokenResult {
   ok: true;
   accountId: string;
   workerName: string;
+  /** The token replaced a Cloudflare authorization (OAuth), which was revoked when Cloudflare let it. */
+  replacedAuthorization: boolean;
 }
 
-/** `/settings` rotation: same account, same Worker, new token. */
+/**
+ * `/settings` rotation: same account, same Worker, new token. On a manager
+ * connected with a Cloudflare authorization this is how an admin switches
+ * to an API token.
+ */
 export async function rotateTokenStep(deps: TokenFlowDeps): Promise<RotateTokenResult> {
   return withTokenLock(deps.db, async () => {
     const db = createDb(deps.db);
@@ -232,8 +250,22 @@ export async function rotateTokenStep(deps: TokenFlowDeps): Promise<RotateTokenR
       },
       now,
     );
-    return { ok: true, accountId: verified.accountId, workerName };
+    const replaced = await clearGrantForApiToken(grantDeps(deps));
+    return {
+      ok: true,
+      accountId: verified.accountId,
+      workerName,
+      replacedAuthorization: replaced.hadGrant,
+    };
   });
+}
+
+function grantDeps(deps: TokenFlowDeps) {
+  return {
+    db: deps.db,
+    ...(deps.grantKey === undefined ? {} : { grantKey: deps.grantKey }),
+    ...(deps.fetch === undefined ? {} : { fetch: deps.fetch }),
+  };
 }
 
 function verifyOptions(deps: TokenFlowDeps) {
@@ -285,14 +317,7 @@ async function deleteSetupToken(client: CloudflareClient, workerName: string): P
   }
 }
 
-async function withTokenLock<T>(db: D1Database, run: () => Promise<T>): Promise<T> {
-  const owner = crypto.randomUUID();
-  if (!(await tryAcquireSettingsLock(db, TOKEN_LOCK_KEY, owner, TOKEN_LOCK_TTL_MS))) {
-    throw new TokenStepError(TOKEN_STEP_MESSAGES.busy);
-  }
-  try {
-    return await run();
-  } finally {
-    await releaseSettingsLock(db, TOKEN_LOCK_KEY, owner);
-  }
+/** Serializes concurrent saves, rotations and grant stores. */
+function withTokenLock<T>(db: D1Database, run: () => Promise<T>): Promise<T> {
+  return withConnectionLock(db, () => new TokenStepError(TOKEN_STEP_MESSAGES.busy), run);
 }

@@ -2,6 +2,7 @@ import { NonRetryableError } from "cloudflare:workflows";
 import { eq } from "drizzle-orm";
 import { z } from "zod";
 import { AccessToggleError, checkAccessMove } from "../access/toggle.server";
+import { requireConnection } from "../cloudflare/connection.server";
 import { createDb } from "../db/client";
 import { jobs } from "../db/schema";
 import { readSettings, SETTING } from "../db/settings";
@@ -164,9 +165,8 @@ export async function runMoveAddress(ctx: JobContext): Promise<void> {
       const settings = await readSettings(orm, [SETTING.accountId, SETTING.workerName]);
       if (!settings.account_id) throw new JobError("the Cloudflare account is not known yet");
       if (!settings.worker_name) throw new JobError("Appflare does not know its own Worker yet");
-      if (!env.CF_API_TOKEN) {
-        throw new JobError("the Cloudflare API token is not configured; finish setup first");
-      }
+      // An API token, or a stored grant that does not need reconnecting.
+      await requireConnection(env);
       log.info(MOVE_LINES.start(hostname, params.from?.hostname ?? null));
       return {
         accountId: settings.account_id,

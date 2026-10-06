@@ -522,6 +522,7 @@ export function fixture(name: string, args: unknown[]): unknown {
       accountRows: [],
       deployCopy: null,
       downgrade: null,
+      reconnectNeeded: false,
     }),
     listCatalog: () => ({
       apps: catalogApps,
@@ -628,6 +629,15 @@ export function fixture(name: string, args: unknown[]): unknown {
       workerName: "appflare",
       verifiedAt: now,
       hasSecret: true,
+      connection: {
+        kind: "api_token",
+        state: "connected",
+        problem: null,
+        problemAt: null,
+        connectedSince: now,
+        ready: true,
+        oauth: null,
+      },
     }),
     getDangerZoneState: () => ({ canRemove: false, reason: null }),
     getSandboxStatus: () => ({

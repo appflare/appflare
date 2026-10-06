@@ -11,6 +11,7 @@ import { z } from "zod";
 import { MANIFEST_TTL_SECONDS, manifestCacheKey } from "../catalog/app-manifest.server";
 import { releaseAssetsSchema } from "../catalog/release-assets";
 import { releaseFetch } from "../catalog/release-fetch";
+import { requireConnection } from "../cloudflare/connection.server";
 import { createDb } from "../db/client";
 import { jobs, snapshots } from "../db/schema";
 import { readSettings, SETTING } from "../db/settings";
@@ -139,9 +140,8 @@ export async function runSelfUpdate(ctx: JobContext): Promise<void> {
       const settings = await readSettings(orm, [SETTING.accountId, SETTING.workerName]);
       if (!settings.account_id) throw new JobError("the Cloudflare account is not known yet");
       if (!settings.worker_name) throw new JobError("Appflare does not know its own Worker yet");
-      if (!env.CF_API_TOKEN) {
-        throw new JobError("the Cloudflare API token is not configured; finish setup first");
-      }
+      // An API token, or a stored grant that does not need reconnecting.
+      await requireConnection(env);
       log.info(
         `Updating Appflare from ${params.fromVersion} to ${params.version} (release ${params.tag}) on Worker "${settings.worker_name}".`,
       );

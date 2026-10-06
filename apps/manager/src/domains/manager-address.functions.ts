@@ -30,7 +30,7 @@ export type {
 /**
  * Settings, Domains, "Appflare's address": read it, the zones it can move
  * to, move it to a custom domain, change it, go back to workers.dev. All
- * admin only; every call goes through the manager's own `CF_API_TOKEN`.
+ * admin only; every call goes through the manager's own Cloudflare connection.
  */
 
 async function asUserError<T>(run: () => Promise<T>): Promise<T> {

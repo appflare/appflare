@@ -99,6 +99,7 @@ describe("saveTokenStep", () => {
       workerName: "appflare",
       missing: [],
       setupTokenRemoved: true,
+      replacedAuthorization: false,
     });
 
     const put = api.calls.find((c) => c.key === `PUT ${A}/workers/scripts/appflare/secrets`);
@@ -281,7 +282,12 @@ describe("rotateTokenStep", () => {
     );
     const api = fakeCloudflare(accountTokenRoutes());
     const result = await rotateTokenStep(deps(api));
-    expect(result).toEqual({ ok: true, accountId: ACC, workerName: "appflare" });
+    expect(result).toEqual({
+      ok: true,
+      accountId: ACC,
+      workerName: "appflare",
+      replacedAuthorization: false,
+    });
     expect(api.keys()).toContain(`PUT ${A}/workers/scripts/appflare/secrets`);
     // Rotation never touches SETUP_TOKEN, and verifies against the known account.
     expect(api.keys().some((k) => k.includes("SETUP_TOKEN"))).toBe(false);

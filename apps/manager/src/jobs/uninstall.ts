@@ -5,6 +5,7 @@ import { z } from "zod";
 import { removeInstallProtectionLocked, removePublicPathsLocked } from "../access/protect.server";
 import { withAccessLock } from "../access/toggle.server";
 import { readAccountPlan } from "../account/plan.server";
+import { requireConnection } from "../cloudflare/connection.server";
 import { createDb } from "../db/client";
 import { installs, jobs, resources } from "../db/schema";
 import { readSettings, SETTING } from "../db/settings";
@@ -376,9 +377,8 @@ export async function runUninstall(ctx: JobContext): Promise<void> {
       }
       const settings = await readSettings(orm, [SETTING.accountId]);
       if (!settings.account_id) throw new JobError("the Cloudflare account is not known yet");
-      if (!env.CF_API_TOKEN) {
-        throw new JobError("the Cloudflare API token is not configured; finish setup first");
-      }
+      // An API token, or a stored grant that does not need reconnecting.
+      await requireConnection(env);
       log.info(
         `Uninstalling Worker "${install.workerName}". ` +
           (accessProtected ? "Removing its Cloudflare Access protection. " : "") +
@@ -935,9 +935,8 @@ async function runDeleteRetained(ctx: JobContext, params: UninstallJobParams): P
       }
       const settings = await readSettings(orm, [SETTING.accountId]);
       if (!settings.account_id) throw new JobError("the Cloudflare account is not known yet");
-      if (!env.CF_API_TOKEN) {
-        throw new JobError("the Cloudflare API token is not configured; finish setup first");
-      }
+      // An API token, or a stored grant that does not need reconnecting.
+      await requireConnection(env);
       log.info(
         targets.length > 0
           ? `Deleting the data "${install.workerName}" kept: ${targets.map((t) => `${RESOURCE_LABEL[t.kind]} ${t.name}`).join(", ")}.`

@@ -65,12 +65,21 @@ export const STEP_SUBREQUESTS = 8;
  */
 export const OUTSIDE_STEPS_SUBREQUESTS = 4;
 
-/** What one invocation may have spent before a step and still run it: 38. */
-export const SPEND_BEFORE_STEP =
-  FREE_PLAN_SUBREQUESTS - OUTSIDE_STEPS_SUBREQUESTS - STEP_SUBREQUESTS;
+/**
+ * Kept for renewing the manager's OAuth access token, which any Cloudflare
+ * call of any step may do when the token is about to run out: one request to
+ * the token endpoint (../cloudflare/connection.server.ts). A token lasts an
+ * hour, so one invocation renews it once at most. Kept on every job, since
+ * a job does not know which connection it will meet when it plans.
+ */
+export const RENEWAL_SUBREQUESTS = 1;
 
-/** The most one block of steps may reserve to run in one invocation: 46. */
-export const MAX_RESERVE = FREE_PLAN_SUBREQUESTS - OUTSIDE_STEPS_SUBREQUESTS;
+/** What one invocation may have spent before a step and still run it: 37. */
+export const SPEND_BEFORE_STEP =
+  FREE_PLAN_SUBREQUESTS - OUTSIDE_STEPS_SUBREQUESTS - RENEWAL_SUBREQUESTS - STEP_SUBREQUESTS;
+
+/** The most one block of steps may reserve to run in one invocation: 45. */
+export const MAX_RESERVE = FREE_PLAN_SUBREQUESTS - OUTSIDE_STEPS_SUBREQUESTS - RENEWAL_SUBREQUESTS;
 
 /**
  * The subrequests this invocation of a job has made, and whether the job

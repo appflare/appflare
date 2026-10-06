@@ -12,10 +12,20 @@ export const SETTING = {
   accountId: "account_id",
   accountName: "account_name",
   workerName: "worker_name",
-  /** "1" once `CF_API_TOKEN` has been written to the Worker by the setup wizard. */
+  /**
+   * "1" once Appflare has a Cloudflare connection: `CF_API_TOKEN` written to
+   * the Worker by the setup wizard, or an OAuth grant stored
+   * (cloudflare/connection.server.ts).
+   */
   cfTokenConfigured: "cf_token_configured",
-  /** ISO 8601 time of the last successful verify-and-store. */
+  /** ISO 8601 time of the last successful verify-and-store, of a token or a grant. */
   cfTokenVerifiedAt: "cf_token_verified_at",
+  /**
+   * JSON `{ id, writtenAt }`: the fingerprint of the `CF_GRANT_KEY` secret
+   * last written to the Worker and when (epoch ms), so a version that does
+   * not have that key yet can tell a redeploy in progress from a lost key.
+   */
+  cfGrantKey: "cf_grant_key",
   /**
    * JSON `{ hash, expiresAt }`: the setup claim issued to the browser that
    * connected Cloudflare before any user existed (server/setup.server.ts).

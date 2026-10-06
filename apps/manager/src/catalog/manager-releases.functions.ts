@@ -1,6 +1,7 @@
 import { env } from "cloudflare:workers";
 import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
+import { connectionReadiness } from "../cloudflare/connection.server";
 import { jobCreator } from "../jobs/create-job.server";
 import { activeSelfUpdateJob } from "../jobs/self-update/guard";
 import { SelfUpdateError, startSelfUpdateCore } from "../jobs/self-update/start.server";
@@ -65,7 +66,7 @@ export const startSelfUpdate = createServerFn({ method: "POST" })
           db: env.DB,
           latest: await readManagerLatest(env.KV),
           currentVersion: runningVersion(env),
-          hasToken: typeof env.CF_API_TOKEN === "string" && env.CF_API_TOKEN.length > 0,
+          ...(await connectionReadiness(env)),
           workflows: env.JOBS,
           createJob: jobCreator(env.JOBS),
         },

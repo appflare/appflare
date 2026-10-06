@@ -18,6 +18,15 @@ import { createJobUnits, type JobUnitsApi } from "./units";
  *     each per database that has them), each R2 page, the
  *     Email Routing check, the cron trigger count (for an app with cron
  *     triggers, unless the account is known to be on Workers Paid);
+ *   - 1 when a manager connected with OAuth renews its access token (at most
+ *     once per invocation, since a token lasts an hour; up to 3 when
+ *     Cloudflare's token endpoint answers with a temporary error, and 1 more
+ *     when the API refused the token and the request is sent again), counted
+ *     where it happens: with the job's own requests, or with a unit's
+ *     (../../cloudflare/connection.server.ts). A job that spreads over
+ *     invocations keeps room for one in each (`RENEWAL_SUBREQUESTS` in
+ *     ../invocation-budget.ts); a job of one Worker has it in the margin of
+ *     the worked example below;
  *   - 1 per Cloudflare API step: token check, script list, each resource's
  *     check and create (2 or more), each Workflow name check and the call
  *     that creates or updates each Workflow (install, update, rollback), the R2 check,
@@ -113,6 +122,7 @@ export interface JobUnitsAccess {
 export interface UnitsEnv {
   SELF?: JobUnitsApi;
   CF_API_TOKEN?: string;
+  CF_GRANT_KEY?: string;
   CF_API_BASE_URL?: string;
   GITHUB_TOKEN?: string;
   /** The manager's D1 and auth secret, for units run in place that read them (Access). */

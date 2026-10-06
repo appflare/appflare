@@ -116,7 +116,11 @@ export type DomainCheckOutcome =
  * before {@link runNotifications}, which then delivers what it emitted.
  */
 export async function runExternalDomainCheck(
-  env: NotificationsCronEnv & { CF_API_TOKEN?: string; CF_API_BASE_URL?: string },
+  env: NotificationsCronEnv & {
+    CF_API_TOKEN?: string;
+    CF_GRANT_KEY?: string;
+    CF_API_BASE_URL?: string;
+  },
   deps: NotificationUnitsDeps = {},
 ): Promise<DomainCheckOutcome> {
   try {
@@ -133,7 +137,11 @@ export async function runExternalDomainCheck(
 
 /** The scheduled handler's call for the domain check: logs one line when something happened. Never throws. */
 export async function scheduledExternalDomainCheck(
-  env: NotificationsCronEnv & { CF_API_TOKEN?: string; CF_API_BASE_URL?: string },
+  env: NotificationsCronEnv & {
+    CF_API_TOKEN?: string;
+    CF_GRANT_KEY?: string;
+    CF_API_BASE_URL?: string;
+  },
 ): Promise<void> {
   const outcome = await runExternalDomainCheck(env);
   if (outcome.status === "failed") {

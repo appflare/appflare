@@ -26,7 +26,7 @@ export type { AccessCheck } from "../access/toggle.server";
 /**
  * Settings → Cloudflare Access. Reading the state is open to every signed-in
  * user; checking, turning on or off, and re-syncing the policy are admin only.
- * Every call goes through the manager's own `CF_API_TOKEN`; errors carry
+ * Every call goes through the manager's own Cloudflare connection; errors carry
  * fixed messages or `CloudflareApiError` text (method, path, status), never
  * the token.
  */

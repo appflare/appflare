@@ -29,6 +29,7 @@ import {
   requirementSentence,
   requirementsToConfirm,
 } from "../catalog/requirements";
+import { requireConnection } from "../cloudflare/connection.server";
 import { createDb, type Database } from "../db/client";
 import { installs, jobs, resources } from "../db/schema";
 import { readSettings, SETTING } from "../db/settings";
@@ -460,9 +461,8 @@ export async function runInstall(ctx: JobContext): Promise<void> {
         SETTING.accountCapabilities,
       ]);
       if (!settings.account_id) throw new InstallError("the Cloudflare account is not known yet");
-      if (!env.CF_API_TOKEN) {
-        throw new InstallError("the Cloudflare API token is not configured; finish setup first");
-      }
+      // An API token, or a stored grant that does not need reconnecting.
+      await requireConnection(env);
       // The detected plan first, then the one an admin set.
       const resolved = resolveAccountPlan(
         settings.account_plan,

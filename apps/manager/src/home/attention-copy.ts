@@ -1,3 +1,4 @@
+import { RECONNECT_COPY } from "../cloudflare/connection-view";
 import type { AttentionItem, FailedJob } from "./attention";
 
 /**
@@ -45,6 +46,8 @@ function failedJobLine(job: FailedJob): string {
 
 export function attentionCopy(item: AttentionItem): { title: string; description: string } {
   switch (item.kind) {
+    case "connection":
+      return { title: RECONNECT_COPY.title, description: RECONNECT_COPY.description };
     case "failed-job":
       return { title: failedJobTitle(item.job, item.label), description: failedJobLine(item.job) };
     case "not-responding":

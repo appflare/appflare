@@ -22,6 +22,7 @@ import {
 } from "../access/placeholder-values.server";
 import { readAccountPlan } from "../account/plan.server";
 import { effectiveManifest } from "../catalog/revisions.server";
+import { requireConnection } from "../cloudflare/connection.server";
 import { appPlace } from "../components/app-links";
 import { createDb, type Database } from "../db/client";
 import { installs, jobs, resources } from "../db/schema";
@@ -454,9 +455,8 @@ export async function runReconfigure(ctx: JobContext): Promise<void> {
         .orderBy(sql`rowid`);
       const settings = await readSettings(orm, [SETTING.accountId]);
       if (!settings.account_id) throw new JobError("the Cloudflare account is not known yet");
-      if (!env.CF_API_TOKEN) {
-        throw new JobError("the Cloudflare API token is not configured; finish setup first");
-      }
+      // An API token, or a stored grant that does not need reconnecting.
+      await requireConnection(env);
       log.info(
         `Changing the settings of ${install.app_slug} ${install.catalog_version} on Worker "${install.worker_name}"; the code stays as it is.`,
       );

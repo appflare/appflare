@@ -1,6 +1,7 @@
 import { reset } from "cloudflare:test";
 import { env } from "cloudflare:workers";
 import type { FetchLike } from "@appflare/cf-api";
+import { FREE_PLAN_SUBREQUESTS } from "@appflare/schema";
 import { beforeEach, describe, expect, it } from "vitest";
 import { createMigrator } from "../db/migrate";
 import { migrations } from "../db/migrations/index";
@@ -12,7 +13,11 @@ import {
   countedUnits,
   FRESH_INVOCATION_SLEEP,
   InvocationBudget,
+  MAX_RESERVE,
+  OUTSIDE_STEPS_SUBREQUESTS,
+  RENEWAL_SUBREQUESTS,
   SPEND_BEFORE_STEP,
+  STEP_SUBREQUESTS,
 } from "./invocation-budget";
 import {
   JOB_HANDLERS,
@@ -217,14 +222,27 @@ describe("a job spread over invocations", () => {
   });
 });
 
+describe("room for renewing an access token", () => {
+  it("keeps one request per invocation for it, beside every step and block", () => {
+    expect(RENEWAL_SUBREQUESTS).toBe(1);
+    expect(
+      SPEND_BEFORE_STEP + STEP_SUBREQUESTS + RENEWAL_SUBREQUESTS + OUTSIDE_STEPS_SUBREQUESTS,
+    ).toBe(FREE_PLAN_SUBREQUESTS);
+    expect(MAX_RESERVE + RENEWAL_SUBREQUESTS + OUTSIDE_STEPS_SUBREQUESTS).toBe(
+      FREE_PLAN_SUBREQUESTS,
+    );
+  });
+});
+
 describe("a block of steps that runs in one invocation", () => {
   it("waits for a fresh invocation before the block when it would not fit, never inside it", async () => {
     const r = await runSteps(async (steps) => {
-      await fetching(steps, "before", [7, 7]);
-      // 14 spent and 32 asked for: 46 fit. The block's eighth step starts at
-      // 42, past where a lone step would wait.
+      await fetching(steps, "before", [7, 6]);
+      // 13 spent and 32 asked for: 45 fit (one more is kept for renewing an
+      // access token). The block's eighth step starts at 41, past where a
+      // lone step would wait.
       await steps.reserve("the block", 32, () => fetching(steps, "block", Array(8).fill(4)));
-      // 46 spent and 20 asked for: a wait first.
+      // 45 spent and 20 asked for: a wait first.
       await steps.reserve("the second block", 20, () => fetching(steps, "second", [10, 10]));
     });
     expect(r.error).toBeNull();
@@ -233,7 +251,7 @@ describe("a block of steps that runs in one invocation", () => {
     ]);
     const block = r.engine.ran.filter((s) => s.name.startsWith("block "));
     expect(block.map((s) => s.invocation)).toEqual(Array(8).fill(0));
-    expect(r.engine.invocations).toEqual([46, 20]);
+    expect(r.engine.invocations).toEqual([45, 20]);
   });
 
   it("runs a block too big for one invocation a step at a time", async () => {

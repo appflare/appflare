@@ -21,6 +21,7 @@ import { CatalogTrustError, catalogTrust } from "../catalog/catalogs.server";
 import { cronTriggerCount } from "../catalog/cron-triggers";
 import { readCachedListing } from "../catalog/merged.server";
 import { unsignedTierRefusal } from "../catalog/sources";
+import { requireConnection } from "../cloudflare/connection.server";
 import { appPlace } from "../components/app-links";
 import { createDb } from "../db/client";
 import { installs, jobs, resources, source_builds } from "../db/schema";
@@ -452,9 +453,8 @@ export async function runUpdate(ctx: JobContext): Promise<void> {
         SETTING.accountCapabilities,
       ]);
       if (!settings.account_id) throw new JobError("the Cloudflare account is not known yet");
-      if (!env.CF_API_TOKEN) {
-        throw new JobError("the Cloudflare API token is not configured; finish setup first");
-      }
+      // An API token, or a stored grant that does not need reconnecting.
+      await requireConnection(env);
       log.info(
         `Updating ${appSlugLabel(install.app_slug)} from ${install.catalog_version} to ${params.version} on Worker "${install.worker_name}".`,
       );

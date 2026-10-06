@@ -47,6 +47,7 @@ function tokenDeps(token: string): TokenFlowDeps {
     host: new URL(getRequest().url).host,
     runningVersionId: env.CF_VERSION_METADATA?.id ?? null,
     setupTokenBound: typeof env.SETUP_TOKEN === "string" && env.SETUP_TOKEN.length > 0,
+    grantKey: env.CF_GRANT_KEY,
     onRequest: logCfRequest,
     ...apiBaseOption(env),
   };

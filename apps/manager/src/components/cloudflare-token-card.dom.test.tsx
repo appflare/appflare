@@ -10,7 +10,12 @@ import type { SavedToken } from "./cloudflare-token-form";
  */
 vi.mock("./cloudflare-token-form", () => ({
   CloudflareTokenForm: ({ onSaved }: { onSaved: (saved: SavedToken) => Promise<void> }) => (
-    <button type="button" onClick={() => void onSaved({ accountId: "a1", workerName: "appflare" })}>
+    <button
+      type="button"
+      onClick={() =>
+        void onSaved({ accountId: "a1", workerName: "appflare", replacedAuthorization: false })
+      }
+    >
       Save the new token
     </button>
   ),
@@ -59,6 +64,15 @@ describe("CloudflareTokenCard", () => {
               workerName: "appflare",
               verifiedAt: null,
               hasSecret: true,
+              connection: {
+                kind: "api_token",
+                state: "connected",
+                problem: null,
+                problemAt: null,
+                connectedSince: null,
+                ready: true,
+                oauth: null,
+              },
             }}
             canRotate
           />

@@ -3,6 +3,7 @@ import { CloudflareApiError } from "@appflare/cf-api";
 import { SANDBOX_BUCKET_NAME, SANDBOX_CONTAINERS, SANDBOX_WORKER_NAME } from "@appflare/schema";
 import { eq } from "drizzle-orm";
 import { z } from "zod";
+import { requireConnection } from "../cloudflare/connection.server";
 import { createDb } from "../db/client";
 import { github_tokens, jobs } from "../db/schema";
 import { readSettings, SETTING } from "../db/settings";
@@ -82,9 +83,8 @@ export async function runSandboxDisable(ctx: JobContext): Promise<void> {
       const settings = await readSettings(orm, [SETTING.accountId, SETTING.workerName]);
       if (!settings.account_id) throw new JobError("the Cloudflare account is not known yet");
       if (!settings.worker_name) throw new JobError("Appflare does not know its own Worker yet");
-      if (!env.CF_API_TOKEN) {
-        throw new JobError("the Cloudflare API token is not configured; finish setup first");
-      }
+      // An API token, or a stored grant that does not need reconnecting.
+      await requireConnection(env);
       requireSelf(steps.units.remote);
       const blocking = await installsNeedingSandbox(orm);
       if (blocking.length > 0) throw new JobError(sandboxInUseMessage(blocking));

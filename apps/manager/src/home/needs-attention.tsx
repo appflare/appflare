@@ -11,6 +11,7 @@ import { type ReactNode, useState } from "react";
 import { appLink } from "../components/app-links";
 import { BusyButton } from "../components/busy-button";
 import { Section, SectionRows } from "../components/section";
+import { settingsLink } from "../components/settings-links";
 import type { StartUpdateHandle } from "../components/update-banner";
 import { useOptimisticDismiss } from "../components/use-optimistic-dismiss";
 import { dismissDeployCopy } from "../deploy-button/deploy-copy.functions";
@@ -146,6 +147,13 @@ function AttentionRow({
   if (item.kind === "deploy-copy") return <DeployCopyRow item={item} />;
   let action: ReactNode;
   switch (item.kind) {
+    case "connection":
+      action = (
+        <LinkButton href={settingsLink("account", "connection")} variant="secondary">
+          Go to Your account
+        </LinkButton>
+      );
+      break;
     case "failed-job":
       action = (
         <>

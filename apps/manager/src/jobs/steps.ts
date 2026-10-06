@@ -2,6 +2,7 @@ import { NonRetryableError } from "cloudflare:workflows";
 import { type CloudflareClient, createClient, type FetchLike } from "@appflare/cf-api";
 import { probeCredentials, zoneNamesVia } from "../access/probe-credentials.server";
 import { apiBaseOption } from "../cloudflare/api-base";
+import { type CloudflareConnection, cloudflareConnection } from "../cloudflare/connection.server";
 import { createDb, type Database } from "../db/client";
 import { errorMessage, JobError, toStepError } from "./errors";
 import { isSubrequestLimitError } from "./install/budget";
@@ -125,6 +126,12 @@ export function createJobSteps(ctx: JobContext, jobId: string): JobSteps {
     now,
   });
   let accountId: string | null = null;
+  /**
+   * The manager's own Cloudflare credential, one provider for the whole run:
+   * it reads D1 once and then answers from this isolate's memo, renewing an
+   * OAuth access token when it runs out, through the counting fetch.
+   */
+  let connection: CloudflareConnection | null = null;
   /** How many times each step name was run so far, replays included, for unique pause names. */
   const seen = new Map<string, number>();
 
@@ -134,14 +141,17 @@ export function createJobSteps(ctx: JobContext, jobId: string): JobSteps {
   }
 
   function client(log: StepLog, other?: string): CloudflareClient {
-    const token = other ?? env.CF_API_TOKEN;
-    if (token === undefined || token.length === 0) {
-      throw new JobError("the Cloudflare API token is not configured; finish setup first");
-    }
+    connection ??= cloudflareConnection(env, {
+      fetch: baseFetch,
+      now,
+      ...(deps.sleep === undefined ? {} : { sleep: deps.sleep }),
+    });
     return createClient({
       accountId: knownAccount(),
-      token,
-      fetch: baseFetch,
+      token: other ?? connection.token,
+      // Another token (an app's own) is sent as is; the manager's own access
+      // token is renewed once when the API refuses it.
+      fetch: other === undefined ? connection.retrying(baseFetch) : baseFetch,
       onRequest: log.onRequest,
       ...apiBaseOption(env),
     });

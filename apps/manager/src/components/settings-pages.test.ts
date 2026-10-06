@@ -99,6 +99,15 @@ const tokenStatus: TokenStatus = {
   workerName: "appflare",
   verifiedAt: ISO,
   hasSecret: true,
+  connection: {
+    kind: "api_token",
+    state: "connected",
+    problem: null,
+    problemAt: null,
+    connectedSince: ISO,
+    ready: true,
+    oauth: null,
+  },
 };
 
 const capabilities = capabilitiesView(undefined, {
@@ -180,6 +189,59 @@ describe("AccountSettingsView", () => {
     );
     // Still one primary action at most, and no extra section.
     expect(sectionIds(html)).toEqual(["connection", "capabilities"]);
+  });
+
+  it("says in plain words when the Cloudflare authorization needs reconnecting", () => {
+    const needsReconnect: TokenStatus = {
+      ...tokenStatus,
+      hasSecret: false,
+      connection: {
+        kind: "oauth",
+        state: "needs_reconnect",
+        problem: "Cloudflare no longer accepts this connection: it was withdrawn in Cloudflare.",
+        problemAt: ISO,
+        connectedSince: ISO,
+        ready: false,
+        oauth: {
+          clientId: "b99863433175d812f9595af56dd1b71d",
+          scopes: ["workers-scripts.write"],
+          missingScopes: [],
+          renewedAt: ISO,
+        },
+      },
+    };
+    const forAdmin = text(
+      render(
+        createElement(AccountSettingsView, {
+          tokenStatus: needsReconnect,
+          capabilities: capabilityRowsData,
+          danger: null,
+          viewer: { role: "admin", isOwner: false },
+        }),
+      ),
+    );
+    expect(forAdmin).toContain("Needs reconnecting");
+    expect(forAdmin).toContain("Appflare needs to be reconnected to Cloudflare");
+    expect(forAdmin).toContain("it was withdrawn in Cloudflare");
+    expect(forAdmin).toContain("Your apps keep running.");
+    expect(forAdmin).toContain("Cloudflare authorization");
+    // Switching to an API token works today; the token rotation stays for token connections.
+    expect(forAdmin).toContain("Use an API token");
+    expect(forAdmin).not.toContain("Rotate token");
+    // Technical details stay behind a toggle.
+    expect(forAdmin).toContain("Authorization details");
+    const forMember = text(
+      render(
+        createElement(AccountSettingsView, {
+          tokenStatus: needsReconnect,
+          capabilities: capabilityRowsData,
+          danger: null,
+          viewer: { role: "member", isOwner: false },
+        }),
+      ),
+    );
+    expect(forMember).toContain("An administrator reconnects Cloudflare here");
+    expect(forMember).not.toContain("Use an API token");
   });
 
   it("shows no danger zone to admins who are not the owner", () => {

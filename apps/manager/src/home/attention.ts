@@ -9,6 +9,8 @@ import { installAgainLink } from "../installs/install-again";
  * section shows it, the sidebar's Home item counts it, and the sidebar's
  * app rows take their status dot from it. Rows are ordered by severity:
  *
+ * 0. Appflare's connection to Cloudflare needs reconnecting (everyone sees
+ *    it: until an administrator reconnects, nothing can change in the account);
  * 1. a job of an app that failed, with no job of that app finishing after it;
  * 2. an app that did not answer its last health check (not when Cloudflare
  *    Access answered in its place: that says nothing about the app);
@@ -28,6 +30,7 @@ import { installAgainLink } from "../installs/install-again";
  */
 
 export type AttentionKind =
+  | "connection"
   | "failed-job"
   | "not-responding"
   | "access-required"
@@ -38,6 +41,7 @@ export type AttentionKind =
 
 /** The order rows appear in, most severe first. */
 export const SEVERITY_ORDER: readonly AttentionKind[] = [
+  "connection",
   "failed-job",
   "not-responding",
   "access-required",
@@ -151,6 +155,8 @@ export interface AttentionInput {
   dismissedAccountRows: ReadonlySet<string>;
   deployCopy: DeployCopyCleanup | null;
   downgrade: Downgrade | null;
+  /** Appflare's connection to Cloudflare needs reconnecting (absent: it does not). */
+  reconnectNeeded?: boolean;
   /**
    * Updates the last "Update all" could not start because they need the
    * admin's input, by install id, with why. They show "Review" until the
@@ -165,6 +171,7 @@ interface AppItem {
 }
 
 export type AttentionItem =
+  | { kind: "connection"; key: string }
   | ({
       kind: "failed-job";
       key: string;
@@ -305,7 +312,18 @@ export function attentionItems(input: AttentionInput): AttentionItem[] {
     notices.push({ kind: "downgrade", key: "downgrade", downgrade: input.downgrade });
   }
 
-  return [...failed, ...notResponding, ...accessRequired, ...updates, ...account, ...notices];
+  const connection: AttentionItem[] =
+    input.reconnectNeeded === true ? [{ kind: "connection", key: "connection" }] : [];
+
+  return [
+    ...connection,
+    ...failed,
+    ...notResponding,
+    ...accessRequired,
+    ...updates,
+    ...account,
+    ...notices,
+  ];
 }
 
 /** What an app's row in the sidebar shows beside its name, most severe first. */

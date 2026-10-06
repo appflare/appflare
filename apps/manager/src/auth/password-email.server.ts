@@ -177,6 +177,7 @@ export async function setPasswordEmailSender(
 export async function deleteRecoverySecret(env: {
   DB: D1Database;
   CF_API_TOKEN?: string;
+  CF_GRANT_KEY?: string;
   CF_API_BASE_URL?: string;
 }): Promise<void> {
   try {
