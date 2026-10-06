@@ -477,8 +477,8 @@ export function diffBindings(
       used.add(same);
       if (same.cfId === null) {
         // Its name was recorded before its create, whose id was never
-        // recorded: this update finishes it under that name, taking up the
-        // resource that create made or making it now.
+        // recorded: this update creates it under that name. A resource of
+        // that name is refused, as nothing shows that create made it.
         if (res.type !== "pipelines") {
           diff.toCreate.push({ ...res, name: same.name });
           continue;

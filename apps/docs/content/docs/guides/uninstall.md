@@ -93,6 +93,14 @@ The uninstall only deletes resources recorded for this install. If no Worker is
 recorded for it (for example, an install that failed before the upload), a Worker
 with the same name is left alone.
 
+A resource recorded by name only, without its Cloudflare id, is left alone too. Only
+an install or update stopped from outside (for example terminated in the Cloudflare
+dashboard) leaves one, and Appflare cannot tell whether a resource of that name is
+the app's. The uninstall makes no delete call for it (a bucket is not emptied),
+marks it deleted, and logs a warning naming it; if it is the app's, delete it in the
+Cloudflare dashboard. **Delete retained data** and the cleanup **Install again** runs
+do the same.
+
 ## If an uninstall stops
 
 An uninstall runs as a job, one step per resource. If a step fails, the install

@@ -500,9 +500,9 @@ describe("a version that connects to a database elsewhere", () => {
     });
   });
 
-  it("takes up a configuration a failed attempt made but recorded by name only, without its connection string", async () => {
-    // The earlier attempt recorded the name, made the configuration, and
-    // could not record its id.
+  it("refuses a configuration of the name an earlier, stopped job recorded without its id", async () => {
+    // The earlier job recorded the name and was stopped before it recorded
+    // an id: the configuration of that name may be the one it made, or not.
     const w = await world(WITH_DATABASE, {
       resources: [
         ...RESOURCES,
@@ -514,7 +514,10 @@ describe("a version that connects to a database elsewhere", () => {
     expect("needsDatabases" in result).toBe(false);
     if (params === null) throw new Error("the update did not start");
     const r = await run(w, params);
-    expect(r.job?.status).toBe("succeeded");
+    expect(r.job?.status).toBe("failed");
+    expect(r.job?.error).toBe(
+      "check Hyperdrive configuration cut-hyperdrive: a Hyperdrive configuration named cut-hyperdrive already exists in this account; it may be one an earlier, stopped job started making, but Appflare did not record its id, so it cannot tell. Delete it in the Cloudflare dashboard if it is not in use, then try again",
+    );
     expect(w.side.state.calls).not.toContain("POST /hyperdrive/configs");
     expect(w.side.state.hyperdrive.map((c) => c.id)).toEqual(["hd-made"]);
     expect(r.resources.filter((row) => row.kind === "hyperdrive")).toEqual([
@@ -522,15 +525,10 @@ describe("a version that connects to a database elsewhere", () => {
         kind: "hyperdrive",
         binding: "HYPERDRIVE",
         name: "cut-hyperdrive",
-        cf_id: "hd-made",
+        cf_id: null,
         deleted_at: null,
       },
     ]);
-    expect(uploadedBindings(w)).toContainEqual({
-      type: "hyperdrive",
-      name: "HYPERDRIVE",
-      id: "hd-made",
-    });
   });
 
   it("releases a name-only record whose configuration was never made, so the next update asks for the string", async () => {

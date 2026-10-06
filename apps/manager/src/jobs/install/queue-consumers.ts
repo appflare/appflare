@@ -145,7 +145,7 @@ export function diffConsumerQueues(
       (r) => r.kind === "queue" && r.binding === null && r.name === queue.name,
     );
     // A row without an id was recorded before its create, whose id never
-    // was: created (or taken up) again under that name.
+    // was: created again under that name (a queue of that name is refused).
     if (row?.cfId == null) toCreate.push(queue);
     else existing.push({ binding: queue.binding, type: "queue", name: row.name, cfId: row.cfId });
   }

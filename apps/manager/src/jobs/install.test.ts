@@ -4137,7 +4137,7 @@ describe("install again", () => {
     expect(r.oldResources.every((x) => x.deleted_at !== null)).toBe(true);
   });
 
-  it("says a namespace stays recorded by name when its id cannot be recorded even as the install fails, and installing again removes it by that name", async () => {
+  it("leaves a namespace recorded by name only alone when installing again, and says so", async () => {
     const failed = await install(twoResources, {}, {}, {}, undefined, "self", undefined, [
       "record KV namespace cut-cut-kv",
       "resolve KV namespace name cut-cut-kv",
@@ -4154,7 +4154,7 @@ describe("install again", () => {
       {
         level: "error",
         message:
-          "Appflare could not finish the record of KV namespace cut-cut-kv: recorded by name only, it is looked up by that name by the next attempt and by the uninstall.",
+          "Appflare could not finish the record of KV namespace cut-cut-kv: with only its name recorded, it cannot tell whether a resource of that name is this app's. The next attempt creates it when nothing has that name and refuses the name otherwise, and the uninstall deletes nothing by that name; if such a resource is this app's, delete it in the Cloudflare dashboard.",
       },
       {
         level: "error",
@@ -4163,13 +4163,29 @@ describe("install again", () => {
       },
     ]);
 
-    const r = await runJobs(failed, await startAgain(failed));
-    expect(r.error).toBeNull();
-    expect(r.newJob?.status).toBe("succeeded");
-    // The removal found it by name and deleted it; the new install made its own.
-    expect(failed.fake.state.calls).toContain("DELETE /storage/kv/namespaces/kv-1");
-    expect(failed.fake.state.kv.map((n) => n.title)).toEqual(["cut-cut-kv"]);
+    const started = await startAgain(failed);
+    const r = await runJobs(failed, started);
+    // The removal made no call for it, marked it deleted, and said so.
+    expect(r.oldInstall?.status).toBe("uninstalled");
     expect(r.oldResources.every((x) => x.deleted_at !== null)).toBe(true);
+    expect(failed.fake.state.calls.some((c) => c.startsWith("DELETE /storage/kv/"))).toBe(false);
+    const removal = (
+      await env.DB.prepare("SELECT level, message FROM job_logs WHERE job_id = ?1 ORDER BY id")
+        .bind(started.cleanup?.jobId)
+        .all<{ level: string; message: string }>()
+    ).results;
+    expect(removal).toContainEqual({
+      level: "warn",
+      message:
+        'Appflare did not finish recording the KV namespace "cut-cut-kv", so it cannot tell whether a KV namespace of that name is this app\'s; nothing was deleted. If it is, delete it in the Cloudflare dashboard. Marked deleted.',
+    });
+    // The new install does not take it on: it stops at that name.
+    expect(r.newJob).toEqual({
+      status: "failed",
+      error:
+        "check KV namespace cut-cut-kv: a KV namespace named cut-cut-kv already exists in this account; Appflare does not adopt existing resources",
+    });
+    expect(failed.fake.state.kv).toEqual([{ id: "kv-1", title: "cut-cut-kv" }]);
   });
 
   it("protects the app when installed again after the token got the Access permission it lacked", async () => {

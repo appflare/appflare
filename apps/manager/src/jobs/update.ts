@@ -762,10 +762,11 @@ export async function runUpdate(ctx: JobContext): Promise<void> {
       // A string for a database the install has a configuration for replaces it.
       databases.push(...replacingDatabases);
       const connections = params.hyperdrive ?? {};
-      // A configuration an earlier attempt made and recorded by name only
-      // (the update dialog does not ask again) is taken up as it is; if it
-      // was never made, its create step fails, releases the name, and the
-      // dialog asks for the string next time.
+      // A configuration recorded by name only (the update dialog does not
+      // ask again) goes on to its check: one of that name is refused, as
+      // nothing shows it is this app's; with none, its create step fails
+      // for want of the string and releases the name, and the dialog asks
+      // for the string next time.
       const recordedByName = (binding: string) =>
         started.resources.some(
           (r) => r.kind === "hyperdrive" && r.binding === binding && r.cfId === null,

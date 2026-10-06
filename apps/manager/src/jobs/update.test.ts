@@ -321,25 +321,42 @@ describe("update job", () => {
     );
   });
 
-  it("finishes a resource an earlier attempt created but recorded only by name, without creating it again", async () => {
-    // The earlier attempt recorded the name, created the namespace, and could
-    // not record its id.
+  it("refuses a resource of the name an earlier, stopped job recorded without its id", async () => {
+    // The earlier job recorded the name and was stopped before it recorded
+    // an id: the namespace of that name may be the one it made, or not.
     const r = await update(
       NEW_APP,
       { kv: [{ id: "kv-made", title: "cut-cache" }] },
       { resources: [...RESOURCES, { kind: "kv", binding: "CACHE", name: "cut-cache" }] },
     );
-    expect(r.error).toBeNull();
-    expect(r.job?.status).toBe("succeeded");
+    expect(r.job?.status).toBe("failed");
+    expect(r.job?.error).toBe(
+      "check KV namespace cut-cache: a KV namespace named cut-cache already exists in this account; it may be one an earlier, stopped job started making, but Appflare did not record its id, so it cannot tell. Delete it in the Cloudflare dashboard if it is not in use, then try again",
+    );
     expect(r.fake.state.calls).not.toContain("POST /storage/kv/namespaces");
+    expect(r.fake.state.calls.some((c) => c.startsWith("DELETE /storage/kv/"))).toBe(false);
     expect(r.fake.state.kv).toEqual([{ id: "kv-made", title: "cut-cache" }]);
     expect(r.resources.filter((row) => row.binding === "CACHE")).toEqual([
-      { kind: "kv", binding: "CACHE", name: "cut-cache", cf_id: "kv-made", deleted_at: null },
+      { kind: "kv", binding: "CACHE", name: "cut-cache", cf_id: null, deleted_at: null },
+    ]);
+  });
+
+  it("creates the resource of a name an earlier job recorded without its id when nothing has that name", async () => {
+    const r = await update(
+      NEW_APP,
+      {},
+      { resources: [...RESOURCES, { kind: "kv", binding: "CACHE", name: "cut-cache" }] },
+    );
+    expect(r.error).toBeNull();
+    expect(r.job?.status).toBe("succeeded");
+    expect(r.fake.state.kv).toEqual([{ id: "kv-new-1", title: "cut-cache" }]);
+    expect(r.resources.filter((row) => row.binding === "CACHE")).toEqual([
+      { kind: "kv", binding: "CACHE", name: "cut-cache", cf_id: "kv-new-1", deleted_at: null },
     ]);
     expect(r.fake.state.versions[0]?.metadata.bindings).toContainEqual({
       type: "kv_namespace",
       name: "CACHE",
-      namespace_id: "kv-made",
+      namespace_id: "kv-new-1",
     });
   });
 

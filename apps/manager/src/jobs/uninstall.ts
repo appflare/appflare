@@ -49,7 +49,7 @@ import {
   removeBucketCatalog,
 } from "./install/pipelines";
 import { consumerTargets, removeQueueConsumersPhase } from "./install/queue-consumers";
-import { deleteResource, RESOURCE_LABEL } from "./install/resources";
+import { deleteResource, RESOURCE_LABEL, unrecordedNote } from "./install/resources";
 import type { JobContext } from "./run-job";
 import { runSelfDeployingUninstall } from "./self-deploying/jobs";
 import { StepLog } from "./step-log";
@@ -247,14 +247,14 @@ export async function runUninstall(ctx: JobContext): Promise<void> {
         .where(and(eq(resources.install_id, params.installId), isNull(resources.deleted_at)))
         .orderBy(sql`rowid`);
       const wanted = new Set(params.deleteResources);
-      const candidates: Target[] = [];
+      const targets: Target[] = [];
       for (const r of live) {
         if (r.retained_at !== null || !wanted.has(r.id)) continue;
         // Resources an app's own installer created (self-deploying tier) are
         // removed by that installer; Appflare never deletes them itself.
         if (r.managed_by === "app") continue;
         const kind = DATA_RESOURCE_KINDS.find((k) => k === r.kind);
-        if (kind !== undefined) candidates.push({ id: r.id, kind, name: r.name, cfId: r.cf_id });
+        if (kind !== undefined) targets.push({ id: r.id, kind, name: r.name, cfId: r.cf_id });
       }
       // Custom domains are never kept: they hold no data.
       const domains: DomainTarget[] = live
@@ -326,42 +326,11 @@ export async function runUninstall(ctx: JobContext): Promise<void> {
         .map((r) => ({ id: r.id, name: r.name }));
       // Hyperdrive configurations are never kept: they hold the database's
       // credentials, not its data. They go after the Worker that binds them.
-      const configs: HyperdriveTarget[] = live
+      const hyperdrive: HyperdriveTarget[] = live
         .filter(
           (r) => (HYPERDRIVE_KINDS as readonly string[]).includes(r.kind) && r.managed_by !== "app",
         )
         .map((r) => ({ id: r.id, name: r.name, cfId: r.cf_id }));
-      // A resource with no id recorded is looked up by name, and two installs'
-      // names can coincide (Worker foo with binding cache-x and Worker
-      // foo-cache with binding x both name foo-cache-x). When another install
-      // records one of that name, it is that install's: never call the API
-      // for it, and record it as gone from this app only.
-      const unrecorded = new Set(
-        [...candidates, ...configs].filter((t) => t.cfId === null).map((t) => t.id),
-      );
-      const held = await namesHeldElsewhere(
-        env.DB,
-        params.installId,
-        live
-          .filter((r) => unrecorded.has(r.id))
-          .map((r) => ({ id: r.id, kind: r.kind, name: r.name, cfId: r.cf_id })),
-      );
-      for (const t of [
-        ...candidates.map((c) => ({ ...c, label: RESOURCE_LABEL[c.kind] })),
-        ...configs.map((c) => ({ ...c, label: RESOURCE_LABEL.hyperdrive })),
-      ]) {
-        const owner = held.get(t.id);
-        if (owner === undefined) continue;
-        log.warn(
-          `${t.label} "${t.name}" is recorded by the install "${owner}" now, so it belongs to that install; left alone, and no longer recorded for this app.`,
-        );
-        await orm
-          .update(resources)
-          .set({ deleted_at: new Date(now()) })
-          .where(eq(resources.id, t.id));
-      }
-      const targets = candidates.filter((t) => !held.has(t.id));
-      const hyperdrive = configs.filter((h) => !held.has(h.id));
       // Pipelines streams, sinks and pipelines are never kept: they hold no
       // data (the sink holds the admin's token). They go after the Worker
       // that sends to the stream, pipeline first.
@@ -685,9 +654,7 @@ export async function runUninstall(ctx: JobContext): Promise<void> {
           if (await deleteResource(cf(), { kind: "hyperdrive", ...config })) {
             log.info(`Deleted ${label} "${config.name}"; the database itself is untouched.`);
           } else {
-            log.warn(
-              `No ${label} named "${config.name}" exists: Appflare recorded its name before creating it, and the create never finished. Marked deleted.`,
-            );
+            log.warn(unrecordedNote("hyperdrive", config.name));
           }
         } catch (error) {
           if (!isNotFound(error)) throw error;
@@ -798,8 +765,10 @@ export async function deleteDataResourcesPhase(
   const r2PerPage = steps.units.remote ? R2_OBJECTS_PER_STEP : R2_OBJECTS_PER_LOCAL_STEP;
   for (const target of targets) {
     const label = RESOURCE_LABEL[target.kind];
-    if (target.kind === "r2") {
-      const bucket = target.cfId ?? target.name;
+    // A bucket with no id recorded is not emptied: its name proves nothing
+    // (see `deleteResource`), and its delete step makes no call either.
+    if (target.kind === "r2" && target.cfId !== null) {
+      const bucket = target.cfId;
       const catalogId = target.catalogId;
       if (catalogId !== undefined) {
         // Before the bucket is emptied: the catalog's table maintenance
@@ -848,9 +817,7 @@ export async function deleteDataResourcesPhase(
       try {
         if (await deleteResource(cf(), target)) log.info(`Deleted ${label} "${target.name}".`);
         else {
-          log.warn(
-            `No ${label} named "${target.name}" exists: Appflare recorded its name before creating it, and the create never finished. Marked deleted.`,
-          );
+          log.warn(unrecordedNote(target.kind, target.name));
         }
       } catch (error) {
         if (target.kind === "r2" && error instanceof CloudflareApiError && error.status === 409) {
@@ -920,11 +887,10 @@ async function runDeleteRetained(ctx: JobContext, params: UninstallJobParams): P
         const kind = DATA_RESOURCE_KINDS.find((k) => k === r.kind);
         if (kind !== undefined) candidates.push({ id: r.id, kind, name: r.name, cfId: r.cf_id });
       }
-      // A bucket or index is addressed by name, and so is anything with no
-      // id recorded. When another install records one of that name (a later
-      // install under the same Worker name, after the kept one was deleted
-      // by hand), it is that install's: never call the API for it, and
-      // record it as gone from this app only.
+      // A bucket or index is addressed by name. When another install records
+      // one of that name (a later install under the same Worker name, after
+      // the kept one was deleted by hand), it is that install's: never call
+      // the API for it, and record it as gone from this app only.
       const held = await namesHeldElsewhere(env.DB, params.installId, candidates);
       // A kept bucket's Data Catalog was kept with it and goes with it now.
       const targets = withCatalogs(

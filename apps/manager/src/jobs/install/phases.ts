@@ -164,13 +164,17 @@ export async function loadVerifiedManifest(
  *
  * The name is recorded before the create so that a resource this install
  * made is always known to it, even when recording its id fails for good:
- * the next attempt (an update retried, or the uninstall before an install is
- * made again) finds the row by name and finishes or deletes that resource,
- * where it would otherwise be refused as one Appflare has no record of. A
- * resource of that name with no row of this install is still never adopted.
+ * each name recorded is added to `reserved`, and a job that fails passes it
+ * to {@link resolveReservedNamesPhase}, which records the id the create
+ * returned (or releases the name), so the next attempt and the uninstall
+ * address that resource by its id.
  *
- * Each name recorded is added to `reserved`; a job that fails passes it to
- * {@link resolveReservedNamesPhase} so no row is left with a name only.
+ * A name-only row outlives its job only when the job is stopped from outside
+ * (terminated in the dashboard, or the engine fails). Such a row never
+ * authorises taking on a resource by its name: the check refuses an existing
+ * resource of that name (it may be the one that create made, or not), and
+ * when there is none the create runs afresh and records its id. An existing
+ * resource is accepted only when this install recorded its id.
  */
 export async function provisionResourcePhase(
   steps: JobSteps,
@@ -200,27 +204,33 @@ export async function provisionResourcePhase(
       return { recorded: null };
     }
     const [row] = await orm
-      .select({ id: resources.id })
+      .select({ cfId: resources.cf_id })
       .from(resources)
       .where(
         and(
           eq(resources.id, rowId),
           eq(resources.name, res.name),
-          isNull(resources.cf_id),
           isNull(resources.deleted_at),
           isNull(resources.retained_at),
         ),
       )
       .limit(1);
-    if (row === undefined) {
+    if (row?.cfId === null) {
+      // Recorded by name only by an earlier job stopped before it recorded
+      // the id: nothing shows the resource of that name is the one its
+      // create made (it may never have run), so it is not taken on.
+      throw new JobError(
+        `a ${label} named ${res.name} already exists in this account; it may be one an earlier, stopped job started making, but Appflare did not record its id, so it cannot tell. Delete it in the Cloudflare dashboard if it is not in use, then try again`,
+      );
+    }
+    if (row === undefined || row.cfId !== existing) {
       throw new JobError(
         `a ${label} named ${res.name} already exists in this account; Appflare does not adopt existing resources`,
       );
     }
-    log.info(
-      `Found the ${label} "${res.name}" an earlier attempt created and recorded by name; finishing it.`,
-      { id: existing },
-    );
+    log.info(`Found the ${label} "${res.name}" this install recorded; using it.`, {
+      id: existing,
+    });
     return { recorded: existing };
   });
 
@@ -415,7 +425,8 @@ export async function resolveReservedNamesPhase(
 
 /** The failure log's line for what {@link resolveReservedNamesPhase} could not resolve. */
 export function nameOnlyNote(unresolved: readonly string[]): string {
-  return `Appflare could not finish the record of ${unresolved.join(", ")}: recorded by name only, ${unresolved.length === 1 ? "it is" : "they are"} looked up by that name by the next attempt and by the uninstall.`;
+  const one = unresolved.length === 1;
+  return `Appflare could not finish the record of ${unresolved.join(", ")}: with only ${one ? "its name" : "their names"} recorded, it cannot tell whether a resource of ${one ? "that name" : "those names"} is this app's. The next attempt creates ${one ? "it" : "each"} when nothing has that name and refuses the name otherwise, and the uninstall deletes nothing by that name; if such a resource is this app's, delete it in the Cloudflare dashboard.`;
 }
 
 /**

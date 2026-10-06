@@ -14,10 +14,10 @@ import { provisionResourcePhase } from "./phases";
 
 /**
  * Creating one backing resource (check, record the name, create, record the
- * id) against a stateful fake of the Cloudflare API and the local D1: a
- * resource whose id could not be recorded stays known to the install by its
- * name, so the next attempt finishes it and an uninstall deletes it, while a
- * resource of that name the install has no record of is still refused.
+ * id) against a stateful fake of the Cloudflare API and the local D1. A
+ * name recorded without its id never lets the next attempt take on, or an
+ * uninstall delete, a resource of that name: nothing shows it is the one
+ * that create made.
  */
 
 const CACHE: ResourceBindingPlan = {
@@ -96,36 +96,64 @@ describe("provisioning a resource", () => {
     ]);
   });
 
-  it("finishes a resource whose id was never recorded on the next attempt, without a second create", async () => {
+  it("refuses, on the next attempt, a resource of the name a stopped job recorded without its id", async () => {
+    // The job recorded the name and created the namespace, and was stopped
+    // before it could record the id (nothing resolved the name as it failed).
     const fake = fakeAccount(null);
     const first = harness(fake, RECORD_ID);
     await expect(provisionResourcePhase(first.steps, INSTALL_ID, CACHE, {}, [])).rejects.toThrow(
       /database unavailable/,
     );
-    // Created, and known to the install by its name.
     expect(fake.state.kv).toEqual([{ id: "kv-new-1", title: "cut-cache" }]);
     expect(await rows()).toMatchObject([{ name: "cut-cache", cf_id: null, deleted_at: null }]);
 
+    // Nothing shows the namespace of that name is the one that create made.
     const next = harness(fake);
-    const made = await provisionResourcePhase(next.steps, INSTALL_ID, CACHE, {}, []);
+    await expect(provisionResourcePhase(next.steps, INSTALL_ID, CACHE, {}, [])).rejects.toThrow(
+      "a KV namespace named cut-cache already exists in this account; it may be one an earlier, stopped job started making, but Appflare did not record its id, so it cannot tell. Delete it in the Cloudflare dashboard if it is not in use, then try again",
+    );
+    expect(next.step.names).toEqual(["check KV namespace cut-cache"]);
+    expect(creates(fake)).toBe(1);
+    expect(fake.state.kv).toEqual([{ id: "kv-new-1", title: "cut-cache" }]);
+    expect(await rows()).toMatchObject([{ name: "cut-cache", cf_id: null, deleted_at: null }]);
+
+    // Deleted in the dashboard: the attempt after that creates it and records its id.
+    fake.state.kv = [];
+    const made = await provisionResourcePhase(harness(fake).steps, INSTALL_ID, CACHE, {}, []);
+    expect(creates(fake)).toBe(2);
+    expect(fake.state.kv).toEqual([{ id: made.cfId, title: "cut-cache" }]);
+    expect(await rows()).toMatchObject([{ name: "cut-cache", cf_id: made.cfId, deleted_at: null }]);
+  });
+
+  it("creates the resource of a name a stopped job recorded without its id when nothing has that name", async () => {
+    await env.DB.prepare(
+      "INSERT INTO resources (id, install_id, kind, binding, name, cf_id, created_at) VALUES (?1, ?2, 'kv', 'CACHE', 'cut-cache', NULL, 1)",
+    )
+      .bind(`${INSTALL_ID}:kv:CACHE`, INSTALL_ID)
+      .run();
+    const fake = fakeAccount(null);
+    const made = await provisionResourcePhase(harness(fake).steps, INSTALL_ID, CACHE, {}, []);
     expect(made.cfId).toBe("kv-new-1");
     expect(creates(fake)).toBe(1);
-    expect(fake.state.kv).toHaveLength(1);
     expect(await rows()).toMatchObject([
       { name: "cut-cache", cf_id: "kv-new-1", deleted_at: null },
     ]);
-
-    // An uninstall then deletes it by the id now recorded.
-    await deleteDataResourcesPhase(
-      harness(fake).steps,
-      [{ id: `${INSTALL_ID}:kv:CACHE`, kind: "kv", name: "cut-cache", cfId: "kv-new-1" }],
-      "uninstall",
-    );
-    expect(fake.state.kv).toEqual([]);
-    expect(fake.state.calls).toContain("DELETE /storage/kv/namespaces/kv-new-1");
   });
 
-  it("lets an uninstall delete a resource recorded by name only, so nothing is left behind", async () => {
+  it("uses a resource of that name when the install recorded its id", async () => {
+    await env.DB.prepare(
+      "INSERT INTO resources (id, install_id, kind, binding, name, cf_id, created_at) VALUES (?1, ?2, 'kv', 'CACHE', 'cut-cache', 'kv-ours', 1)",
+    )
+      .bind(`${INSTALL_ID}:kv:CACHE`, INSTALL_ID)
+      .run();
+    const fake = fakeAccount(null, { kv: [{ id: "kv-ours", title: "cut-cache" }] });
+    const made = await provisionResourcePhase(harness(fake).steps, INSTALL_ID, CACHE, {}, []);
+    expect(made.cfId).toBe("kv-ours");
+    expect(creates(fake)).toBe(0);
+    expect(await rows()).toMatchObject([{ cf_id: "kv-ours", deleted_at: null }]);
+  });
+
+  it("never lets an uninstall delete a resource recorded by name only", async () => {
     const fake = fakeAccount(null);
     await expect(
       provisionResourcePhase(harness(fake, RECORD_ID).steps, INSTALL_ID, CACHE, {}, []),
@@ -138,9 +166,9 @@ describe("provisioning a resource", () => {
       [{ id: `${INSTALL_ID}:kv:CACHE`, kind: "kv", name: "cut-cache", cfId: null }],
       "uninstall",
     );
-    // Found by its recorded name and deleted.
-    expect(fake.state.kv).toEqual([]);
-    expect(fake.state.calls).toContain("DELETE /storage/kv/namespaces/kv-new-1");
+    // Neither looked up nor deleted by its name: it stays in the account.
+    expect(fake.state.calls.some((c) => c.startsWith("DELETE"))).toBe(false);
+    expect(fake.state.kv).toEqual([{ id: "kv-new-1", title: "cut-cache" }]);
     expect((await rows())[0]?.deleted_at).not.toBeNull();
   });
 

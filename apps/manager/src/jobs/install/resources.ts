@@ -5,8 +5,7 @@ import type { ResourceBindingPlan } from "./bindings";
 /**
  * Finding, creating, and deleting the backing resources of an install.
  * `findResource` is used before creating (a name that exists is never adopted)
- * by a retried create step, to pick up what its own failed attempt made, and
- * by a delete of a resource recorded by name only, before its create.
+ * and by a retried create step, to pick up what its own failed attempt made.
  */
 
 export const RESOURCE_LABEL: Record<ResourceBindingPlan["kind"], string> = {
@@ -94,65 +93,53 @@ export interface DeletableResource {
   cfId: string | null;
 }
 
-/** The plan type {@link findResource} looks each kind of resource up by. */
-const TYPE_OF_KIND = {
-  kv: "kv_namespace",
-  d1: "d1",
-  r2: "r2_bucket",
-  queue: "queue",
-  vectorize: "vectorize",
-  hyperdrive: "hyperdrive",
-  pipeline_stream: "pipelines",
-} as const satisfies Record<ResourceBindingPlan["kind"], ResourceBindingPlan["type"]>;
+/**
+ * The warning for a resource recorded by name only (its id never was), which
+ * an uninstall marks deleted without a call: the name proves nothing.
+ */
+export function unrecordedNote(kind: ResourceBindingPlan["kind"], name: string): string {
+  const label = RESOURCE_LABEL[kind];
+  return `Appflare did not finish recording the ${label} "${name}", so it cannot tell whether a ${label} of that name is this app's; nothing was deleted. If it is, delete it in the Cloudflare dashboard. Marked deleted.`;
+}
 
 /**
  * Deletes the resource with one API call and returns true, or returns false
- * without deleting anything when there is nothing to address. Throws
+ * without a call when no Cloudflare id is recorded to address it by. Throws
  * `CloudflareApiError` as is (a 404 means it is already gone; the caller
  * decides what that means).
  *
- * A row with no Cloudflare id is one whose name was recorded before its
- * create (see `provisionResourcePhase`): the resource of that name, if any,
- * is the one that create made, since the name was checked free just before.
- * It is looked up by name first; false when there is none, as the create
- * never finished. A Pipelines stream is never recorded that way, so one
- * without an id cannot be addressed (false).
+ * A row with no id is one whose name was recorded before its create (see
+ * `provisionResourcePhase`) by a job stopped before it could record the id
+ * or release the name. Nothing shows that a resource of that name is the
+ * one that create made: the create may never have run, and someone else may
+ * have made that name since. So it is never addressed by its name.
  */
 export async function deleteResource(
   api: CloudflareClient,
   res: DeletableResource,
 ): Promise<boolean> {
-  const id =
-    res.cfId ??
-    (res.kind === "r2" || res.kind === "vectorize" || res.kind === "pipeline_stream"
-      ? null
-      : await findResource(api, { type: TYPE_OF_KIND[res.kind], name: res.name }));
+  if (res.cfId === null) return false;
   switch (res.kind) {
     case "kv":
-      if (id === null) return false;
-      await api.kv.deleteNamespace(id);
+      await api.kv.deleteNamespace(res.cfId);
       return true;
     case "d1":
-      if (id === null) return false;
-      await api.d1.deleteDatabase(id);
+      await api.d1.deleteDatabase(res.cfId);
       return true;
     case "r2":
-      await api.r2.deleteBucket(id ?? res.name);
+      await api.r2.deleteBucket(res.cfId);
       return true;
     case "queue":
-      if (id === null) return false;
-      await api.queues.deleteQueue(id);
+      await api.queues.deleteQueue(res.cfId);
       return true;
     case "vectorize":
-      await api.vectorize.deleteIndex(id ?? res.name);
+      await api.vectorize.deleteIndex(res.cfId);
       return true;
     case "hyperdrive":
-      if (id === null) return false;
-      await api.hyperdrive.deleteConfig(id);
+      await api.hyperdrive.deleteConfig(res.cfId);
       return true;
     case "pipeline_stream":
-      if (id === null) return false;
-      await api.pipelines.deleteStream(id);
+      await api.pipelines.deleteStream(res.cfId);
       return true;
   }
 }
