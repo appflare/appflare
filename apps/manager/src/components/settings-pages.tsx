@@ -5,6 +5,7 @@ import type { CapabilityRowsData } from "../capabilities/capability-rows.server"
 import { CapabilitiesSection } from "../capabilities/capability-section";
 import type { CatalogView } from "../catalog/catalogs.functions";
 import type { ManagerUpdateState } from "../catalog/manager-releases.functions";
+import type { ReconnectOutcome } from "../cloudflare/reconnect-outcome";
 import type { DangerZoneState } from "../danger/danger.functions";
 import { DangerZone } from "../danger/danger-zone";
 import type { GatewayView } from "../gateway/gateway.server";
@@ -78,7 +79,7 @@ function SettingsPageHeader({
 
 /**
  * `/settings/account` (Your account): the Cloudflare connection (admins
- * rotate the token), what the account can run (admins check it again and
+ * reconnect it or change how Appflare connects), what the account can run (admins check it again and
  * choose the Workers plan while it cannot be detected), and last, for the
  * owner only, the danger zone.
  */
@@ -88,6 +89,8 @@ export function AccountSettingsView({
   danger,
   viewer,
   managerUrl,
+  reconnectOutcome = null,
+  reconnectOpen = false,
 }: {
   tokenStatus: TokenStatus;
   capabilities: CapabilityRowsData;
@@ -99,6 +102,10 @@ export function AccountSettingsView({
    * link when the server did not name one (`tokenStatus.managerOrigin`).
    */
   managerUrl?: string | null;
+  /** How a Cloudflare sign-in that just came back ended. */
+  reconnectOutcome?: ReconnectOutcome | null;
+  /** Open Reconnect Cloudflare at once (admins). */
+  reconnectOpen?: boolean;
 }) {
   const isAdmin = viewer.role === "admin";
   return (
@@ -108,6 +115,8 @@ export function AccountSettingsView({
         status={tokenStatus}
         canRotate={isAdmin}
         managerUrl={tokenStatus.managerOrigin ?? managerUrl}
+        outcome={reconnectOutcome}
+        startOpen={reconnectOpen}
       />
       <CapabilitiesSection data={capabilities} isAdmin={isAdmin} />
       {viewer.isOwner && danger !== null && <DangerZone state={danger} />}

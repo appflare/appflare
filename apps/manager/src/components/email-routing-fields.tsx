@@ -191,7 +191,7 @@ function PermissionsBanner({
             <Link href={settingsLink("account", "connection")} target="_blank" rel="noopener">
               Cloudflare connection settings
             </Link>{" "}
-            with Rotate token.
+            with Change how Appflare connects.
           </span>
         </span>
       }

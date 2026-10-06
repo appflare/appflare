@@ -34,6 +34,7 @@ import { Route as AppSettingsUpdatesRouteImport } from './routes/_app/settings/u
 import { Route as AppSettingsUsageDataRouteImport } from './routes/_app/settings/usage-data'
 import { Route as AppSettingsUsersRouteImport } from './routes/_app/settings/users'
 import { Route as ApiAuthSplatRouteImport } from './routes/api/auth/$'
+import { Route as ApiCloudflareOauthReturnRouteImport } from './routes/api/cloudflare/oauth-return'
 import { Route as ApiDangerRemoveAppflareRouteImport } from './routes/api/danger/remove-appflare'
 import { Route as ApiDangerRotateAuthSecretRouteImport } from './routes/api/danger/rotate-auth-secret'
 import { Route as AppCatalogSourceBuildIdRouteImport } from './routes/_app/catalog/source.$buildId'
@@ -167,6 +168,12 @@ const ApiAuthSplatRoute = ApiAuthSplatRouteImport.update({
   path: '/api/auth/$',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ApiCloudflareOauthReturnRoute =
+  ApiCloudflareOauthReturnRouteImport.update({
+    id: '/api/cloudflare/oauth-return',
+    path: '/api/cloudflare/oauth-return',
+    getParentRoute: () => rootRouteImport,
+  } as any)
 const ApiDangerRemoveAppflareRoute = ApiDangerRemoveAppflareRouteImport.update({
   id: '/api/danger/remove-appflare',
   path: '/api/danger/remove-appflare',
@@ -222,6 +229,7 @@ export interface FileRoutesByFullPath {
   '/settings/usage-data': typeof AppSettingsUsageDataRoute
   '/settings/users': typeof AppSettingsUsersRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
+  '/api/cloudflare/oauth-return': typeof ApiCloudflareOauthReturnRoute
   '/api/danger/remove-appflare': typeof ApiDangerRemoveAppflareRoute
   '/api/danger/rotate-auth-secret': typeof ApiDangerRotateAuthSecretRoute
   '/catalog/': typeof AppCatalogIndexRoute
@@ -254,6 +262,7 @@ export interface FileRoutesByTo {
   '/settings/usage-data': typeof AppSettingsUsageDataRoute
   '/settings/users': typeof AppSettingsUsersRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
+  '/api/cloudflare/oauth-return': typeof ApiCloudflareOauthReturnRoute
   '/api/danger/remove-appflare': typeof ApiDangerRemoveAppflareRoute
   '/api/danger/rotate-auth-secret': typeof ApiDangerRotateAuthSecretRoute
   '/catalog': typeof AppCatalogIndexRoute
@@ -288,6 +297,7 @@ export interface FileRoutesById {
   '/_app/settings/usage-data': typeof AppSettingsUsageDataRoute
   '/_app/settings/users': typeof AppSettingsUsersRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
+  '/api/cloudflare/oauth-return': typeof ApiCloudflareOauthReturnRoute
   '/api/danger/remove-appflare': typeof ApiDangerRemoveAppflareRoute
   '/api/danger/rotate-auth-secret': typeof ApiDangerRotateAuthSecretRoute
   '/_app/catalog/': typeof AppCatalogIndexRoute
@@ -322,6 +332,7 @@ export interface FileRouteTypes {
     | '/settings/usage-data'
     | '/settings/users'
     | '/api/auth/$'
+    | '/api/cloudflare/oauth-return'
     | '/api/danger/remove-appflare'
     | '/api/danger/rotate-auth-secret'
     | '/catalog/'
@@ -354,6 +365,7 @@ export interface FileRouteTypes {
     | '/settings/usage-data'
     | '/settings/users'
     | '/api/auth/$'
+    | '/api/cloudflare/oauth-return'
     | '/api/danger/remove-appflare'
     | '/api/danger/rotate-auth-secret'
     | '/catalog'
@@ -387,6 +399,7 @@ export interface FileRouteTypes {
     | '/_app/settings/usage-data'
     | '/_app/settings/users'
     | '/api/auth/$'
+    | '/api/cloudflare/oauth-return'
     | '/api/danger/remove-appflare'
     | '/api/danger/rotate-auth-secret'
     | '/_app/catalog/'
@@ -406,6 +419,7 @@ export interface RootRouteChildren {
   SetupRoute: typeof SetupRoute
   ApiHealthRoute: typeof ApiHealthRoute
   ApiAuthSplatRoute: typeof ApiAuthSplatRoute
+  ApiCloudflareOauthReturnRoute: typeof ApiCloudflareOauthReturnRoute
   ApiDangerRemoveAppflareRoute: typeof ApiDangerRemoveAppflareRoute
   ApiDangerRotateAuthSecretRoute: typeof ApiDangerRotateAuthSecretRoute
   ApiCatalogAvatarHandleRoute: typeof ApiCatalogAvatarHandleRoute
@@ -589,6 +603,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiAuthSplatRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/cloudflare/oauth-return': {
+      id: '/api/cloudflare/oauth-return'
+      path: '/api/cloudflare/oauth-return'
+      fullPath: '/api/cloudflare/oauth-return'
+      preLoaderRoute: typeof ApiCloudflareOauthReturnRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/api/danger/remove-appflare': {
       id: '/api/danger/remove-appflare'
       path: '/api/danger/remove-appflare'
@@ -690,6 +711,7 @@ const rootRouteChildren: RootRouteChildren = {
   SetupRoute: SetupRoute,
   ApiHealthRoute: ApiHealthRoute,
   ApiAuthSplatRoute: ApiAuthSplatRoute,
+  ApiCloudflareOauthReturnRoute: ApiCloudflareOauthReturnRoute,
   ApiDangerRemoveAppflareRoute: ApiDangerRemoveAppflareRoute,
   ApiDangerRotateAuthSecretRoute: ApiDangerRotateAuthSecretRoute,
   ApiCatalogAvatarHandleRoute: ApiCatalogAvatarHandleRoute,

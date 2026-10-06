@@ -532,9 +532,11 @@ export async function revokeToken(args: RevokeTokenArgs): Promise<void> {
  *
  * - `install`: started by the deploy page. Its callback page (same origin)
  *   checks `n` against the nonce it kept and exchanges the code itself.
- * - `reconnect`: started by a manager, which keeps the PKCE verifier. The
- *   callback page passes the code to `window.opener` with `o`, the manager's
- *   origin, as the exact target origin; the code is useless without the
+ * - `reconnect`: started by a manager, which keeps the PKCE verifier and
+ *   sends the whole tab to Cloudflare. The callback page shows `o`, the
+ *   manager's origin, asks the visitor to confirm it is their own Appflare,
+ *   and only then posts `code` and `state` (or `error` and `state`) as a form
+ *   to `<o>/api/cloudflare/oauth-return`; the code is useless without the
  *   manager's verifier.
  */
 export type OAuthState =
@@ -548,7 +550,7 @@ const MAX_STATE_LENGTH = 1024;
 const nonceSchema = z.string().regex(/^[A-Za-z0-9_-]{22,128}$/);
 
 /**
- * True for an origin a reconnect may relay a code to: a bare origin (no path,
+ * True for an origin a reconnect may return a code to: a bare origin (no path,
  * query, fragment, user or trailing slash) that is `https:`, or `http:` on
  * `localhost` or `127.0.0.1` for local development.
  */

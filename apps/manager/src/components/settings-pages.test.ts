@@ -159,7 +159,7 @@ describe("AccountSettingsView", () => {
     expectPattern(
       html,
       ["connection", "capabilities", "danger-zone"],
-      ["Rotate token", "Check again", "Rotate auth secret", "Remove Appflare"],
+      ["Change how Appflare connects", "Check again", "Rotate auth secret", "Remove Appflare"],
     );
     expect(html).toMatch(/<h1[^>]*>Your account<\/h1>/);
     expect(text(html)).toContain("Acme");
@@ -224,12 +224,12 @@ describe("AccountSettingsView", () => {
     expect(forAdmin).toContain("Appflare needs to be reconnected to Cloudflare");
     expect(forAdmin).toContain("it was withdrawn in Cloudflare");
     expect(forAdmin).toContain("Your apps keep running.");
-    expect(forAdmin).toContain("Cloudflare authorization");
-    // Switching to an API token works today; the token rotation stays for token connections.
-    expect(forAdmin).toContain("Use an API token");
-    expect(forAdmin).not.toContain("Rotate token");
+    expect(forAdmin).toContain("Was connected with Cloudflare sign-in");
+    // One action, which offers signing in again or an API token.
+    expect(forAdmin).toContain("Reconnect Cloudflare");
+    expect(forAdmin).not.toContain("Change how Appflare connects");
     // Technical details stay behind a toggle.
-    expect(forAdmin).toContain("Authorization details");
+    expect(forAdmin).toContain("Details");
     const forMember = text(
       render(
         createElement(AccountSettingsView, {
@@ -241,7 +241,7 @@ describe("AccountSettingsView", () => {
       ),
     );
     expect(forMember).toContain("An administrator reconnects Cloudflare here");
-    expect(forMember).not.toContain("Use an API token");
+    expect(forMember).not.toContain("Reconnect Cloudflare");
   });
 
   it("shows no danger zone to admins who are not the owner", () => {
@@ -268,7 +268,7 @@ describe("AccountSettingsView", () => {
       }),
     );
     expect(sectionIds(html)).toEqual(["connection", "capabilities"]);
-    expect(text(html)).not.toContain("Rotate token");
+    expect(text(html)).not.toContain("Change how Appflare connects");
     expect(count(html, ">Check again<")).toBe(0);
   });
 });

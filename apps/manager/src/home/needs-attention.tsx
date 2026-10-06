@@ -8,10 +8,11 @@ import {
 } from "@phosphor-icons/react";
 import { useRouter } from "@tanstack/react-router";
 import { type ReactNode, useState } from "react";
+import { RECONNECT_COPY } from "../cloudflare/connection-view";
 import { appLink } from "../components/app-links";
 import { BusyButton } from "../components/busy-button";
 import { Section, SectionRows } from "../components/section";
-import { settingsLink } from "../components/settings-links";
+import { SETTINGS_SECTIONS, settingsLink } from "../components/settings-links";
 import type { StartUpdateHandle } from "../components/update-banner";
 import { useOptimisticDismiss } from "../components/use-optimistic-dismiss";
 import { dismissDeployCopy } from "../deploy-button/deploy-copy.functions";
@@ -28,6 +29,9 @@ import {
   updateAllTargets,
 } from "./attention";
 import { attentionCopy } from "./attention-copy";
+
+/** Reconnect Cloudflare on the connection settings, opened at once. */
+const RECONNECT_HREF = `${SETTINGS_SECTIONS.account.path}?reconnect=1#connection`;
 
 /**
  * Home's "Needs attention": one card of rows, most severe first (see
@@ -148,7 +152,12 @@ function AttentionRow({
   let action: ReactNode;
   switch (item.kind) {
     case "connection":
-      action = (
+      // Admins land in Reconnect Cloudflare itself; members see where it happens.
+      action = isAdmin ? (
+        <LinkButton href={RECONNECT_HREF} variant="secondary">
+          {RECONNECT_COPY.action}
+        </LinkButton>
+      ) : (
         <LinkButton href={settingsLink("account", "connection")} variant="secondary">
           Go to Your account
         </LinkButton>

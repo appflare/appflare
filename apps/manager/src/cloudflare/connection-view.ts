@@ -44,13 +44,22 @@ export interface ConnectionView {
 
 /** What the connection is called, for people who never saw the word OAuth. */
 export const CONNECTION_KIND_LABELS: Record<ConnectionKind, string> = {
-  api_token: "API token",
-  oauth: "Cloudflare authorization",
+  api_token: "an API token",
+  oauth: "Cloudflare sign-in",
 };
+
+/** The connection's type as one sentence: "Connected with Cloudflare sign-in". */
+export function connectedWith(kind: ConnectionKind): string {
+  return `Connected with ${CONNECTION_KIND_LABELS[kind]}`;
+}
 
 /** Home's row and the settings card's notice while the connection needs reconnecting. */
 export const RECONNECT_COPY = {
   title: "Appflare needs to be reconnected to Cloudflare",
   description:
     "Cloudflare no longer accepts Appflare's connection, so apps cannot be installed, updated or removed. Your apps keep running. An administrator reconnects Cloudflare on the Your account page.",
+  /** The action that reconnects, on the connection card and Home. */
+  action: "Reconnect Cloudflare",
+  /** The same choice while the connection works. */
+  change: "Change how Appflare connects",
 } as const;

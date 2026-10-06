@@ -33,7 +33,7 @@ import {
   readGrant,
   replaceGrantStatements,
 } from "./grant-store.server";
-import { verifyGrantAccount } from "./verify-token";
+import { GRANT_MESSAGES, verifyGrantAccount } from "./verify-token";
 
 /**
  * Storing an OAuth grant as the manager's Cloudflare connection, and
@@ -89,9 +89,41 @@ export interface StoredGrant {
   previous: ConnectionKind | null;
 }
 
+/**
+ * Why a grant was refused, for a caller that answers each case differently
+ * (the OAuth reconnect's outcome on Settings): `other_account`, the grant is
+ * for another account than the one recorded or does not run this manager
+ * there; `missing_scopes`; `refused` and `rejected`, Cloudflare would not
+ * renew it; `unreachable`; `busy`, another connection change holds the lock;
+ * `unverifiable`, this manager cannot tell which account it runs in.
+ */
+export type GrantStoreReason =
+  | "busy"
+  | "refused"
+  | "unreachable"
+  | "rejected"
+  | "missing_scopes"
+  | "other_account"
+  | "unverifiable";
+
 /** A refused grant; the message is shown as is and never carries a token. */
 export class GrantStoreError extends Error {
   override name = "GrantStoreError";
+  constructor(
+    message: string,
+    readonly reason: GrantStoreReason = "rejected",
+  ) {
+    super(message);
+  }
+}
+
+/** The reason for a failed `verifyGrantAccount`, from its fixed messages. */
+function verifyReason(message: string): GrantStoreReason {
+  if (message === GRANT_MESSAGES.unreachable) return "unreachable";
+  if (message === GRANT_MESSAGES.cannotVerifyAccount) return "unverifiable";
+  // It cannot list the account's Workers (every scope was granted, so it is
+  // not this account), or the account does not run this manager.
+  return "other_account";
 }
 
 export const GRANT_STORE_MESSAGES = {
@@ -170,7 +202,7 @@ export async function storeGrant(deps: StoreGrantDeps): Promise<StoredGrant> {
   const sleep = deps.sleep ?? ((ms: number) => new Promise((r) => setTimeout(r, ms)));
   return withConnectionLock(
     deps.db,
-    () => new GrantStoreError(GRANT_STORE_MESSAGES.busy),
+    () => new GrantStoreError(GRANT_STORE_MESSAGES.busy, "busy"),
     async () => {
       const stored = await readSettings(createDb(deps.db), [
         SETTING.accountId,
@@ -178,7 +210,7 @@ export async function storeGrant(deps: StoreGrantDeps): Promise<StoredGrant> {
         SETTING.cfTokenConfigured,
       ]);
       if (stored.account_id && stored.account_id !== deps.accountId) {
-        throw new GrantStoreError(GRANT_STORE_MESSAGES.otherAccount);
+        throw new GrantStoreError(GRANT_STORE_MESSAGES.otherAccount, "other_account");
       }
 
       let tokens: RefreshedTokens;
@@ -189,9 +221,13 @@ export async function storeGrant(deps: StoreGrantDeps): Promise<StoredGrant> {
         );
       } catch (error) {
         if (!(error instanceof CloudflareOAuthError)) throw error;
-        if (error.reconnectNeeded) throw new GrantStoreError(GRANT_STORE_MESSAGES.refused);
-        if (error.retryable) throw new GrantStoreError(GRANT_STORE_MESSAGES.unreachable);
-        throw new GrantStoreError(GRANT_STORE_MESSAGES.rejected(error.code));
+        if (error.reconnectNeeded) {
+          throw new GrantStoreError(GRANT_STORE_MESSAGES.refused, "refused");
+        }
+        if (error.retryable) {
+          throw new GrantStoreError(GRANT_STORE_MESSAGES.unreachable, "unreachable");
+        }
+        throw new GrantStoreError(GRANT_STORE_MESSAGES.rejected(error.code), "rejected");
       }
       // Only this call holds the rotated refresh token now: a refusal below revokes it.
       const abandon = async (error: unknown): Promise<never> => {
@@ -204,7 +240,7 @@ export async function storeGrant(deps: StoreGrantDeps): Promise<StoredGrant> {
 
       const scopes = tokens.scopes ?? [...deps.grant.scopes];
       if (missingManagerScopes(scopes).length > 0) {
-        return abandon(new GrantStoreError(GRANT_STORE_MESSAGES.missingScopes));
+        return abandon(new GrantStoreError(GRANT_STORE_MESSAGES.missingScopes, "missing_scopes"));
       }
       const verified = await verifyGrantAccount({
         token: tokens.accessToken,
@@ -215,7 +251,9 @@ export async function storeGrant(deps: StoreGrantDeps): Promise<StoredGrant> {
         onRequest: deps.onRequest,
         baseUrl: deps.baseUrl,
       }).catch(abandon);
-      if (!verified.ok) return abandon(new GrantStoreError(verified.error));
+      if (!verified.ok) {
+        return abandon(new GrantStoreError(verified.error, verifyReason(verified.error)));
+      }
 
       const previousRow = await readGrant(deps.db);
       const previous = await openStoredGrant(

@@ -1,3 +1,4 @@
+import { MANAGER_OAUTH_SCOPES } from "@appflare/cf-api/oauth";
 import {
   type CatalogManifest,
   catalogManifestSchema,
@@ -8,6 +9,7 @@ import {
 } from "@appflare/schema";
 import type { AppAccessCheck, InstallAccessView } from "../../src/access/app-access";
 import type { CatalogDetail } from "../../src/catalog/catalog.functions";
+import type { ConnectionView } from "../../src/cloudflare/connection-view";
 import { installVarFields } from "../../src/installs/install-vars";
 import type { InstallSettings } from "../../src/installs/reconfigure.server";
 import type { StartUpdateResult } from "../../src/installs/versions.server";
@@ -426,6 +428,40 @@ const managerAddress =
         movingTo: null,
       };
 
+/**
+ * Appflare's Cloudflare connection: an API token, or (`?fixture=connection-oauth`)
+ * Cloudflare sign-in, which (`?fixture=connection-needs-reconnect`) Cloudflare
+ * no longer accepts.
+ */
+const connection: ConnectionView =
+  variant === "connection-oauth" || variant === "connection-needs-reconnect"
+    ? {
+        kind: "oauth",
+        state: variant === "connection-needs-reconnect" ? "needs_reconnect" : "connected",
+        problem:
+          variant === "connection-needs-reconnect"
+            ? "Cloudflare no longer accepts this connection: it was withdrawn in Cloudflare, it expired, or it was used somewhere else."
+            : null,
+        problemAt: variant === "connection-needs-reconnect" ? now : null,
+        connectedSince: "2026-09-20T10:00:00.000Z",
+        ready: variant !== "connection-needs-reconnect",
+        oauth: {
+          clientId: "b99863433175d812f9595af56dd1b71d",
+          scopes: [...MANAGER_OAUTH_SCOPES],
+          missingScopes: [],
+          renewedAt: now,
+        },
+      }
+    : {
+        kind: "api_token",
+        state: "connected",
+        problem: null,
+        problemAt: null,
+        connectedSince: now,
+        ready: true,
+        oauth: null,
+      };
+
 const installSettings: InstallSettings = {
   slug: "cut",
   kind: "artifact",
@@ -522,7 +558,7 @@ export function fixture(name: string, args: unknown[]): unknown {
       accountRows: [],
       deployCopy: null,
       downgrade: null,
-      reconnectNeeded: false,
+      reconnectNeeded: connection.state === "needs_reconnect",
     }),
     listCatalog: () => ({
       apps: catalogApps,
@@ -629,16 +665,9 @@ export function fixture(name: string, args: unknown[]): unknown {
       workerName: "appflare",
       verifiedAt: now,
       hasSecret: true,
-      connection: {
-        kind: "api_token",
-        state: "connected",
-        problem: null,
-        problemAt: null,
-        connectedSince: now,
-        ready: true,
-        oauth: null,
-      },
+      connection,
     }),
+    startCloudflareReconnect: () => ({ url: "#", origin: "https://appflare.example.com" }),
     getDangerZoneState: () => ({ canRemove: false, reason: null }),
     getSandboxStatus: () => ({
       connected: true,

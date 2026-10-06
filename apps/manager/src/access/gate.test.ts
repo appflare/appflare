@@ -136,6 +136,12 @@ describe("access gate, protection on", () => {
     expect(certs.calls).toHaveLength(0);
   });
 
+  it("exempts the return from Cloudflare sign-in, and only that exact path", async () => {
+    expect(await gate.check(request("/api/cloudflare/oauth-return"), env.DB)).toBeNull();
+    expect((await gate.check(request("/api/cloudflare/oauth-return/x"), env.DB))?.status).toBe(403);
+    expect((await gate.check(request("/api/cloudflare"), env.DB))?.status).toBe(403);
+  });
+
   it("never logs the token", async () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
     const token = await team.sign(team.claims(clock, { aud: ["other"] }));
