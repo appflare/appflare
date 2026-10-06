@@ -1,12 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
-  classifyModuleType,
   collectBindings,
   collectQueueConsumers,
   collectWorkerSettings,
   collectWorkflowSettings,
   HyperdriveDeclarationError,
-  mainModuleName,
   PipelineDeclarationError,
   QueueConsumerError,
   type ResolvedWranglerConfig,
@@ -576,36 +574,6 @@ describe("collectQueueConsumers", () => {
     expect(() =>
       collectQueueConsumers({ queues: { consumers: [{ queue: "q" }, { queue: "q" }] } }),
     ).toThrow(/two consumers/);
-  });
-});
-
-describe("classifyModuleType", () => {
-  it("classifies the main module and additional modules by wrangler's rules", () => {
-    expect(classifyModuleType("index.js", true)).toBe("esm");
-    expect(classifyModuleType("worker.py", true)).toBe("python");
-    expect(classifyModuleType("chunk.mjs", false)).toBe("esm");
-    expect(classifyModuleType("legacy.cjs", false)).toBe("commonjs");
-    expect(classifyModuleType("hash.wasm", false)).toBe("compiled-wasm");
-    expect(classifyModuleType("template.html", false)).toBe("text");
-    expect(classifyModuleType("seed.sql", false)).toBe("text");
-    expect(classifyModuleType("blob.bin", false)).toBe("data");
-  });
-});
-
-describe("mainModuleName", () => {
-  it("maps a source entry path to its emitted .js filename", () => {
-    expect(mainModuleName("src/index.ts")).toBe("index.js");
-    expect(mainModuleName("/abs/src/worker.tsx")).toBe("worker.js");
-    expect(mainModuleName("dist/index.js")).toBe("index.js");
-    expect(mainModuleName("src/main.py")).toBe("main.py");
-    // esbuild names its output .js whatever the entry's extension.
-    expect(mainModuleName("dist/entry.mjs")).toBe("entry.js");
-    expect(mainModuleName("dist/entry.cjs")).toBe("entry.js");
-  });
-
-  it("keeps the entry's own name when wrangler does not bundle it", () => {
-    expect(mainModuleName("dist/server/entry.mjs", true)).toBe("entry.mjs");
-    expect(mainModuleName("dist/index.js", true)).toBe("index.js");
   });
 });
 

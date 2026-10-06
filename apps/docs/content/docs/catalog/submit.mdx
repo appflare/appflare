@@ -25,7 +25,12 @@ credentials.
   Object migrations, queue consumers, and cron triggers all come from the app's own
   wrangler config; the manifest does not repeat them. An app that needs a build step
   before `wrangler deploy` (Vite, React Router, OpenNext) and has no `build.command`
-  in its wrangler config names that step in `install.buildCommand`.
+  in its wrangler config names that step in `install.buildCommand`. The config's own
+  `build.command` runs in the config's directory, as it does when you run
+  `wrangler deploy` beside the config, so a command such as `npm run build` finds the
+  `package.json` next to it. Each module reaches the Worker as the type `wrangler
+  deploy` would upload it as, following the config's `rules` and wrangler's default
+  ones: a `Text` rule for `**/*.svg` makes an imported SVG a string, not bytes.
 - **It is self-contained.** Durable Objects and Workflows must be defined by the app's
   own Worker (or, in an app of several Workers, by another Worker of the same entry),
   not bound from a Worker outside the app. The only service binding an app may have
@@ -56,12 +61,17 @@ rate limit counters of its own. A service binding to the app's own Worker is poi
 at the installed Worker, whatever name it is installed under; set
 `install.fixedWorkerName` only when something else in the app needs one fixed name.
 Other binding types cannot be installed yet: a wrangler config that declares one
-(Workers VPC services, Secrets Store secrets, Tail Workers, dispatch namespaces,
-Containers, AI Search, Media, Stream, inbound email `addresses`, Workers Sites, and
-the rest wrangler knows) fails the pack with a message naming it, rather than
-installing an app that would run without it. When the app works without that
+(Workers VPC services, Secrets Store secrets, Tail Workers, dispatch namespaces, mTLS
+certificates, Containers, AI Search, Media, Stream, inbound email `addresses`, Workers
+Sites, and the rest wrangler knows) fails the pack with a message naming it, rather
+than installing an app that would run without it. When the app works without that
 section, drop it with the config patch the message names, such as
-`{ "vpc_services": null }`.
+`{ "vpc_services": null }`. An mTLS certificate is uploaded to one account with its
+private key, so an artifact cannot bring one. A key at the top of the config that the
+packer's wrangler does not know (a binding added in a newer wrangler, or a key
+wrangler never had) fails the pack the same way, since wrangler would drop it with no
+more than a warning; drop it with the config patch the message names when the app
+works without it.
 
 Each Workflow is created for the Worker that defines it with the settings its
 `workflows` entry gives it, `limits`, `concurrency`, `schedules` and
@@ -300,7 +310,8 @@ Points that need care:
   `new_classes` to `new_sqlite_classes`, which the Free plan requires; `ratelimits`,
   only to add a rate limit an upstream deploy script adds, keeping the config's own. A section
   Appflare cannot install may be set to `null` to drop it, when the app works without
-  it (`"vpc_services": null`, `"unsafe": null`). Anything else fails with a message. An app of several Workers sets `configPatch` on each Worker
+  it (`"vpc_services": null`, `"unsafe": null`), and so may a key the config sets that
+  the packer's wrangler does not know (`"email": null`). Anything else fails with a message. An app of several Workers sets `configPatch` on each Worker
   in `install.workers`. The patch is part of the signed manifest.
   `appflare-pack inspect <checkout> --config <config> --manifest appflare.jsonc`
   applies it and shows what changed.

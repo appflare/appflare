@@ -4,7 +4,6 @@ import {
   entryWorkerRef,
   isUnsupportedWranglerSection,
   type JsonValue,
-  type ModuleType,
   PIPELINES_BINDING_TYPE,
   type PlaceholderWorkers,
   placeholderProblems,
@@ -60,7 +59,6 @@ export interface ResolvedWranglerConfig {
    */
   pipelines?: Array<{ binding: string; stream?: string; pipeline?: string }>;
   analytics_engine_datasets?: Array<{ binding: string; dataset?: string }>;
-  mtls_certificates?: Array<{ binding: string }>;
   durable_objects?: {
     bindings?: Array<{
       name: string;
@@ -236,7 +234,6 @@ export const READ_WRANGLER_KEYS = [
   "vectorize",
   "hyperdrive",
   "analytics_engine_datasets",
-  "mtls_certificates",
   "durable_objects",
   "workflows",
   "services",
@@ -295,6 +292,80 @@ export const IGNORED_WRANGLER_KEYS: Readonly<Record<string, string>> = {
   access: "it simulates Cloudflare Access in local development",
   dev: "it configures local development",
 };
+
+/**
+ * Keys wrangler 4.136.2's reader adds to the config it resolves
+ * (`normalizeAndValidateConfig`) and takes from a config a build generated
+ * (the Cloudflare Vite plugin writes the config it resolved, these
+ * included): where the config and the one it was generated from live, and
+ * the environments of the build. They describe the build, not the Worker.
+ * `legacy_env` is one older Vite plugins still write, which wrangler drops
+ * from a config it reads through the build's redirect (and the packer from
+ * one it reads without, `readableWranglerConfig`).
+ */
+export const GENERATED_WRANGLER_KEYS: Readonly<Record<string, string>> = {
+  configPath: "it records where the generated config lives",
+  userConfigPath: "it records the config the build generated this one from",
+  topLevelName: "it records the Worker name of the config's top level",
+  definedEnvironments: "it records the environments the config defines",
+  targetEnvironment: "it records the environment the build targeted",
+  legacy_env: "wrangler drops it from a generated config",
+};
+
+/**
+ * The wrangler config sets a top-level key the packer does not know: one
+ * the packer's wrangler does not know either drops it from the config it
+ * resolves, with no more than a warning, so the app would run without it.
+ */
+export class UnknownWranglerKeyError extends Error {
+  override name = "UnknownWranglerKeyError";
+}
+
+/**
+ * The top-level keys of `raw` (the config as its file holds it, before
+ * wrangler resolves it) that the packer neither reads
+ * ({@link READ_WRANGLER_KEYS}), leaves out on purpose
+ * ({@link IGNORED_WRANGLER_KEYS}, {@link GENERATED_WRANGLER_KEYS}) nor
+ * refuses ({@link UNSUPPORTED_WRANGLER_SECTIONS}), in the file's order. A
+ * key set to null, or to an empty list or object, declares nothing and does
+ * not count: a config the Vite plugin writes holds every binding list the
+ * wrangler it was built with knows, empty ones included. Only the top level
+ * is looked at: the packer builds it alone, never an `env` section.
+ */
+export function unknownWranglerKeys(raw: Readonly<Record<string, unknown>>): string[] {
+  const read: readonly string[] = READ_WRANGLER_KEYS;
+  return Object.keys(raw).filter(
+    (key) =>
+      !isEmptySection(raw[key]) &&
+      !read.includes(key) &&
+      !Object.hasOwn(IGNORED_WRANGLER_KEYS, key) &&
+      !Object.hasOwn(GENERATED_WRANGLER_KEYS, key) &&
+      !isUnsupportedWranglerSection(key),
+  );
+}
+
+/**
+ * Throws {@link UnknownWranglerKeyError} when `raw` sets a top-level key
+ * {@link unknownWranglerKeys} finds, naming each. `config` is how the
+ * message names the config; `wranglerVersion` is the packer's wrangler.
+ */
+export function refuseUnknownWranglerKeys(
+  raw: Readonly<Record<string, unknown>>,
+  config: string,
+  wranglerVersion: string,
+): void {
+  const unknown = unknownWranglerKeys(raw);
+  if (unknown.length === 0) return;
+  const it = unknown.length === 1 ? "it" : "them";
+  const drop = `{ ${unknown.map((key) => `"${key}": null`).join(", ")} }`;
+  throw new UnknownWranglerKeyError(
+    `the wrangler config ${config} sets ${listWords(unknown.map((key) => `"${key}"`))}, which the ` +
+      `packer does not know: wrangler ${wranglerVersion}, which it builds with, would drop ${it} ` +
+      `with no more than a warning, and the app would run without ${it}. A key wrangler added ` +
+      `since needs a newer Appflare that reads or refuses it; if the app works without ${it}, ` +
+      `drop ${it} with the catalog manifest's config patch ${drop}`,
+  );
+}
 
 function isEmptySection(value: unknown): boolean {
   if (value === undefined || value === null) return true;
@@ -699,7 +770,7 @@ export function checkPipelineDeclarations(
  *
  * The stripping rule is an allowlist, not a denylist: for each binding kind we
  * copy only the handful of fields known to be safe, so no account id
- * (`id`/`database_id`/`namespace_id`/`bucket_name`/`index_name`/`certificate_id`,
+ * (`id`/`database_id`/`namespace_id`/`bucket_name`/`index_name`,
  * preview ids, queue names, etc.) can ever leak into a published artifact. The
  * user's account fills those in at install time. (A rate limit's
  * `namespace_id` is recorded as the app's author wrote it, since the upload
@@ -808,9 +879,6 @@ export function collectBindings(
   }
   for (const ae of config.analytics_engine_datasets ?? []) {
     push("analytics_engine", ae.binding, { dataset: ae.dataset });
-  }
-  for (const cert of config.mtls_certificates ?? []) {
-    push("mtls_certificate", cert.binding);
   }
   for (const dobj of config.durable_objects?.bindings ?? []) {
     // class_name/script_name/environment are code references, not account ids.
@@ -1160,54 +1228,4 @@ export function collectQueueConsumers(
     consumers.push(out);
   }
   return consumers;
-}
-
-/**
- * Classifies an emitted worker module the way wrangler does, mapping to the
- * artifact schema's module types. Extensions follow wrangler's default module
- * rules (`Text` = txt/html/sql, `Data` = bin, `CompiledWasm` = wasm); the main
- * module is `esm` (or `python` for a `.py` entry). Service-worker format is not
- * detected in v0 (all artifact-tier apps are ES modules).
- */
-export function classifyModuleType(relPath: string, isMain: boolean): ModuleType {
-  const p = relPath.toLowerCase();
-  if (isMain) {
-    return p.endsWith(".py") ? "python" : "esm";
-  }
-  if (p.endsWith(".wasm") || p.endsWith(".wasm?module")) {
-    return "compiled-wasm";
-  }
-  if (p.endsWith(".txt") || p.endsWith(".html") || p.endsWith(".sql")) {
-    return "text";
-  }
-  if (p.endsWith(".bin")) {
-    return "data";
-  }
-  if (p.endsWith(".py")) {
-    return "python";
-  }
-  if (p.endsWith(".cjs")) {
-    return "commonjs";
-  }
-  if (p.endsWith(".js") || p.endsWith(".mjs") || p.endsWith(".jsx")) {
-    return "esm";
-  }
-  // Unknown additional module: keep the bytes, treat as opaque data.
-  return "data";
-}
-
-/**
- * The expected main-module output filename for a source `main` path. A
- * bundled Worker's is esbuild's output, `<name>.js` whatever the source's
- * extension (`.ts`, `.mjs` and `.cjs` alike, checked against wrangler
- * 4.136.2's dry run). With `no_bundle`, wrangler copies the entry as it is,
- * so its name keeps its extension (`entry.mjs`, as the Astro Cloudflare
- * adapter emits it).
- */
-export function mainModuleName(mainPath: string, noBundle = false): string {
-  const base = mainPath.split(/[/\\]/).pop() ?? mainPath;
-  if (noBundle || base.toLowerCase().endsWith(".py")) {
-    return base;
-  }
-  return base.replace(/\.(tsx?|mts|cts|jsx?|mjs|cjs)$/i, ".js");
 }

@@ -253,22 +253,31 @@ function samePath(a: string, b: string): boolean {
 /**
  * How to run wrangler against `target`: with `--config` for the config it
  * names (the declared config, or the config the packer wrote in its place),
- * or, when the build left a redirect, from the declared config's directory
- * without `--config`, which is the only way wrangler reads a redirected
- * config as one. Passing a generated config to `--config` makes wrangler
- * treat it as a hand-written config and refuse the fields build tools write
- * into it (`legacy_env`, for one); `readableWranglerConfig` in
- * config-patch.ts writes a copy without them for a generated config that
- * no redirect leads to.
+ * or, when the build left a redirect, without `--config`, which is the only
+ * way wrangler reads a redirected config as one. Passing a generated config
+ * to `--config` makes wrangler treat it as a hand-written config and refuse
+ * the fields build tools write into it (`legacy_env`, for one);
+ * `readableWranglerConfig` in config-patch.ts writes a copy without them for
+ * a generated config that no redirect leads to.
+ *
+ * Either way wrangler runs in the declared config's directory, where an app
+ * runs `wrangler deploy` itself: wrangler 4.136.2 runs the config's
+ * `build.command` in `build.cwd` as written, or in the directory it was
+ * started in when there is none (`runCustomBuild`; `normalizeAndValidateBuild`
+ * leaves `build.cwd` unresolved), so a build command written for the
+ * config's directory (`npm run build` beside its package.json) only works
+ * there. The config the packer writes in the declared config's place lies
+ * beside it, so this is that config's directory too.
  */
-export function dryRunInvocation(
-  target: WranglerConfigTarget,
-  checkoutDir: string,
-): { cwd: string; configArgs: string[] } {
+export function dryRunInvocation(target: WranglerConfigTarget): {
+  cwd: string;
+  configArgs: string[];
+} {
+  const cwd = path.dirname(target.declaredPath);
   if (target.deployConfigPath === null) {
-    return { cwd: checkoutDir, configArgs: ["--config", target.effectivePath] };
+    return { cwd, configArgs: ["--config", target.effectivePath] };
   }
-  return { cwd: path.dirname(target.declaredPath), configArgs: [] };
+  return { cwd, configArgs: [] };
 }
 
 /**

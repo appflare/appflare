@@ -17,10 +17,13 @@
  * (`resources.pipelines`), which a repository has no place for, and only the
  * rate limits among `unsafe.bindings` are carried.
  *
- * Bindings the packer records but the manager cannot install (mTLS
- * certificates, a service binding to another Worker, a Hyperdrive binding the
- * catalog manifest does not declare) are refused by the packer and the
- * install plan instead.
+ * `mtls_certificates` is refused like the rest: a certificate is uploaded to
+ * one account, with its private key, and an artifact cannot bring one, so
+ * an app that binds one can only be installed without it.
+ *
+ * Bindings the packer cannot record as written (a service binding to
+ * another Worker, a Hyperdrive binding the catalog manifest does not
+ * declare) are refused by the packer and the install plan instead.
  *
  * This module imports nothing: the catalog manifest's schema uses it, and the
  * JSON Schema export runs that schema under Node's type stripping.
@@ -29,6 +32,7 @@ export const UNSUPPORTED_WRANGLER_SECTION_LABELS = {
   containers: "Containers",
   cloudchamber: "Containers (cloudchamber)",
   dispatch_namespaces: "dispatch namespaces (Workers for Platforms)",
+  mtls_certificates: "mTLS certificates",
   tail_consumers: "Tail Workers",
   streaming_tail_consumers: "streaming Tail Workers",
   logfwdr: "log forwarding bindings",
