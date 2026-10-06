@@ -10,7 +10,7 @@ import {
   Table,
   Text,
 } from "@cloudflare/kumo";
-import { ArrowsClockwiseIcon, GlobeSimpleIcon, PlusIcon, TrashIcon } from "@phosphor-icons/react";
+import { ArrowsClockwiseIcon, PlusIcon, TrashIcon } from "@phosphor-icons/react";
 import { useRouter } from "@tanstack/react-router";
 import { type FormEvent, useCallback, useEffect, useId, useRef, useState } from "react";
 import {
@@ -43,8 +43,8 @@ import { FLUSH_RING_CLASS } from "./hash-target";
 import { HealthBadge } from "./install-health";
 import { BANNER_ICON, ErrorMessageBanner, MessageText } from "./message-text";
 import { ResponsiveTable } from "./responsive-table";
-import { Section, SectionBody, SectionEmpty, SectionRow, SectionRows } from "./section";
-import { settingsLink } from "./settings-links";
+import { Section, SectionBody, SectionRow, SectionRows } from "./section";
+import { settingsLink, settingsSectionTitle } from "./settings-links";
 import { NEW_ADDRESS_SETTINGS, useSettingsRefresh } from "./settings-refresh";
 
 /** How often a pending domain is read again while the page is open. */
@@ -96,19 +96,23 @@ export function ExternalDomainsSection({
       description="Hostnames in DNS outside this account, such as a customer's domain."
       action={canAdd ? <AddExternalDomainDialog install={install} /> : null}
       className={FLUSH_RING_CLASS}
+      // One line, as the custom domains above it: the gateway's setup only
+      // while there is no gateway.
       empty={
         install.externalDomains.length === 0 ? (
-          <SectionEmpty
-            size="sm"
-            icon={<GlobeSimpleIcon size={32} className="text-kumo-inactive" />}
-            title="No external domains"
-            description="An external domain needs the gateway, set up once in the domains settings."
-            contents={
-              <Link href={settingsLink("domains", "external-domains")}>
-                Open the domains settings
-              </Link>
-            }
-          />
+          <Text variant="secondary">
+            No external domains.
+            {!install.gatewayReady && (
+              <>
+                {" "}
+                An external domain needs the gateway, set up once in{" "}
+                <Link href={settingsLink("domains", "external-domains")}>
+                  {settingsSectionTitle("domains", "external-domains")} settings
+                </Link>
+                .
+              </>
+            )}
+          </Text>
         ) : null
       }
     >

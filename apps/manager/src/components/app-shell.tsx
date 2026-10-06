@@ -8,7 +8,7 @@ import {
   StorefrontIcon,
 } from "@phosphor-icons/react";
 import { useLocation, useMatches, useRouter } from "@tanstack/react-router";
-import { type ReactNode, useCallback, useEffect, useMemo, useRef } from "react";
+import { type MouseEvent, type ReactNode, useCallback, useEffect, useMemo, useRef } from "react";
 import { useHomeClick } from "../home/use-attention";
 import type { ManagerStatus } from "../installs/pending-updates";
 import type { Viewer } from "../server/session.functions";
@@ -106,10 +106,33 @@ function useCloseDrawerOnNavigate(pathname: string): void {
 /** Kumo's tooltip gives its trigger the default cursor; the sidebar's button keeps its pointer. */
 const TRIGGER_CURSOR = "cursor-pointer";
 
+/**
+ * The folded and the expanded header each have their own trigger, so the one
+ * pressed leaves the page with the toggle and would take the keyboard focus
+ * with it. When it had the focus, the trigger now shown takes it.
+ */
+function useTriggerFocus(folded: boolean) {
+  const trigger = useRef<HTMLButtonElement>(null);
+  const refocus = useRef(false);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: `folded` is the toggle itself, after which the other header's trigger is shown
+  useEffect(() => {
+    if (!refocus.current) return;
+    refocus.current = false;
+    trigger.current?.focus();
+  }, [folded]);
+  return {
+    ref: trigger,
+    onClick: (event: MouseEvent<HTMLButtonElement>) => {
+      refocus.current = event.currentTarget === document.activeElement;
+    },
+  };
+}
+
 function ShellHeader() {
   const { isMobile } = useSidebar();
   const folded = useFolded();
   const onHomeClick = useHomeClick();
+  const triggerFocus = useTriggerFocus(folded);
   if (folded) {
     return (
       <Sidebar.Header className="justify-center px-[11px]">
@@ -119,7 +142,7 @@ function ShellHeader() {
           side="right"
           className={TRIGGER_CURSOR}
           render={
-            <Sidebar.Trigger className="group/rail">
+            <Sidebar.Trigger {...triggerFocus} className="group/rail">
               <LogoMark
                 size={20}
                 className="group-hover/rail:hidden group-focus-visible/rail:hidden"
@@ -153,7 +176,7 @@ function ShellHeader() {
           side="bottom"
           className={TRIGGER_CURSOR}
           render={
-            <Sidebar.Trigger>
+            <Sidebar.Trigger {...triggerFocus}>
               <SidebarSimpleIcon size={18} />
             </Sidebar.Trigger>
           }

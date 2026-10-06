@@ -47,7 +47,7 @@ import { DocsLink } from "../../../components/docs-link";
 import { InstallAgainBanner } from "../../../components/install-again-banner";
 import { InstallForm } from "../../../components/install-form";
 import { plainMessage } from "../../../components/message-links";
-import { MessageLinkButtons, MessageText } from "../../../components/message-text";
+import { BANNER_ICON, MessageLinkButtons, MessageText } from "../../../components/message-text";
 import { PageHeader } from "../../../components/page-header";
 import { SANDBOX_CAPABILITY_LINK_LABEL } from "../../../components/sandbox-first";
 import { ScreenshotGallery } from "../../../components/screenshot-gallery";
@@ -235,7 +235,7 @@ function AppPage({
       {detail.error !== null && (
         <Banner
           variant="error"
-          icon={<WarningCircleIcon weight="fill" />}
+          icon={BANNER_ICON.error}
           title="This app cannot be installed right now"
           description={<MessageText message={detail.error} />}
         />

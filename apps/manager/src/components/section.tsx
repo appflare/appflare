@@ -1,7 +1,6 @@
 import { Banner, cn, Empty, LayerCard, Text } from "@cloudflare/kumo";
-import { WarningCircleIcon } from "@phosphor-icons/react";
 import { Children, type ComponentProps, type ReactElement, type ReactNode, useId } from "react";
-import { ErrorMessageBanner } from "./message-text";
+import { BANNER_ICON, bannerRole, ErrorMessageBanner } from "./message-text";
 import { ResponsiveTable } from "./responsive-table";
 
 /**
@@ -95,9 +94,12 @@ export function Section({
                 {typeof error === "string" ? (
                   <ErrorMessageBanner message={error} />
                 ) : (
+                  // An error that is not a message string (a list) is still
+                  // the outcome of something the admin did, such as "Update all".
                   <Banner
                     variant="error"
-                    icon={<WarningCircleIcon weight="fill" />}
+                    icon={BANNER_ICON.error}
+                    role={bannerRole("error")}
                     description={error}
                   />
                 )}

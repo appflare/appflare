@@ -22,6 +22,7 @@ import { installAppKey } from "../catalog/sources";
 import { createDb } from "../db/client";
 import { type BuildKind, installs, type JobStarter, jobs, resources } from "../db/schema";
 import { readSettings, SETTING } from "../db/settings";
+import { isGatewayReady, readGateway } from "../gateway/gateway.server";
 import { isAccessChangeJob, isRestoreJob, reconcileJobs } from "../jobs/reconcile.server";
 import { recordedCatalog } from "../jobs/self-deploying/phases";
 import { sandboxBinding } from "../sandbox/binding";
@@ -173,6 +174,8 @@ export interface InstallDetail extends InstallRow {
   wildcard: { reason: string } | null;
   /** External domains (`custom_hostname` resources), served through the gateway. */
   externalDomains: CustomDomainView[];
+  /** The external domains gateway is set up, so an external domain can be added. */
+  gatewayReady: boolean;
   /** What the install set up in Email Routing, in the order it was set up. */
   emailRoutes: EmailRouteView[];
   /** Which uninstall action the page offers now. */
@@ -250,7 +253,7 @@ export async function readInstallDetail(installId: string): Promise<InstallDetai
     db.select().from(jobs).where(eq(jobs.install_id, installId)).orderBy(desc(jobs.id));
   const records = listCatalogRecords(db);
   // Everything that needs only the install's id, in one round.
-  const [firstRow, firstJobs, resourceRows, sub, autoUpdateDefaults, account, allNames] =
+  const [firstRow, firstJobs, resourceRows, sub, autoUpdateDefaults, account, allNames, gateway] =
     await Promise.all([
       readRow(),
       readJobs(),
@@ -265,6 +268,7 @@ export async function readInstallDetail(installId: string): Promise<InstallDetai
       readAutoUpdateDefaults(db),
       accountId(),
       readInstallNames(env.DB),
+      readGateway(db),
       records,
     ]);
   let row = firstRow;
@@ -446,6 +450,7 @@ export async function readInstallDetail(installId: string): Promise<InstallDetai
       .map(domainView),
     wildcard: wildcardOfManifest(row.manifest_json),
     externalDomains: live.filter((r) => r.kind === CUSTOM_HOSTNAME_KIND).map(domainView),
+    gatewayReady: isGatewayReady(gateway),
     emailRoutes: emailRouteViews(
       live
         .filter((r) => r.kind === EMAIL_ROUTE_KIND)

@@ -1,8 +1,8 @@
 import { Badge, Banner, Link, LinkButton, Text } from "@cloudflare/kumo";
-import { ArrowRightIcon, TrashSimpleIcon, WarningCircleIcon } from "@phosphor-icons/react";
+import { ArrowRightIcon, TrashSimpleIcon } from "@phosphor-icons/react";
 import type { RemovedAppRow } from "../installs/removed-apps.functions";
 import { resourceKindLabel } from "./format";
-import { MessageText } from "./message-text";
+import { BANNER_ICON, MessageText } from "./message-text";
 import { DeleteRetainedDialog, ForgetDialog } from "./removed-app-actions";
 import { Section, SectionEmpty, SectionRow, SectionRows } from "./section";
 import { settingsSection } from "./settings-links";
@@ -88,7 +88,7 @@ function RemovedAppItem({ row, isAdmin }: { row: RemovedAppRow; isAdmin: boolean
       {row.lastFailure !== null && !busy && (
         <Banner
           variant="error"
-          icon={<WarningCircleIcon weight="fill" />}
+          icon={BANNER_ICON.error}
           title="Deleting the kept data did not finish"
           description={<MessageText message={row.lastFailure.error ?? "The job failed."} />}
           action={

@@ -54,7 +54,7 @@ const ACTIVE: ExternalDomainStatus = {
   checkedAt: "2026-10-06T10:00:00.000Z",
 } as ExternalDomainStatus;
 
-function install(externalDomains: CustomDomainView[]): InstallDetail {
+function install(externalDomains: CustomDomainView[], gatewayReady = true): InstallDetail {
   return {
     id: "install-1",
     label: "Links",
@@ -62,6 +62,7 @@ function install(externalDomains: CustomDomainView[]): InstallDetail {
     activeJobId: null,
     wildcard: null,
     externalDomains,
+    gatewayReady,
   } as InstallDetail;
 }
 
@@ -112,16 +113,22 @@ describe("ExternalDomainsSection", () => {
     });
   });
 
-  it("shows an empty state that leads to the gateway's settings, with Add external domain in the header", async () => {
+  it("says only that there is none once the gateway is set up, with Add external domain in the header", async () => {
     await show(install([]));
-    expect(container.textContent).toContain("No external domains");
+    expect(container.textContent).toContain("No external domains.");
+    expect(container.textContent).not.toContain("gateway");
+    expect(container.querySelector('a[href="/settings/domains#external-domains"]')).toBeNull();
+    expect(button("Add external domain")).toBeDefined();
+  });
+
+  it("leads to the gateway's settings while there is no gateway", async () => {
+    await show(install([], false));
     expect(container.textContent).toContain(
-      "An external domain needs the gateway, set up once in the domains settings.",
+      "No external domains. An external domain needs the gateway, set up once in External domains settings.",
     );
     const link = [...container.querySelectorAll("a")].find(
-      (a) => a.textContent === "Open the domains settings",
+      (a) => a.textContent === "External domains settings",
     );
     expect(link?.getAttribute("href")).toBe("/settings/domains#external-domains");
-    expect(button("Add external domain")).toBeDefined();
   });
 });

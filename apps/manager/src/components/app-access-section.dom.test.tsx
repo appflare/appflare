@@ -197,10 +197,10 @@ describe("AppAccessSection", () => {
   it("warns when the catalog now requires protection of an unprotected app, with Turn on for admins", async () => {
     const access = { ...OFF, offer: "required" as const };
     const member = await show(access, { isAdmin: false });
-    expect(member).toContain("The catalog now says this app must run behind Cloudflare Access.");
+    expect(member).toContain("The catalog now says this app must run behind Cloudflare Access");
     expect(button("Turn on")).toBeUndefined();
     const text = await show(access);
-    expect(text).toContain("The catalog now says this app must run behind Cloudflare Access.");
+    expect(text).toContain("The catalog now says this app must run behind Cloudflare Access");
     expect(text).toContain("Appflare never protects it on its own");
     expect(button("Turn on")).toBeDefined();
   });

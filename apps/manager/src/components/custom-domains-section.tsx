@@ -1,5 +1,5 @@
 import { Badge, Button, LayerDialog, Link, Text } from "@cloudflare/kumo";
-import { ArrowsClockwiseIcon, GlobeIcon, PlusIcon, TrashIcon } from "@phosphor-icons/react";
+import { ArrowsClockwiseIcon, PlusIcon, TrashIcon } from "@phosphor-icons/react";
 import { useRouter } from "@tanstack/react-router";
 import { type FormEvent, useCallback, useEffect, useId, useState } from "react";
 import { checkSubdomainInZone, DOMAIN_SETTING_UP } from "../installs/custom-domain-input";
@@ -27,7 +27,7 @@ import { formatTime } from "./format";
 import { FLUSH_RING_CLASS } from "./hash-target";
 import { HealthBadge } from "./install-health";
 import { ErrorMessageBanner, MessageText } from "./message-text";
-import { Section, SectionEmpty, SectionRow, SectionRows } from "./section";
+import { Section, SectionRow, SectionRows } from "./section";
 import { NEW_ADDRESS_SETTINGS, useSettingsRefresh } from "./settings-refresh";
 import { useAccountId } from "./use-account-id";
 import { WildcardNotes } from "./wildcard-notes";
@@ -63,18 +63,17 @@ export function CustomDomainsSection({ install }: { install: InstallDetail }) {
           <AddWildcardDomainDialog install={install} reason={wildcard.reason} />
         )
       }
+      // One line, not a full empty state: an app with no domains of either
+      // kind shows this above the external domains' empty state.
       empty={
         install.domains.length === 0 ? (
-          <SectionEmpty
-            size="sm"
-            icon={<GlobeIcon size={32} className="text-kumo-inactive" />}
-            title={wildcard === null ? "No custom domains" : "No wildcard domain"}
-            description={
-              wildcard === null
-                ? "The app is served on its workers.dev URL only. Add a hostname in one of your domains on Cloudflare to serve it there too."
-                : `The app is served on its workers.dev URL only, and needs a hostname with every name under it. ${wildcard.reason}`.trim()
-            }
-          />
+          <Text variant="secondary">
+            {wildcard !== null
+              ? `No wildcard domain. The app is served on its workers.dev URL only, and needs a hostname with every name under it. ${wildcard.reason}`.trim()
+              : install.externalDomains.length === 0
+                ? "No custom domains. The app is served on its workers.dev URL only."
+                : "No custom domains."}
+          </Text>
         ) : null
       }
     >
