@@ -1,0 +1,5 @@
+---
+"@appflare/sandbox-worker": patch
+---
+
+The sandbox Worker now refuses build containers' HTTPS requests addressed to `api.cloudflare.com`, as it already refused their plain-HTTP ones. It intercepts only the HTTPS connections that name that host, and every other host is still reached directly, so builds fetch their code and dependencies exactly as before. The refusal goes by the host name a request is sent to, so code that connects to the API by IP address or through another server still gets there; what keeps a build from acting on your account is that its container never holds a Cloudflare credential. The installers of self-deploying apps, which deploy through the API, run in two new container classes of their own, `SelfDeployingSandbox` and `LargeSelfDeployingSandbox` (added by the Durable Object migration `v2`), with up to two containers each, so build containers keep the refusal. An installer still gets the app's own token in the environment of its deploy or destroy command only.

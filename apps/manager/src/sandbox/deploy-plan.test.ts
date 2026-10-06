@@ -65,11 +65,23 @@ describe("containerNamespaces", () => {
         ],
         [
           { id: "ns-2", script: "appflare-sandbox", class: "LargeSandbox" },
+          { id: "ns-3", script: "appflare-sandbox", class: "SelfDeployingSandbox" },
           { id: "ns-x", script: "someone-else", class: "Sandbox" },
+          { id: "ns-y", script: "someone-else", class: "LargeSelfDeployingSandbox" },
         ],
       ),
-    ).toEqual({ Sandbox: "ns-1", LargeSandbox: "ns-2" });
-    expect(containerNamespaces(undefined)).toEqual({ Sandbox: null, LargeSandbox: null });
+    ).toEqual({
+      Sandbox: "ns-1",
+      LargeSandbox: "ns-2",
+      SelfDeployingSandbox: "ns-3",
+      LargeSelfDeployingSandbox: null,
+    });
+    expect(containerNamespaces(undefined)).toEqual({
+      Sandbox: null,
+      LargeSandbox: null,
+      SelfDeployingSandbox: null,
+      LargeSelfDeployingSandbox: null,
+    });
   });
 });
 

@@ -14,6 +14,9 @@ importers:
       '@appflare/pack':
         specifier: workspace:*
         version: link:packages/pack
+      '@appflare/schema':
+        specifier: workspace:*
+        version: link:packages/schema
       '@biomejs/biome':
         specifier: 2.5.14
         version: 2.5.14

@@ -34,6 +34,18 @@ export const SANDBOX_RELEASE_WRANGLER = path.join(SANDBOX_DIR, "dist", "wrangler
  */
 export const SANDBOX_ALLOWED_SECTIONS: readonly string[] = ["containers"];
 
+/**
+ * The sandbox Worker's container classes (`SANDBOX_CONTAINERS` in
+ * @appflare/schema): builds on two sizes, and self-deploying runs on two
+ * sizes. Each needs its Durable Object binding and a SQLite migration.
+ */
+export const SANDBOX_CONTAINER_CLASSES: readonly string[] = [
+  "Sandbox",
+  "LargeSandbox",
+  "SelfDeployingSandbox",
+  "LargeSelfDeployingSandbox",
+];
+
 interface ContainerConfig {
   class_name: string;
   image: string;
@@ -85,8 +97,8 @@ const ID_FIELDS = ["id", "account_id", "namespace_id", "bucket_name"];
 
 /**
  * Checks a sandbox Worker artifact manifest and its zip entry list; returns every
- * problem found (empty = OK): identity and source, `nodejs_compat`, the two
- * Sandbox Durable Object classes with their SQLite migration, the BUILDS
+ * problem found (empty = OK): identity and source, `nodejs_compat`, the
+ * Sandbox Durable Object classes with their SQLite migrations, the BUILDS
  * bucket without its name, APPFLARE_VERSION, the version metadata binding
  * the manager reads the answering version from, no assets, crons, or D1
  * migrations, no account-specific id, and a zip holding exactly the listed
@@ -140,7 +152,7 @@ export function sandboxArtifactProblems(
     worker.bindings.find((b) => b.type === type && b.name === name) as
       | Record<string, unknown>
       | undefined;
-  for (const className of ["Sandbox", "LargeSandbox"]) {
+  for (const className of SANDBOX_CONTAINER_CLASSES) {
     expect(
       binding("durable_object_namespace", className)?.class_name === className,
       `durable object binding ${className} is missing`,
@@ -164,7 +176,7 @@ export function sandboxArtifactProblems(
   const sqliteClasses = worker.migrations.flatMap((m) =>
     Array.isArray(m.new_sqlite_classes) ? (m.new_sqlite_classes as unknown[]) : [],
   );
-  for (const className of ["Sandbox", "LargeSandbox"]) {
+  for (const className of SANDBOX_CONTAINER_CLASSES) {
     expect(
       sqliteClasses.includes(className),
       `no migration creates ${className} as a SQLite class`,

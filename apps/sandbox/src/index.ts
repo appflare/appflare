@@ -28,7 +28,7 @@ import { githubFetch, heldGithubToken } from "./github";
 import { readProgress } from "./log";
 import { serveBuildObject } from "./range";
 import { runRepositoryBuild } from "./repository";
-import { openBuildSandbox } from "./sandbox";
+import { openBuildSandbox, openSelfDeployingSandbox } from "./sandbox";
 import {
   heldCredentials,
   runSelfManaged,
@@ -38,10 +38,16 @@ import {
 } from "./self-managed";
 import { deleteInstallBuilds } from "./storage";
 
-// The container runtime's proxy, which carries the build containers' outbound
-// traffic (including the credential-less R2 mount) through this Worker.
+// The container runtime's proxy, which carries the build containers' plain-HTTP
+// traffic (including the credential-less R2 mount) through this Worker, and
+// refuses their requests addressed to api.cloudflare.com (sandbox.ts).
 export { ContainerProxy } from "@cloudflare/sandbox";
-export { LargeSandbox, Sandbox } from "./sandbox";
+export {
+  LargeSandbox,
+  LargeSelfDeployingSandbox,
+  Sandbox,
+  SelfDeployingSandbox,
+} from "./sandbox";
 
 /**
  * The sandbox Worker's RPC surface for the manager, reached through the manager's
@@ -155,7 +161,7 @@ export class SandboxBuilds extends WorkerEntrypoint<Env> {
     return {
       bucket: this.env.BUILDS,
       sandboxVersion: this.env.APPFLARE_VERSION,
-      openSandbox: (id, instanceType) => openBuildSandbox(this.env, id, instanceType),
+      openSandbox: (id, instanceType) => openSelfDeployingSandbox(this.env, id, instanceType),
       credentials: (installId, names) => heldCredentials(this.env, installId, names),
       account: (token, accountId) => accountReader(token, accountId),
     };

@@ -89,7 +89,7 @@ export function fakeRemovalAccount(options: FakeRemovalOptions = {}) {
       const containers = options.containers ?? "present";
       if (containers === "denied") return error(403, 10000, "Authentication error");
       const name = url.searchParams.get("name") ?? "";
-      const id = `app-${name.split("-").at(-1)}`;
+      const id = `app-${name.replace("appflare-sandbox-", "")}`;
       const listed = containers === "present" && !gone.has(`/a/containers/applications/${id}`);
       return ok(listed ? [{ id, name }] : []);
     }

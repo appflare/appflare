@@ -72,6 +72,15 @@ export interface SandboxAccountState {
   calls: string[];
 }
 
+/**
+ * The sandbox Worker's Durable Object migrations, as apps/sandbox/wrangler.jsonc
+ * declares them: the build classes at v1, the self-deploying classes at v2.
+ */
+export const SANDBOX_MIGRATIONS = [
+  { tag: "v1", new_sqlite_classes: ["Sandbox", "LargeSandbox"] },
+  { tag: "v2", new_sqlite_classes: ["SelfDeployingSandbox", "LargeSelfDeployingSandbox"] },
+];
+
 /** A signed sandbox Worker release of `version`, shaped like the real one. */
 export function sandboxRelease(
   version: string,
@@ -82,13 +91,16 @@ export function sandboxRelease(
     keyId: opts.keyId ?? "appflare-test",
     catalog: { slug: "appflare-sandbox", name: "Appflare sandbox", secrets: [], vars: [] },
     bindings: [
-      { type: "durable_object_namespace", name: "Sandbox", class_name: "Sandbox" },
-      { type: "durable_object_namespace", name: "LargeSandbox", class_name: "LargeSandbox" },
+      ...SANDBOX_CONTAINERS.map((c) => ({
+        type: "durable_object_namespace",
+        name: c.class_name,
+        class_name: c.class_name,
+      })),
       { type: "r2_bucket", name: "BUILDS" },
       { type: "version_metadata", name: "CF_VERSION_METADATA" },
       { type: "plain_text", name: "APPFLARE_VERSION", text: version },
     ],
-    migrations: [{ tag: "v1", new_sqlite_classes: ["Sandbox", "LargeSandbox"] }],
+    migrations: SANDBOX_MIGRATIONS,
     tweak: (m) => {
       m.app = "appflare-sandbox";
       m.worker.name = "appflare-sandbox";

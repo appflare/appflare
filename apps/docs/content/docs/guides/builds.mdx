@@ -53,9 +53,9 @@ Enabling runs as a job, so its log shows each step:
    `github.com/appflare/appflare/releases` (`sandbox@<version>`) and checks its
    signature the same way a self-update checks the manager's. Every file it uploads is
    checked against that signed manifest.
-3. It creates the R2 bucket, uploads the sandbox Worker with its two container classes,
+3. It creates the R2 bucket, uploads the sandbox Worker with its container classes,
    and turns its `workers.dev` URL and preview URLs off.
-4. It creates the two container applications, running the release's image, and waits
+4. It creates the container applications, running the release's image, and waits
    until Cloudflare has prepared their instances, which takes a minute or two. Prepared
    instances do not run: no container starts until a build asks for one.
 5. It connects the manager to the sandbox Worker (see below).
@@ -65,7 +65,7 @@ It creates:
 | Resource | Name |
 | --- | --- |
 | Worker | `appflare-sandbox`, with no `workers.dev` URL and no routes |
-| Container applications | `appflare-sandbox-standard-1` (`standard-1`) and `appflare-sandbox-standard-2` (`standard-2`) |
+| Container applications | For builds, `appflare-sandbox-standard-1` (`standard-1`) and `appflare-sandbox-standard-2` (`standard-2`); for the installers of [self-deploying apps](#self-deploying-apps), `appflare-sandbox-self-deploying-standard-1` and `appflare-sandbox-self-deploying-standard-2` |
 | R2 bucket | `appflare-builds` |
 
 The containers run the image `docker.io/mendylanda/appflare-sandbox:<version>`, where the
@@ -87,8 +87,8 @@ restart every container of the sandbox Worker.
 Each manager version comes with a sandbox Worker version. After Appflare updates itself
 to a version with a newer sandbox Worker, the card shows **Sandbox Worker `<version>` is
 available** and an **Update sandbox** button. Updating runs the same job as enabling: it
-uploads the new sandbox Worker and rolls both container applications out to the new
-image, then waits until the rollouts complete.
+uploads the new sandbox Worker, rolls its container applications out to the new image
+and creates any the new version adds, then waits until they are ready.
 
 ## Connect the manager
 
@@ -113,7 +113,7 @@ log once the Worker is gone.
 **Disable sandbox builds** asks you to type `appflare-sandbox`. It is refused while any
 app built or deployed in the sandbox Worker is still installed; uninstall those apps
 first. The job then removes the `SANDBOX` binding from the manager (a checked new
-version, as above), deletes the sandbox Worker and its two container applications, and
+version, as above), deletes the sandbox Worker and its container applications, and
 empties and deletes the `appflare-builds` bucket, leaving the account as it was before.
 The [GitHub access tokens](/guides/install-from-a-repository/#private-repositories) are
 secrets of the sandbox Worker, so they go with it; add them again after enabling
@@ -182,9 +182,11 @@ The manager then installs the artifact exactly as it installs a prebuilt one.
 - **No install scripts, no credentials.** Dependency install scripts never run. The
   container holds no Cloudflare token or key of any kind, so the code it runs has
   nothing to act on your account with. The build output reaches R2 through the
-  sandbox Worker's own binding, not with keys. Outbound traffic from the container is
-  not filtered: a build needs the internet to fetch its dependencies, so it can reach
-  any host over HTTPS.
+  sandbox Worker's own binding, not with keys. A build needs the internet to fetch its
+  dependencies, so it can reach any host. The sandbox Worker refuses its HTTP and HTTPS
+  requests addressed to `api.cloudflare.com`, but that only stops requests that name
+  the API: a build could still reach it by IP address or through another server. What
+  protects your account is that the build has no credential to send.
 - **Unsigned output.** A prebuilt artifact is signed by catalog CI. A sandbox build is
   built in your account and is not signed. The manager accepts an unsigned
   `manifest.json` only when it reads it through the `SANDBOX` binding, and only when

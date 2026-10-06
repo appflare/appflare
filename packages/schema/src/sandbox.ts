@@ -81,6 +81,14 @@ export function sandboxImage(version: string): string {
  * catalog entry asks for it. At most two builds of the first size and one of
  * the second run at once. The application names are how the manager and the
  * CLI find the applications again, so they never change.
+ *
+ * `use` says which runs a class serves. The build classes refuse their
+ * containers' requests addressed to api.cloudflare.com, and a build container
+ * never holds a Cloudflare credential; a self-deploying app's installer
+ * deploys through the API with the app's token, so its runs get classes of
+ * their own, one per size. Each allows two containers at once: two installs
+ * can run side by side, and a run that starts over in a fresh container
+ * (`<id>-r`) need not wait while the one it left is released.
  */
 export const SANDBOX_CONTAINERS = [
   {
@@ -88,16 +96,35 @@ export const SANDBOX_CONTAINERS = [
     class_name: "Sandbox",
     instance_type: "standard-1",
     max_instances: 2,
+    use: "build",
   },
   {
     name: `${SANDBOX_WORKER_NAME}-standard-2`,
     class_name: "LargeSandbox",
     instance_type: "standard-2",
     max_instances: 1,
+    use: "build",
+  },
+  {
+    name: `${SANDBOX_WORKER_NAME}-self-deploying-standard-1`,
+    class_name: "SelfDeployingSandbox",
+    instance_type: "standard-1",
+    max_instances: 2,
+    use: "self-deploying",
+  },
+  {
+    name: `${SANDBOX_WORKER_NAME}-self-deploying-standard-2`,
+    class_name: "LargeSelfDeployingSandbox",
+    instance_type: "standard-2",
+    max_instances: 2,
+    use: "self-deploying",
   },
 ] as const;
 
 export type SandboxContainer = (typeof SANDBOX_CONTAINERS)[number];
+
+/** Which runs a container class serves: builds, or self-deploying apps' installers. */
+export type SandboxUse = SandboxContainer["use"];
 
 /** Every object the sandbox Worker writes or serves lives under this prefix. */
 export const BUILDS_PREFIX = "builds/";

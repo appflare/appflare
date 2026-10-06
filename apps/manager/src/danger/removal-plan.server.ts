@@ -31,9 +31,9 @@ import { DangerError } from "./errors";
  * the manager Worker with the D1 database and KV namespace it binds, the
  * external domains gateway as its setting records it, the sandbox Worker and
  * its build bucket, and the Cloudflare Access applications that protect the
- * manager. Six read calls at most: the account, the manager's bindings, the
- * sandbox Worker's bindings, its two container applications by name, and one
- * page of the bucket list.
+ * manager. Eight read calls at most: the account, the manager's bindings, the
+ * sandbox Worker's bindings, its four container applications by name, and
+ * one page of the bucket list.
  *
  * Apps Appflare protects with Cloudflare Access keep their Access
  * applications and the "Appflare users" policy: deleting them would open the
@@ -142,8 +142,8 @@ async function hasBuildBucket(api: CloudflareClient): Promise<boolean> {
 }
 
 /**
- * The sandbox Worker's container applications, by their exact names (two
- * read calls); null when Cloudflare refuses Containers to the token (403
+ * The sandbox Worker's container applications, by their exact names (one
+ * read call each); null when Cloudflare refuses Containers to the token (403
  * without the Containers group, 401 on an account no longer on Workers Paid).
  */
 async function sandboxContainerApps(

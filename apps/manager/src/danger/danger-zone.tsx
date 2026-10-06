@@ -1,3 +1,4 @@
+import { SANDBOX_CONTAINERS } from "@appflare/schema";
 import { Banner, Button, Collapsible, Link, Text } from "@cloudflare/kumo";
 import { KeyIcon, TrashIcon, WarningCircleIcon, WarningIcon } from "@phosphor-icons/react";
 import { type ReactNode, useState } from "react";
@@ -172,6 +173,16 @@ function Mono({ children }: { children: ReactNode }) {
   return <span className="font-mono text-[0.9em]">{children}</span>;
 }
 
+/** Names in monospace, as a list: "a, b and c". */
+function MonoList({ names }: { names: readonly string[] }) {
+  return names.map((name, i) => (
+    <span key={name}>
+      {i === 0 ? "" : i === names.length - 1 ? " and " : ", "}
+      <Mono>{name}</Mono>
+    </span>
+  ));
+}
+
 function RemovalReviewBody({ review }: { review: RemovalReview }) {
   const { targets, stays, activeJobs, externalDomains } = review;
   const { gateway, sandbox, manager } = targets;
@@ -219,13 +230,7 @@ function RemovalReviewBody({ review }: { review: RemovalReview }) {
           {(sandbox.containerApps ?? []).length > 0 && (
             <li>
               The sandbox Worker's container applications,{" "}
-              {(sandbox.containerApps ?? []).map((app, i) => (
-                <span key={app.id}>
-                  {i > 0 && " and "}
-                  <Mono>{app.name}</Mono>
-                </span>
-              ))}
-              .
+              <MonoList names={(sandbox.containerApps ?? []).map((app) => app.name)} />.
             </li>
           )}
           {manager.kvId !== null && (
@@ -323,11 +328,11 @@ function RemovalReviewBody({ review }: { review: RemovalReview }) {
           )}
           {sandbox.worker === "sandbox" && sandbox.containerApps === null && (
             <li>
-              The sandbox Worker's container applications, <Mono>appflare-sandbox-standard-1</Mono>{" "}
-              and <Mono>appflare-sandbox-standard-2</Mono>. Cloudflare keeps them when the Worker is
-              deleted, and Appflare's token lacks Containers: Edit, so it cannot delete them.
-              Afterwards, delete them in the Cloudflare dashboard under Workers, Containers, or add
-              that permission to the token first.
+              The sandbox Worker's container applications,{" "}
+              <MonoList names={SANDBOX_CONTAINERS.map((c) => c.name)} />. Cloudflare keeps them when
+              the Worker is deleted, and Appflare's token lacks Containers: Edit, so it cannot
+              delete them. Afterwards, delete them in the Cloudflare dashboard under Workers,
+              Containers, or add that permission to the token first.
             </li>
           )}
         </ul>
