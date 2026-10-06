@@ -1,5 +1,5 @@
-import { Banner, Button, ClipboardText, Input, Link, Text } from "@cloudflare/kumo";
-import { CheckCircleIcon, EnvelopeSimpleIcon, KeyIcon } from "@phosphor-icons/react";
+import { Button, ClipboardText, Input, Link, Text } from "@cloudflare/kumo";
+import { EnvelopeSimpleIcon, KeyIcon } from "@phosphor-icons/react";
 import { createFileRoute, redirect } from "@tanstack/react-router";
 import { type FormEvent, useState } from "react";
 import { authClient } from "../auth/client";
@@ -12,6 +12,7 @@ import {
 } from "../auth/recovery-messages";
 import { AuthError, AuthLayout, FULL_WIDTH_ACTION, OrDivider } from "../components/auth-layout";
 import { BusyButton } from "../components/busy-button";
+import { StatusRegion, SuccessBanner } from "../components/message-text";
 import { PasswordInput } from "../components/password-input";
 import { returnToSearchSchema, withReturnTo } from "../components/return-to";
 import { getPasswordRecoveryOptions } from "../server/recovery.functions";
@@ -104,39 +105,44 @@ function EmailForm({ onUseCode }: { onUseCode: () => void }) {
   }
 
   return (
-    <div className="grid gap-5">
-      {error !== null && <AuthError message={error} />}
-      {sent ? (
-        <Banner
+    <div>
+      {/* Outside the grid, so it adds no gap while empty. */}
+      <StatusRegion spacing="mb-5">
+        {sent && (
+          <SuccessBanner
+            live={false}
+            title="Check your email"
+            description={RECOVERY_MESSAGES.emailSent}
+          />
+        )}
+      </StatusRegion>
+      <div className="grid gap-5">
+        {error !== null && <AuthError message={error} />}
+        {!sent && (
+          <form className="grid gap-4" onSubmit={onSubmit}>
+            <Input label="Email" name="email" type="email" autoComplete="username" required />
+            <BusyButton
+              pending={pending}
+              type="submit"
+              variant="primary"
+              icon={<EnvelopeSimpleIcon />}
+              className={FULL_WIDTH_ACTION}
+            >
+              Email me a reset link
+            </BusyButton>
+          </form>
+        )}
+        <OrDivider />
+        <Button
           variant="secondary"
-          icon={<CheckCircleIcon weight="fill" />}
-          title="Check your email"
-          description={RECOVERY_MESSAGES.emailSent}
-        />
-      ) : (
-        <form className="grid gap-4" onSubmit={onSubmit}>
-          <Input label="Email" name="email" type="email" autoComplete="username" required />
-          <BusyButton
-            pending={pending}
-            type="submit"
-            variant="primary"
-            icon={<EnvelopeSimpleIcon />}
-            className={FULL_WIDTH_ACTION}
-          >
-            Email me a reset link
-          </BusyButton>
-        </form>
-      )}
-      <OrDivider />
-      <Button
-        variant="secondary"
-        icon={<KeyIcon />}
-        className={FULL_WIDTH_ACTION}
-        onClick={onUseCode}
-      >
-        I have a recovery code
-      </Button>
-      <BackToSignIn />
+          icon={<KeyIcon />}
+          className={FULL_WIDTH_ACTION}
+          onClick={onUseCode}
+        >
+          I have a recovery code
+        </Button>
+        <BackToSignIn />
+      </div>
     </div>
   );
 }
@@ -168,64 +174,73 @@ function CodeForm({ onUseEmail }: { onUseEmail: (() => void) | undefined }) {
     setDone(true);
   }
 
-  if (done) {
-    return (
-      <div className="grid gap-5">
-        <Banner
-          variant="secondary"
-          icon={<CheckCircleIcon weight="fill" />}
-          title="Password changed"
-          description="Sign in with your new password. You were signed out everywhere else."
-        />
-        <Link href={signInHref}>Sign in</Link>
-      </div>
-    );
-  }
-
   return (
-    <div className="grid gap-5">
-      {error !== null && <AuthError message={error} />}
-      <Text variant="secondary">
-        An admin of this Appflare can give you a code. If you manage the Cloudflare account it runs
-        in, get one yourself by running this on your computer:
-      </Text>
-      <ClipboardText text={RECOVER_COMMAND} />
-      <form className="grid gap-4" onSubmit={onSubmit}>
-        <Input label="Email" name="email" type="email" autoComplete="username" required />
-        <Input
-          label="Recovery code"
-          name="code"
-          autoComplete="one-time-code"
-          spellCheck={false}
-          placeholder="XXXXX-XXXXX-XXXXX-XXXXX"
-          required
-        />
-        <PasswordInput
-          label="New password"
-          name="newPassword"
-          autoComplete="new-password"
-          minLength={PASSWORD_LIMITS.min}
-          maxLength={PASSWORD_LIMITS.max}
-          description={`At least ${PASSWORD_LIMITS.min} characters.`}
-        />
-        <BusyButton pending={pending} type="submit" variant="primary" className={FULL_WIDTH_ACTION}>
-          Set new password
-        </BusyButton>
-      </form>
-      {onUseEmail !== undefined && (
-        <>
-          <OrDivider />
-          <Button
-            variant="secondary"
-            icon={<EnvelopeSimpleIcon />}
-            className={FULL_WIDTH_ACTION}
-            onClick={onUseEmail}
-          >
-            Email me a reset link instead
-          </Button>
-        </>
-      )}
-      <BackToSignIn />
+    <div>
+      {/* Outside the grid, so it adds no gap while empty. */}
+      <StatusRegion spacing="mb-5">
+        {done && (
+          <SuccessBanner
+            live={false}
+            title="Password changed"
+            description="Sign in with your new password. You were signed out everywhere else."
+          />
+        )}
+      </StatusRegion>
+      <div className="grid gap-5">
+        {done ? (
+          <Link href={signInHref}>Sign in</Link>
+        ) : (
+          <>
+            {error !== null && <AuthError message={error} />}
+            <Text variant="secondary">
+              An admin of this Appflare can give you a code. If you manage the Cloudflare account it
+              runs in, get one yourself by running this on your computer:
+            </Text>
+            <ClipboardText text={RECOVER_COMMAND} />
+            <form className="grid gap-4" onSubmit={onSubmit}>
+              <Input label="Email" name="email" type="email" autoComplete="username" required />
+              <Input
+                label="Recovery code"
+                name="code"
+                autoComplete="one-time-code"
+                spellCheck={false}
+                placeholder="XXXXX-XXXXX-XXXXX-XXXXX"
+                required
+              />
+              <PasswordInput
+                label="New password"
+                name="newPassword"
+                autoComplete="new-password"
+                minLength={PASSWORD_LIMITS.min}
+                maxLength={PASSWORD_LIMITS.max}
+                description={`At least ${PASSWORD_LIMITS.min} characters.`}
+              />
+              <BusyButton
+                pending={pending}
+                type="submit"
+                variant="primary"
+                className={FULL_WIDTH_ACTION}
+              >
+                Set new password
+              </BusyButton>
+            </form>
+            {onUseEmail !== undefined && (
+              <>
+                <OrDivider />
+                <Button
+                  variant="secondary"
+                  icon={<EnvelopeSimpleIcon />}
+                  className={FULL_WIDTH_ACTION}
+                  onClick={onUseEmail}
+                >
+                  Email me a reset link instead
+                </Button>
+              </>
+            )}
+            <BackToSignIn />
+          </>
+        )}
+      </div>
     </div>
   );
 }

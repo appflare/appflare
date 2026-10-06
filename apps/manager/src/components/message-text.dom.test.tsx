@@ -6,6 +6,7 @@ import {
   bannerMessage,
   ErrorMessageBanner,
   MessageBanner,
+  StatusRegion,
   SuccessBanner,
 } from "./message-text";
 
@@ -103,5 +104,42 @@ describe("the success banner", () => {
   it("takes a message string through bannerMessage", () => {
     act(() => root.render(<SuccessBanner {...bannerMessage("Access is on.")} />));
     expect(live()).toEqual([{ role: "status", text: "Access is on." }]);
+  });
+
+  it("takes no role with live={false}, for a region that announces it", () => {
+    act(() => root.render(<SuccessBanner live={false} title="Token rotated" />));
+    expect(live()).toEqual([]);
+    expect(container.textContent).toBe("Token rotated");
+  });
+});
+
+describe("the status region", () => {
+  function region(notice: string | null) {
+    return (
+      <StatusRegion spacing="mt-4">
+        {notice !== null && <SuccessBanner live={false} title={notice} />}
+      </StatusRegion>
+    );
+  }
+
+  it("is on the page, empty and displayed, before its message", () => {
+    act(() => root.render(region(null)));
+    expect(live()).toEqual([{ role: "status", text: "" }]);
+    const el = container.querySelector("[role=status]");
+    // Nothing that hides it: an empty region must stay in the accessibility tree.
+    expect(el?.getAttribute("class")).toBeNull();
+    expect(el?.childElementCount).toBe(0);
+  });
+
+  it("is the one live region around its message, which carries the spacing", () => {
+    act(() => root.render(region(null)));
+    const el = container.querySelector("[role=status]");
+    act(() => root.render(region("Reset link sent")));
+    expect(container.querySelector("[role=status]")).toBe(el);
+    expect(live()).toEqual([{ role: "status", text: "Reset link sent" }]);
+    expect(el?.firstElementChild?.getAttribute("class")).toBe("mt-4");
+    act(() => root.render(region(null)));
+    expect(container.querySelector("[role=status]")).toBe(el);
+    expect(el?.childElementCount).toBe(0);
   });
 });

@@ -70,4 +70,14 @@ describe("the reset password dialog, mounted before it opens", () => {
     expect(document.body.textContent).not.toContain("Reset link sent");
     expect(primary("Send reset link")).toBeDefined();
   });
+
+  it('reads "sent" from a status region that was in the dialog before it', async () => {
+    render(true, true);
+    const region = document.querySelector('[role="dialog"] [role="status"]');
+    expect(region?.textContent).toBe("");
+    await act(async () => primary("Send reset link").click());
+    expect(document.querySelector('[role="dialog"] [role="status"]')).toBe(region);
+    expect(region?.textContent).toContain("Reset link sent");
+    expect(region?.querySelector('[role="status"]')).toBeNull();
+  });
 });

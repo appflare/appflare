@@ -4,7 +4,6 @@ import {
   GlobeIcon,
   LockKeyIcon,
   LockKeyOpenIcon,
-  WarningIcon,
 } from "@phosphor-icons/react";
 import { useRouter } from "@tanstack/react-router";
 import { useState } from "react";
@@ -34,7 +33,7 @@ import { DescriptionItem, DescriptionList } from "./description-list";
 import { DocsLink } from "./docs-link";
 import { FLUSH_RING_CLASS } from "./hash-target";
 import { useJobStarted } from "./job-started";
-import { MessageText } from "./message-text";
+import { BANNER_ICON, bannerRole, MessageText } from "./message-text";
 import { Section, SectionBody } from "./section";
 import { useAccountId } from "./use-account-id";
 
@@ -93,7 +92,7 @@ export function AppAccessSection({
         {required && !access.protected && (
           <Banner
             variant="alert"
-            icon={<WarningIcon weight="fill" />}
+            icon={BANNER_ICON.alert}
             title={ACCESS_NOW_REQUIRED_TITLE}
             description={`${accessRequiredLine(install.name)} Appflare never protects it on its own, and holds its updates until it is protected.`}
             action={
@@ -106,7 +105,7 @@ export function AppAccessSection({
         {access.syncFailedAt !== null && (
           <Banner
             variant="alert"
-            icon={<WarningIcon weight="fill" />}
+            icon={BANNER_ICON.alert}
             title="Cloudflare Access is not in step with this app's addresses"
             description="The last update of its Access applications failed. Appflare tries again every 30 minutes; the app's addresses stay protected meanwhile."
           />
@@ -282,7 +281,8 @@ function TurnOnDialog({
       {problem !== null && fix !== null && (
         <Banner
           variant="error"
-          icon={<WarningIcon weight="fill" />}
+          icon={BANNER_ICON.error}
+          role={bannerRole("error")}
           title="This account cannot protect apps yet"
           description={
             <span className="grid gap-1">

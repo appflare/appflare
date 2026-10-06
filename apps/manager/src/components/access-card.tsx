@@ -1,13 +1,5 @@
 import { Badge, Banner, Button, Checkbox, LayerDialog, LinkButton, Text } from "@cloudflare/kumo";
-import {
-  ArrowsClockwiseIcon,
-  CheckCircleIcon,
-  InfoIcon,
-  LockKeyIcon,
-  LockKeyOpenIcon,
-  WarningCircleIcon,
-  WarningIcon,
-} from "@phosphor-icons/react";
+import { ArrowsClockwiseIcon, LockKeyIcon, LockKeyOpenIcon } from "@phosphor-icons/react";
 import { useRouter } from "@tanstack/react-router";
 import { useState } from "react";
 import { ACCESS_RECOVERY_COMMAND, accessRecoverySteps } from "../access/recovery";
@@ -24,7 +16,15 @@ import { AppflareLoader } from "./appflare-loader";
 import { BusyButton, BusyMark, busyActionProps } from "./busy-button";
 import { ConfirmDialog } from "./confirm-dialog";
 import { DescriptionItem, DescriptionList } from "./description-list";
-import { ErrorMessageBanner, MessageBanner } from "./message-text";
+import {
+  BANNER_ICON,
+  bannerMessage,
+  bannerRole,
+  ErrorMessageBanner,
+  MessageText,
+  StatusRegion,
+  SuccessBanner,
+} from "./message-text";
 import { Section, SectionBody } from "./section";
 import { settingsSection } from "./settings-links";
 import { Timestamp } from "./timestamp";
@@ -105,34 +105,34 @@ function EnabledDetails({ status, isAdmin }: { status: AccessStatus; isAdmin: bo
 
   return (
     <>
-      <DescriptionList>
-        <DescriptionItem label="Protected address">
-          <Text variant="mono" as="span">
-            {status.domain ?? "Unknown"}
-          </Text>
-        </DescriptionItem>
-        <DescriptionItem label="Zero Trust team">
-          <Text variant="mono" as="span">
-            {status.teamDomain ?? "Unknown"}
-          </Text>
-        </DescriptionItem>
-        <DescriptionItem label="On since">
-          <Timestamp iso={status.enabledAt} />
-        </DescriptionItem>
-        {status.adminEmails !== null && (
-          <DescriptionItem label="Allowed admins">
-            {status.adminEmails.join(", ") || "None"}
+      {/* The section body's grid spaces the list and the notice as one item,
+          so the notice's region adds no gap while empty. */}
+      <div>
+        <DescriptionList>
+          <DescriptionItem label="Protected address">
+            <Text variant="mono" as="span">
+              {status.domain ?? "Unknown"}
+            </Text>
           </DescriptionItem>
-        )}
-      </DescriptionList>
+          <DescriptionItem label="Zero Trust team">
+            <Text variant="mono" as="span">
+              {status.teamDomain ?? "Unknown"}
+            </Text>
+          </DescriptionItem>
+          <DescriptionItem label="On since">
+            <Timestamp iso={status.enabledAt} />
+          </DescriptionItem>
+          {status.adminEmails !== null && (
+            <DescriptionItem label="Allowed admins">
+              {status.adminEmails.join(", ") || "None"}
+            </DescriptionItem>
+          )}
+        </DescriptionList>
+        <StatusRegion spacing="mt-4">
+          {notice !== null && <SuccessBanner live={false} {...bannerMessage(notice)} />}
+        </StatusRegion>
+      </div>
       {error !== null && <ErrorMessageBanner message={error} />}
-      {notice !== null && (
-        <MessageBanner
-          message={notice}
-          variant="secondary"
-          icon={<CheckCircleIcon weight="fill" />}
-        />
-      )}
       {isAdmin && (
         <div className="flex flex-wrap justify-end gap-2">
           <BusyButton
@@ -254,7 +254,7 @@ function TurnOnDialog({ viewerEmail }: { viewerEmail: string }) {
                 </DescriptionList>
                 <Banner
                   variant="alert"
-                  icon={<WarningIcon weight="fill" />}
+                  icon={BANNER_ICON.alert}
                   title={`You must be able to sign in to Access as ${viewerEmail}`}
                   description={<LockoutWarning hostname={state.check.hostname} />}
                 />
@@ -265,15 +265,18 @@ function TurnOnDialog({ viewerEmail }: { viewerEmail: string }) {
                 />
               </>
             )}
-
+          </div>
+          {/* In the dialog while it checks and turns on; the grid above is
+              empty by the time it holds anything. */}
+          <StatusRegion>
             {state.step === "done" && (
-              <Banner
-                icon={<CheckCircleIcon weight="fill" />}
+              <SuccessBanner
+                live={false}
                 title="Cloudflare Access protection is on"
                 description={`Reload to sign in through Access. From now on every visit to ${state.hostname} starts with the Access sign-in.`}
               />
             )}
-          </div>
+          </StatusRegion>
         </LayerDialog.Body>
         {ready && (
           <LayerDialog.Actions dismissLabel="Cancel">
@@ -320,23 +323,19 @@ function LockoutWarning({ hostname }: { hostname: string }) {
 
 function ProblemView({ check }: { check: Extract<AccessCheck, { ok: false }> }) {
   const accountId = useAccountId();
+  const variant = check.problem === "no-organization" ? "default" : "error";
   return (
     <div className="grid gap-4">
       <Banner
-        variant={check.problem === "no-organization" ? "default" : "error"}
-        icon={
-          check.problem === "no-organization" ? (
-            <InfoIcon weight="fill" />
-          ) : (
-            <WarningCircleIcon weight="fill" />
-          )
-        }
+        variant={variant}
+        icon={BANNER_ICON[variant]}
+        role={bannerRole(variant)}
         title={
           check.problem === "no-organization"
             ? "Create a Zero Trust organization first"
             : "Cloudflare Access cannot be turned on yet"
         }
-        description={check.message}
+        description={<MessageText message={check.message} newTab />}
       />
       {check.problem === "no-organization" && (
         <div>

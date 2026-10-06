@@ -7,7 +7,7 @@ import {
   Text,
   useKumoToastManager,
 } from "@cloudflare/kumo";
-import { EnvelopeSimpleIcon, InfoIcon } from "@phosphor-icons/react";
+import { EnvelopeSimpleIcon } from "@phosphor-icons/react";
 import { useRouter } from "@tanstack/react-router";
 import { type FormEvent, useState } from "react";
 import type { RecoveryMethod } from "../auth/recovery.server";
@@ -18,6 +18,7 @@ import {
   sendTestPasswordEmail,
   setPasswordResetEmails,
 } from "../server/recovery.functions";
+import { AppflareLoader } from "./appflare-loader";
 import { BusyButton } from "./busy-button";
 import { ConfirmDialog } from "./confirm-dialog";
 import { DocsLink } from "./docs-link";
@@ -126,7 +127,7 @@ function PasswordEmailCard({
           <EnvelopeSimpleIcon size={18} />
           Password reset emails
           <DocsLink topic="passwordResetEmails" />
-          <Badge variant={status.enabled ? "primary" : "neutral"}>
+          <Badge variant={status.enabled ? "success" : "neutral"}>
             {status.enabled ? "On" : "Off"}
           </Badge>
         </span>
@@ -136,7 +137,8 @@ function PasswordEmailCard({
       {restarting && (
         <Banner
           variant="secondary"
-          icon={<InfoIcon weight="fill" />}
+          // No live region: the toast for the change already says so.
+          icon={<AppflareLoader size="sm" aria-hidden />}
           title="Appflare is restarting with reset emails turned on"
           description="Reload this page in a few seconds."
         />
@@ -153,7 +155,7 @@ function PasswordEmailCard({
               </BusyButton>
               <ConfirmDialog
                 trigger={(p) => (
-                  <Button {...p} variant="secondary" disabled={pending !== null}>
+                  <Button {...p} variant="secondary-destructive" disabled={pending !== null}>
                     Turn off
                   </Button>
                 )}

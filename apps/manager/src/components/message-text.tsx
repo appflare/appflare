@@ -1,6 +1,6 @@
 import { Banner, Link, LinkButton } from "@cloudflare/kumo";
 import { CheckCircleIcon, InfoIcon, WarningCircleIcon, WarningIcon } from "@phosphor-icons/react";
-import { type ComponentProps, Fragment, type ReactElement, type ReactNode } from "react";
+import { Children, type ComponentProps, Fragment, type ReactElement, type ReactNode } from "react";
 import { messageSegments } from "./message-links";
 
 /** What ends an address: a space, a quote, an angle bracket, a backtick, a closing bracket. */
@@ -196,6 +196,26 @@ export function bannerRole(variant: BannerTone): "alert" | "status" {
 }
 
 /**
+ * A polite live region for a message that appears after the admin did
+ * something ("Reset link sent"), there before it and after it, so a screen
+ * reader reads the message as it appears (see `bannerRole`). Its children
+ * are the message or nothing; the banner inside takes no role of its own
+ * (`<SuccessBanner live={false} />`).
+ *
+ * Always displayed, never `display: none`, which would take an empty region
+ * out of the accessibility tree and bring it back only with its message. So
+ * it adds no gap while empty, place it outside a grid or flex gap and put
+ * the space in `spacing` (`mt-4`), which the message's wrapper carries.
+ */
+export function StatusRegion({ spacing, children }: { spacing?: string; children?: ReactNode }) {
+  return (
+    <div role="status">
+      {Children.toArray(children).length > 0 && <div className={spacing}>{children}</div>}
+    </div>
+  );
+}
+
+/**
  * A message string as a banner's text: its title, or, when it has a link,
  * its description (Kumo's banner title is plain text). For
  * `<SuccessBanner {...bannerMessage(notice)} />`.
@@ -249,12 +269,16 @@ export function ErrorMessageBanner({
  * Something the admin did worked ("Token rotated"). Kumo's banner has no
  * success variant: this is the neutral one with a green check, so success
  * never reads as information or as a warning. A polite `status` (see
- * `bannerRole`). Takes Kumo's banner props but its variant and icon.
+ * `bannerRole`), or no role with `live={false}`, inside a `StatusRegion`
+ * that announces it. Takes Kumo's banner props but its variant and icon.
  */
-export function SuccessBanner(props: Omit<ComponentProps<typeof Banner>, "variant" | "icon">) {
+export function SuccessBanner({
+  live = true,
+  ...props
+}: Omit<ComponentProps<typeof Banner>, "variant" | "icon"> & { live?: boolean }) {
   return (
     <Banner
-      role="status"
+      role={live ? "status" : undefined}
       {...props}
       variant="secondary"
       icon={<CheckCircleIcon weight="fill" className="text-kumo-success" />}

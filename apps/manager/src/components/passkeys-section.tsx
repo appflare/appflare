@@ -1,5 +1,5 @@
 import { Badge, Banner, Button, Input, LayerDialog, Table, Text } from "@cloudflare/kumo";
-import { FingerprintIcon, PlusIcon, TrashIcon, WarningCircleIcon } from "@phosphor-icons/react";
+import { FingerprintIcon, PlusIcon, TrashIcon } from "@phosphor-icons/react";
 import { useRouter } from "@tanstack/react-router";
 import { type FormEvent, useId, useState } from "react";
 import { authClient } from "../auth/client";
@@ -12,7 +12,7 @@ import { type PasskeyRow, removePasskey } from "../server/passkeys.functions";
 import { passkeyNameInput } from "../server/schemas";
 import { BusyMark, busyActionProps } from "./busy-button";
 import { ConfirmDialog } from "./confirm-dialog";
-import { ErrorMessageBanner } from "./message-text";
+import { BANNER_ICON, ErrorMessageBanner } from "./message-text";
 import { Section, SectionBody, SectionEmpty, SectionTable } from "./section";
 import { settingsSection } from "./settings-links";
 import { Timestamp } from "./timestamp";
@@ -35,7 +35,8 @@ export function PasskeysSection({ passkeys }: { passkeys: PasskeyRow[] }) {
       {!supported && (
         <SectionBody>
           <Banner
-            icon={<WarningCircleIcon weight="fill" />}
+            variant="alert"
+            icon={BANNER_ICON.alert}
             title={PASSKEY_MESSAGES.registerUnsupported}
             description="Open this page in a current browser to add a passkey."
           />
@@ -83,9 +84,8 @@ export function PasskeysSection({ passkeys }: { passkeys: PasskeyRow[] }) {
                   )}
                 </Table.Cell>
                 <Table.Cell>
-                  <Badge variant={p.synced ? "primary" : "neutral"}>
-                    {p.synced ? "Synced" : "This device only"}
-                  </Badge>
+                  {/* Two kinds, neither of them a state to be glad of or to fix. */}
+                  <Badge variant="neutral">{p.synced ? "Synced" : "This device only"}</Badge>
                 </Table.Cell>
                 <Table.Cell>
                   <Timestamp iso={p.createdAt} dateOnly fallback="Unknown" />
@@ -162,7 +162,7 @@ function AddPasskeyDialog() {
         )}
       />
       <LayerDialog.Content>
-        <LayerDialog.Title>Add a passkey</LayerDialog.Title>
+        <LayerDialog.Title>Add passkey</LayerDialog.Title>
         <LayerDialog.Description>
           Name it after the device or password manager that keeps it, so you can tell your passkeys
           apart. Your browser then asks you to create it.

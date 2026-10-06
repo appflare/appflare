@@ -4,6 +4,7 @@ import {
   Button,
   Checkbox,
   ClipboardText,
+  DropdownMenu,
   Input,
   LayerDialog,
   Radio,
@@ -12,18 +13,24 @@ import {
 } from "@cloudflare/kumo";
 import {
   BellSimpleIcon,
-  CheckCircleIcon,
-  InfoIcon,
+  DotsThreeIcon,
   KeyIcon,
   PaperPlaneTiltIcon,
   PencilSimpleIcon,
   PlusIcon,
   TrashIcon,
-  WarningCircleIcon,
-  WarningIcon,
 } from "@phosphor-icons/react";
 import { useRouter } from "@tanstack/react-router";
-import { type FormEvent, useId, useState } from "react";
+import {
+  type ComponentProps,
+  type FormEvent,
+  type Ref,
+  type RefObject,
+  useEffect,
+  useId,
+  useRef,
+  useState,
+} from "react";
 import {
   CHANNEL_KIND_DESCRIPTIONS,
   CHANNEL_KIND_LABELS,
@@ -52,7 +59,14 @@ import { BusyButton, BusyMark, busyActionProps } from "./busy-button";
 import { ChannelKindLogo } from "./channel-logos";
 import { ConfirmDialog } from "./confirm-dialog";
 import { DocsLink } from "./docs-link";
-import { ErrorMessageBanner, MessageText } from "./message-text";
+import {
+  BANNER_ICON,
+  bannerRole,
+  ErrorMessageBanner,
+  MessageText,
+  StatusRegion,
+  SuccessBanner,
+} from "./message-text";
 import { Section, SectionBody, SectionEmpty, SectionRow, SectionRows } from "./section";
 import { settingsSection } from "./settings-links";
 import { Timestamp } from "./timestamp";
@@ -68,10 +82,11 @@ function SigningSecretDescription() {
 
 /**
  * The notifications settings' Channels section: the channels, one row each
- * with its target, events, delivery health, "Send test", edit, and remove; a
- * generic webhook also replaces its signing secret. "Add channel" sits at the
- * right of the header. Credentials are entered here and never shown again.
- * Admins only: members (`channels` null) see a note.
+ * with its target, events and delivery health, "Send test" at its right, and
+ * a menu beside it to edit or remove the channel (a generic webhook also
+ * replaces its signing secret there). "Add channel" sits at the right of the
+ * header. Credentials are entered here and never shown again. Admins only:
+ * members (`channels` null) see a note.
  */
 
 const mono = "font-mono text-[0.9em]";
@@ -80,23 +95,67 @@ function errorText(err: unknown, fallback: string): string {
   return err instanceof Error ? err.message : fallback;
 }
 
-function AddChannelDialog() {
-  return <ChannelDialog mode={{ kind: "add" }} />;
+/** Sets a ref of either kind. */
+function setRef<T>(ref: Ref<T> | undefined, value: T | null) {
+  if (typeof ref === "function") ref(value);
+  else if (ref != null) ref.current = value;
+}
+
+/**
+ * The header's (or the empty state's) "Add channel" and its dialog. `button`
+ * holds its button, which takes the focus once a removed channel's row is gone.
+ */
+function AddChannelDialog({ button }: { button: RefObject<HTMLButtonElement | null> }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <ChannelDialog
+      mode={{ kind: "add" }}
+      open={open}
+      onOpenChange={setOpen}
+      trigger={(p) => (
+        <Button
+          {...p}
+          // The dialog's own ref on the button, and this one.
+          ref={(node: HTMLButtonElement | null) => {
+            setRef(p.ref, node);
+            button.current = node;
+          }}
+          variant="primary"
+          icon={<PlusIcon />}
+        >
+          Add channel
+        </Button>
+      )}
+    />
+  );
 }
 
 export function NotificationChannels({ channels }: { channels: ChannelView[] | null }) {
+  const addButton = useRef<HTMLButtonElement>(null);
+  // A channel just removed from its menu; its row (and the focus in it) goes
+  // once the list no longer has it.
+  const [removed, setRemoved] = useState<string | null>(null);
+  useEffect(() => {
+    if (removed === null || channels?.some((c) => c.id === removed)) return;
+    setRemoved(null);
+    // There is always one: in the header, or in the empty state after the last.
+    addButton.current?.focus();
+  }, [removed, channels]);
+
   return (
     <Section
       {...settingsSection("notifications", "channels")}
       description={NOTIFICATION_COPY.privacy}
       // With no channel yet, the empty state offers it instead.
-      action={channels !== null && channels.length > 0 ? <AddChannelDialog /> : null}
+      action={
+        channels !== null && channels.length > 0 ? <AddChannelDialog button={addButton} /> : null
+      }
     >
       {channels === null ? (
         <SectionBody>
           <Banner
             variant="secondary"
-            icon={<InfoIcon weight="fill" />}
+            icon={BANNER_ICON.secondary}
             title={NOTIFICATION_COPY.membersOnly}
           />
         </SectionBody>
@@ -106,13 +165,13 @@ export function NotificationChannels({ channels }: { channels: ChannelView[] | n
             icon={<BellSimpleIcon size={48} className="text-kumo-inactive" />}
             title="No notification channels"
             description={NOTIFICATION_COPY.empty}
-            contents={<AddChannelDialog />}
+            contents={<AddChannelDialog button={addButton} />}
           />
         </SectionBody>
       ) : (
         <SectionRows>
           {channels.map((channel) => (
-            <ChannelRow key={channel.id} channel={channel} />
+            <ChannelRow key={channel.id} channel={channel} onRemoved={setRemoved} />
           ))}
         </SectionRows>
       )}
@@ -133,9 +192,27 @@ function statusBadge(channel: ChannelView) {
   return <Badge variant="neutral">Nothing sent yet</Badge>;
 }
 
-function ChannelRow({ channel }: { channel: ChannelView }) {
+/** The dialogs a channel's menu opens. */
+type RowDialog = "edit" | "secret" | "remove";
+
+/** A dialog opened from a row's menu: controlled, handing focus back to the menu's button. */
+interface MenuDialogProps {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  returnFocus: RefObject<HTMLElement | null>;
+}
+
+function ChannelRow({
+  channel,
+  onRemoved,
+}: {
+  channel: ChannelView;
+  onRemoved: (id: string) => void;
+}) {
   const [testing, setTesting] = useState(false);
   const [test, setTest] = useState<TestResult | null>(null);
+  const [dialog, setDialog] = useState<RowDialog | null>(null);
+  const menu = useRef<HTMLButtonElement>(null);
   const router = useRouter();
 
   async function onTest() {
@@ -150,7 +227,18 @@ function ChannelRow({ channel }: { channel: ChannelView }) {
     setTesting(false);
   }
 
+  // The dialogs stay mounted with the row and open from the menu (one mounted
+  // on demand would skip its opening animation); the menu is gone by then.
+  function dialogProps(which: RowDialog): MenuDialogProps {
+    return {
+      open: dialog === which,
+      onOpenChange: (next) => setDialog(next ? which : null),
+      returnFocus: menu,
+    };
+  }
+
   const events = channel.events.map((e) => EVENT_LABELS[e]);
+  const replacesSecret = channel.kind === "webhook" && channel.readable;
   return (
     <SectionRow
       id={`channel-${channel.id}`}
@@ -166,66 +254,114 @@ function ChannelRow({ channel }: { channel: ChannelView }) {
           {CHANNEL_KIND_LABELS[channel.kind]}, <span className={mono}>{channel.target}</span>
         </>
       }
-    >
-      <div className="grid gap-4">
-        <div className="grid gap-1.5">
-          <Text bold>Events</Text>
-          <Text variant="secondary">
-            {events.length === 0
-              ? "None: this channel receives nothing until you pick events."
-              : events.join(", ")}
-          </Text>
-        </div>
-        <div className="grid gap-1.5">
-          <Text bold>Deliveries</Text>
-          <Text variant="secondary">
-            Last delivered: <Timestamp iso={channel.lastSuccessAt} />.
-            {channel.pending > 0 &&
-              ` ${channel.pending} message${channel.pending === 1 ? " is" : "s are"} waiting to be sent or retried.`}
-          </Text>
-          {channel.failureCount > 0 && channel.lastError !== null && (
-            <Text variant="secondary">
-              {channel.failureCount} failed attempt{channel.failureCount === 1 ? "" : "s"} since the
-              last delivery. Last error (<Timestamp iso={channel.lastFailureAt} />
-              ): <span className={mono}>{channel.lastError}</span>
-            </Text>
-          )}
-          {!channel.readable && (
-            <Text variant="secondary">
-              The stored credentials cannot be read, so nothing is sent. Edit the channel and enter
-              its details again.
-            </Text>
-          )}
-        </div>
-        {test !== null && (
-          <Banner
-            variant={test.ok ? "default" : "error"}
-            icon={test.ok ? <CheckCircleIcon weight="fill" /> : <WarningCircleIcon weight="fill" />}
-            title={test.ok ? "Test message delivered" : "Test message not delivered"}
-            description={test.ok ? undefined : <MessageText message={test.detail} />}
-          />
-        )}
-        <div className="flex flex-wrap gap-2">
+      action={
+        <>
           <BusyButton
             pending={testing}
             variant="secondary"
             icon={<PaperPlaneTiltIcon />}
+            // Every row has one: the name says which channel it tests.
+            aria-label={`Send test to ${channel.label}`}
             onClick={() => void onTest()}
           >
             Send test
           </BusyButton>
-          <ChannelDialog mode={{ kind: "edit", channel }} />
-          {channel.kind === "webhook" && channel.readable && (
-            <SigningSecretDialog channel={channel} />
+          <DropdownMenu>
+            <DropdownMenu.Trigger
+              ref={menu}
+              render={
+                // Bold, as in the users table: the regular dots are faint beside "Send test".
+                <Button
+                  variant="secondary"
+                  shape="square"
+                  aria-label={`Actions for ${channel.label}`}
+                >
+                  <DotsThreeIcon weight="bold" size={16} />
+                </Button>
+              }
+            />
+            <DropdownMenu.Content align="end">
+              {/* Icons go in as components: Kumo sizes and spaces a component
+                  icon, but renders an element as it is, flush against the label. */}
+              <DropdownMenu.Item icon={PencilSimpleIcon} onClick={() => setDialog("edit")}>
+                Edit
+              </DropdownMenu.Item>
+              {replacesSecret && (
+                <DropdownMenu.Item icon={KeyIcon} onClick={() => setDialog("secret")}>
+                  Replace signing secret
+                </DropdownMenu.Item>
+              )}
+              <DropdownMenu.Separator />
+              <DropdownMenu.Item
+                icon={TrashIcon}
+                variant="danger"
+                onClick={() => setDialog("remove")}
+              >
+                Remove
+              </DropdownMenu.Item>
+            </DropdownMenu.Content>
+          </DropdownMenu>
+        </>
+      }
+    >
+      <div>
+        <div className="grid gap-4">
+          <div className="grid gap-1.5">
+            <Text bold>Events</Text>
+            <Text variant="secondary">
+              {events.length === 0
+                ? "None: this channel receives nothing until you pick events."
+                : events.join(", ")}
+            </Text>
+          </div>
+          <div className="grid gap-1.5">
+            <Text bold>Deliveries</Text>
+            <Text variant="secondary">
+              Last delivered: <Timestamp iso={channel.lastSuccessAt} />.
+              {channel.pending > 0 &&
+                ` ${channel.pending} message${channel.pending === 1 ? " is" : "s are"} waiting to be sent or retried.`}
+            </Text>
+            {channel.failureCount > 0 && channel.lastError !== null && (
+              <Text variant="secondary">
+                {channel.failureCount} failed attempt{channel.failureCount === 1 ? "" : "s"} since
+                the last delivery. Last error (<Timestamp iso={channel.lastFailureAt} />
+                ): <span className={mono}>{channel.lastError}</span>
+              </Text>
+            )}
+            {!channel.readable && (
+              <Text variant="secondary">
+                The stored credentials cannot be read, so nothing is sent. Edit the channel and
+                enter its details again.
+              </Text>
+            )}
+          </div>
+          {test !== null && !test.ok && (
+            <Banner
+              variant="error"
+              icon={BANNER_ICON.error}
+              role={bannerRole("error")}
+              title="Test message not delivered"
+              description={<MessageText message={test.detail} />}
+            />
           )}
-          <RemoveChannelDialog channel={channel} />
         </div>
+        {/* Outside the grid, so it adds no gap while empty. */}
+        <StatusRegion spacing="mt-4">
+          {test?.ok === true && <SuccessBanner live={false} title="Test message delivered" />}
+        </StatusRegion>
       </div>
+      <ChannelDialog mode={{ kind: "edit", channel }} {...dialogProps("edit")} />
+      {channel.kind === "webhook" && (
+        <SigningSecretDialog channel={channel} {...dialogProps("secret")} />
+      )}
+      <RemoveChannelDialog channel={channel} onRemoved={onRemoved} {...dialogProps("remove")} />
     </SectionRow>
   );
 }
 
 type Mode = { kind: "add" } | { kind: "edit"; channel: ChannelView };
+
+type TriggerRender = ComponentProps<typeof LayerDialog.Trigger>["render"];
 
 interface Fields {
   botToken: string;
@@ -273,15 +409,27 @@ const KIND_HELP: Record<ChannelKind, string> = {
  * Add a channel, or edit one (credentials are replaced only when entered
  * again). A channel whose credentials cannot be read any more needs its
  * details entered again; a webhook repaired this way gets a new signing
- * secret, shown once, as when it was added.
+ * secret, shown once, as when it was added. Controlled: "Add channel" is its
+ * `trigger`; a row's menu opens the edit and takes the focus back.
  */
-function ChannelDialog({ mode }: { mode: Mode }) {
+function ChannelDialog({
+  mode,
+  open,
+  onOpenChange,
+  trigger,
+  returnFocus,
+}: {
+  mode: Mode;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  trigger?: TriggerRender;
+  returnFocus?: RefObject<HTMLElement | null>;
+}) {
   const router = useRouter();
   const formId = useId();
   const editing = mode.kind === "edit" ? mode.channel : null;
   /** Editing a channel whose stored credentials are unreadable: they must be entered again. */
   const reenter = editing !== null && !editing.readable;
-  const [open, setOpen] = useState(false);
   const [kind, setKind] = useState<ChannelKind>(editing?.kind ?? "telegram");
   const [label, setLabel] = useState(editing?.label ?? "");
   const [events, setEvents] = useState<string[]>([...(editing?.events ?? DEFAULT_EVENTS)]);
@@ -291,9 +439,12 @@ function ChannelDialog({ mode }: { mode: Mode }) {
   const [failure, setFailure] = useState<string | null>(null);
   const [secret, setSecret] = useState<string | null>(null);
 
-  function onOpenChange(next: boolean) {
-    setOpen(next);
-    if (next) {
+  // Each opening starts from the channel as it is now. A controlled dialog
+  // opens without `onOpenChange(true)`, so this follows `open` itself.
+  const [wasOpen, setWasOpen] = useState(open);
+  if (open !== wasOpen) {
+    setWasOpen(open);
+    if (open) {
       setKind(editing?.kind ?? "telegram");
       setLabel(editing?.label ?? "");
       setEvents([...(editing?.events ?? DEFAULT_EVENTS)]);
@@ -346,7 +497,7 @@ function ChannelDialog({ mode }: { mode: Mode }) {
       }
       await router.invalidate();
       if (saved.signingSecret !== null) setSecret(saved.signingSecret);
-      else setOpen(false);
+      else onOpenChange(false);
     } catch (err) {
       setFailure(errorText(err, "Could not save the channel."));
     } finally {
@@ -359,22 +510,13 @@ function ChannelDialog({ mode }: { mode: Mode }) {
     <LayerDialog.Root
       open={open}
       onOpenChange={onOpenChange}
+      onOpenChangeComplete={(opened: boolean) => {
+        if (!opened) returnFocus?.current?.focus();
+      }}
       disablePointerDismissal
       dismissDisabled={pending}
     >
-      <LayerDialog.Trigger
-        render={(p) =>
-          editing === null ? (
-            <Button {...p} variant="primary" icon={<PlusIcon />}>
-              Add channel
-            </Button>
-          ) : (
-            <Button {...p} variant="secondary" icon={<PencilSimpleIcon />}>
-              Edit
-            </Button>
-          )
-        }
-      />
+      {trigger !== undefined && <LayerDialog.Trigger render={trigger} />}
       <LayerDialog.Content size="lg">
         <LayerDialog.Title>
           {secret !== null
@@ -403,9 +545,9 @@ function ChannelDialog({ mode }: { mode: Mode }) {
               <ClipboardText text={secret} />
               <Banner
                 variant="alert"
-                icon={<WarningIcon weight="fill" />}
+                icon={BANNER_ICON.alert}
                 title="Copy it now"
-                description="Appflare stores it encrypted and never shows it again. Replace it from the channel if it is lost."
+                description="Appflare stores it encrypted and never shows it again. Replace it from the channel's menu if it is lost."
               />
             </div>
           ) : (
@@ -511,7 +653,7 @@ function ChannelDialog({ mode }: { mode: Mode }) {
         </LayerDialog.Body>
         <LayerDialog.Actions dismissLabel={secret !== null ? "Close" : "Cancel"}>
           {secret !== null ? (
-            <LayerDialog.Actions.Primary onClick={() => setOpen(false)}>
+            <LayerDialog.Actions.Primary onClick={() => onOpenChange(false)}>
               Done
             </LayerDialog.Actions.Primary>
           ) : (
@@ -527,16 +669,22 @@ function ChannelDialog({ mode }: { mode: Mode }) {
 }
 
 /** A generic webhook's new signing secret, shown once; the old one stops working at once. */
-function SigningSecretDialog({ channel }: { channel: ChannelView }) {
+function SigningSecretDialog({
+  channel,
+  open,
+  onOpenChange,
+  returnFocus,
+}: { channel: ChannelView } & MenuDialogProps) {
   const router = useRouter();
-  const [open, setOpen] = useState(false);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [secret, setSecret] = useState<string | null>(null);
 
-  function onOpenChange(next: boolean) {
-    setOpen(next);
-    if (next) {
+  // Each opening starts clean; see `ChannelDialog`.
+  const [wasOpen, setWasOpen] = useState(open);
+  if (open !== wasOpen) {
+    setWasOpen(open);
+    if (open) {
       setError(null);
       setSecret(null);
     }
@@ -559,16 +707,12 @@ function SigningSecretDialog({ channel }: { channel: ChannelView }) {
     <LayerDialog.Root
       open={open}
       onOpenChange={onOpenChange}
+      onOpenChangeComplete={(opened: boolean) => {
+        if (!opened) returnFocus.current?.focus();
+      }}
       disablePointerDismissal
       dismissDisabled={pending}
     >
-      <LayerDialog.Trigger
-        render={(p) => (
-          <Button {...p} variant="secondary" icon={<KeyIcon />}>
-            Replace signing secret
-          </Button>
-        )}
-      />
       <LayerDialog.Content>
         <LayerDialog.Title>
           {secret === null ? "Replace signing secret" : "New signing secret"}
@@ -596,7 +740,7 @@ function SigningSecretDialog({ channel }: { channel: ChannelView }) {
               Replace
             </LayerDialog.Actions.Primary>
           ) : (
-            <LayerDialog.Actions.Primary onClick={() => setOpen(false)}>
+            <LayerDialog.Actions.Primary onClick={() => onOpenChange(false)}>
               Done
             </LayerDialog.Actions.Primary>
           )}
@@ -606,21 +750,31 @@ function SigningSecretDialog({ channel }: { channel: ChannelView }) {
   );
 }
 
-function RemoveChannelDialog({ channel }: { channel: ChannelView }) {
+/** Asks before removing a channel; once removed, `onRemoved` moves the focus on from its row. */
+function RemoveChannelDialog({
+  channel,
+  onRemoved,
+  open,
+  onOpenChange,
+  returnFocus,
+}: { channel: ChannelView; onRemoved: (id: string) => void } & MenuDialogProps) {
   const router = useRouter();
+  const done = useRef(false);
   return (
     <ConfirmDialog
-      trigger={(p) => (
-        <Button {...p} variant="secondary-destructive" icon={<TrashIcon />}>
-          Remove
-        </Button>
-      )}
+      open={open}
+      onOpenChange={onOpenChange}
+      onOpenChangeComplete={(opened) => {
+        if (!opened && !done.current) returnFocus.current?.focus();
+      }}
       title={`Remove ${channel.label}`}
       description="Appflare stops sending to this channel and deletes its stored credentials. Messages waiting for a retry are dropped."
       confirmText={channel.label}
       actionLabel="Remove channel"
       onConfirm={async () => {
         await deleteNotificationChannel({ data: { id: channel.id } });
+        done.current = true;
+        onRemoved(channel.id);
         await router.invalidate();
       }}
     />

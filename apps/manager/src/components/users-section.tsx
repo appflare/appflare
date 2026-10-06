@@ -14,12 +14,10 @@ import {
 import {
   CrownSimpleIcon,
   DotsThreeIcon,
-  InfoIcon,
   KeyIcon,
   TrashIcon,
   UserGearIcon,
   UserPlusIcon,
-  WarningCircleIcon,
 } from "@phosphor-icons/react";
 import { useRouter } from "@tanstack/react-router";
 import { type FormEvent, useId, useState } from "react";
@@ -33,10 +31,11 @@ import {
   transferOwnership,
   type UserRow,
 } from "../server/users.functions";
+import { accountRoleLabel } from "./account";
 import { appEntryMemo } from "./app-entry-memo";
 import { BusyMark, busyActionProps } from "./busy-button";
 import { ConfirmDialog } from "./confirm-dialog";
-import { ErrorMessageBanner } from "./message-text";
+import { BANNER_ICON, bannerRole, ErrorMessageBanner } from "./message-text";
 import { ResetPasswordDialog } from "./reset-password-dialog";
 import { Section, SectionBody, SectionTable } from "./section";
 import { settingsSection } from "./settings-links";
@@ -71,8 +70,8 @@ export function UsersSection({
         <SectionBody>
           <Banner
             variant="secondary"
-            icon={<InfoIcon weight="fill" />}
-            title="Only admins can view and add users."
+            icon={BANNER_ICON.secondary}
+            title="Only admins can view and add users"
             description="Ask an admin if you need an account for someone else."
           />
         </SectionBody>
@@ -145,10 +144,7 @@ function UsersTable({
               </Table.Cell>
               <Table.Cell>{u.name}</Table.Cell>
               <Table.Cell>
-                <span className="inline-flex gap-1">
-                  <Badge variant={u.role === "admin" ? "primary" : "neutral"}>{u.role}</Badge>
-                  {u.isOwner && <Badge variant="outline">owner</Badge>}
-                </span>
+                <RoleBadge user={u} />
               </Table.Cell>
               <Table.Cell>
                 <Timestamp iso={u.createdAt} dateOnly />
@@ -168,6 +164,15 @@ function UsersTable({
       />
     </>
   );
+}
+
+/**
+ * "Owner" (always an admin), "Admin" or "Member", worded and coloured as the
+ * account menu shows the viewer's own role.
+ */
+function RoleBadge({ user }: { user: UserRow }) {
+  const role = accountRoleLabel(user);
+  return <Badge variant={role === "Member" ? "neutral" : "primary"}>{role}</Badge>;
 }
 
 function actionLabel(action: UserAction): string {
@@ -493,14 +498,14 @@ export function AddUserDialog() {
               <ClipboardText text={created.temporaryPassword} />
               <Banner
                 variant="alert"
-                icon={<WarningCircleIcon weight="fill" />}
+                icon={BANNER_ICON.alert}
                 title="Copy it now"
                 description="Appflare stores only a hash. Closing this dialog discards the password."
               />
               {created.accessPolicy === "updated" && (
                 <Banner
                   variant="secondary"
-                  icon={<InfoIcon weight="fill" />}
+                  icon={BANNER_ICON.secondary}
                   title="Added to the Cloudflare Access policy"
                   description={`${created.email} can now sign in through Cloudflare Access with that email.`}
                 />
@@ -508,7 +513,8 @@ export function AddUserDialog() {
               {created.accessPolicy === "failed" && (
                 <Banner
                   variant="error"
-                  icon={<WarningCircleIcon weight="fill" />}
+                  icon={BANNER_ICON.error}
+                  role={bannerRole("error")}
                   title="Not added to the Cloudflare Access policy"
                   description={`Cloudflare Access will keep ${created.email} out until the policy lists them. Use "Re-sync admins" under Cloudflare Access.`}
                 />
@@ -516,7 +522,8 @@ export function AddUserDialog() {
               {(created.appAccessPolicy === "failed" || created.appAccessPolicy === "missing") && (
                 <Banner
                   variant="error"
-                  icon={<WarningCircleIcon weight="fill" />}
+                  icon={BANNER_ICON.error}
+                  role={bannerRole("error")}
                   title="Not added to the Access policy of your protected apps yet"
                   description={
                     created.appAccessPolicy === "missing"
