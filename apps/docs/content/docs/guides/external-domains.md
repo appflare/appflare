@@ -37,7 +37,8 @@ Zone, DNS and Workers Routes are the permissions [custom domains](/guides/custom
 use as well. The token link in setup includes all four. If the token lacks one,
 Appflare names it where it is needed. Open **API Tokens** in the Cloudflare
 dashboard, edit the Appflare token, add the permission, and save. An edited token
-keeps its value, so nothing changes in Appflare.
+keeps its value, so nothing changes in Appflare. Appflare connected with
+[Cloudflare sign-in](/guides/cloudflare-connection/) has all four already.
 
 ## Choose the gateway domain
 

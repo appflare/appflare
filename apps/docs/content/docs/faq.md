@@ -73,4 +73,6 @@ Worker's **Deployments** page in the Cloudflare dashboard, or with
    its build bucket. See
    [Rotate the auth secret or remove Appflare](/guides/danger-zone/#remove-appflare-from-this-account).
 4. In the Cloudflare dashboard, revoke the `Appflare` API token, and any tokens you
-   created for apps.
+   created for apps. If Appflare connected with Cloudflare sign-in instead, the removal
+   withdraws it; see [Withdraw Appflare's access](/guides/cloudflare-connection/#withdraw-appflares-access)
+   to check.

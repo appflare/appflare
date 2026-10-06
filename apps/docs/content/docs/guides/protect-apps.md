@@ -186,7 +186,8 @@ tokens pass it too.
   (Edit), **Access: Organizations, Identity Providers, and Groups** (Read), and
   **Access: Service Tokens** (Edit). The token template asks for all three. An older
   token needs them added; **Token permissions** in **What this account can run**
-  names any it lacks.
+  names any it lacks. Appflare connected with
+  [Cloudflare sign-in](/guides/cloudflare-connection/) has all three already.
 
 Appflare checks both before it changes anything, at install and when you turn
 protection on.

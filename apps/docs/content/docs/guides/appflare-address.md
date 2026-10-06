@@ -19,6 +19,9 @@ Only admins can change Appflare's address.
   for apps: **Zone: Read**, **DNS: Edit** and **Workers Routes: Edit**, for that
   domain. The token link in setup includes them. If the token lacks them, the
   dialog names the missing ones and links to the token in the Cloudflare dashboard.
+  Appflare connected with [Cloudflare sign-in](/guides/cloudflare-connection/) has
+  them already, so you can also choose the address while
+  [installing from your browser](/start/browser-install/#4-choose-its-address).
 - With [Cloudflare Access](/security/#protect-with-cloudflare-access) protection on,
   the Access permissions it already uses. Without them the move is refused before
   anything changes.

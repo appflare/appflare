@@ -12,14 +12,13 @@ Home shows your installed apps and the work that needs your attention.
 
 ## Install it
 
-The easiest way is the Deploy to Cloudflare button. It copies a prebuilt Appflare
-into your GitHub or GitLab account, deploys it to your Cloudflare account, and then
-you open the setup wizard. Afterwards Appflare updates itself, and you can remove the
-copy.
-
-[![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://link.appflare.dev/deploy)
+Four ways, all ending with the same signed Appflare in your own account. Two of them
+need nothing on your computer.
 
 <Cards>
+  <Card title="Install from your browser" href="/start/browser-install/">
+    Sign in to Cloudflare at appflare.dev/deploy, pick an address, and the page deploys Appflare there.
+  </Card>
   <Card title="Deploy with the button" href="/start/deploy-button/">
     Everything happens in your browser. The page walks through the form and the clean-up.
   </Card>
@@ -28,18 +27,20 @@ copy.
   </Card>
 </Cards>
 
-The third way is a coding agent. The prompt points it at instructions on this site; it
+[![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://link.appflare.dev/deploy)
+
+The fourth way is a coding agent. The prompt points it at instructions on this site; it
 runs the installer and tells you the few steps only you can do.
 
 <AgentPrompt kind="install" />
 
-All three install the same signed release and end in the same
-[setup wizard](/start/install/#the-setup-wizard).
+[Which way to choose](/start/install/#which-way-to-choose) compares them. All four end in
+the same [setup wizard](/start/install/#the-setup-wizard).
 
 ## How it works
 
-The Deploy to Cloudflare button, or the installer, deploys one Worker, the manager, into
-your Cloudflare account. The manager has a web UI where you browse a catalog of apps
+Whichever way you install, one Worker, the manager, is deployed into your Cloudflare
+account. The manager has a web UI where you browse a catalog of apps
 that run on Workers.
 
 When you install an app, the manager creates what the app needs (KV namespaces, D1
@@ -85,6 +86,7 @@ Whichever way you install, these are created in your account:
 | KV namespace | `appflare-kv` (with the button, named after the project) |
 | Workflow | `appflare-jobs` |
 | Cron trigger | every 30 minutes |
+| Custom domain | only when you give Appflare [its own address](/guides/appflare-address/), during setup or later |
 
 The D1 database holds users, settings, install records, and job logs. The KV
 namespace caches the catalog. The Workflow runs installs, updates, rollbacks, and
@@ -95,17 +97,19 @@ releases. It starts update jobs on its own only when you turn on
 ## The parts
 
 - **The manager** is the Worker above, with its web UI.
-- **The Deploy to Cloudflare button** or **the installer**, `create-appflare`, puts
-  the manager into your account. Everything after that, updates and removal included,
-  happens in the manager's settings pages.
+- **The deploy page** at [appflare.dev/deploy](/deploy/), **the Deploy to Cloudflare
+  button**, or **the installer**, `create-appflare`, puts the manager into your
+  account.
+- Everything after that, updates and removal included, happens in the manager's
+  settings pages.
 - **The catalog** is a public GitHub repository, `appflare/catalog`. Its CI builds
   each app from a pinned commit, signs it, and publishes it. See
   [How the catalog works](/catalog/how-it-works/).
 
 ## Next
 
-- [Deploy with the button](/start/deploy-button/), or compare
-  [the three ways to install](/start/install/).
+- [Install from your browser](/start/browser-install/), or compare
+  [the four ways to install](/start/install/#which-way-to-choose).
 - [Install an app](/guides/install-apps/) from the catalog.
 - [Submit an app](/catalog/submit/) to the catalog.
-- [Security model](/security/): what the manager does with your API token.
+- [Security model](/security/): what the manager does with its access to your account.

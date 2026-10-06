@@ -1,0 +1,247 @@
+---
+title: Install from your browser
+description: Install Appflare from appflare.dev/deploy, what Appflare's hosted installer receives and keeps, and how to continue or remove an unfinished installation.
+---
+
+[appflare.dev/deploy](/deploy/) installs Appflare into your own Cloudflare account. You
+sign in to Cloudflare, choose an account, a name and an address, and the page deploys
+Appflare and opens it at that address, where you create the owner account. There is no
+API token to create, no Git account involved, and nothing to install on your computer.
+
+A web page cannot create Workers by itself, because Cloudflare's API does not accept
+requests from one. So the deploying is done by Appflare's hosted installer, a small
+open-source service behind the page, and for the few minutes of the install it can act
+on your account. [What the installer sees and keeps](#what-the-installer-sees-and-keeps)
+spells out what that means. If you would rather no service of Appflare's ever touches
+your account, choose [another way to install](/start/install/#which-way-to-choose).
+
+## Before you start
+
+- **A Cloudflare account.** The free Workers plan works.
+- **An address for Appflare.** Either a domain on that account with the status
+  **Active**, or a `workers.dev` subdomain. An account with neither gets a `workers.dev`
+  subdomain the first time someone opens **Workers & Pages** in the Cloudflare dashboard.
+- **A free cron trigger.** Appflare checks for updates on a schedule, which uses one
+  cron trigger. A free account has five. If all five are in use, the deploy still
+  finishes and Appflare works, but the page says its regular checks, such as looking
+  for updates, do not run on their own. Free a trigger in another Worker to turn them
+  on.
+- **A browser that keeps site data for appflare.dev**, with JavaScript on. Private
+  windows often refuse site data, and then the page cannot sign in.
+
+If an administrator of the account turned off **Public OAuth App access** (in the
+Cloudflare dashboard under **Manage Account > Members > Settings**), Cloudflare refuses
+new sign-ins from apps such as Appflare. Install with
+[the button or the installer](/start/install/) instead.
+
+## Install
+
+The page shows its steps along the top: Connect, Account, Name, Address, Review, Deploy,
+and Set up. Nothing is created in your account before you select **Deploy Appflare** on
+the review.
+
+### 1. Connect Cloudflare
+
+Select **Connect Cloudflare**. Cloudflare asks you to sign in, to choose the accounts
+Appflare may reach, and to allow its permissions. Allow all of them. Appflare asks for
+every permission it uses at once, so it never has to come back for more when you turn
+on a feature later, and it refuses a sign-in that leaves any out. **The permissions
+Appflare asks for**, on the page, lists them.
+
+They are the permissions of the [API token](/start/install/#1-connect-cloudflare) other
+installs use, without Billing: Cloudflare offers no Billing permission to apps that sign
+in this way. Appflare then works the [Workers plan](/guides/install-apps/#workers-free-or-workers-paid)
+out from what the account can run, or you choose it in its settings.
+
+Cloudflare sends you back to appflare.dev, which finishes the sign-in in your browser.
+
+### 2. Choose the account
+
+When your login reaches more than one account, choose the one Appflare goes into. With
+one account the page skips this step. If the account has installations that never
+finished, the page lists them first. See
+[Continue or remove an unfinished installation](#continue-or-remove-an-unfinished-installation).
+
+### 3. Name it
+
+The name is `appflare` unless you change it. Appflare's Worker and its D1 database take
+this name, its KV namespace is `<name>-kv` and its Workflow `<name>-jobs`. Use lowercase
+letters, digits and dashes. Keep the suggestion unless the account already has an
+Appflare; the page refuses a name that is in use.
+
+### 4. Choose its address
+
+You open Appflare and sign in at this address, and your passkeys belong to it, so choose
+the one you want to keep.
+
+- **On your domain.** The page proposes `appflare.<your domain>`. Change the part in
+  front, or pick another domain of the account. Cloudflare creates the DNS record and
+  the certificate.
+- **Cloudflare's free address**, `https://<name>.<your subdomain>.workers.dev`.
+
+Before you go on, the page checks a name on your domain. It refuses one that already
+has a DNS record (a wildcard record that covers it counts), is attached to another
+Worker, or is caught by a Workers route, so the install never takes over something that
+serves there now. Choose another name, or free that one first.
+
+You can move Appflare to another address later; see
+[Give Appflare its own address](/guides/appflare-address/).
+
+### 5. Check before you deploy
+
+The review shows the account, the name, the full address, and the Appflare release:
+the newest one, with its signature checked. Under **Created in** it lists everything the
+install will create:
+
+- the Worker, named after the name you chose;
+- its D1 database and KV namespace;
+- its Workflow, and a schedule that runs every 30 minutes;
+- the custom domain with its DNS record and certificate, or the `workers.dev` address.
+
+Nothing that is already in the account is changed. Select **Deploy Appflare**.
+
+### 6. Deploy
+
+A progress bar names each step: check the release, create the database and the
+key-value storage, upload Appflare's files and Appflare itself, set up background jobs,
+schedule regular checks, store the setup key, turn on the `workers.dev` address, connect
+your domain, and wait for Appflare to answer. The installer checks the release's Ed25519
+signature and the sha256 of every file before it uploads anything.
+
+You can close the tab while it runs. The installation keeps its progress, and the page
+continues it when you open [appflare.dev/deploy](/deploy/) again in the same browser,
+after you connect Cloudflare again. If the browser does not let the page remember the
+installation, the page says so: keep that tab open until the end.
+
+The last step waits until your new Appflare answers at the address you chose and proves
+it belongs to this installation. A page that merely answers is not enough. Nothing is
+sent to an address before it has proved that.
+
+### 7. Hand over and open Appflare
+
+The page checks the address once more, then gives your new Appflare its Cloudflare
+connection, straight from your browser. Appflare renews the connection right away, so
+the copy your browser held stops working and only Appflare can renew it from then on.
+The page shows **Appflare is ready** and opens Appflare at its address.
+
+### 8. Create the owner account
+
+Appflare opens at the owner step of its [setup wizard](/start/install/#the-setup-wizard),
+because the page already connected Cloudflare. Enter a name, an email, and a password of
+at least 12 characters. Then [check your account](/start/install/#3-check-your-account)
+and select **Finish**.
+
+When Appflare is on your domain, setup skips **Where should Appflare live?**, because
+it already lives there. On `workers.dev`, in an account with an active domain, setup offers to move
+it.
+
+The link that opens the owner step works once, for 30 minutes. If setup says **This
+setup link no longer works**, open [appflare.dev/deploy](/deploy/) again in the browser
+you installed from, connect Cloudflare, and select **Continue**. The page opens Appflare
+with a new link.
+
+Someone who opens your new Appflare before you do, in another browser, sees **Finish
+where you installed Appflare** and cannot create the owner. The same screen offers
+**Connect with an API token instead**, which works for anyone who can create a token for
+the account. Such a person controls the account already.
+
+Once the owner account exists, Appflare tells the installer, and the installer deletes
+its record of the installation.
+
+## If the domain takes a while
+
+A new name on your domain needs a DNS record and a certificate before browsers can open
+it. That usually takes one to five minutes, sometimes longer. While it waits, the page
+says what Cloudflare is doing, keeps checking by itself, and offers **Check now**. It
+never gives up on its own.
+
+After half a minute of waiting, the page also offers **Open at workers.dev instead**.
+Appflare then opens at its `workers.dev` address, and your sign-in and passkeys belong
+to that address. Moving to the domain later, from
+[Appflare's address](/guides/appflare-address/) in its settings, means signing in again
+there. The page never switches addresses without you choosing it.
+
+## Continue or remove an unfinished installation
+
+The installer keeps an unfinished installation until its owner account exists or you
+remove it. Closing the tab, or leaving it for days, removes neither the installation
+nor what it created.
+
+To continue, open [appflare.dev/deploy](/deploy/) in the browser you started in. It says
+**Continue installing Appflare**. Connect Cloudflare (the page cannot renew its access by
+itself, so it usually asks again), and select **Continue** next to the installation. It
+picks up where it stopped, at the same address, and never starts a second deploy.
+
+The page lists, under the account, installations that were started in another browser.
+Only the browser that started one can continue it, because only that browser holds the
+key to it. From any browser whose Cloudflare login reaches the account, you can remove
+it.
+
+To remove one, select **Remove…** next to it, or **Remove this installation…** after a
+failed step. The page lists what goes: whatever the installation created, as far as it
+got. Anything that was in the account before is left alone. Appflare's data goes with
+its database, which cannot be undone. When the removal finishes, the installer deletes
+its record.
+
+An Appflare whose owner account exists is no longer an unfinished installation. Remove
+it from its own settings, as
+[Remove Appflare](/guides/danger-zone/#remove-appflare-from-this-account) describes.
+
+### When a step fails
+
+**The deployment stopped** shows the step and Cloudflare's reason. Fix the cause, if it
+names one, and select **Try again**. The installation continues from that step.
+
+**Appflare is deployed but not connected yet** means the deploy worked and the handover
+did not. The message says why. Most often your new Appflare does not answer yet, or
+someone is finishing its setup in another browser with an API token. **Try again** is
+safe: nothing is handed to an address that has not proved it is yours. When the page
+says your Cloudflare connection ran out or was not accepted, connect Cloudflare again
+with the account Appflare is installed in, and allow every permission.
+
+## What the installer sees and keeps
+
+- **It receives a short-lived access token.** Every request the page sends the
+  installer carries the access token Cloudflare issued when you connected. It lasts
+  about an hour and carries every permission you allowed Appflare, which is much more
+  than deploying needs. While it is valid, the installer could use it for anything those
+  permissions allow in the accounts you chose. The installer uses it only to deploy
+  Appflare, and it neither stores nor logs it. Throwing the token away does not cancel
+  it at Cloudflare, though. It stays valid until it expires.
+- **It never receives the refresh token**, the part that keeps Appflare connected
+  afterwards. Your browser hands that to your new Appflare directly and then forgets
+  it, and Appflare renews it at once. This describes the published code. An installer
+  that ran other code could not take the refresh token from your browser, but while
+  the access token is valid it could use that token to do more than deploy, for
+  example change the Appflare it is deploying. That is the trust described below.
+- **It keeps a record of the installation** until setup finishes: your Cloudflare
+  account id, the name, the address, the Appflare release, the ids of what it created,
+  and how far it got. No token, no password, nothing about the owner and nothing about
+  your apps. The record has no time limit. It is deleted when your new Appflare's owner
+  account is created, or when you remove the unfinished installation.
+- **Its code is open source**, in
+  [apps/installer](https://github.com/appflare/appflare/tree/main/apps/installer) of
+  Appflare's repository, so you can read what it does with your token. You cannot check
+  that the service on appflare.dev runs exactly that code. Using it is a decision to
+  trust it.
+
+The deploy page and the page Cloudflare sends you back to run no analytics; see
+[Privacy](/privacy/#installing-appflare-from-this-site).
+
+Once Appflare has its connection, it talks to Cloudflare on its own. Your Appflare and
+your apps keep working if appflare.dev is down. Two things still go through appflare.dev
+later: signing in with Cloudflare again from Appflare's settings comes back through a
+page there, and it uses Appflare's registration with Cloudflare. An API token needs
+neither; see [Appflare's Cloudflare connection](/guides/cloudflare-connection/).
+
+To keep every Appflare service out of your account, install with
+[the Deploy to Cloudflare button](/start/deploy-button/) or
+[the installer](/start/install/). Both connect Appflare with an API token you create,
+which goes from the Cloudflare dashboard into your own Appflare and nowhere else.
+
+## Afterwards
+
+Appflare connects with Cloudflare sign-in and renews its access by itself. If Cloudflare
+ever stops accepting it, admins see **Reconnect Cloudflare**. To switch to an API token,
+or to withdraw Appflare's access, see
+[Appflare's Cloudflare connection](/guides/cloudflare-connection/).

@@ -26,8 +26,11 @@ Appflare itself can have a domain too: see
 If the token lacks them, the **Add domain** dialog says which ones. Open **API
 Tokens** in the Cloudflare dashboard, edit the Appflare token, add the permissions
 for your domains, and save. An edited token keeps its value, so nothing changes in
-Appflare. You can also create a new token and replace the old one with **Rotate token** under
-**Settings > Your account > Cloudflare connection**.
+Appflare. You can also create a new token and replace the old one with **Change how
+Appflare connects** under **Settings > Your account > Cloudflare connection**.
+
+Appflare connected with [Cloudflare sign-in](/guides/cloudflare-connection/) has these
+permissions already.
 
 ## Add a domain
 

@@ -23,7 +23,7 @@ describe("Markdown for agents", () => {
   it("writes a Callout as a blockquote led by its title", async () => {
     const text = await docsLlms.page(page("start", "install"));
     expect(text).toContain(
-      "> **The easiest way: the Deploy to Cloudflare button**\n>\n> Everything happens in your browser.",
+      "> **Nothing to install on your computer**\n>\n> Two ways work entirely in your browser.",
     );
   });
 

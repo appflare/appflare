@@ -4,6 +4,7 @@
   "pages": [
     "---Getting started---",
     "start/overview",
+    "start/browser-install",
     "start/deploy-button",
     "start/install",
     "---Using Appflare---",
@@ -23,6 +24,7 @@
     "guides/update-appflare",
     "guides/users",
     "guides/forgot-password",
+    "guides/cloudflare-connection",
     "guides/danger-zone",
     "---Catalog---",
     "catalog/how-it-works",

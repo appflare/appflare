@@ -1,29 +1,52 @@
 ---
 title: Install Appflare
-description: The three ways to install, the installer, and the setup wizard.
+description: The four ways to install, which one to choose, the installer, and the setup wizard.
 ---
 
-## Three ways to install
+## Four ways to install
 
-All three deploy the same signed release into your own account and end in the same
+All four deploy the same signed release into your own account and end in the same
 [setup wizard](#the-setup-wizard).
 
-<Callout title="The easiest way: the Deploy to Cloudflare button">
+<Callout title="Nothing to install on your computer">
 
-Everything happens in your browser. The button copies a prebuilt Appflare into your
-GitHub or GitLab account, deploys it to your Cloudflare account, and then you open the
-setup wizard. Afterwards Appflare updates itself, and you can remove the copy.
-[Deploy with the button](/start/deploy-button/) walks through each step.
+Two ways work entirely in your browser.
+[Install from your browser](/start/browser-install/) at [appflare.dev/deploy](/deploy/)
+signs you in to Cloudflare, deploys Appflare, and opens it at the address you chose.
+The Deploy to Cloudflare button goes through a copy of Appflare in your GitHub or
+GitLab account, which you remove afterwards; [Deploy with the button](/start/deploy-button/)
+walks through it.
 
 [![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://link.appflare.dev/deploy)
 
 </Callout>
 
-| | The Deploy to Cloudflare button | The installer | An AI agent |
-| --- | --- | --- | --- |
-| How | Select the button in your browser: [Deploy with the button](/start/deploy-button/) | Run `npx create-appflare` in a terminal | Copy the prompt below into a coding agent; it runs the installer |
-| You need | A GitHub or GitLab account | Node.js 22 | Node.js 22 and a coding agent |
-| Leaves behind | A copy of Appflare in your Git account and a Workers Builds connection, which you remove afterwards | Nothing | Nothing |
+| | From your browser | The Deploy to Cloudflare button | The installer | An AI agent |
+| --- | --- | --- | --- | --- |
+| How | Open [appflare.dev/deploy](/deploy/): [Install from your browser](/start/browser-install/) | Select the button in your browser: [Deploy with the button](/start/deploy-button/) | Run `npx create-appflare` in a terminal | Copy the prompt below into a coding agent; it runs the installer |
+| You need | A Cloudflare login | A GitHub or GitLab account | Node.js 22 | Node.js 22 and a coding agent |
+| Appflare connects with | Cloudflare sign-in, set up by the page | An API token you create during setup | An API token you create during setup | An API token you create during setup |
+| Who touches your account | Appflare's hosted installer, with a short-lived token, during the install | Cloudflare's Workers Builds | Wrangler, with your login | Wrangler, with your login |
+| Leaves behind | Nothing once setup is done | A copy of Appflare in your Git account and a Workers Builds connection, which you remove afterwards | Nothing | Nothing |
+
+### Which way to choose
+
+- **From your browser** is the shortest: no token to create and no Git account. You
+  choose Appflare's address before it is deployed, so you sign in and add passkeys
+  there from the first visit. The other ways start on `workers.dev`, and setup's
+  **Where should Appflare live?** step moves Appflare to your domain after the owner
+  account exists; you then sign in again there. The price is trust. For a few minutes
+  Appflare's hosted installer holds a token that can do everything Appflare can.
+  [What the installer sees and keeps](/start/browser-install/#what-the-installer-sees-and-keeps)
+  explains it.
+- **The button** suits you if no Appflare service should touch your account and you
+  have a GitHub or GitLab account. You clean up a repository copy afterwards.
+- **The installer** suits you if you have a terminal and Node.js. It runs on your
+  computer with your own wrangler login and leaves nothing behind.
+- **An agent** runs the installer for you and tells you the steps only you can do.
+
+Whichever you pick, you can change how Appflare connects to Cloudflare later; see
+[Appflare's Cloudflare connection](/guides/cloudflare-connection/).
 
 <AgentPrompt kind="install" />
 
@@ -124,6 +147,11 @@ Open the manager's address. Until setup is finished, every page of the manager
 leads to the setup wizard: one page with three steps (four when the account has an
 active domain), each shown in place of the one before.
 
+After an [install from your browser](/start/browser-install/), the page that installed
+Appflare does step 1 for you and opens Appflare at step 2. Anyone who opens that
+Appflare in another browser first sees **Finish where you installed Appflare**, with
+**Connect with an API token instead** as the way to do step 1 here.
+
 ### 1. Connect Cloudflare
 
 The manager needs a Cloudflare API token to create and update apps in your account.
@@ -162,7 +190,9 @@ your domains. **Later** skips it. See
 Only the browser that saved the token can do this step, for 30 minutes. Anyone else
 who opens the manager in the meantime sees only step 1, and once the owner exists
 they see the sign-in page. If you close the browser before this step, open the
-manager again after 30 minutes and paste the token again.
+manager again after 30 minutes and paste the token again. After an install from your
+browser, the browser the deploy page brought here holds the step instead; if its link
+ran out, see [Create the owner account](/start/browser-install/#8-create-the-owner-account).
 
 ### 3. Check your account
 
@@ -242,9 +272,12 @@ Worker, through the Cloudflare API. Saving it redeploys the manager, which takes
 few seconds. The token is never shown again, never written to the database, and
 never included in logs. See [Security model](/security/).
 
-To replace the token later, open **Settings > Your account > Cloudflare connection** and
-select **Rotate token**. The new token must be for the same account. Revoke the old
-one in the Cloudflare dashboard afterwards.
+To replace the token later, open **Settings > Your account > Cloudflare connection**,
+select **Change how Appflare connects**, and choose **Use a new API token**. The new
+token must be for the same account. Revoke the old one in the Cloudflare dashboard
+afterwards. The same choice can switch Appflare to Cloudflare sign-in, which grants
+every permission Appflare uses except Billing, all at once. See
+[Appflare's Cloudflare connection](/guides/cloudflare-connection/).
 
 ## Next
 

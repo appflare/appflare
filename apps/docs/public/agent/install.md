@@ -16,10 +16,11 @@ Background, if you need it:
 - Change nothing in their Cloudflare account except through the Appflare installer. If the installer refuses because something already exists, stop and ask them. Never delete anything.
 - Never use `--allow-unsigned` and never set `APPFLARE_DEV`.
 - Work in a new directory outside their projects. The installer writes nothing to the current directory.
+- These steps install with the installer, and the manager then connects to Cloudflare with an API token the user creates. If Node.js 22 is missing and the user does not want to install it, or they would rather not run anything on their computer, tell them they can install from their browser at https://appflare.dev/deploy/ (guide: https://appflare.dev/start/browser-install.md), and stop. That page needs their own Cloudflare sign-in in their own browser: do not drive it for them, and do not open it with a browser automation tool.
 
 ## Steps
 
-1. Run `node --version`. Appflare needs Node.js 22 or newer. If it is older, stop and tell the user.
+1. Run `node --version`. Appflare needs Node.js 22 or newer. If it is older, stop and tell the user, and mention the browser install above.
 2. Run `npx wrangler whoami`. If it says they are not logged in, run `npx wrangler login`, tell them to approve the request on the page it opens in their browser, and wait until the command finishes.
 3. If `whoami` lists more than one account, show them the account names and ask which one to use. Set `CLOUDFLARE_ACCOUNT_ID` to that account's id for every command below.
 4. The installer is the npm package `create-appflare`, run as `npx create-appflare`. Type the name exactly: never run an npm package with a similar name, because it would run with the user's Cloudflare login. It downloads the release from GitHub; if GitHub refuses or rate-limits the download, put `GITHUB_TOKEN="$(gh auth token)"` in front of the installer command, which keeps the token out of the output.
@@ -50,4 +51,4 @@ When the account has an active domain, setup shows "Where should Appflare live?"
 
 ## End with
 
-The manager's URL, the version the installer reported (or that the manager had not answered yet), and anything that did not work. After setup, everything else happens in the manager: updates in Settings > Updates (`/settings/updates#appflare` on the manager's address), sandbox builds in Settings > Building apps (`/settings/building#sandbox`), and removal in Settings > Your account > Danger zone (`/settings/account#danger-zone`).
+The manager's URL, the version the installer reported (or that the manager had not answered yet), and anything that did not work. After setup, everything else happens in the manager: updates in Settings > Updates (`/settings/updates#appflare` on the manager's address), sandbox builds in Settings > Building apps (`/settings/building#sandbox`), and removal in Settings > Your account > Danger zone (`/settings/account#danger-zone`). To replace the API token later, or to switch to Cloudflare sign-in, an admin uses Settings > Your account > Cloudflare connection (guide: https://appflare.dev/guides/cloudflare-connection.md).
