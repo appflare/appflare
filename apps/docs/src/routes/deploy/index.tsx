@@ -1,3 +1,5 @@
+// The apps the permissions' reasons name, worked out from the catalog when the site is built.
+import examples from "virtual:appflare-scope-examples";
 import { createFileRoute } from "@tanstack/react-router";
 import { DeployPanel, NO_ACTIONS } from "../../components/deploy/deploy-panel.tsx";
 import { DeployLayout } from "../../components/deploy/deploy-shell.tsx";
@@ -35,9 +37,15 @@ function DeployPage() {
   return (
     <DeployLayout>
       {flow === null ? (
-        <DeployPanel view={view} actions={NO_ACTIONS} canGoBack={false} />
+        <DeployPanel view={view} actions={NO_ACTIONS} canGoBack={false} examples={examples} />
       ) : (
-        <DeployPanel view={view} actions={flow} canGoBack={flow.canGoBack()} />
+        <DeployPanel
+          view={view}
+          actions={flow}
+          canGoBack={flow.canGoBack()}
+          accountStep={flow.choosesAccount()}
+          examples={examples}
+        />
       )}
     </DeployLayout>
   );

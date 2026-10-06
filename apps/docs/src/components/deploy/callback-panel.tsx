@@ -60,15 +60,12 @@ export interface CallbackPanelProps {
   onCancel?: () => void;
 }
 
-/** The Connect step of the deploy journey, for the sign-in the deploy page started. */
-const CONNECT = { step: 1, count: 7 };
-
 export function CallbackPanel({ view, onConfirm, onCancel }: CallbackPanelProps) {
   switch (view.step) {
     case "working":
     case "done":
       return (
-        <DeployCard meter={CONNECT} title="Connecting Cloudflare">
+        <DeployCard meter={null} title="Connecting Cloudflare">
           <Working label="Finishing the Cloudflare sign-in…" />
           <noscript>
             <Text variant="secondary">This page needs JavaScript.</Text>

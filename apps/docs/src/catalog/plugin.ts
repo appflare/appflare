@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs";
 import type { Plugin } from "vite";
+import { scopeExamples } from "../deploy/scope-examples.ts";
 import type { OgPicture } from "../og/picture.ts";
 import { fetchCatalogSnapshot } from "./fetch-snapshot.ts";
 import { type SiteCatalog, siteCatalog } from "./site-catalog.ts";
@@ -74,17 +75,25 @@ export const OG_ICONS_MODULE = "virtual:appflare-catalog-og-icons";
 /** The apps' first screenshots for the OpenGraph cards, imported by the same route. */
 export const OG_SCREENSHOTS_MODULE = "virtual:appflare-catalog-og-screenshots";
 
+/**
+ * The apps the deploy page names as examples of each permission it asks
+ * for, worked out from the catalog (`deploy/scope-examples.ts`), so the
+ * page carries a few names and not the whole catalog.
+ */
+export const SCOPE_EXAMPLES_MODULE = "virtual:appflare-scope-examples";
+
 /** A module whose default export is `value`, parsed from JSON (faster than an object literal). */
 function jsonModule(value: unknown): string {
   return `export default JSON.parse(${JSON.stringify(JSON.stringify(value))});\n`;
 }
 
-/** Serves the loaded catalog to the pages as three virtual modules, each made when first loaded. */
+/** Serves the loaded catalog to the pages as virtual modules, each made when first loaded. */
 export function catalogData(catalog: LoadedCatalog): Plugin {
   const modules = new Map<string, unknown>([
     [`\0${CATALOG_MODULE}`, catalog.site],
     [`\0${OG_ICONS_MODULE}`, catalog.ogIcons],
     [`\0${OG_SCREENSHOTS_MODULE}`, catalog.ogScreenshots],
+    [`\0${SCOPE_EXAMPLES_MODULE}`, scopeExamples(catalog.site.apps)],
   ]);
   return {
     name: "appflare-catalog-data",

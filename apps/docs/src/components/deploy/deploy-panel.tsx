@@ -15,7 +15,6 @@ import {
   WarningIcon,
 } from "@phosphor-icons/react";
 import { type FormEvent, type ReactNode, useEffect, useRef } from "react";
-import { REQUESTED_SCOPES } from "../../deploy/authorize.ts";
 import type {
   AddressChoice,
   DeployView,
@@ -28,9 +27,17 @@ import type {
 import { hostnameFor, workersDevAddress } from "../../deploy/flow.ts";
 import type { StepAnswer, Unfinished, Zone } from "../../deploy/installer-api.ts";
 import { DEPLOY_PATH } from "../../deploy/paths.ts";
+import type { ScopeExamples } from "../../deploy/scope-examples.ts";
 import { SITE_URL } from "../../lib/shared.ts";
 import { BusyButton } from "./busy-button.tsx";
-import { DeployCard, More, STEP_TITLE_ID } from "./deploy-shell.tsx";
+import {
+  DeployCard,
+  JourneyContext,
+  type JourneyStep,
+  More,
+  STEP_TITLE_ID,
+} from "./deploy-shell.tsx";
+import { ScopeList } from "./scope-list.tsx";
 
 /**
  * One step of the deploy page, drawn from the state in `deploy/flow.ts`.
@@ -194,10 +201,26 @@ export function stageOf(view: DeployView): Stage | null {
   }
 }
 
-/** The step meter's position for a view, or null outside the journey. */
-export function meterOf(view: DeployView): { step: number; count: number } | null {
-  const stage = stageOf(view);
-  return stage === null ? null : { step: STAGES.indexOf(stage) + 1, count: STAGES.length };
+/**
+ * The journey step a view shows on its meter, or null for a view without
+ * one: nothing before Cloudflare is connected (a first screen should not
+ * count steps at you), nothing while the page works or asks about an
+ * unfinished installation, and nothing from Deploy on, where the deploy's
+ * own progress is the bar.
+ */
+export function meterOf(view: DeployView): JourneyStep | null {
+  switch (view.step) {
+    case "account":
+      return "account";
+    case "name":
+      return "name";
+    case "address":
+      return "address";
+    case "review":
+      return "review";
+    default:
+      return null;
+  }
 }
 
 /**
@@ -256,9 +279,11 @@ const NOTICES: Record<Notice, string> = {
 function Welcome({
   view,
   actions,
+  examples,
 }: {
   view: Extract<DeployView, { step: "welcome" }>;
   actions: DeployActions;
+  examples: ScopeExamples;
 }) {
   return (
     <DeployCard
@@ -286,12 +311,7 @@ function Welcome({
           Every permission it uses, all at once, so it never has to ask again when you turn on a
           feature later. Nothing is created until you check and press Deploy.
         </Text>
-        <ul className="grid list-disc gap-0.5 pl-5 font-mono text-[0.9em]" translate="no">
-          {REQUESTED_SCOPES.map((scope) => (
-            <li key={scope}>{scope}</li>
-          ))}
-          <li>offline_access</li>
-        </ul>
+        <ScopeList examples={examples} />
         <Text variant="secondary">
           Billing is not among them, so Appflare works your Workers plan out from what the account
           can run, or asks you in its settings.
@@ -1403,22 +1423,39 @@ export interface DeployPanelProps {
   view: DeployView;
   actions: DeployActions;
   canGoBack: boolean;
+  /**
+   * Whether this sign-in reaches several accounts, so choosing one is a step
+   * of its own; when it is not, the meter does not count it.
+   */
+  accountStep?: boolean;
+  /** Example apps for the permissions' reasons, from the catalog the site is built with. */
+  examples?: ScopeExamples;
 }
 
 /** The current step, in its card. */
-export function DeployPanel({ view, actions, canGoBack }: DeployPanelProps) {
+export function DeployPanel({
+  view,
+  actions,
+  canGoBack,
+  accountStep = false,
+  examples = {},
+}: DeployPanelProps) {
   useFocusOnStepChange(view.step);
-  return <Step view={view} actions={actions} canGoBack={canGoBack} />;
+  return (
+    <JourneyContext.Provider value={{ accountStep }}>
+      <Step view={view} actions={actions} canGoBack={canGoBack} examples={examples} />
+    </JourneyContext.Provider>
+  );
 }
 
-function Step({ view, actions, canGoBack }: DeployPanelProps) {
+function Step({ view, actions, canGoBack, examples = {} }: DeployPanelProps) {
   switch (view.step) {
     case "loading":
       return <Loading view={view} />;
     case "unavailable":
       return <Unavailable view={view} />;
     case "welcome":
-      return <Welcome view={view} actions={actions} />;
+      return <Welcome view={view} actions={actions} examples={examples} />;
     case "working":
       return (
         <DeployCard meter={meterOf(view)} title="Connected to Cloudflare">

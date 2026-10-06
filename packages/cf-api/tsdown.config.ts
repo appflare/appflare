@@ -36,6 +36,15 @@ export default defineConfig([
     target: "es2023",
     clean: false,
   },
+  // `./scope-reasons`: why each permission is asked for, data only, for the
+  // deploy page and the manager's settings.
+  {
+    ...shared,
+    entry: ["src/oauth-scope-reasons.ts"],
+    platform: "neutral",
+    target: "es2023",
+    clean: false,
+  },
   // `./dev`: loadDevContext() reads `.env` from disk; Node only.
   { ...shared, entry: ["src/dev.ts"], platform: "node", target: "node22", clean: false },
 ]);

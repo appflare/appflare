@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import type { DeployView } from "../../deploy/flow.ts";
 import { CallbackPanel } from "./callback-panel.tsx";
 import { createdItems, DeployPanel, meterOf, NO_ACTIONS, stageOf } from "./deploy-panel.tsx";
-import { InstallerTerms, OtherWays } from "./deploy-shell.tsx";
+import { InstallerTerms, journeyPosition, OtherWays } from "./deploy-shell.tsx";
 import { SAMPLE_CALLBACK_VIEWS, SAMPLE_SECRETS, SAMPLE_VIEWS } from "./sample-views.ts";
 
 function render(view: DeployView, canGoBack = true): string {
@@ -42,11 +42,51 @@ describe("DeployPanel", () => {
     expect(html).not.toContain("animate-spin");
   });
 
-  it("shows where the step is in the journey on the meter", () => {
-    expect(meterOf(sample("review"))).toEqual({ step: 5, count: 7 });
-    expect(text(render(sample("review")))).toContain("Step 5 of 7");
+  it("counts no steps before Cloudflare is connected", () => {
+    for (const name of ["loading", "welcome", "welcome-resume", "unavailable"]) {
+      expect(meterOf(sample(name))).toBeNull();
+      expect(render(sample(name))).not.toContain('role="meter"');
+    }
+  });
+
+  it("shows a slim bar and the step's name after sign-in, the count only for screen readers", () => {
+    const steps: Array<[string, string]> = [
+      ["account", "Choose an account"],
+      ["name", "Name"],
+      ["address-domain", "Address"],
+      ["review", "Review"],
+    ];
+    for (const [name, label] of steps) {
+      const html = renderToStaticMarkup(
+        <DeployPanel view={sample(name)} actions={NO_ACTIONS} canGoBack accountStep />,
+      );
+      expect(html).toContain('role="meter"');
+      expect(text(html)).toContain(label);
+      expect(text(html)).not.toMatch(/Step \d+ of \d+/);
+    }
+    // With several accounts: account 1, name 2, address 3, review 4, of 5 (the deploy is the last).
+    const review = renderToStaticMarkup(
+      <DeployPanel view={sample("review")} actions={NO_ACTIONS} canGoBack accountStep />,
+    );
+    expect(review).toMatch(/aria-valuenow="4"[^>]*|aria-valuemax="5"/);
+    expect(review).toContain('aria-valuetext="Step 4 of 5"');
+  });
+
+  it("leaves no gap in the bar when there is no account to choose", () => {
+    expect(journeyPosition("name", false)).toEqual({ step: 1, count: 4 });
+    expect(journeyPosition("address", false)).toEqual({ step: 2, count: 4 });
+    expect(journeyPosition("review", false)).toEqual({ step: 3, count: 4 });
+    expect(journeyPosition("account", true)).toEqual({ step: 1, count: 5 });
+    expect(journeyPosition("name", true)).toEqual({ step: 2, count: 5 });
+    expect(render(sample("name"))).toContain('aria-valuetext="Step 1 of 4"');
+  });
+
+  it("hides the journey's bar from the deploy on, and outside the journey", () => {
+    for (const name of ["deploying", "deploy-failed", "handing-off", "opening", "set-up"]) {
+      expect(meterOf(sample(name))).toBeNull();
+    }
     expect(stageOf(sample("confirm-remove"))).toBeNull();
-    expect(text(render(sample("confirm-remove")))).not.toContain("of 7");
+    expect(render(sample("confirm-remove"))).not.toContain('role="meter"');
   });
 
   it("gives every step a title that can take the focus", () => {
@@ -70,10 +110,13 @@ describe("DeployPanel", () => {
     const t = text(html);
     expect(t).toContain("Connect Cloudflare");
     expect(t).toContain("What Appflare asks Cloudflare for");
-    // In the page for find-in-page, but folded away.
-    expect(html).toContain("workers-scripts.write");
-    expect(html).toContain("offline_access");
-    expect(html).toMatch(/<div[^>]*hidden[^>]*>(?:(?!<\/div>).)*workers-scripts\.write/s);
+    // In the page for find-in-page, but folded away: each permission by name only.
+    expect(html).toMatch(/<div[^>]*hidden[^>]*>(?:(?!<\/div>).)*Workers Scripts/s);
+    expect(t).toContain("Offline access");
+    expect(html).toContain('aria-label="Why Appflare needs Workers Scripts"');
+    // The raw ids wait inside each Why? popover.
+    expect(html).not.toContain("workers-scripts.write");
+    expect(html).not.toContain("offline_access");
   });
 
   it("reviews the account, name, complete address and release, with what gets created on demand", () => {

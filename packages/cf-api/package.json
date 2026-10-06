@@ -19,6 +19,11 @@
       "types": "./dist/oauth.d.ts",
       "import": "./dist/oauth.js"
     },
+    "./scope-reasons": {
+      "@appflare/source": "./src/oauth-scope-reasons.ts",
+      "types": "./dist/oauth-scope-reasons.d.ts",
+      "import": "./dist/oauth-scope-reasons.js"
+    },
     "./dev": {
       "@appflare/source": "./src/dev.ts",
       "types": "./dist/dev.d.ts",
@@ -42,6 +47,10 @@
       "./oauth": {
         "types": "./dist/oauth.d.ts",
         "import": "./dist/oauth.js"
+      },
+      "./scope-reasons": {
+        "types": "./dist/oauth-scope-reasons.d.ts",
+        "import": "./dist/oauth-scope-reasons.js"
       },
       "./dev": {
         "types": "./dist/dev.d.ts",

@@ -1140,6 +1140,11 @@ export class DeployFlow {
 
   // --- Back ------------------------------------------------------------------
 
+  /** Whether this sign-in reaches several accounts, so choosing one is a step of its own. */
+  choosesAccount(): boolean {
+    return this.accounts.length > 1;
+  }
+
   /** Whether the current step has a Back. */
   canGoBack(): boolean {
     const view = this.view;

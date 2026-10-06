@@ -4,7 +4,7 @@ import { LayerCard } from "@cloudflare/kumo/components/layer-card";
 import { Link } from "@cloudflare/kumo/components/link";
 import { Meter } from "@cloudflare/kumo/components/meter";
 import { Text } from "@cloudflare/kumo/components/text";
-import type { ReactNode } from "react";
+import { createContext, type ReactNode, useContext } from "react";
 import { repositoryUrl, siteName } from "../../lib/shared.ts";
 import { Appearance } from "./appearance.tsx";
 
@@ -97,11 +97,63 @@ function FooterLink({ href, children }: { href: string; children: ReactNode }) {
 /** The id of the step's title, which takes the focus when the step changes. */
 export const STEP_TITLE_ID = "deploy-step-title";
 
+/** The steps between connecting Cloudflare and deploying that show a meter. */
+export type JourneyStep = "account" | "name" | "address" | "review";
+
+const JOURNEY_LABELS: Record<JourneyStep, string> = {
+  account: "Choose an account",
+  name: "Name",
+  address: "Address",
+  review: "Review",
+};
+
+/** What the meter needs from the page: whether choosing an account is a step on this sign-in. */
+export const JourneyContext = createContext<{ accountStep: boolean }>({ accountStep: false });
+
 /**
- * The card of one step: the meter (where the step is in the journey), the
- * title, one line under it, then the step's content. The card is never
- * marked busy as a whole: that would silence the live regions in it, which
- * announce the progress.
+ * Where `step` is on the way to the deploy, counting only the steps this
+ * sign-in shows (no account step when it reaches one account), so the bar
+ * has no gaps or jumps. The deploy itself is the last step; its own
+ * progress takes over there.
+ */
+export function journeyPosition(
+  step: JourneyStep,
+  accountStep: boolean,
+): { step: number; count: number } {
+  const steps: Array<JourneyStep | "deploy"> = [
+    ...(accountStep ? (["account"] as const) : []),
+    "name",
+    "address",
+    "review",
+    "deploy",
+  ];
+  return { step: steps.indexOf(step) + 1, count: steps.length };
+}
+
+/**
+ * The card's meter: a slim bar and the step's name, no count on screen.
+ * The count is the bar's value for assistive technology.
+ */
+function JourneyMeter({ step }: { step: JourneyStep }) {
+  const { accountStep } = useContext(JourneyContext);
+  const at = journeyPosition(step, accountStep);
+  return (
+    <Meter
+      label={JOURNEY_LABELS[step]}
+      showValue={false}
+      value={at.step}
+      max={at.count}
+      getAriaValueText={() => `Step ${at.step} of ${at.count}`}
+      trackClassName="h-1"
+    />
+  );
+}
+
+/**
+ * The card of one step: the meter (where the step is on the way to the
+ * deploy), the title, one line under it, then the step's content. The card
+ * is never marked busy as a whole: that would silence the live regions in
+ * it, which announce the progress.
  */
 export function DeployCard({
   meter,
@@ -109,7 +161,7 @@ export function DeployCard({
   description,
   children,
 }: {
-  meter: { step: number; count: number } | null;
+  meter: JourneyStep | null;
   title: ReactNode;
   description?: ReactNode;
   children?: ReactNode;
@@ -117,16 +169,7 @@ export function DeployCard({
   return (
     <LayerCard className="grid w-full gap-6 rounded-xl px-5 py-5 sm:px-8 sm:py-7">
       <div className="grid gap-5">
-        {meter !== null && (
-          <Meter
-            label="Install Appflare"
-            customValue={`Step ${meter.step} of ${meter.count}`}
-            value={meter.step}
-            max={meter.count}
-            getAriaValueText={() => `Step ${meter.step} of ${meter.count}`}
-            trackClassName="h-1"
-          />
-        )}
+        {meter !== null && <JourneyMeter step={meter} />}
         <div className="grid gap-1.5">
           <Text variant="heading" size="lg" as="h1">
             <span id={STEP_TITLE_ID} tabIndex={-1} className="outline-none [text-wrap:balance]">
