@@ -126,6 +126,7 @@ const sandboxStatus: SandboxCardState = {
   problem: null,
   workerExists: false,
   danglingBinding: false,
+  answered: false,
   pinnedVersion: "0.1.3",
   updateAvailable: false,
   activeJob: null,

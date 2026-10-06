@@ -39,6 +39,7 @@ import {
 import { sandboxPreflightProblems } from "./preflight";
 import { findSandboxRelease, verifySandboxManifest } from "./release";
 import { SANDBOX_CONTAINER_WAIT } from "./units";
+import { clearSandboxWorkerDeleted } from "./worker-deleted";
 
 /**
  * The `sandbox_enable` and `sandbox_update` jobs: bring the account's
@@ -468,6 +469,7 @@ export async function runSandboxEnable(ctx: JobContext): Promise<void> {
         }),
         log,
       );
+      await clearSandboxWorkerDeleted(orm);
       await orm
         .update(jobs)
         .set({ status: "succeeded", finished_at: new Date(now()) })

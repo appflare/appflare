@@ -1,10 +1,10 @@
 import { env } from "cloudflare:workers";
 import { CloudflareApiError } from "@appflare/cf-api";
-import { SANDBOX_WORKER_NAME, type SandboxInfo } from "@appflare/schema";
+import { SANDBOX_WORKER_NAME } from "@appflare/schema";
 import { createServerFn } from "@tanstack/react-start";
 import { hasRole } from "../auth/roles";
 import { getCfClient } from "../cloudflare/client.server";
-import { sandboxBinding, sandboxInfo, usesGithubTokens } from "../sandbox/binding";
+import { usesGithubTokens } from "../sandbox/binding";
 import { requireRole, requireSession } from "../server/auth.server";
 import { addGithubTokenInput, type GithubTokenView, githubTokenIdInput } from "./tokens";
 import {
@@ -12,6 +12,7 @@ import {
   deleteGithubTokenCore,
   type GithubTokenDeps,
   GithubTokenError,
+  githubSandboxState,
   githubTokenViews,
   readGithubTokens,
 } from "./tokens.server";
@@ -22,15 +23,7 @@ import {
  * users get nothing about them.
  */
 
-async function sandboxState(): Promise<{ connected: boolean; info: SandboxInfo | null }> {
-  const binding = sandboxBinding(env);
-  if (binding === undefined) return { connected: false, info: null };
-  try {
-    return { connected: true, info: await sandboxInfo(binding) };
-  } catch {
-    return { connected: true, info: null };
-  }
-}
+const sandboxState = () => githubSandboxState(env);
 
 function tokenDeps(): GithubTokenDeps {
   return {

@@ -7,28 +7,20 @@ import { CfTokenNotConfiguredError, getCfClient } from "../cloudflare/client.ser
 import { createDb } from "../db/client";
 import { jobCreator } from "../jobs/create-job.server";
 import { sandboxBinding } from "../sandbox/binding";
-import { installsNeedingSandbox } from "../sandbox/blockers";
+import { readSandboxCardState, type SandboxCardState } from "../sandbox/card-state.server";
 import {
   type ConnectSandboxResult,
   connectSandboxCore,
   readSandboxStatus,
   SandboxConnectError,
-  type SandboxStatus,
 } from "../sandbox/connect.server";
-import { bindingDanglesWith } from "../sandbox/connection.server";
-import {
-  activeSandboxWorkerJob,
-  lastSandboxJobFailure,
-  SandboxJobError,
-  type SandboxJobFailure,
-  startSandboxJobCore,
-} from "../sandbox/jobs.server";
+import { SandboxJobError, startSandboxJobCore } from "../sandbox/jobs.server";
 import type { SandboxReadiness } from "../sandbox/readiness";
 import { readSandboxReadiness } from "../sandbox/readiness.server";
-import { PINNED_SANDBOX_VERSION, sandboxUpdateAvailable } from "../sandbox/release";
 import { requireRole, requireSession } from "./auth.server";
 import { runningVersion } from "./build-version";
 
+export type { SandboxCardState } from "../sandbox/card-state.server";
 export type { SandboxStatus } from "../sandbox/connect.server";
 
 /**
@@ -39,50 +31,13 @@ export type { SandboxStatus } from "../sandbox/connect.server";
  * updating, disabling and connecting are admin only.
  */
 
-export interface SandboxCardState extends SandboxStatus {
-  /** The sandbox Worker release this Appflare deploys. */
-  pinnedVersion: string;
-  /** The connected sandbox Worker is older than {@link SandboxCardState.pinnedVersion}. */
-  updateAvailable: boolean;
-  /** An enable, update or disable job that is queued or running. */
-  activeJob: { id: string; kind: string } | null;
-  /** The most recent enable, update or disable job, when it failed and no newer one succeeded. */
-  lastFailure: SandboxJobFailure | null;
-  /** Apps that need the sandbox Worker, which keep it from being disabled. */
-  inUseBy: string[];
-  /** On, ready to turn on at first need, or what is missing. */
-  readiness: SandboxReadiness;
-}
-
 export const getSandboxStatus = createServerFn({ method: "GET" }).handler(
   async (): Promise<SandboxCardState> => {
     const session = await requireSession();
-    const admin = hasRole(session.user.role, "admin");
-    const status = await readSandboxStatus({
-      binding: sandboxBinding(env),
-      bindingDangles: bindingDanglesWith(env.DB, () => getCfClient(env)),
-      ...(admin
-        ? {
-            listWorkers: async () =>
-              (await (await getCfClient(env)).workers.listScripts()).map((s) => s.id),
-          }
-        : {}),
+    return readSandboxCardState(env, {
+      admin: hasRole(session.user.role, "admin"),
+      client: () => getCfClient(env),
     });
-    const [activeJob, lastFailure, inUse, readiness] = await Promise.all([
-      activeSandboxWorkerJob(env.DB),
-      lastSandboxJobFailure(env.DB),
-      installsNeedingSandbox(createDb(env.DB)),
-      readSandboxReadiness(env, createDb(env.DB)),
-    ]);
-    return {
-      ...status,
-      pinnedVersion: PINNED_SANDBOX_VERSION,
-      updateAvailable: sandboxUpdateAvailable(status.info?.sandboxVersion),
-      activeJob,
-      lastFailure,
-      inUseBy: inUse.map((i) => i.label),
-      readiness,
-    };
   },
 );
 

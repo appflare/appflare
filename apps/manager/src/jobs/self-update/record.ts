@@ -4,6 +4,7 @@ import { isVersionPreviewHost } from "../../cloudflare/worker-name";
 import { createDb } from "../../db/client";
 import { jobs } from "../../db/schema";
 import { readSettings, SETTING, writeSettings } from "../../db/settings";
+import { clearSandboxWorkerDeleted } from "../../sandbox/worker-deleted";
 import { runningVersion } from "../../server/build-version";
 import type { StepConfig, StepRunner } from "../run-job";
 import { StepLog } from "../step-log";
@@ -19,6 +20,9 @@ import { appendVersionHistory } from "./plan";
  * input (the job's params and row), and its result shape never change. It
  * marks the job `succeeded` and appends to `settings.manager_version_history`;
  * both are idempotent, so running it twice (old code, then new) is harmless.
+ * It also clears the record of a deleted sandbox Worker
+ * (sandbox/worker-deleted.ts): the new version binds `SANDBOX` only to a
+ * sandbox Worker the account has, never to a deleted one.
  *
  * Nothing here completes a job whose `promoting_version` does not name its
  * target: the job writes that marker in the step right before the promotion.
@@ -86,8 +90,9 @@ export async function appendSelfUpdateHistory(
 }
 
 /**
- * Marks a promoted job succeeded (if still queued or running) and records the
- * switch in the version history. Returns whether the job row changed.
+ * Marks a promoted job succeeded (if still queued or running), records the
+ * switch in the version history, and clears the record of a deleted sandbox
+ * Worker. Returns whether the job row changed.
  */
 export async function recordSelfUpdate(
   db: D1Database,
@@ -105,6 +110,7 @@ export async function recordSelfUpdate(
       ),
     )
     .returning({ id: jobs.id });
+  if (updated.length > 0) await clearSandboxWorkerDeleted(createDb(db));
   await appendSelfUpdateHistory(db, input.jobId, at);
   return updated.length > 0;
 }

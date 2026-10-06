@@ -1,6 +1,5 @@
 import { readCapabilitiesView } from "../capabilities/capabilities.server";
 import type { Database } from "../db/client";
-import { sandboxBinding } from "./binding";
 import { activeSandboxWorkerJob, lastSandboxJobFailure } from "./jobs.server";
 import {
   type SandboxJobState,
@@ -8,6 +7,7 @@ import {
   sandboxReadinessOf,
   withSandboxJobs,
 } from "./readiness";
+import { sandboxBound } from "./worker-deleted";
 
 /** The enable job running now and the last failed sandbox job, from D1. */
 export async function readSandboxJobState(d1: D1Database): Promise<SandboxJobState> {
@@ -24,13 +24,18 @@ export async function readSandboxJobState(d1: D1Database): Promise<SandboxJobSta
 /**
  * The sandbox builds row's state on Your account and on the pages
  * that start builds: from the stored capability probes, whether the
- * running Worker has its `SANDBOX` binding, and the sandbox jobs (an enable
- * in progress, the last one that failed). No Cloudflare API call.
+ * running Worker has its `SANDBOX` binding and the sandbox Worker it names
+ * is not recorded as deleted (./worker-deleted.ts), and the sandbox jobs (an
+ * enable in progress, the last one that failed). No Cloudflare API call.
  */
 export async function readSandboxReadiness(
   env: { SANDBOX?: unknown; DB: D1Database },
   db: Database,
 ): Promise<SandboxReadiness> {
-  const [view, jobs] = await Promise.all([readCapabilitiesView(db), readSandboxJobState(env.DB)]);
-  return withSandboxJobs(sandboxReadinessOf(view, sandboxBinding(env) !== undefined), jobs);
+  const [view, jobs, bound] = await Promise.all([
+    readCapabilitiesView(db),
+    readSandboxJobState(env.DB),
+    sandboxBound(env, db),
+  ]);
+  return withSandboxJobs(sandboxReadinessOf(view, bound), jobs);
 }

@@ -17,13 +17,16 @@ import {
   sandboxInfo,
 } from "./binding";
 import { ENABLE_SANDBOX_PLACE } from "./connect-copy";
+import { clearSandboxWorkerDeleted } from "./worker-deleted";
 
 /**
  * Settings, Building apps: whether this manager can build sandbox tier apps,
  * and connecting it to the sandbox Worker (or disconnecting it).
  *
- * Connected means the running Worker has its `SANDBOX` service binding; that
- * binding is the only record (no setting that could disagree with it). The
+ * Connected means the running Worker has its `SANDBOX` service binding to the
+ * sandbox Worker. The one setting next to it records that the sandbox Worker
+ * was deleted while the binding stayed (./worker-deleted.ts), so pages need
+ * no API call to read that binding as off; connecting clears it. The
  * sandbox Worker itself is deployed by the "Enable sandbox builds" job
  * (./enable-job.ts), because it needs Containers, which only Workers Paid
  * accounts have.
@@ -76,6 +79,12 @@ export interface SandboxStatus {
    * off; disabling them removes the binding, enabling them replaces it.
    */
   danglingBinding: boolean;
+  /**
+   * A call through the binding got an answer, with the sandbox Worker's info
+   * or with one of an unexpected shape: either proves the Worker it names
+   * exists, which one to a deleted Worker never does.
+   */
+  answered: boolean;
 }
 
 export async function readSandboxStatus(deps: {
@@ -94,7 +103,14 @@ export async function readSandboxStatus(deps: {
         workerExists = null;
       }
     }
-    return { connected: false, info: null, problem: null, workerExists, danglingBinding };
+    return {
+      connected: false,
+      info: null,
+      problem: null,
+      workerExists,
+      danglingBinding,
+      answered: false,
+    };
   };
   if (deps.binding === undefined) return off(false);
   let problem: string;
@@ -105,12 +121,20 @@ export async function readSandboxStatus(deps: {
       problem: null,
       workerExists: null,
       danglingBinding: false,
+      answered: true,
     };
   } catch (error) {
     problem = error instanceof Error ? error.message : String(error);
     // It answered, so the Worker it names is there.
     if (error instanceof SandboxProtocolError) {
-      return { connected: true, info: null, problem, workerExists: null, danglingBinding: false };
+      return {
+        connected: true,
+        info: null,
+        problem,
+        workerExists: null,
+        danglingBinding: false,
+        answered: true,
+      };
     }
   }
   // A call through a binding to a deleted Worker fails like one the sandbox
@@ -123,7 +147,14 @@ export async function readSandboxStatus(deps: {
     dangles = false;
   }
   if (dangles) return off(true);
-  return { connected: true, info: null, problem, workerExists: null, danglingBinding: false };
+  return {
+    connected: true,
+    info: null,
+    problem,
+    workerExists: null,
+    danglingBinding: false,
+    answered: false,
+  };
 }
 
 /** What changing the binding needs; no database, so a job unit can run it too. */
@@ -380,5 +411,6 @@ export async function connectSandboxCore(deps: ConnectSandboxDeps): Promise<Conn
     },
     true,
   );
+  await clearSandboxWorkerDeleted(orm);
   return { alreadyConnected: result.unchanged, versionId: result.versionId };
 }

@@ -3,9 +3,10 @@ import { asc, count, eq, inArray } from "drizzle-orm";
 import { ulid } from "ulidx";
 import { createDb } from "../db/client";
 import { github_tokens } from "../db/schema";
-import { usesGithubTokens } from "../sandbox/binding";
+import { sandboxBinding, sandboxInfo, usesGithubTokens } from "../sandbox/binding";
 import { activeSandboxJob, sandboxBusyMessage } from "../sandbox/busy";
 import { ENABLE_SANDBOX_PLACE, UPDATE_SANDBOX_HINT } from "../sandbox/connect-copy";
+import { sandboxBound } from "../sandbox/worker-deleted";
 import {
   type AddGithubTokenInput,
   addGithubTokenInput,
@@ -97,7 +98,7 @@ export async function forgetGithubTokens(db: D1Database): Promise<number> {
 
 export interface GithubTokenDeps {
   db: D1Database;
-  /** Whether the manager has its `SANDBOX` binding, and the sandbox Worker's `info()`. */
+  /** Whether sandbox builds are on (`githubSandboxState`), and the sandbox Worker's `info()`. */
   sandbox(): Promise<{ connected: boolean; info: SandboxInfo | null }>;
   /** `PUT /workers/scripts/appflare-sandbox/secrets` with the manager's token. */
   putSandboxSecret(name: string, value: string): Promise<void>;
@@ -105,6 +106,27 @@ export interface GithubTokenDeps {
   deleteSandboxSecret(name: string): Promise<void>;
   now?: () => Date;
   newId?: () => string;
+}
+
+/**
+ * `GithubTokenDeps.sandbox` for the running Worker: connected when it has
+ * its `SANDBOX` binding and the sandbox Worker it names is not recorded as
+ * deleted (sandbox/worker-deleted.ts), with what that Worker says about
+ * itself; null when it did not answer.
+ */
+export async function githubSandboxState(env: {
+  SANDBOX?: unknown;
+  DB: D1Database;
+}): Promise<{ connected: boolean; info: SandboxInfo | null }> {
+  const binding = sandboxBinding(env);
+  if (binding === undefined || !(await sandboxBound(env, createDb(env.DB)))) {
+    return { connected: false, info: null };
+  }
+  try {
+    return { connected: true, info: await sandboxInfo(binding) };
+  } catch {
+    return { connected: true, info: null };
+  }
 }
 
 /** Refuses a secret change while a job runs in the sandbox Worker (a new version would stop it). */

@@ -3,9 +3,9 @@ import { type CatalogIndexRead, listedApps, readEnabledCatalogs } from "../catal
 import { appKey } from "../catalog/sources";
 import type { Database } from "../db/client";
 import { install_access, installs } from "../db/schema";
-import { sandboxBinding } from "../sandbox/binding";
 import type { SandboxJobState } from "../sandbox/readiness";
 import { readSandboxJobState } from "../sandbox/readiness.server";
+import { sandboxBound } from "../sandbox/worker-deleted";
 import type { CapabilitiesView } from "./capabilities";
 import { readCapabilitiesView } from "./capabilities.server";
 import {
@@ -35,7 +35,8 @@ export interface CapabilityRowsData {
 
 /**
  * Reads the stored capabilities, whether sandbox builds are connected (the
- * running Worker has the `SANDBOX` binding) or being turned on, the cached
+ * running Worker has the `SANDBOX` binding, to a sandbox Worker not recorded
+ * as deleted) or being turned on, the cached
  * catalog, and the account's installs with the catalog entries they came
  * from. No Cloudflare API call; "Check again" refreshes the capabilities
  * first. A caller that already read the enabled catalogs or the installs,
@@ -50,10 +51,11 @@ export async function readCapabilityRowsData(
     installs?: readonly InstallOfApp[] | Promise<readonly InstallOfApp[]>;
   } = {},
 ): Promise<CapabilityRowsData> {
-  const [view, reads, sandboxJobs, present] = await Promise.all([
+  const [view, reads, sandboxJobs, bound, present] = await Promise.all([
     readCapabilitiesView(db),
     known.reads ?? readEnabledCatalogs(env, { refreshOnMiss: false }),
     readSandboxJobState(env.DB),
+    sandboxBound(env, db),
     known.installs ??
       db
         .select({
@@ -80,7 +82,7 @@ export async function readCapabilityRowsData(
   const byKey = new Map(listedApps(reads).map((l) => [l.key, l.app]));
   return {
     view,
-    sandbox: sandboxBinding(env) === undefined ? "off" : "enabled",
+    sandbox: bound ? "enabled" : "off",
     needs: cached.length === 0 ? null : catalogNeeds(apps),
     inUse: installedNeeds(present, (i) => byKey.get(appKey(i.catalogId, i.appSlug))),
     sandboxJobs,

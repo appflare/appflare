@@ -17,7 +17,9 @@ import {
  * repository dialog read the same words, and the install start applies the
  * same rules to live probes.
  *
- * - `on`: this manager has its `SANDBOX` binding.
+ * - `on`: this manager has its `SANDBOX` binding, and the sandbox Worker it
+ *   names is not recorded as deleted (a disable that stopped before its last
+ *   step leaves the binding pointing at nothing; that reads as off).
  * - `ready-auto`: Workers Paid, R2 enabled and the token's Containers: Edit
  *   are in place; the first install or build that needs the sandbox turns
  *   sandbox builds on first.
@@ -92,7 +94,10 @@ export const SANDBOX_CAPABILITY_HREF = settingsLink("account", "capability-sandb
 export const SANDBOX_FIRST_NOTE = "Sandbox builds will be turned on first (about two minutes).";
 
 export interface SandboxReadinessInput {
-  /** The running Worker has its `SANDBOX` binding. */
+  /**
+   * The running Worker has its `SANDBOX` binding, to a sandbox Worker not
+   * recorded as deleted (`sandboxBound`).
+   */
   connected: boolean;
   r2: R2Capability | null;
   containers: ContainersCapability | null;

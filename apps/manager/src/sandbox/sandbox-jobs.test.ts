@@ -6,7 +6,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { createDb } from "../db/client";
 import { createMigrator } from "../db/migrate";
 import { migrations } from "../db/migrations/index";
-import { SETTING, writeSettings } from "../db/settings";
+import { readSettings, SETTING, writeSettings } from "../db/settings";
 import type { JobEnv } from "../jobs/run-job";
 import type { ArtifactFixture } from "../test/artifact-fixture";
 import { ACC, type FakeAccount, NEW_VERSION, SUBDOMAIN, TOKEN } from "../test/fake-account";
@@ -25,6 +25,8 @@ import { seedInstall } from "../test/seed-install";
 import { runSandboxDisable, type SandboxDisableJobParams } from "./disable-job";
 import { runSandboxEnable, type SandboxEnableJobParams } from "./enable-job";
 import { SandboxJobError, startSandboxJobCore } from "./jobs.server";
+import { readSandboxReadiness } from "./readiness.server";
+import { markSandboxWorkerDeleted } from "./worker-deleted";
 
 /**
  * Enabling, updating and disabling sandbox builds end to end: the start
@@ -193,6 +195,11 @@ function enabledAt(version: string, classes: 2 | 4 = 4): Partial<SandboxAccountS
 
 const connected = { versionBindings: { [MANAGER_SERVING]: [SANDBOX_SERVICE] } };
 
+/** Whether D1 records the sandbox Worker as deleted while Appflare still binds it. */
+const deletedRecorded = async () =>
+  (await readSettings(createDb(env.DB), [SETTING.sandboxWorkerDeleted])).sandbox_worker_deleted !==
+  undefined;
+
 /**
  * What a disable that deleted everything but stopped short of disconnecting
  * left: no sandbox Worker, applications or bucket, and the manager still
@@ -345,8 +352,11 @@ describe("enable sandbox builds", () => {
   });
 
   it("enables again after a disable that left Appflare bound to the deleted Worker, replacing that binding", async () => {
+    await markSandboxWorkerDeleted(createDb(env.DB));
     const r = await enable({}, leftBound);
     expect(r.error).toBeNull();
+    // Connected again: the pages read sandbox builds as on.
+    expect(await deletedRecorded()).toBe(false);
     expect(r.job).toMatchObject({ kind: "sandbox_enable", status: "succeeded", error: null });
     expect(r.world.state.uploads).toHaveLength(1);
     expect(r.world.manager.state.versionPatches).toEqual([
@@ -650,6 +660,34 @@ describe("disable sandbox builds", () => {
     );
   });
 
+  it("records the sandbox Worker as deleted once it is gone, until the disconnect finishes", async () => {
+    const release = await sandboxRelease(VERSION);
+    // The new version's preview check fails, so the disconnect stops.
+    const world = fakeSandboxAccount(release, enabledAt(VERSION), {
+      previews: [{ status: 500, body: "internal error" }],
+      ...connected,
+    });
+    const { params } = await start(world, { action: "disable", confirm: "appflare-sandbox" });
+    const stopped = await runJob(world, params, release);
+    expect(stopped.job?.status).toBe("failed");
+    expect(stopped.job?.error).toMatch(/^disconnect Appflare from the sandbox Worker: /);
+    expect(world.state.worker).toBeNull();
+    expect(await deletedRecorded()).toBe(true);
+    // The running Worker still has its binding; the pages read it as off.
+    const readiness = await readSandboxReadiness({ DB: env.DB, SANDBOX: {} }, createDb(env.DB));
+    expect(readiness.state).not.toBe("on");
+
+    // Disabling again finishes, and the record goes with the binding.
+    world.manager.state.previews = [healthy];
+    const again = await runJob(
+      world,
+      (await start(world, { action: "disable", confirm: "appflare-sandbox" }, "job2")).params,
+      release,
+    );
+    expect(again.job?.status).toBe("succeeded");
+    expect(await deletedRecorded()).toBe(false);
+  });
+
   it("converges when the last step runs again after the manager's deploy cut it off", async () => {
     const release = await sandboxRelease(VERSION);
     const world = fakeSandboxAccount(release, enabledAt(VERSION), {
@@ -713,6 +751,22 @@ describe("disable sandbox builds", () => {
       expect(world.manager.state.versionPatches).toEqual([]);
     },
   );
+
+  it("records the sandbox Worker as deleted when it was already gone and the binding to it stays", async () => {
+    const release = await sandboxRelease(VERSION);
+    // An earlier disable deleted it; the disconnect stops again here.
+    const world = fakeSandboxAccount(
+      release,
+      {},
+      { previews: [{ status: 500, body: "internal error" }], ...leftBound },
+    );
+    const { params } = await start(world, { action: "disable", confirm: "appflare-sandbox" });
+    const r = await runJob(world, params, release);
+    expect(r.job?.status).toBe("failed");
+    expect(r.job?.error).toMatch(/^disconnect Appflare from the sandbox Worker: /);
+    expect(world.state.deletes).toEqual([]);
+    expect(await deletedRecorded()).toBe(true);
+  });
 
   it("removes the binding to the deleted Worker an earlier disable left, and a second disable changes nothing", async () => {
     const release = await sandboxRelease(VERSION);
