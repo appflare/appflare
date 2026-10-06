@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { handoffProof, newChallenge } from "./handoff-secret.ts";
 import type { FetchLike } from "./installer-api.ts";
+import { AuthorizationNeeded } from "./tokens.ts";
 
 /**
  * The new Appflare's handoff API, called from the browser at the address
@@ -32,21 +33,38 @@ export interface HandoffRequest {
 export type HandoffFailure =
   /** An owner exists already. */
   | "done"
+  /** Another browser is finishing setup with an API token (`minutes` until it may be tried again). */
+  | "elsewhere"
   /** The secret was refused. */
   | "refused"
+  /** Appflare cannot use this Cloudflare connection (another account, missing permissions). */
+  | "declined"
   /** Too many attempts from this address; wait. */
   | "rate-limited"
-  /** No answer, or a server error. */
-  | "unreachable"
+  /** Appflare is busy with another step, or Cloudflare did not answer it; the same request works later. */
+  | "busy"
+  /** Appflare answered with an error of its own. */
+  | "failed"
+  /** The request went out but no answer came back. */
+  | "no-answer"
   /** An answer that is not a valid handoff answer for this address. */
   | "invalid";
 
 export class HandoffError extends Error {
   override name = "HandoffError";
-  constructor(readonly kind: HandoffFailure) {
+  constructor(
+    readonly kind: HandoffFailure,
+    /** For `elsewhere`: minutes until another try can work. */
+    readonly minutes: number | null = null,
+  ) {
     super(`The handoff failed: ${kind}`);
   }
 }
+
+const errorAnswerSchema = z.object({
+  error: z.string(),
+  minutes: z.number().int().min(1).max(60).nullable().optional(),
+});
 
 export interface ManagerApi {
   probe(address: string, secret: string): Promise<ProbeResult>;
@@ -145,13 +163,25 @@ export function managerApi(fetch: FetchLike): ManagerApi {
           body: JSON.stringify(request),
         });
       } catch {
-        throw new HandoffError("unreachable");
+        throw new HandoffError("no-answer");
       }
       const body = await readJson(response);
-      if (response.status === 409) throw new HandoffError("done");
+      const failed = errorAnswerSchema.safeParse(body);
+      const code = failed.success ? failed.data.error : null;
+      if (response.status === 409) {
+        if (code === "setup_elsewhere") {
+          throw new HandoffError("elsewhere", failed.data?.minutes ?? null);
+        }
+        throw new HandoffError("done");
+      }
+      // The grant this tab handed over was used up by an earlier try and
+      // Appflare keeps none: connect to Cloudflare again, then hand over the new one.
+      if (response.status === 401 && code === "authorize_again") throw new AuthorizationNeeded();
       if (response.status === 403) throw new HandoffError("refused");
       if (response.status === 429) throw new HandoffError("rate-limited");
-      if (response.status >= 500) throw new HandoffError("unreachable");
+      if (response.status === 400 && code === "refused") throw new HandoffError("declined");
+      if (response.status === 503) throw new HandoffError("busy");
+      if (response.status >= 500) throw new HandoffError("failed");
       const parsed = handoffAnswerSchema.safeParse(body);
       if (!response.ok || !parsed.success) throw new HandoffError("invalid");
       if (!isOwnerSetupUrl(parsed.data.ownerSetupUrl, address)) throw new HandoffError("invalid");

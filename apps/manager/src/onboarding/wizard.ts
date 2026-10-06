@@ -25,6 +25,13 @@ export interface SavedTokenSummary {
 
 export type WizardState =
   | { step: "connect" }
+  /**
+   * A manager installed from the browser, in a browser without the setup
+   * claim: finish from the page that installed it, or paste a token
+   * instead. `received`: that page has handed over the connection already.
+   * `installPage`: where that page is, when known.
+   */
+  | { step: "handoff"; received: boolean; installPage: string | null }
   | { step: "redeploying" }
   | { step: "create-owner" }
   /**
@@ -54,11 +61,19 @@ export type WizardEvent =
   | { type: "connected"; next: "create-owner" | "redeploying" }
   /** A version with the auth secret serves. */
   | { type: "auth-ready" }
+  /** On the handoff screen: connect with an API token instead. */
+  | { type: "use-token" }
   /**
    * The owner exists and is signed in; what the account can run was read,
-   * and the zones Appflare could move to (null when they could not be read).
+   * and the zones Appflare could move to (null when they could not be read;
+   * `set` when Appflare already lives on a domain of the account, which it
+   * does when it was installed there).
    */
-  | { type: "owner-created"; checklist: CapabilityRowsData; address: AddressOptions | null }
+  | {
+      type: "owner-created";
+      checklist: CapabilityRowsData;
+      address: AddressOptions | null | "set";
+    }
   /** The address step is done: Appflare stays where it is, now or for later. */
   | { type: "address-done" }
   /** An admin saved the token outside first-run setup. */
@@ -77,8 +92,19 @@ export type WizardEvent =
 export function initialWizardState(
   step: GateStep,
   checklist: CapabilityRowsData | null,
-  { addressShown = false }: { addressShown?: boolean } = {},
+  {
+    addressShown = false,
+    handoff,
+    installPage,
+  }: {
+    addressShown?: boolean;
+    handoff?: "waiting" | "received" | undefined;
+    installPage?: string | undefined;
+  } = {},
 ): WizardState {
+  if (step === "handoff") {
+    return { step, received: handoff === "received", installPage: installPage ?? null };
+  }
   if (step !== "checklist") return { step };
   if (checklist === null) throw new Error("The last setup step needs what the account can run.");
   return addressShown ? { step, checklist, addressShown } : { step, checklist };
@@ -121,8 +147,11 @@ export function wizardReducer(state: WizardState, event: WizardEvent): WizardSta
       return state.step === "connect" ? { step: event.next } : state;
     case "auth-ready":
       return state.step === "redeploying" ? { step: "create-owner" } : state;
+    case "use-token":
+      return state.step === "handoff" ? { step: "connect" } : state;
     case "owner-created":
       if (state.step !== "create-owner") return state;
+      if (event.address === "set") return { step: "checklist", checklist: event.checklist };
       if (offersAddressStep(event.address)) {
         return { step: "address", options: event.address, checklist: event.checklist };
       }
@@ -160,6 +189,7 @@ export interface WizardProgress {
 export function wizardProgress(state: WizardState): WizardProgress | null {
   switch (state.step) {
     case "connect":
+    case "handoff":
       return { step: 1, count: 3 };
     case "redeploying":
     case "create-owner":
@@ -188,6 +218,18 @@ export function wizardCopy(state: WizardState): WizardCopy {
         title: "Connect Cloudflare",
         description: "Appflare needs an API token for the Cloudflare account it runs in.",
       };
+    case "handoff":
+      return state.received
+        ? {
+            title: "Finish where you installed Appflare",
+            description:
+              "Appflare is connected to Cloudflare. Go back to the page that installed it and open Appflare from there to create your owner account.",
+          }
+        : {
+            title: "Finish where you installed Appflare",
+            description:
+              "Appflare is installed and waiting to be connected to Cloudflare. Go back to the page that installed it: it connects Appflare and brings you here to create your owner account.",
+          };
     case "redeploying":
       return {
         title: "Create the owner account",

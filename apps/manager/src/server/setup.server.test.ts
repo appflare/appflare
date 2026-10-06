@@ -384,15 +384,15 @@ describe("a manager deployed without secrets or SELF (the Deploy to Cloudflare b
     [DEPLOY]: ok({ id: "d1" }),
   });
 
-  it("writes a random BETTER_AUTH_SECRET with the pasted token, then CF_API_TOKEN", async () => {
+  it("writes CF_API_TOKEN, then a random BETTER_AUTH_SECRET with the pasted token", async () => {
     const api = fakeCloudflare(withPatch());
     await connect(api, { authSecretBound: false, generateAuthSecret: () => "generated-secret" });
     const puts = api.calls.filter((c) => c.key === `PUT ${A}/workers/scripts/appflare/secrets`);
     expect(puts.map((c) => JSON.parse(c.body ?? "null").name)).toEqual([
-      "BETTER_AUTH_SECRET",
       "CF_API_TOKEN",
+      "BETTER_AUTH_SECRET",
     ]);
-    expect(JSON.parse(puts[0]?.body ?? "null")).toMatchObject({
+    expect(JSON.parse(puts[1]?.body ?? "null")).toMatchObject({
       type: "secret_text",
       text: "generated-secret",
     });

@@ -1,4 +1,12 @@
-import { Banner, Button, ClipboardText, Collapsible, Input, Text } from "@cloudflare/kumo";
+import {
+  Banner,
+  Button,
+  ClipboardText,
+  Collapsible,
+  Input,
+  LinkButton,
+  Text,
+} from "@cloudflare/kumo";
 import { CheckCircleIcon, InfoIcon, SignOutIcon, WarningIcon } from "@phosphor-icons/react";
 import { createFileRoute, useRouter } from "@tanstack/react-router";
 import { type FormEvent, useCallback, useEffect, useReducer, useState } from "react";
@@ -19,6 +27,13 @@ import {
   type AddressOptions,
   getManagerAddressOptions,
 } from "../domains/manager-address.functions";
+import {
+  type ClaimNotice as ClaimNoticeState,
+  claimNoticeFor,
+  type RedeemResult,
+  redeemOwnerClaimWith,
+  takeOwnerClaimFromAddressBar,
+} from "../handoff/owner-claim";
 import { AddressSkippedNote, AddressStep } from "../onboarding/address-step";
 import {
   initialWizardState,
@@ -33,7 +48,7 @@ import {
 } from "../onboarding/wizard";
 import { enterSetup } from "../server/gate.functions";
 import { MIN_PASSWORD_LENGTH } from "../server/schemas";
-import { createOwner } from "../server/setup.functions";
+import { createOwner, redeemOwnerClaim } from "../server/setup.functions";
 import { getTokenStatus } from "../server/token.functions";
 import { loadAppflareVersion } from "../server/version.functions";
 
@@ -52,6 +67,14 @@ import { loadAppflareVersion } from "../server/version.functions";
  * of the new address, which returns here). Last: what the account can run
  * (the same rows as on Your account), then Finish goes home. Once the owner
  * exists, everyone else is sent to sign in.
+ *
+ * On a manager installed from the browser, step 1 happens on the page that
+ * installed it: that page hands over the Cloudflare connection and opens
+ * `/setup#claim=<code>`. The code leaves the address bar before anything
+ * else and is exchanged, once, for this browser's setup claim; step 2
+ * follows. Any other browser is told to finish there, or may connect with
+ * an API token instead. Installed on a domain of the account, Appflare
+ * lives there already, and the address step is skipped.
  *
  * `?checklist=true` marks the last step, so a reload stays there (a reload
  * on the address step goes on to it too); `?address=true` says the address
@@ -72,6 +95,10 @@ export const Route = createFileRoute("/setup")({
   shouldReload: false,
   loader: async ({ location }) => {
     stripTokenFromAddressBar();
+    // Before anything else: the code leaves the address bar, then is
+    // exchanged for this browser's setup claim.
+    const taken = takeOwnerClaimFromAddressBar();
+    const redeemed = taken === null ? null : await redeem(taken.code);
     const { checklist, address, returnTo } = location.search as {
       checklist?: boolean;
       address?: boolean;
@@ -84,7 +111,15 @@ export const Route = createFileRoute("/setup")({
     ]);
     const checklistData = gate.step === "checklist" ? await getCapabilityRowsData() : null;
     return {
-      initial: initialWizardState(gate.step, checklistData, { addressShown: address === true }),
+      initial: initialWizardState(gate.step, checklistData, {
+        addressShown: address === true,
+        handoff: gate.handoff,
+        installPage: gate.installPage,
+      }),
+      // What became of the code, shown only where it would have led past:
+      // the first step. A code that got no definite answer stays in memory
+      // (never in the address bar again) for Try again.
+      claim: claimNoticeFor(taken, redeemed, gate.step === "handoff" || gate.step === "connect"),
       version,
     };
   },
@@ -103,10 +138,17 @@ function stripTokenFromAddressBar() {
   window.history.replaceState(window.history.state, "", url.pathname + url.search + url.hash);
 }
 
+/** Exchanges an owner claim for the setup claim cookie (see `redeemOwnerClaimWith`). */
+function redeem(code: string | null): Promise<RedeemResult> {
+  return redeemOwnerClaimWith((claim) => redeemOwnerClaim({ data: { claim } }), code);
+}
+
 function SetupPage() {
   const loaded = Route.useLoaderData();
   const [state, dispatch] = useReducer(wizardReducer, loaded.initial);
   const router = useRouter();
+  // Kept across reloads of the loader, which no longer sees the code.
+  const [claim, setClaim] = useState(loaded.claim);
 
   // A refusal can mean setup moved on elsewhere: the loader reads where it
   // stands again, and the wizard follows. The first run only repeats the start.
@@ -128,8 +170,71 @@ function SetupPage() {
       description={<MessageText message={copy.description} newTab />}
       version={loaded.version}
     >
+      {claim !== null && (state.step === "handoff" || state.step === "connect") && (
+        <ClaimNotice
+          claim={claim}
+          onAnswer={async (outcome) => {
+            if (outcome === "retry") return;
+            setClaim(outcome === "refused" ? { kind: "refused" } : null);
+            if (outcome === "ok") await resync();
+          }}
+        />
+      )}
       <StepContent state={state} dispatch={dispatch} resync={resync} />
     </AuthLayout>
+  );
+}
+
+/**
+ * What became of the setup link's code: refused for good, or not answered
+ * yet, with Try again (the code is still in this page's memory).
+ */
+function ClaimNotice({
+  claim,
+  onAnswer,
+}: {
+  claim: ClaimNoticeState;
+  onAnswer: (outcome: RedeemResult) => Promise<void>;
+}) {
+  const [trying, setTrying] = useState(false);
+  if (claim.kind === "refused") {
+    return (
+      <Banner
+        variant="alert"
+        icon={<WarningIcon weight="fill" />}
+        title="This setup link no longer works"
+        description="It was already used, or it is more than 30 minutes old. Go back to the page that installed Appflare and open Appflare from there again."
+      />
+    );
+  }
+  return (
+    <Banner
+      variant="alert"
+      icon={<WarningIcon weight="fill" />}
+      title="Your setup link could not be used yet"
+      description={
+        <div className="grid gap-2">
+          <p>Appflare did not answer, or asked this browser to wait a moment. Try again.</p>
+          <div>
+            <BusyButton
+              pending={trying}
+              variant="secondary"
+              size="sm"
+              onClick={async () => {
+                setTrying(true);
+                try {
+                  await onAnswer(await redeem(claim.code));
+                } finally {
+                  setTrying(false);
+                }
+              }}
+            >
+              Try again
+            </BusyButton>
+          </div>
+        </div>
+      }
+    />
   );
 }
 
@@ -150,6 +255,13 @@ function StepContent({
           onContinue={(saved) =>
             dispatch({ type: "connected", next: saved.next ?? "create-owner" })
           }
+        />
+      );
+    case "handoff":
+      return (
+        <HandoffStep
+          installPage={state.installPage}
+          onUseToken={() => dispatch({ type: "use-token" })}
         />
       );
     case "redeploying":
@@ -239,6 +351,41 @@ function SetupAddressStep({
   );
 }
 
+/**
+ * Step 1 on a manager installed from the browser, in a browser that has
+ * not come from the page that installed it: go back there, or connect with
+ * an API token instead (anyone with a token for this account controls it
+ * anyway, so the token is enough on its own).
+ */
+function HandoffStep({
+  installPage,
+  onUseToken,
+}: {
+  installPage: string | null;
+  onUseToken: () => void;
+}) {
+  return (
+    <>
+      <Text variant="secondary">
+        If you closed that page, open it again in the same browser: it continues where it stopped.
+      </Text>
+      {installPage !== null && (
+        <LinkButton href={installPage} variant="primary" className={FULL_WIDTH_ACTION}>
+          Open the installer
+        </LinkButton>
+      )}
+      <div className="grid gap-2">
+        <Text variant="secondary">
+          You can also connect Appflare with a Cloudflare API token for this account instead.
+        </Text>
+        <Button variant="secondary" className={FULL_WIDTH_ACTION} onClick={onUseToken}>
+          Connect with an API token instead
+        </Button>
+      </div>
+    </>
+  );
+}
+
 /** How often the redeploy wait asks `/api/health` whether the new version serves. */
 const REDEPLOY_POLL_MS = 2000;
 
@@ -277,7 +424,7 @@ function CreateOwnerStep({
   onCreated,
   resync,
 }: {
-  onCreated: (checklist: CapabilityRowsData, address: AddressOptions | null) => void;
+  onCreated: (checklist: CapabilityRowsData, address: AddressOptions | null | "set") => void;
   resync: () => Promise<void>;
 }) {
   const router = useRouter();
@@ -293,8 +440,11 @@ function CreateOwnerStep({
     const password = String(form.get("password") ?? "");
     setPending(true);
     setError(null);
+    let addressSet = false;
     try {
-      await createOwner({ data: { email, name: String(form.get("name") ?? ""), password } });
+      ({ addressSet } = await createOwner({
+        data: { email, name: String(form.get("name") ?? ""), password },
+      }));
     } catch (err) {
       setError(serverErrorMessage(err, "Could not create the owner account. Try again."));
       setPending(false);
@@ -307,13 +457,14 @@ function CreateOwnerStep({
       await router.navigate({ href: withReturnTo("/login", returnTo) });
       return;
     }
-    // The zones decide whether the address step shows; without them, it does not.
+    // The zones decide whether the address step shows; without them, it does
+    // not. Nor when Appflare already lives on a domain (installed there).
     const [checklist, address] = await Promise.all([
       getCapabilityRowsData(),
-      getManagerAddressOptions().catch(() => null),
+      addressSet ? ("set" as const) : getManagerAddressOptions().catch(() => null),
     ]);
     onCreated(checklist, address);
-    await showChecklist({ address: offersAddressStep(address) });
+    await showChecklist({ address: address !== "set" && offersAddressStep(address) });
   }
 
   return (

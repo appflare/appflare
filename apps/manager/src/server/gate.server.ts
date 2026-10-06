@@ -3,6 +3,7 @@ import { hasRole } from "../auth/roles";
 import { createDb } from "../db/client";
 import { settings, user } from "../db/schema";
 import { SETTING } from "../db/settings";
+import { HANDOFF_RECEIVED_KEY } from "../handoff/handoff-state.server";
 import { markOpenedToday, type TelemetryEnv } from "../telemetry/state.server";
 import type { GateState } from "./gate";
 import type { Viewer } from "./session.functions";
@@ -30,6 +31,8 @@ export interface GateInputs {
   setupClaimed: () => Promise<boolean>;
   /** The version serving this request has `BETTER_AUTH_SECRET`. */
   authReady: boolean;
+  /** The manager was installed from the browser (`APPFLARE_HANDOFF` is bound). */
+  handoffBound?: boolean;
 }
 
 export interface GateRead {
@@ -53,7 +56,13 @@ export async function readGate(inputs: GateInputs): Promise<GateRead> {
       db
         .select({ key: settings.key, value: settings.value })
         .from(settings)
-        .where(inArray(settings.key, [SETTING.cfTokenConfigured, SETTING.accountId])),
+        .where(
+          inArray(settings.key, [
+            SETTING.cfTokenConfigured,
+            SETTING.accountId,
+            HANDOFF_RECEIVED_KEY,
+          ]),
+        ),
     ]),
   ]);
   const hasUser = users.length > 0;
@@ -80,6 +89,9 @@ export async function readGate(inputs: GateInputs): Promise<GateRead> {
       tokenConfigured,
       setupClaimed,
       authReady: inputs.authReady,
+      ...(inputs.handoffBound === true && !hasUser
+        ? { handoff: setting.has(HANDOFF_RECEIVED_KEY) ? "received" : "waiting" }
+        : {}),
     },
     viewer,
     accountId: setting.get(SETTING.accountId) || null,

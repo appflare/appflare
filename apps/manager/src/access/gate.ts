@@ -25,11 +25,13 @@ import { accessRecoverySteps } from "./recovery";
 
 /**
  * Paths answered without an Access token: what the health check canaries and
- * the installer read, and the return from "Sign in with Cloudflare" (a form
- * appflare.dev posts, authorized by the sign-in an administrator started).
+ * the installers read, the browser installer's handoff, and the return from
+ * "Sign in with Cloudflare" (a form appflare.dev posts, authorized by the
+ * sign-in an administrator started).
  */
 export const ACCESS_EXEMPT_PATHS: ReadonlySet<string> = new Set([
   "/api/health",
+  "/api/handoff",
   "/api/cloudflare/oauth-return",
 ]);
 

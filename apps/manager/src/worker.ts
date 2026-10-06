@@ -21,6 +21,7 @@ import { createDb } from "./db/client";
 import { ensureMigrated } from "./db/migrate";
 import { addressRedirect, serveRequest } from "./domains/address-redirect";
 import { reconcileManagerAddress } from "./domains/manager-address.server";
+import { completeInstallation } from "./handoff/installer-completion.server";
 import { scheduledSourceBuildExpiry } from "./installs/source-builds-expiry.server";
 import { workflowRepairLog, workflowRepairNeeded } from "./installs/workflow-repair.server";
 import { finalizeSelfUpdates } from "./jobs/self-update/record";
@@ -168,8 +169,10 @@ export default {
    * (capabilities/). Then the anonymous usage-data report
    * (telemetry/report.server.ts), which starts with the first run after setup
    * and sends nothing once an admin turns it off. It starts update jobs only for what automatic updates
-   * allow (auto-update/), and only updates that need nothing from an admin. Last, it deletes a
-   * recovery code secret that can no longer be used (auth/recovery-cleanup.server.ts).
+   * allow (auto-update/), and only updates that need nothing from an admin. Then it deletes a
+   * recovery code secret that can no longer be used (auth/recovery-cleanup.server.ts). Last, a
+   * manager installed from the browser reports the end of setup to its installer until the
+   * installer has answered (handoff/installer-completion.server.ts).
    * Between those, the upkeep of apps protected with Cloudflare Access
    * (access/upkeep-run.server.ts), as three SELF units: newer catalog
    * revisions of their releases; service tokens with less than 30 days left
@@ -313,5 +316,8 @@ export default {
         error: error instanceof Error ? error.message : String(error),
       });
     }
+    // A manager installed from the browser tells the installer that setup is
+    // done, until it has answered; one read otherwise; never fails the run.
+    await completeInstallation(env);
   },
 } satisfies ExportedHandler<Env>;

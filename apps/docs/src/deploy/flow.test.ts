@@ -468,6 +468,61 @@ describe("the handoff", () => {
     expect(h.storage.installation.read()).toBeNull();
   });
 
+  it("connects Cloudflare again when Appflare used up the grant without keeping it, then hands over the new one", async () => {
+    const world = new FakeWorld();
+    const original = world.addManager.bind(world);
+    world.addManager = (address, hash) => {
+      const created = original(address, hash);
+      created.postAnswers = [{ status: 401, body: { error: "authorize_again", message: "…" } }];
+      return created;
+    };
+    const h = harness(world);
+    await toReview(h);
+    await h.flow.deploy();
+    expect(view(h.flow, "welcome")).toMatchObject({ notice: "reconnect", unfinished: true });
+    expect(h.tokens.grant()).toBeNull();
+    expect(h.navigations).toEqual([]);
+
+    world.validAccess.add("access-9");
+    h.tokens.keep({
+      clientId: CLIENT_ID,
+      accessToken: "access-9",
+      expiresAt: START + 3_600_000,
+      refreshToken: "refresh-9",
+      scopes: [...MANAGER_OAUTH_SCOPES],
+    });
+    await h.flow.loadAccounts();
+    await h.flow.continueMine();
+    expect(h.navigations).toEqual([
+      "https://appflare.example.com/setup#claim=claim0123456789abcdef",
+    ]);
+    const manager = world.managers.get("https://appflare.example.com");
+    expect(manager?.received?.grant).toMatchObject({ refreshToken: "refresh-9" });
+  });
+
+  it("says plainly that another browser is finishing setup, after sending", async () => {
+    const world = new FakeWorld();
+    const original = world.addManager.bind(world);
+    world.addManager = (address, hash) => {
+      const created = original(address, hash);
+      created.postAnswers = [
+        { status: 409, body: { error: "setup_elsewhere", message: "…", minutes: 7 } },
+        { status: 503, body: { error: "busy", message: "…" } },
+      ];
+      return created;
+    };
+    const h = harness(world);
+    await toReview(h);
+    await h.flow.deploy();
+    expect(view(h.flow, "handoff-failed")).toMatchObject({ problem: "elsewhere", minutes: 7 });
+    // An installation is not forgotten: it is not set up yet.
+    expect(h.storage.installation.read()).not.toBeNull();
+    await h.flow.retry();
+    expect(view(h.flow, "handoff-failed").problem).toBe("busy");
+    await h.flow.retry();
+    expect(h.navigations).toHaveLength(1);
+  });
+
   it("says when the address does not answer yet, and tries again", async () => {
     const world = new FakeWorld();
     const h = harness(world);

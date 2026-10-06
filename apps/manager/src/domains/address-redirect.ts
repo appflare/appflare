@@ -10,7 +10,8 @@ import { SETTING } from "../db/settings";
  *
  * Left alone: other methods (a form post or a server function call must not
  * be turned into a GET elsewhere), `/api/health` (health checks and the
- * installer read the workers.dev address), server functions, static assets
+ * installer read the workers.dev address), `/api/handoff` (the browser
+ * installer proves the address it chose, which a redirect would fail), server functions, static assets
  * (served before the Worker runs), version preview hosts (a self-update
  * checks its new version there), and every other host.
  *
@@ -19,7 +20,7 @@ import { SETTING } from "../db/settings";
  */
 
 /** Paths never redirected, and prefixes of them. */
-const EXEMPT_PATHS: ReadonlySet<string> = new Set(["/api/health"]);
+const EXEMPT_PATHS: ReadonlySet<string> = new Set(["/api/health", "/api/handoff"]);
 const EXEMPT_PREFIXES = ["/_serverFn/", "/assets/"] as const;
 
 /**

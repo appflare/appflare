@@ -44,6 +44,13 @@ interface ManagerSecrets {
    * recovery-code.ts). Deleted by the manager once used.
    */
   RECOVERY_CODE_HASH?: string;
+  /**
+   * `v1.<sha-256 hex>` of the handoff secret, on a manager installed from
+   * the browser: set by the hosted installer that deployed it. Only the
+   * installing browser knows the secret; with it, that browser hands the
+   * manager its Cloudflare connection at `/api/handoff` (handoff/).
+   */
+  APPFLARE_HANDOFF?: string;
 }
 
 // Optional vars that are not in wrangler.jsonc (code defaults apply when unset):
@@ -83,10 +90,16 @@ interface ManagerOptionalVars {
   /**
    * How this manager was first deployed. `deploy-button` on managers the
    * "Deploy to Cloudflare" button deployed (the deploy repository's
-   * wrangler.jsonc sets it); unset otherwise. Read it through
-   * `deployButtonInstalled()`.
+   * wrangler.jsonc sets it), `browser` on managers the hosted installer
+   * deployed; unset otherwise. Read it through `deployButtonInstalled()`.
    */
   APPFLARE_INSTALL_SOURCE?: string;
+  /**
+   * The origin of the hosted installer that deployed this manager (for
+   * example `https://appflare.dev`): the only origin whose pages may call
+   * `/api/handoff`, and where the end of setup is reported.
+   */
+  APPFLARE_INSTALLER_ORIGIN?: string;
   /**
    * `send_email` binding for password reset emails. Not in wrangler.jsonc:
    * the owner turns reset emails on from Settings > Users, and the manager

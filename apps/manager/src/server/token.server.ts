@@ -12,7 +12,6 @@ import { readGrant } from "../cloudflare/grant-store.server";
 import { type TokenVerification, verifyCloudflareToken } from "../cloudflare/verify-token";
 import { discoverWorkerName } from "../cloudflare/worker-name";
 import { settingsPlace } from "../components/settings-links";
-import { AUTH_SECRET_NAME, generateAuthSecret } from "../danger/auth-secret.server";
 import { createDb } from "../db/client";
 import { readSettings, SETTING, writeSettings } from "../db/settings";
 
@@ -111,19 +110,11 @@ export interface SaveTokenOptions {
    * again (the browser that stored it went away): it is re-verified against
    * the running account and rewritten only when it differs from
    * `currentToken`, the one the running Worker holds. Without this a stored
-   * token refuses the save.
+   * token refuses the save. Setup's other writes (the auth secret and the
+   * `SELF` binding of a manager deployed without them) are setup.server.ts's.
    */
   beforeOwner?: {
     currentToken: string | undefined;
-    /**
-     * The running Worker has `BETTER_AUTH_SECRET`. A manager deployed without
-     * secrets (the "Deploy to Cloudflare" button) has none, so the first save
-     * also writes a random one with the pasted token, before the owner can
-     * be created.
-     */
-    authSecretBound?: boolean;
-    /** Test seam for the generated auth secret. */
-    generateAuthSecret?: () => string;
   };
 }
 
@@ -156,15 +147,6 @@ export async function saveTokenStep(
     }
     const client = clientFor(deps, verified.accountId);
 
-    const before = options.beforeOwner;
-    if (before !== undefined && before.authSecretBound === false) {
-      // Only the one API call sees the value: never logged, stored or returned.
-      await client.workers.putSecret(workerName, {
-        name: AUTH_SECRET_NAME,
-        type: "secret_text",
-        text: (before.generateAuthSecret ?? generateAuthSecret)(),
-      });
-    }
     const unchanged =
       configured &&
       !grantStored &&

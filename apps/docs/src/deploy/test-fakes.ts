@@ -47,6 +47,8 @@ export interface FakeManagerState {
   impostor?: boolean;
   /** No answer at all (DNS, certificate). */
   unreachable?: boolean;
+  /** Answers for the next POSTs, in order, before the real ones. */
+  postAnswers?: Array<{ status: number; body: unknown }>;
 }
 
 function sha256Hex(text: string): string {
@@ -269,6 +271,8 @@ export class FakeWorld {
         : proofFor(m.hash, challenge);
       return Response.json({ app: "appflare", version: "0.4.2", state: m.state, proof });
     }
+    const forced = m.postAnswers?.shift();
+    if (forced !== undefined) return Response.json(forced.body, { status: forced.status });
     const body = JSON.parse(raw) as { secret?: string };
     if (m.state === "done") return Response.json({ error: "done" }, { status: 409 });
     if (typeof body.secret !== "string" || sha256Hex(body.secret) !== m.hash) {

@@ -15,6 +15,7 @@ import { Route as LoginRouteImport } from './routes/login'
 import { Route as ResetPasswordRouteImport } from './routes/reset-password'
 import { Route as SetupRouteImport } from './routes/setup'
 import { Route as AppIndexRouteImport } from './routes/_app/index'
+import { Route as ApiHandoffRouteImport } from './routes/api/handoff'
 import { Route as ApiHealthRouteImport } from './routes/api/health'
 import { Route as AppAppsInstallIdRouteImport } from './routes/_app/apps/$installId'
 import { Route as AppCatalogIndexRouteImport } from './routes/_app/catalog/index'
@@ -70,6 +71,11 @@ const AppIndexRoute = AppIndexRouteImport.update({
   id: '/',
   path: '/',
   getParentRoute: () => AppRoute,
+} as any)
+const ApiHandoffRoute = ApiHandoffRouteImport.update({
+  id: '/api/handoff',
+  path: '/api/handoff',
+  getParentRoute: () => rootRouteImport,
 } as any)
 const ApiHealthRoute = ApiHealthRouteImport.update({
   id: '/api/health',
@@ -213,6 +219,7 @@ export interface FileRoutesByFullPath {
   '/login': typeof LoginRoute
   '/reset-password': typeof ResetPasswordRoute
   '/setup': typeof SetupRoute
+  '/api/handoff': typeof ApiHandoffRoute
   '/api/health': typeof ApiHealthRoute
   '/apps/$installId': typeof AppAppsInstallIdRoute
   '/catalog/$slug': typeof AppCatalogSlugRoute
@@ -245,6 +252,7 @@ export interface FileRoutesByTo {
   '/login': typeof LoginRoute
   '/reset-password': typeof ResetPasswordRoute
   '/setup': typeof SetupRoute
+  '/api/handoff': typeof ApiHandoffRoute
   '/api/health': typeof ApiHealthRoute
   '/': typeof AppIndexRoute
   '/apps/$installId': typeof AppAppsInstallIdRoute
@@ -280,6 +288,7 @@ export interface FileRoutesById {
   '/login': typeof LoginRoute
   '/reset-password': typeof ResetPasswordRoute
   '/setup': typeof SetupRoute
+  '/api/handoff': typeof ApiHandoffRoute
   '/api/health': typeof ApiHealthRoute
   '/_app/': typeof AppIndexRoute
   '/_app/apps/$installId': typeof AppAppsInstallIdRoute
@@ -316,6 +325,7 @@ export interface FileRouteTypes {
     | '/login'
     | '/reset-password'
     | '/setup'
+    | '/api/handoff'
     | '/api/health'
     | '/apps/$installId'
     | '/catalog/$slug'
@@ -348,6 +358,7 @@ export interface FileRouteTypes {
     | '/login'
     | '/reset-password'
     | '/setup'
+    | '/api/handoff'
     | '/api/health'
     | '/'
     | '/apps/$installId'
@@ -382,6 +393,7 @@ export interface FileRouteTypes {
     | '/login'
     | '/reset-password'
     | '/setup'
+    | '/api/handoff'
     | '/api/health'
     | '/_app/'
     | '/_app/apps/$installId'
@@ -417,6 +429,7 @@ export interface RootRouteChildren {
   LoginRoute: typeof LoginRoute
   ResetPasswordRoute: typeof ResetPasswordRoute
   SetupRoute: typeof SetupRoute
+  ApiHandoffRoute: typeof ApiHandoffRoute
   ApiHealthRoute: typeof ApiHealthRoute
   ApiAuthSplatRoute: typeof ApiAuthSplatRoute
   ApiCloudflareOauthReturnRoute: typeof ApiCloudflareOauthReturnRoute
@@ -469,6 +482,13 @@ declare module '@tanstack/react-router' {
       fullPath: '/'
       preLoaderRoute: typeof AppIndexRouteImport
       parentRoute: typeof AppRoute
+    }
+    '/api/handoff': {
+      id: '/api/handoff'
+      path: '/api/handoff'
+      fullPath: '/api/handoff'
+      preLoaderRoute: typeof ApiHandoffRouteImport
+      parentRoute: typeof rootRouteImport
     }
     '/api/health': {
       id: '/api/health'
@@ -709,6 +729,7 @@ const rootRouteChildren: RootRouteChildren = {
   LoginRoute: LoginRoute,
   ResetPasswordRoute: ResetPasswordRoute,
   SetupRoute: SetupRoute,
+  ApiHandoffRoute: ApiHandoffRoute,
   ApiHealthRoute: ApiHealthRoute,
   ApiAuthSplatRoute: ApiAuthSplatRoute,
   ApiCloudflareOauthReturnRoute: ApiCloudflareOauthReturnRoute,

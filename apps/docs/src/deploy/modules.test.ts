@@ -333,14 +333,8 @@ describe("managerApi", () => {
     expect(error.kind).toBe("invalid");
   });
 
-  it.each([
-    [409, "done"],
-    [403, "refused"],
-    [429, "rate-limited"],
-    [502, "unreachable"],
-  ])("names an answer of %i", async (status, kind) => {
-    const api = managerApi(async () => Response.json({}, { status }));
-    const error = await api
+  const handOffWith = (answer: () => Promise<Response>) =>
+    managerApi(answer)
       .handOff(address, {
         secret,
         grant: { refreshToken: "r", clientId: "c", scopes: [] },
@@ -348,6 +342,40 @@ describe("managerApi", () => {
         installer: { url: "https://appflare.dev", installationId: "i", key: "k" },
       })
       .catch((e) => e);
+
+  it.each([
+    [409, { error: "done" }, "done"],
+    [403, { error: "forbidden" }, "refused"],
+    [400, { error: "refused" }, "declined"],
+    [400, { error: "invalid" }, "invalid"],
+    [429, {}, "rate-limited"],
+    [503, { error: "busy" }, "busy"],
+    [502, { error: "failed" }, "failed"],
+    [500, {}, "failed"],
+  ])("names an answer of %i %j", async (status, body, kind) => {
+    const error = await handOffWith(async () => Response.json(body, { status }));
+    expect(error).toBeInstanceOf(HandoffError);
     expect(error.kind).toBe(kind);
+  });
+
+  it("tells another browser finishing setup apart from an owner that exists, with the minutes", async () => {
+    const error = await handOffWith(async () =>
+      Response.json({ error: "setup_elsewhere", message: "…", minutes: 12 }, { status: 409 }),
+    );
+    expect(error).toMatchObject({ kind: "elsewhere", minutes: 12 });
+  });
+
+  it("asks to connect Cloudflare again when the grant handed over was used up", async () => {
+    const error = await handOffWith(async () =>
+      Response.json({ error: "authorize_again", message: "…" }, { status: 401 }),
+    );
+    expect(error).toBeInstanceOf(AuthorizationNeeded);
+  });
+
+  it("does not claim nothing was sent when the answer never came", async () => {
+    const error = await handOffWith(async () => {
+      throw new TypeError("Failed to fetch");
+    });
+    expect(error.kind).toBe("no-answer");
   });
 });

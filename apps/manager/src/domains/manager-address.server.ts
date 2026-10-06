@@ -543,10 +543,21 @@ export interface CompletedMove {
  * the address lock, the rows, Cloudflare Access and the passkey bookkeeping
  * in one go (`switchAddress`), then the attach record goes. Safe to run
  * again: when the rows already name `hostname`, an earlier run switched.
+ *
+ * Also how a manager installed from the browser on a custom domain adopts
+ * it when the installer's handoff arrives there: `inUse` is then that
+ * hostname, the address people already use, so nothing is left behind.
  */
 export async function completeAddressMove(
   deps: Pick<ManagerAddressDeps, "db" | "api" | "now">,
-  move: { hostname: string; domainId: string; zoneId: string; workerName: string },
+  move: {
+    hostname: string;
+    domainId: string;
+    zoneId: string;
+    workerName: string;
+    /** The address people use now, when the caller knows it; else it is looked up. */
+    inUse?: string;
+  },
 ): Promise<CompletedMove> {
   return withAddressLock(deps.db, async () => {
     const current = await readAddressRows(deps.db);
@@ -554,7 +565,7 @@ export async function completeAddressMove(
       await deleteAttachedBy(deps.db, move.hostname);
       return { from: current.previousHostname ?? move.hostname, accessMoved: false };
     }
-    const leaving = current.hostname ?? (await addressInUse(deps, move.workerName));
+    const leaving = current.hostname ?? move.inUse ?? (await addressInUse(deps, move.workerName));
     const now = (deps.now ?? (() => new Date()))();
     const accessMoved = await switchAddress(deps, {
       from: leaving,

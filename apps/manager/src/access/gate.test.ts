@@ -142,6 +142,12 @@ describe("access gate, protection on", () => {
     expect((await gate.check(request("/api/cloudflare"), env.DB))?.status).toBe(403);
   });
 
+  it("exempts the browser installer's /api/handoff, and only that exact path", async () => {
+    expect(await gate.check(request("/api/handoff"), env.DB)).toBeNull();
+    expect((await gate.check(request("/api/handoff/extra"), env.DB))?.status).toBe(403);
+    expect(certs.calls).toHaveLength(0);
+  });
+
   it("never logs the token", async () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
     const token = await team.sign(team.claims(clock, { aud: ["other"] }));

@@ -68,6 +68,17 @@ export interface StoreGrantDeps {
   baseUrl?: string;
   now?: () => number;
   sleep?: (ms: number) => Promise<void>;
+  /**
+   * What refreshing `grant` already returned, when the caller refreshed it
+   * and kept the rotated refresh token itself (the handoff): no refresh is
+   * made here.
+   */
+  refreshed?: RefreshedTokens;
+  /**
+   * Revoke the refreshed grant when it is refused or cannot be stored
+   * (default). False when the caller keeps it and decides.
+   */
+  revokeOnFailure?: boolean;
   /** Test seams. */
   memo?: ConnectionMemo;
   generateKey?: () => string;
@@ -139,6 +150,16 @@ export const GRANT_STORE_MESSAGES = {
     "Appflare manages another Cloudflare account. Connect the account Appflare runs in.",
 } as const;
 
+/** A failed refresh of a grant handed over, as the refusal to show; other errors as they are. */
+export function grantRefreshError(error: unknown): unknown {
+  if (!(error instanceof CloudflareOAuthError)) return error;
+  if (error.reconnectNeeded) return new GrantStoreError(GRANT_STORE_MESSAGES.refused, "refused");
+  if (error.retryable) {
+    return new GrantStoreError(GRANT_STORE_MESSAGES.unreachable, "unreachable");
+  }
+  return new GrantStoreError(GRANT_STORE_MESSAGES.rejected(error.code), "rejected");
+}
+
 /** An upsert of one `settings` row, for a batch. */
 function settingStatement(
   db: D1Database,
@@ -178,8 +199,9 @@ async function chooseKey(
 /**
  * Stores a grant as the manager's Cloudflare connection:
  *
- * 1. Refreshes it at once. The manager takes over rotation, so the copy
- *    whoever handed it over still holds stops mattering.
+ * 1. Refreshes it at once, unless the caller did (`refreshed`). The manager
+ *    takes over rotation, so the copy whoever handed it over still holds
+ *    stops mattering.
  * 2. Checks that it carries every scope the manager asks for, and that it
  *    can manage this manager in `accountId`: this Worker's running version
  *    must be in that account (`verifyGrantAccount`), as the token step
@@ -193,7 +215,8 @@ async function chooseKey(
  * 5. Revokes the grant it replaced, if any, best effort.
  *
  * When a check fails after the refresh, the new grant is revoked, since
- * nobody else holds it any more. Serialized with token saves.
+ * nobody else holds it any more (unless `revokeOnFailure` is false: the
+ * caller kept it). Serialized with token saves.
  */
 export async function storeGrant(deps: StoreGrantDeps): Promise<StoredGrant> {
   const memo = deps.memo ?? isolateConnectionMemo();
@@ -214,27 +237,27 @@ export async function storeGrant(deps: StoreGrantDeps): Promise<StoredGrant> {
       }
 
       let tokens: RefreshedTokens;
-      try {
-        tokens = await refreshWithRetries(
-          { clientId: deps.grant.clientId, refreshToken: deps.grant.refreshToken },
-          { fetch: fetchImpl, now, sleep },
-        );
-      } catch (error) {
-        if (!(error instanceof CloudflareOAuthError)) throw error;
-        if (error.reconnectNeeded) {
-          throw new GrantStoreError(GRANT_STORE_MESSAGES.refused, "refused");
+      if (deps.refreshed !== undefined) {
+        tokens = deps.refreshed;
+      } else {
+        try {
+          tokens = await refreshWithRetries(
+            { clientId: deps.grant.clientId, refreshToken: deps.grant.refreshToken },
+            { fetch: fetchImpl, now, sleep },
+          );
+        } catch (error) {
+          throw grantRefreshError(error);
         }
-        if (error.retryable) {
-          throw new GrantStoreError(GRANT_STORE_MESSAGES.unreachable, "unreachable");
-        }
-        throw new GrantStoreError(GRANT_STORE_MESSAGES.rejected(error.code), "rejected");
       }
-      // Only this call holds the rotated refresh token now: a refusal below revokes it.
+      // Only this call holds the rotated refresh token now (unless the caller
+      // keeps it): a refusal below revokes it.
       const abandon = async (error: unknown): Promise<never> => {
-        await revokeGrant(
-          { clientId: deps.grant.clientId, refreshToken: tokens.refreshToken },
-          { fetch: fetchImpl },
-        );
+        if (deps.revokeOnFailure !== false) {
+          await revokeGrant(
+            { clientId: deps.grant.clientId, refreshToken: tokens.refreshToken },
+            { fetch: fetchImpl },
+          );
+        }
         throw error;
       };
 

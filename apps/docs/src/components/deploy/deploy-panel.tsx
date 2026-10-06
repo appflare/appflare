@@ -934,14 +934,29 @@ function DeployFailed({
   );
 }
 
-const HANDOFF_PROBLEMS: Record<HandoffProblem, (address: string) => string> = {
+const minutesText = (minutes: number | undefined) =>
+  minutes === undefined ? "a few minutes" : `${minutes} ${minutes === 1 ? "minute" : "minutes"}`;
+
+// Only the first two happen before anything is sent; the rest describe how
+// Appflare answered after this page sent it its Cloudflare connection.
+const HANDOFF_PROBLEMS: Record<HandoffProblem, (address: string, minutes?: number) => string> = {
   unreachable: (a) => `${a} does not answer yet. Nothing was sent to it.`,
   unverified: (a) =>
     `Something answers at ${a}, but it is not your new Appflare, so nothing was sent to it.`,
   refused: () =>
     "Your new Appflare did not accept this browser's setup key. If you started this installation in another browser, finish it there.",
+  elsewhere: (_a, m) =>
+    `Someone is finishing the setup of your new Appflare in another browser, with a Cloudflare API token. Finish it there, or try again here in ${minutesText(m)}.`,
+  declined: () =>
+    "Your new Appflare could not use this Cloudflare connection. Connect Cloudflare again, choosing the account Appflare is installed in and allowing every permission it asks for.",
   "rate-limited": () =>
     "Your new Appflare asked this page to wait after several attempts. Try again in a few minutes.",
+  busy: () =>
+    "Your new Appflare is busy with another step, or could not reach Cloudflare just now. Try again in a minute.",
+  failed: () =>
+    "Your new Appflare received the request but could not finish connecting to Cloudflare. Try again.",
+  "no-answer": () =>
+    "Your new Appflare stopped answering while this page was connecting it. Try again.",
   invalid: () => "Your new Appflare gave an answer this page cannot use. Try again.",
 };
 
@@ -968,7 +983,7 @@ function HandoffFailed({
   return (
     <div className="grid gap-4">
       <Title>Appflare is deployed but not connected yet</Title>
-      <Callout tone="error">{HANDOFF_PROBLEMS[view.problem](view.address)}</Callout>
+      <Callout tone="error">{HANDOFF_PROBLEMS[view.problem](view.address, view.minutes)}</Callout>
       <Actions>
         <button type="button" className={primary} onClick={() => actions.retry()}>
           Try again

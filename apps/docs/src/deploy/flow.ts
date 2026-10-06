@@ -10,7 +10,7 @@ import {
   type Unfinished,
   type Zone,
 } from "./installer-api.ts";
-import { HandoffError, type ManagerApi } from "./manager-api.ts";
+import { HandoffError, type HandoffFailure, type ManagerApi } from "./manager-api.ts";
 import type { DeployStorage, LocalInstallation } from "./storage.ts";
 import { AuthorizationNeeded, type TokenKeeper } from "./tokens.ts";
 
@@ -96,15 +96,12 @@ export type Notice =
   | "account-unreachable";
 
 export type HandoffProblem =
-  /** The address does not answer yet. */
+  /** Before anything was sent: the address does not answer yet. */
   | "unreachable"
-  /** Something answers, but it is not this installation. */
+  /** Before anything was sent: something answers, but it is not this installation. */
   | "unverified"
-  /** Appflare refused the setup key. */
-  | "refused"
-  | "rate-limited"
-  /** Appflare's answer was not usable. */
-  | "invalid";
+  /** After the connection was sent: how Appflare answered (see `HandoffFailure`). */
+  | Exclude<HandoffFailure, "done">;
 
 export type DeployView =
   | { step: "loading" }
@@ -162,7 +159,14 @@ export type DeployView =
     }
   | { step: "deploy-failed"; active: Active; progress: StepAnswer | null; message: string }
   | { step: "handing-off"; active: Active; address: string }
-  | { step: "handoff-failed"; active: Active; address: string; problem: HandoffProblem }
+  | {
+      step: "handoff-failed";
+      active: Active;
+      address: string;
+      problem: HandoffProblem;
+      /** For `elsewhere`: minutes until trying again can work. */
+      minutes?: number;
+    }
   | { step: "opening"; address: string; ownerSetupUrl: string }
   /** Appflare already has its owner: nothing more to do here. */
   | { step: "set-up"; address: string }
@@ -882,7 +886,14 @@ export class DeployFlow {
       }
       const problem: HandoffProblem =
         error instanceof HandoffError && error.kind !== "done" ? error.kind : "invalid";
-      this.set({ step: "handoff-failed", active, address, problem });
+      const minutes = error instanceof HandoffError ? error.minutes : null;
+      this.set({
+        step: "handoff-failed",
+        active,
+        address,
+        problem,
+        ...(minutes === null ? {} : { minutes }),
+      });
       return;
     }
     // Appflare refreshes the grant at once, so this tab's copy is spent.

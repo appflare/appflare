@@ -19,6 +19,11 @@ import { hasRole } from "../auth/roles";
 import { createDb } from "../db/client";
 import { readSettings, SETTING } from "../db/settings";
 import {
+  type AttemptLimit,
+  DEFAULT_ATTEMPT_LIMIT,
+  takeAttempt,
+} from "../server/attempt-limit.server";
+import {
   type ConnectionMemo,
   cloudflareCredential,
   isolateConnectionMemo,
@@ -68,7 +73,7 @@ export const RECONNECT_TTL_MS = 10 * 60_000;
 /** Where the callback page posts the result. */
 export const OAUTH_RETURN_PATH = "/api/cloudflare/oauth-return";
 /** Returns per client address in {@link RETURN_RATE_LIMIT}'s window, like setup's. */
-export const RETURN_RATE_LIMIT = { max: 20, windowMs: 10 * 60_000 } as const;
+export const RETURN_RATE_LIMIT: AttemptLimit = DEFAULT_ATTEMPT_LIMIT;
 /** The longest form body read; a real one is well under 2 KiB. */
 const MAX_RETURN_BODY = 8 * 1024;
 
@@ -277,28 +282,17 @@ function plain(status: number, text: string): Response {
 }
 
 /**
- * Counts one return for `client` (hashed: no address is stored) in a fixed
- * window, in Better Auth's `rate_limit` table under a key of Appflare's own,
- * the way setup counts its attempts. False once the window is used up.
+ * Counts one return for `client` through the attempt limit every door
+ * before sign-in shares (server/attempt-limit.server.ts), under this
+ * return's own key. False once the window is used up.
  */
-export async function takeReturnAttempt(
+export function takeReturnAttempt(
   db: D1Database,
   client: string,
   now: number,
-  limit: { max: number; windowMs: number } = RETURN_RATE_LIMIT,
+  limit: AttemptLimit = RETURN_RATE_LIMIT,
 ): Promise<boolean> {
-  const key = `appflare:cloudflare-oauth-return:${await sha256Hex(client)}`;
-  const row = await db
-    .prepare(
-      `INSERT INTO rate_limit (id, key, count, last_request) VALUES (?1, ?1, 1, ?2)
-       ON CONFLICT(id) DO UPDATE SET
-         count = CASE WHEN ?2 - last_request >= ?3 THEN 1 ELSE count + 1 END,
-         last_request = CASE WHEN ?2 - last_request >= ?3 THEN ?2 ELSE last_request END
-       RETURNING count`,
-    )
-    .bind(key, now, limit.windowMs)
-    .first<{ count: number }>();
-  return (row?.count ?? 1) <= limit.max;
+  return takeAttempt(db, "cloudflare-oauth-return", client, now, limit);
 }
 
 /**
