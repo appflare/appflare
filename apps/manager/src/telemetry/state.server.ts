@@ -24,6 +24,17 @@ export function isDevBuild(version: string): boolean {
   return version.startsWith("0.0.0");
 }
 
+/**
+ * Why this version never sends usage data, or null when it does. Development
+ * builds and pre-releases (a semver pre-release part, as in `0.4.0-rc.1`) run
+ * on test managers, which would otherwise count in the usage stats of the
+ * versions people actually run.
+ */
+export function usageDataWithheld(version: string): "development build" | "pre-release" | null {
+  if (isDevBuild(version)) return "development build";
+  return /^\d+\.\d+\.\d+-/.test(version) ? "pre-release" : null;
+}
+
 /** The variable that turns usage data off on this Worker, or null. */
 export function lockOf(
   env: Pick<TelemetryEnv, "APPFLARE_TELEMETRY" | "DO_NOT_TRACK">,
@@ -45,6 +56,7 @@ export async function readTelemetryStatus(env: TelemetryEnv): Promise<TelemetryS
     state: row.telemetry === "off" ? "off" : "on",
     lockedBy: lockOf(env),
     devBuild: isDevBuild(runningVersion(env)),
+    preRelease: usageDataWithheld(runningVersion(env)) === "pre-release",
   };
 }
 
@@ -146,7 +158,7 @@ export async function markOpenedToday(
   role: "admin" | "member",
   now: number = Date.now(),
 ): Promise<void> {
-  if (isDevBuild(runningVersion(env)) || lockOf(env) !== null) return;
+  if (usageDataWithheld(runningVersion(env)) !== null || lockOf(env) !== null) return;
   const day = utcDay(now);
   if (openedMarkedDay === day) return;
   const result = await env.DB.prepare(

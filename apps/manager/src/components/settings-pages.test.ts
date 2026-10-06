@@ -314,12 +314,25 @@ describe("UsageDataSettingsView", () => {
   it("keeps the switch and the preview", () => {
     const html = render(
       createElement(UsageDataSettingsView, {
-        telemetry: { state: "on", lockedBy: null, devBuild: false },
+        telemetry: { state: "on", lockedBy: null, devBuild: false, preRelease: false },
         isAdmin: true,
       }),
     );
     expectPattern(html, ["usage-data"], ["Preview"]);
     expect(html).toContain('role="switch"');
+    expect(text(html)).not.toContain("never sends usage data");
+  });
+
+  it("says a pre-release never sends usage data, whatever the switch says", () => {
+    const html = render(
+      createElement(UsageDataSettingsView, {
+        telemetry: { state: "on", lockedBy: null, devBuild: false, preRelease: true },
+        isAdmin: true,
+      }),
+    );
+    expect(text(html)).toContain(
+      "This is a pre-release of Appflare, which never sends usage data, whatever this switch says. Released versions do.",
+    );
   });
 });
 

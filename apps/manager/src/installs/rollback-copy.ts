@@ -95,6 +95,7 @@ export function rollbackFinishMessage(opts: {
   toVersion: string | null;
   versionId: string;
   sameCode: boolean;
+  /** The app's address (its root, not the health path the check probed). */
   url: string;
   /** `healthLabel` of the live check. */
   health: string;

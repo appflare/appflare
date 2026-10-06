@@ -79,9 +79,9 @@ export function UsageDataSwitch({
       <Text variant="secondary" size="sm">
         {TELEMETRY_COPY.scope}
       </Text>
-      {status.lockedBy === null && status.devBuild && (
+      {status.lockedBy === null && (status.devBuild || status.preRelease) && (
         <Text variant="secondary" size="sm">
-          {TELEMETRY_COPY.devBuild}
+          {status.devBuild ? TELEMETRY_COPY.devBuild : TELEMETRY_COPY.preRelease}
         </Text>
       )}
     </div>

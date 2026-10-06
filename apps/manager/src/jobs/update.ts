@@ -1573,7 +1573,7 @@ export async function runUpdate(ctx: JobContext): Promise<void> {
           ),
       ]);
       log.info(
-        `Updated ${appSlugLabel(started.slug)} from ${started.fromVersion} to ${params.version} at ${url} (health: ${healthLabel(health)}).`,
+        `Updated ${appSlugLabel(started.slug)} from ${started.fromVersion} to ${params.version} at ${appBase}/ (health: ${healthLabel(health)}).`,
       );
       return {};
     });

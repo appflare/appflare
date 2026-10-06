@@ -1160,7 +1160,14 @@ export async function runRollback(ctx: JobContext): Promise<void> {
         ? { [started.versionId]: secretNames.vars }
         : {},
     );
-    const url = `${appBaseUrl({ workerName, subdomain, workersDev: started.workersDev, domains: started.domains, served: started.servedDomain })}${started.healthPath}`;
+    const appBase = appBaseUrl({
+      workerName,
+      subdomain,
+      workersDev: started.workersDev,
+      domains: started.domains,
+      served: started.servedDomain,
+    });
+    const url = `${appBase}${started.healthPath}`;
     // Recorded rather than fatal: the snapshot's version already serves. A
     // job started before health modes existed has none recorded.
     const health = await checkLiveHealthPhase(
@@ -1193,7 +1200,7 @@ export async function runRollback(ctx: JobContext): Promise<void> {
           toVersion: started.toVersion,
           versionId: started.versionId,
           sameCode: started.sameCode,
-          url,
+          url: `${appBase}/`,
           health: healthLabel(health),
         }),
       );

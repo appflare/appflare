@@ -21,6 +21,8 @@ export interface TelemetryStatus {
   lockedBy: TelemetryLock | null;
   /** A development build (`0.0.0…`) never sends anything. */
   devBuild: boolean;
+  /** Nor does a pre-release (`0.4.0-rc.1`). */
+  preRelease: boolean;
 }
 
 export const setTelemetryInput = z.object({ enabled: z.boolean() });
@@ -48,6 +50,8 @@ export const TELEMETRY_COPY = {
     `Turned off by the ${variable} variable on this Worker. Remove the variable to change this here.`,
   devBuild:
     "This is a development build of Appflare, which never sends usage data, whatever this switch says.",
+  preRelease:
+    "This is a pre-release of Appflare, which never sends usage data, whatever this switch says. Released versions do.",
   membersOnly: "Only admins can change it.",
   preview: "Preview",
   previewDescription:
