@@ -14,7 +14,7 @@ import {
   parseConnectionString,
   type SigningKey,
 } from "@appflare/schema";
-import { inArray } from "drizzle-orm";
+import { and, eq, inArray, isNotNull, isNull } from "drizzle-orm";
 import { MANIFEST_TTL_SECONDS, manifestCacheKey } from "../../catalog/app-manifest.server";
 import type { ReleaseAssets } from "../../catalog/release-assets";
 import { appPlace } from "../../components/app-links";
@@ -22,7 +22,7 @@ import type { Database } from "../../db/client";
 import { type RESOURCE_KINDS, resources } from "../../db/schema";
 import { readSettings, SETTING, writeSettings } from "../../db/settings";
 import type { StepRunner } from "../run-job";
-import { JobError, type JobSteps } from "../steps";
+import { errorMessage, JobError, type JobSteps } from "../steps";
 import { failureError, settleUnit } from "../units/result";
 import type { ArtifactHost } from "../units/units";
 import { ACCESS_PREVIEW_REASON, activeVersionId, cronChanges } from "../update/plan";
@@ -157,9 +157,24 @@ export async function loadVerifiedManifest(
 }
 
 /**
- * Creates one backing resource as three steps, so a retried create never
+ * Creates one backing resource as four steps, so a retried create never
  * double-creates and a failed record never re-creates: check the name is free
- * (Appflare never adopts an existing resource), create it, record it.
+ * (Appflare never adopts an existing resource), record the name with no
+ * Cloudflare id yet, create it, record its id.
+ *
+ * The name is recorded before the create so that a resource this install
+ * made is always known to it, even when recording its id fails for good:
+ * each name recorded is added to `reserved`, and a job that fails passes it
+ * to {@link resolveReservedNamesPhase}, which records the id the create
+ * returned (or releases the name), so the next attempt and the uninstall
+ * address that resource by its id.
+ *
+ * A name-only row outlives its job only when the job is stopped from outside
+ * (terminated in the dashboard, or the engine fails). Such a row never
+ * authorises taking on a resource by its name: the check refuses an existing
+ * resource of that name (it may be the one that create made, or not), and
+ * when there is none the create runs afresh and records its id. An existing
+ * resource is accepted only when this install recorded its id.
  */
 export async function provisionResourcePhase(
   steps: JobSteps,
@@ -169,9 +184,11 @@ export async function provisionResourcePhase(
    * Connection strings by Hyperdrive binding, from the job's input. Read
    * inside the create step only; never logged, returned, or recorded.
    */
-  connections: Readonly<Record<string, string>> = {},
+  connections: Readonly<Record<string, string>>,
+  reserved: NameReservation[],
 ): Promise<CreatedResource> {
   const label = RESOURCE_LABEL[res.kind];
+  const rowId = resourceId(installId, res.kind, res.binding);
   // An account without R2 refuses every R2 call; say so instead of the raw error.
   // A token without the optional Hyperdrive group: name the permission.
   const explain = <T>(call: () => Promise<T>): Promise<T> =>
@@ -180,17 +197,71 @@ export async function provisionResourcePhase(
       : res.kind === "hyperdrive"
         ? explainHyperdriveRefusal(call)
         : call();
-  await steps.run(`check ${label} ${res.name}`, async ({ log, cf }) => {
-    if ((await explain(() => findResource(cf(), res))) !== null) {
+  const checked = await steps.run(`check ${label} ${res.name}`, async ({ log, cf, orm }) => {
+    const existing = await explain(() => findResource(cf(), res));
+    if (existing === null) {
+      log.info(`No ${label} named "${res.name}" exists yet.`);
+      return { recorded: null };
+    }
+    const [row] = await orm
+      .select({ cfId: resources.cf_id })
+      .from(resources)
+      .where(
+        and(
+          eq(resources.id, rowId),
+          eq(resources.name, res.name),
+          isNull(resources.deleted_at),
+          isNull(resources.retained_at),
+        ),
+      )
+      .limit(1);
+    if (row?.cfId === null) {
+      // Recorded by name only by an earlier job stopped before it recorded
+      // the id: nothing shows the resource of that name is the one its
+      // create made (it may never have run), so it is not taken on.
+      throw new JobError(
+        `a ${label} named ${res.name} already exists in this account; it may be one an earlier, stopped job started making, but Appflare did not record its id, so it cannot tell. Delete it in the Cloudflare dashboard if it is not in use, then try again`,
+      );
+    }
+    if (row === undefined || row.cfId !== existing) {
       throw new JobError(
         `a ${label} named ${res.name} already exists in this account; Appflare does not adopt existing resources`,
       );
     }
-    log.info(`No ${label} named "${res.name}" exists yet.`);
-    return {};
+    log.info(`Found the ${label} "${res.name}" this install recorded; using it.`, {
+      id: existing,
+    });
+    return { recorded: existing };
   });
 
-  const made = await steps.run(`create ${label} ${res.name}`, async ({ log, cf, attempt }) => {
+  await steps.run(`record ${label} name ${res.name}`, async ({ orm }) => {
+    const at = new Date(steps.now());
+    await orm
+      .insert(resources)
+      .values({
+        id: rowId,
+        install_id: installId,
+        kind: res.kind,
+        binding: res.unbound === true ? null : res.binding,
+        name: res.name,
+        cf_id: null,
+        created_at: at,
+      })
+      // A row an earlier attempt released (nothing was created) is taken
+      // up again; a live one is left as it is.
+      .onConflictDoUpdate({
+        target: resources.id,
+        set: { name: res.name, cf_id: null, deleted_at: null, created_at: at },
+        where: isNotNull(resources.deleted_at),
+      });
+    return {};
+  });
+  const reservation: NameReservation = { rowId, res, createdId: null, recorded: false };
+  reserved.push(reservation);
+
+  const made = await steps.run(`create ${label} ${res.name}`, async ({ log, cf, orm, attempt }) => {
+    // A step output recorded before the check looked at the records has none.
+    if (checked.recorded != null) return { cfId: checked.recorded };
     const api = cf();
     // The check step saw no such name, so on a retry a resource with this name
     // is the one this step's own earlier attempt created before it failed.
@@ -203,10 +274,26 @@ export async function provisionResourcePhase(
         return { cfId: existing };
       }
     }
-    const cfId =
-      res.type === "hyperdrive"
-        ? await createHyperdriveConfig(api, res, connections[res.binding])
-        : await explain(() => createResource(api, res));
+    let cfId: string;
+    try {
+      cfId =
+        res.type === "hyperdrive"
+          ? await createHyperdriveConfig(api, res, connections[res.binding])
+          : await explain(() => createResource(api, res));
+    } catch (error) {
+      // Refused (or never sent): nothing was created. Release the name so
+      // an uninstall never deletes a same-named resource made elsewhere later.
+      if (
+        error instanceof JobError ||
+        (error instanceof CloudflareApiError && error.status < 500 && error.status !== 429)
+      ) {
+        await orm
+          .update(resources)
+          .set({ deleted_at: new Date(steps.now()) })
+          .where(and(eq(resources.id, rowId), isNull(resources.cf_id)));
+      }
+      throw error;
+    }
     log.info(
       res.unbound === true
         ? `Created ${label} "${res.name}".`
@@ -215,25 +302,131 @@ export async function provisionResourcePhase(
     );
     return { cfId };
   });
+  reservation.createdId = made.cfId;
 
   await steps.run(`record ${label} ${res.name}`, async ({ orm }) => {
-    await recordResource(
-      orm,
-      installId,
-      {
+    await orm
+      .insert(resources)
+      .values({
+        id: rowId,
+        install_id: installId,
         kind: res.kind,
-        key: res.binding,
         binding: res.unbound === true ? null : res.binding,
         name: res.name,
-        cfId: made.cfId,
-      },
-      new Date(steps.now()),
-    );
+        cf_id: made.cfId,
+        created_at: new Date(steps.now()),
+      })
+      .onConflictDoUpdate({
+        target: resources.id,
+        set: { cf_id: made.cfId },
+        where: isNull(resources.cf_id),
+      });
     return {};
   });
+  reservation.recorded = true;
   // Recorded first, so a failure below leaves a resource the job's cleanup knows.
   await configureResourcePhase(steps, res);
   return { binding: res.binding, type: res.type, name: res.name, cfId: made.cfId };
+}
+
+/**
+ * A resource name a job recorded before creating the resource (see
+ * {@link provisionResourcePhase}). Rebuilt the same way when the job runs
+ * again from the top, as every step it follows returns its recorded output.
+ */
+export interface NameReservation {
+  rowId: string;
+  res: ResourceBindingPlan;
+  /** The id the job's create step returned, once that step finished. */
+  createdId: string | null;
+  /** Whether the step that records the id finished. */
+  recorded: boolean;
+}
+
+/**
+ * Run when an install or update fails: leaves none of the rows the job
+ * recorded by name only, so a name-only row never outlives the job that
+ * reserved it. Each one whose id was not recorded is looked up by name. When
+ * the resource there is the one the job's create step made (the step
+ * returned its id), its id is recorded, so the next attempt and the
+ * uninstall address it by id. Otherwise the row is released (marked
+ * deleted): the create never made anything, or made something the job has
+ * no id for, and a resource Appflare has no id for is never taken on. When
+ * the lookup itself fails, the id the create step returned is recorded all
+ * the same (it is this job's own); with none, the row is released. Best
+ * effort: a row this cannot resolve stays as it was, and its resource
+ * (`<label> <name>`) is returned for the job's failure log; the job still
+ * fails with its own reason, and the step it failed at stays `steps.current`.
+ */
+export async function resolveReservedNamesPhase(
+  steps: JobSteps,
+  reserved: readonly NameReservation[],
+): Promise<string[]> {
+  const failedAt = steps.current;
+  const unresolved: string[] = [];
+  for (const r of reserved) {
+    if (r.recorded) continue;
+    const label = RESOURCE_LABEL[r.res.kind];
+    try {
+      await steps.run(`resolve ${label} name ${r.res.name}`, async ({ log, cf, orm }) => {
+        const [row] = await orm
+          .select({ cfId: resources.cf_id, deletedAt: resources.deleted_at })
+          .from(resources)
+          .where(eq(resources.id, r.rowId))
+          .limit(1);
+        if (row === undefined || row.deletedAt !== null || row.cfId !== null) return {};
+        let found: string | null;
+        let lookupFailed = false;
+        try {
+          found = await findResource(cf(), r.res);
+        } catch (error) {
+          // Unknown: what the create step returned is still this job's own.
+          log.warn(`Could not look up the ${label} "${r.res.name}": ${errorMessage(error)}`);
+          found = r.createdId;
+          lookupFailed = true;
+        }
+        const at = new Date(steps.now());
+        if (r.createdId !== null && found === r.createdId) {
+          await orm
+            .update(resources)
+            .set({ cf_id: r.createdId })
+            .where(and(eq(resources.id, r.rowId), isNull(resources.cf_id)));
+          log.info(
+            `Recorded the id of the ${label} "${r.res.name}" this job created, so the next attempt and the uninstall find it.`,
+            { id: r.createdId },
+          );
+          return {};
+        }
+        await orm
+          .update(resources)
+          .set({ deleted_at: at })
+          .where(and(eq(resources.id, r.rowId), isNull(resources.cf_id)));
+        if (lookupFailed) {
+          log.warn(
+            `Appflare could not check whether a ${label} named "${r.res.name}" exists, and this job has no id of one it created, so it releases the name. A ${label} of that name is not Appflare's to keep: delete it in the Cloudflare dashboard if nothing uses it, then try again.`,
+          );
+        } else if (found === null) {
+          log.info(`No ${label} named "${r.res.name}" was created; its name is released.`);
+        } else {
+          log.warn(
+            `A ${label} named "${r.res.name}" exists, but this job has no id of one it created, so Appflare leaves it alone and releases the name. Delete it in the Cloudflare dashboard if nothing uses it, then try again.`,
+            { id: found },
+          );
+        }
+        return {};
+      });
+    } catch {
+      unresolved.push(`${label} ${r.res.name}`);
+    }
+  }
+  steps.current = failedAt;
+  return unresolved;
+}
+
+/** The failure log's line for what {@link resolveReservedNamesPhase} could not resolve. */
+export function nameOnlyNote(unresolved: readonly string[]): string {
+  const one = unresolved.length === 1;
+  return `Appflare could not finish the record of ${unresolved.join(", ")}: with only ${one ? "its name" : "their names"} recorded, it cannot tell whether a resource of ${one ? "that name" : "those names"} is this app's. The next attempt creates ${one ? "it" : "each"} when nothing has that name and refuses the name otherwise, and the uninstall deletes nothing by that name; if such a resource is this app's, delete it in the Cloudflare dashboard.`;
 }
 
 /**

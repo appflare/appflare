@@ -42,6 +42,8 @@ const NOW = 1_790_000_000_000;
 interface World {
   scripts: Set<string>;
   kv: Set<string>;
+  /** KV namespace titles by id, for the listing; an id without one is its own title. */
+  kvTitles?: Map<string, string>;
   d1: Set<string>;
   r2: Map<string, string[]>;
   queues: Set<string>;
@@ -201,6 +203,12 @@ function fakeWorld(over: Partial<World> = {}) {
       world.r2.delete(m[1]);
       return ok(null);
     }
+    if (key === "GET /storage/kv/namespaces") {
+      return ok(
+        [...world.kv].map((id) => ({ id, title: world.kvTitles?.get(id) ?? id })),
+        { result_info: { page: 1, total_pages: 1 } },
+      );
+    }
     return fail(404, `no route ${key}`);
   };
   return { world, fetch };
@@ -247,6 +255,59 @@ async function seedInstall(
 }
 
 const ALL_DATA = ["kv", "d1", "r2", "queue", "vec"];
+
+/**
+ * Records every data resource of install `i1`, and a Hyperdrive
+ * configuration, by name only: an install or update stopped from outside
+ * after recording each name, before recording its id.
+ */
+async function recordByNameOnly(): Promise<void> {
+  await env.DB.batch([
+    env.DB.prepare(
+      "UPDATE resources SET cf_id = NULL WHERE id IN ('kv', 'd1', 'r2', 'queue', 'vec')",
+    ),
+    env.DB.prepare(
+      `INSERT INTO resources (id, install_id, kind, binding, name, cf_id, created_at)
+       VALUES ('hd', 'i1', 'hyperdrive', 'HYPERDRIVE', 'cut-hyperdrive', NULL, 1)`,
+    ),
+  ]);
+}
+
+/** The warning for a resource recorded by name only, which nothing deletes. */
+const unrecorded = (label: string, name: string) =>
+  `Appflare did not finish recording the ${label} "${name}", so it cannot tell whether a ${label} of that name is this app's; nothing was deleted. If it is, delete it in the Cloudflare dashboard. Marked deleted.`;
+
+/** A world with a resource under each name `recordByNameOnly` leaves, the bucket holding an object. */
+const sameNamedWorld = () =>
+  fakeWorld({
+    kvTitles: new Map([["kv-1", "cut-cut-kv"]]),
+    r2: new Map([["cut-files", ["keep.txt"]]]),
+    hyperdrive: new Set(["hd-1"]),
+  });
+
+/** The calls a job made to a data resource's API (or a Hyperdrive configuration's). */
+const dataCalls = (fake: ReturnType<typeof fakeWorld>) =>
+  fake.world.calls.filter((c) =>
+    /^\w+ \/(storage\/kv|d1|r2|r2-catalog|queues|vectorize|hyperdrive)\//.test(c),
+  );
+
+/** The world `sameNamedWorld` made, untouched. */
+function expectUntouched(fake: ReturnType<typeof fakeWorld>) {
+  expect(fake.world.kv).toEqual(new Set(["kv-1"]));
+  expect(fake.world.d1).toEqual(new Set(["d1-1"]));
+  expect(fake.world.r2.get("cut-files")).toEqual(["keep.txt"]);
+  expect(fake.world.queues).toEqual(new Set(["q-1"]));
+  expect(fake.world.vectorize).toEqual(new Set(["cut-vectors"]));
+  expect(fake.world.hyperdrive).toEqual(new Set(["hd-1"]));
+}
+
+const DATA_WARNINGS = [
+  unrecorded("KV namespace", "cut-cut-kv"),
+  unrecorded("D1 database", "cut-db"),
+  unrecorded("R2 bucket", "cut-files"),
+  unrecorded("queue", "cut-events"),
+  unrecorded("Vectorize index", "cut-vectors"),
+];
 
 async function start(request: StartUninstallRequest) {
   let params: UninstallJobParams | null = null;
@@ -1061,16 +1122,26 @@ describe("uninstall job", () => {
     expect(fake.world.scripts).toEqual(new Set(["appflare"]));
   });
 
-  it("skips a data resource with no recorded id, marking it deleted with a warning", async () => {
+  it("makes no delete call for a resource recorded by name only, of any kind, and warns", async () => {
     await seedInstall();
-    await env.DB.prepare("UPDATE resources SET cf_id = NULL WHERE id = 'kv'").run();
-    const fake = fakeWorld();
-    const r = await uninstall({ installId: "i1", deleteResources: ["kv"] }, fake);
+    await recordByNameOnly();
+    const fake = sameNamedWorld();
+    const r = await uninstall({ installId: "i1", deleteResources: ALL_DATA }, fake);
+
     expect(r.error).toBeNull();
-    expect(r.state("kv")).toBe("deleted");
-    expect(fake.world.calls.some((c) => c.includes("/storage/kv/"))).toBe(false);
-    expect(fake.world.kv).toEqual(new Set(["kv-1"]));
-    expect(r.logs.find((l) => l.message.startsWith("No Cloudflare id"))?.level).toBe("warn");
+    expect(r.install?.status).toBe("uninstalled");
+    // Not looked up, emptied, or deleted by its name: a resource of that
+    // name may not be this app's.
+    expect(dataCalls(fake)).toEqual([]);
+    expect(r.step.names.some((n) => n.startsWith("empty R2 bucket"))).toBe(false);
+    expectUntouched(fake);
+    for (const id of [...ALL_DATA, "hd"]) expect(r.state(id)).toBe("deleted");
+    expect(r.logs.filter((l) => l.level === "warn").map((l) => l.message)).toEqual(
+      expect.arrayContaining([
+        unrecorded("Hyperdrive configuration", "cut-hyperdrive"),
+        ...DATA_WARNINGS,
+      ]),
+    );
   });
 
   it("stops when a deleted object is still listed instead of looping", async () => {
@@ -1484,6 +1555,33 @@ describe("deleting the data an uninstall kept", () => {
     expect(r.logs.at(-1)?.message).toBe(
       'Deleted everything "cut" kept that no other install uses now.',
     );
+  });
+
+  it("makes no delete call for a kept resource recorded by name only, and warns", async () => {
+    await seedInstall();
+    await recordByNameOnly();
+    const fake = sameNamedWorld();
+    await uninstall({ installId: "i1", deleteResources: [] }, fake);
+    fake.world.calls.length = 0;
+
+    const r = await deleteRetained(fake);
+
+    expect(r.error).toBeNull();
+    expect(r.job?.status).toBe("succeeded");
+    expect(r.install?.status).toBe("uninstalled");
+    expect(r.step.names).toEqual([
+      "start",
+      "delete KV namespace cut-cut-kv",
+      "delete D1 database cut-db",
+      "delete R2 bucket cut-files",
+      "delete queue cut-events",
+      "delete Vectorize index cut-vectors",
+      "finish",
+    ]);
+    expect(dataCalls(fake)).toEqual([]);
+    expectUntouched(fake);
+    for (const id of ALL_DATA) expect(r.state(id)).toBe("deleted");
+    expect(r.logs.filter((l) => l.level === "warn").map((l) => l.message)).toEqual(DATA_WARNINGS);
   });
 
   it("refuses to start when all that is left has a name a later install records", async () => {

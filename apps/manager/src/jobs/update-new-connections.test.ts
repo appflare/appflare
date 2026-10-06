@@ -500,6 +500,57 @@ describe("a version that connects to a database elsewhere", () => {
     });
   });
 
+  it("refuses a configuration of the name an earlier, stopped job recorded without its id", async () => {
+    // The earlier job recorded the name and was stopped before it recorded
+    // an id: the configuration of that name may be the one it made, or not.
+    const w = await world(WITH_DATABASE, {
+      resources: [
+        ...RESOURCES,
+        { kind: "hyperdrive", binding: "HYPERDRIVE", name: "cut-hyperdrive" },
+      ],
+    });
+    w.side.state.hyperdrive.push({ id: "hd-made", name: "cut-hyperdrive", body: {} });
+    const { result, params } = await start(w);
+    expect("needsDatabases" in result).toBe(false);
+    if (params === null) throw new Error("the update did not start");
+    const r = await run(w, params);
+    expect(r.job?.status).toBe("failed");
+    expect(r.job?.error).toBe(
+      "check Hyperdrive configuration cut-hyperdrive: a Hyperdrive configuration named cut-hyperdrive already exists in this account; it may be one an earlier, stopped job started making, but Appflare did not record its id, so it cannot tell. Delete it in the Cloudflare dashboard if it is not in use, then try again",
+    );
+    expect(w.side.state.calls).not.toContain("POST /hyperdrive/configs");
+    expect(w.side.state.hyperdrive.map((c) => c.id)).toEqual(["hd-made"]);
+    expect(r.resources.filter((row) => row.kind === "hyperdrive")).toEqual([
+      {
+        kind: "hyperdrive",
+        binding: "HYPERDRIVE",
+        name: "cut-hyperdrive",
+        cf_id: null,
+        deleted_at: null,
+      },
+    ]);
+  });
+
+  it("releases a name-only record whose configuration was never made, so the next update asks for the string", async () => {
+    const w = await world(WITH_DATABASE, {
+      resources: [
+        ...RESOURCES,
+        { kind: "hyperdrive", binding: "HYPERDRIVE", name: "cut-hyperdrive" },
+      ],
+    });
+    const { params } = await start(w);
+    if (params === null) throw new Error("the update did not start");
+    const r = await run(w, params);
+    expect(r.job?.status).toBe("failed");
+    expect(r.job?.error).toBe(
+      "create Hyperdrive configuration cut-hyperdrive: no connection string was given for the database of HYPERDRIVE",
+    );
+    expect(w.side.state.calls).not.toContain("POST /hyperdrive/configs");
+    expect(r.resources.find((row) => row.kind === "hyperdrive")?.deleted_at).not.toBeNull();
+    const again = await start(w, {}, "job2");
+    expect(again.result).toMatchObject({ needsDatabases: [{ binding: "HYPERDRIVE" }] });
+  });
+
   describe("a configuration a failed attempt made, which the installed version does not use", () => {
     const seeded = {
       resources: [

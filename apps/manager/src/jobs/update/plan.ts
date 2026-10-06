@@ -476,6 +476,13 @@ export function diffBindings(
     if (same !== undefined) {
       used.add(same);
       if (same.cfId === null) {
+        // Its name was recorded before its create, whose id was never
+        // recorded: this update creates it under that name. A resource of
+        // that name is refused, as nothing shows that create made it.
+        if (res.type !== "pipelines") {
+          diff.toCreate.push({ ...res, name: same.name });
+          continue;
+        }
         diff.problems.push(
           `The ${res.kind} resource of binding ${res.binding} (${same.name}) is recorded without a Cloudflare id, so the update cannot bind it.`,
         );

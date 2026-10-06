@@ -800,6 +800,8 @@ async function install(
   units: "self" | "local" = "self",
   /** Runs once the install row exists, before the job starts. */
   beforeRun?: (installId: string, fixture: ArtifactFixture) => Promise<void>,
+  /** Steps that fail on every attempt (see `fakeStep`). */
+  failing?: readonly string[],
 ) {
   const fixture = await buildArtifactFixture(options);
   const fake = fakeWorld(fixture, world);
@@ -807,7 +809,10 @@ async function install(
   const { jobId, installId } = started;
   const params = { ...started.params, ...paramsOver };
   await beforeRun?.(installId, fixture);
-  const step = fakeStep(clock === undefined ? {} : { onSleep: clock.onSleep });
+  const step = fakeStep({
+    ...(clock === undefined ? {} : { onSleep: clock.onSleep }),
+    ...(failing === undefined ? {} : { failing }),
+  });
   fake.state.stepOf = () => step.names.at(-1);
   const self = fakeSelf(jobEnv(), {
     fetch: fake.fetch,
@@ -946,9 +951,11 @@ describe("install job", () => {
       "check Worker name",
       "check cron trigger limit",
       "check KV namespace cut-cut-kv",
+      "record KV namespace name cut-cut-kv",
       "create KV namespace cut-cut-kv",
       "record KV namespace cut-cut-kv",
       "check D1 database cut-db",
+      "record D1 database name cut-db",
       "create D1 database cut-db",
       "record D1 database cut-db",
       "look up workers.dev subdomain",
@@ -4094,6 +4101,91 @@ describe("install again", () => {
         .filter((x) => x.deleted_at === null && ["kv", "d1", "worker"].includes(x.kind))
         .map((x) => `${x.kind} ${x.name}`),
     ).toEqual(["kv cut-cut-kv", "d1 cut-db", "worker cut"]);
+  });
+
+  it("records the id of a namespace whose record failed for good, so installing again removes it", async () => {
+    const failed = await install(twoResources, {}, {}, {}, undefined, "self", undefined, [
+      "record KV namespace cut-cut-kv",
+    ]);
+    expect(failed.job?.status).toBe("failed");
+    expect(failed.job?.error).toBe(
+      "record KV namespace cut-cut-kv: D1_ERROR: database unavailable",
+    );
+    expect(failed.step.names).toContain("resolve KV namespace name cut-cut-kv");
+    // The failure log names the step the install failed at, not the one after it.
+    expect(failed.logs.at(-1)).toMatchObject({
+      level: "error",
+      message:
+        'Install failed at "record KV namespace cut-cut-kv". Resources created so far stay recorded.',
+    });
+    // Created, and recorded with its id when the install failed.
+    expect(failed.fake.state.kv).toEqual([{ id: "kv-1", title: "cut-cut-kv" }]);
+    expect(failed.resources).toContainEqual({
+      kind: "kv",
+      binding: "CUT_KV",
+      name: "cut-cut-kv",
+      cf_id: "kv-1",
+    });
+
+    const r = await runJobs(failed, await startAgain(failed));
+    expect(r.error).toBeNull();
+    expect(r.newJob?.status).toBe("succeeded");
+    expect(r.oldInstall?.status).toBe("uninstalled");
+    // The removal deleted it by its id; the new install made its own.
+    expect(failed.fake.state.calls).toContain("DELETE /storage/kv/namespaces/kv-1");
+    expect(failed.fake.state.kv.map((n) => n.title)).toEqual(["cut-cut-kv"]);
+    expect(r.oldResources.every((x) => x.deleted_at !== null)).toBe(true);
+  });
+
+  it("leaves a namespace recorded by name only alone when installing again, and says so", async () => {
+    const failed = await install(twoResources, {}, {}, {}, undefined, "self", undefined, [
+      "record KV namespace cut-cut-kv",
+      "resolve KV namespace name cut-cut-kv",
+    ]);
+    expect(failed.job?.status).toBe("failed");
+    expect(failed.fake.state.kv).toEqual([{ id: "kv-1", title: "cut-cut-kv" }]);
+    expect(failed.resources).toContainEqual({
+      kind: "kv",
+      binding: "CUT_KV",
+      name: "cut-cut-kv",
+      cf_id: null,
+    });
+    expect(failed.logs.slice(-2)).toMatchObject([
+      {
+        level: "error",
+        message:
+          "Appflare could not finish the record of KV namespace cut-cut-kv: with only its name recorded, it cannot tell whether a resource of that name is this app's. The next attempt creates it when nothing has that name and refuses the name otherwise, and the uninstall deletes nothing by that name; if such a resource is this app's, delete it in the Cloudflare dashboard.",
+      },
+      {
+        level: "error",
+        message:
+          'Install failed at "record KV namespace cut-cut-kv". Resources created so far stay recorded.',
+      },
+    ]);
+
+    const started = await startAgain(failed);
+    const r = await runJobs(failed, started);
+    // The removal made no call for it, marked it deleted, and said so.
+    expect(r.oldInstall?.status).toBe("uninstalled");
+    expect(r.oldResources.every((x) => x.deleted_at !== null)).toBe(true);
+    expect(failed.fake.state.calls.some((c) => c.startsWith("DELETE /storage/kv/"))).toBe(false);
+    const removal = (
+      await env.DB.prepare("SELECT level, message FROM job_logs WHERE job_id = ?1 ORDER BY id")
+        .bind(started.cleanup?.jobId)
+        .all<{ level: string; message: string }>()
+    ).results;
+    expect(removal).toContainEqual({
+      level: "warn",
+      message:
+        'Appflare did not finish recording the KV namespace "cut-cut-kv", so it cannot tell whether a KV namespace of that name is this app\'s; nothing was deleted. If it is, delete it in the Cloudflare dashboard. Marked deleted.',
+    });
+    // The new install does not take it on: it stops at that name.
+    expect(r.newJob).toEqual({
+      status: "failed",
+      error:
+        "check KV namespace cut-cut-kv: a KV namespace named cut-cut-kv already exists in this account; Appflare does not adopt existing resources",
+    });
+    expect(failed.fake.state.kv).toEqual([{ id: "kv-1", title: "cut-cut-kv" }]);
   });
 
   it("protects the app when installed again after the token got the Access permission it lacked", async () => {

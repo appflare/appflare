@@ -94,40 +94,51 @@ export interface DeletableResource {
 }
 
 /**
+ * The warning for a resource recorded by name only (its id never was), which
+ * an uninstall marks deleted without a call: the name proves nothing.
+ */
+export function unrecordedNote(kind: ResourceBindingPlan["kind"], name: string): string {
+  const label = RESOURCE_LABEL[kind];
+  return `Appflare did not finish recording the ${label} "${name}", so it cannot tell whether a ${label} of that name is this app's; nothing was deleted. If it is, delete it in the Cloudflare dashboard. Marked deleted.`;
+}
+
+/**
  * Deletes the resource with one API call and returns true, or returns false
  * without a call when no Cloudflare id is recorded to address it by. Throws
  * `CloudflareApiError` as is (a 404 means it is already gone; the caller
  * decides what that means).
+ *
+ * A row with no id is one whose name was recorded before its create (see
+ * `provisionResourcePhase`) by a job stopped before it could record the id
+ * or release the name. Nothing shows that a resource of that name is the
+ * one that create made: the create may never have run, and someone else may
+ * have made that name since. So it is never addressed by its name.
  */
 export async function deleteResource(
   api: CloudflareClient,
   res: DeletableResource,
 ): Promise<boolean> {
+  if (res.cfId === null) return false;
   switch (res.kind) {
     case "kv":
-      if (res.cfId === null) return false;
       await api.kv.deleteNamespace(res.cfId);
       return true;
     case "d1":
-      if (res.cfId === null) return false;
       await api.d1.deleteDatabase(res.cfId);
       return true;
     case "r2":
-      await api.r2.deleteBucket(res.cfId ?? res.name);
+      await api.r2.deleteBucket(res.cfId);
       return true;
     case "queue":
-      if (res.cfId === null) return false;
       await api.queues.deleteQueue(res.cfId);
       return true;
     case "vectorize":
-      await api.vectorize.deleteIndex(res.cfId ?? res.name);
+      await api.vectorize.deleteIndex(res.cfId);
       return true;
     case "hyperdrive":
-      if (res.cfId === null) return false;
       await api.hyperdrive.deleteConfig(res.cfId);
       return true;
     case "pipeline_stream":
-      if (res.cfId === null) return false;
       await api.pipelines.deleteStream(res.cfId);
       return true;
   }

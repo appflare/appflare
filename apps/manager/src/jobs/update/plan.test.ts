@@ -163,19 +163,26 @@ describe("diffBindings", () => {
     expect(diff.toCreate).toEqual([]);
   });
 
-  it("refuses a binding whose resource kind changed, and one recorded without an id", () => {
+  it("refuses a binding whose resource kind changed", () => {
     const changed = diffBindings("cut", [{ type: "d1", name: "CUT_KV" }], recorded);
     expect(changed.problems).toEqual([
       "Binding CUT_KV was a kv resource (cut-cut-kv) and is a d1 resource in this version; Appflare does not replace a resource on update.",
     ]);
     expect(changed.toCreate).toEqual([]);
+  });
 
+  it("finishes a resource recorded by name only, under its recorded name", () => {
+    // Its name was recorded before its create, and its id never was.
     const noId = diffBindings(
-      "cut",
+      "cut-2",
       [{ type: "kv_namespace", name: "CUT_KV" }],
       [row({ kind: "kv", binding: "CUT_KV", name: "cut-cut-kv" })],
     );
-    expect(noId.problems[0]).toMatch(/recorded without a Cloudflare id/);
+    expect(noId.problems).toEqual([]);
+    expect(noId.existing).toEqual([]);
+    expect(noId.toCreate).toEqual([
+      expect.objectContaining({ binding: "CUT_KV", kind: "kv", name: "cut-cut-kv" }),
+    ]);
   });
 
   it("carries the binding plan's own problems", () => {

@@ -49,7 +49,7 @@ import {
   removeBucketCatalog,
 } from "./install/pipelines";
 import { consumerTargets, removeQueueConsumersPhase } from "./install/queue-consumers";
-import { deleteResource, RESOURCE_LABEL } from "./install/resources";
+import { deleteResource, RESOURCE_LABEL, unrecordedNote } from "./install/resources";
 import type { JobContext } from "./run-job";
 import { runSelfDeployingUninstall } from "./self-deploying/jobs";
 import { StepLog } from "./step-log";
@@ -654,9 +654,7 @@ export async function runUninstall(ctx: JobContext): Promise<void> {
           if (await deleteResource(cf(), { kind: "hyperdrive", ...config })) {
             log.info(`Deleted ${label} "${config.name}"; the database itself is untouched.`);
           } else {
-            log.warn(
-              `No Cloudflare id is recorded for ${label} "${config.name}", so it cannot be addressed; marked deleted without a call. Check the Cloudflare dashboard for it.`,
-            );
+            log.warn(unrecordedNote("hyperdrive", config.name));
           }
         } catch (error) {
           if (!isNotFound(error)) throw error;
@@ -767,8 +765,10 @@ export async function deleteDataResourcesPhase(
   const r2PerPage = steps.units.remote ? R2_OBJECTS_PER_STEP : R2_OBJECTS_PER_LOCAL_STEP;
   for (const target of targets) {
     const label = RESOURCE_LABEL[target.kind];
-    if (target.kind === "r2") {
-      const bucket = target.cfId ?? target.name;
+    // A bucket with no id recorded is not emptied: its name proves nothing
+    // (see `deleteResource`), and its delete step makes no call either.
+    if (target.kind === "r2" && target.cfId !== null) {
+      const bucket = target.cfId;
       const catalogId = target.catalogId;
       if (catalogId !== undefined) {
         // Before the bucket is emptied: the catalog's table maintenance
@@ -817,9 +817,7 @@ export async function deleteDataResourcesPhase(
       try {
         if (await deleteResource(cf(), target)) log.info(`Deleted ${label} "${target.name}".`);
         else {
-          log.warn(
-            `No Cloudflare id is recorded for ${label} "${target.name}", so it cannot be addressed; marked deleted without a call. Check the Cloudflare dashboard for it.`,
-          );
+          log.warn(unrecordedNote(target.kind, target.name));
         }
       } catch (error) {
         if (target.kind === "r2" && error instanceof CloudflareApiError && error.status === 409) {

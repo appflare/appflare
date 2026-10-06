@@ -234,6 +234,15 @@ once per Worker, as described below.
 If a step fails, the job stops and names the step. Everything created so far stays
 recorded. Nothing is deleted automatically.
 
+Appflare records each resource's name before creating it, and its id once Cloudflare
+returns one. A job that fails records that id as it stops, or releases the name when
+nothing was created. Only a job stopped from outside (for example terminated in the
+Cloudflare dashboard) can leave a name recorded without its id. Appflare then cannot
+tell whether a resource of that name is the app's, since the create may never have
+run, so it never deletes or reuses one by that name: the next attempt creates the
+resource when nothing has that name, and otherwise stops, naming it. If that
+resource is not in use, delete it in the Cloudflare dashboard, then try again.
+
 Once the cause is fixed (a permission added to the token, a domain freed), use
 **Install again**. It is on the app's page, on its row under **Needs attention** on
 Home, and on the log of the failed job. It opens the install form filled in from
