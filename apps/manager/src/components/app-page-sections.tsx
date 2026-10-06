@@ -363,22 +363,22 @@ export function LinksList({
 }
 
 /** The installs of this app on the account, each linked to its page; the Worker name on hover. */
-export function InstallsList({ instances }: { instances: readonly InstalledRef[] }) {
+export function InstallsList({ installs }: { installs: readonly InstalledRef[] }) {
   return (
     <LayerCard render={<ul />} className="m-0 grid list-none divide-y divide-kumo-hairline p-0">
-      {instances.map((instance) => (
+      {installs.map((install) => (
         <li
-          key={instance.installId}
+          key={install.installId}
           className="flex min-w-0 flex-wrap items-center justify-between gap-2 px-4 py-3"
         >
           {/* The link itself is the tooltip's trigger: a link inside the default button trigger would nest two controls. */}
           <Tooltip
-            content={`Worker: ${instance.workerName}`}
-            render={<Link href={`/apps/${instance.installId}`} />}
+            content={`Worker: ${install.workerName}`}
+            render={<Link href={`/apps/${install.installId}`} />}
           >
-            {instance.label}
+            {install.label}
           </Tooltip>
-          <StatusBadge status={instance.status} of="install" />
+          <StatusBadge status={install.status} of="install" />
         </li>
       ))}
     </LayerCard>

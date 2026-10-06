@@ -214,7 +214,7 @@ const catalogApps = catalogIndex.apps.map((app) => ({
   ...app,
   key: app.slug,
   source,
-  instances: apps
+  installs: apps
     .filter((install) => install.slug === app.slug)
     .map((install) => ({
       installId: install.id,
@@ -306,7 +306,7 @@ function detail(slug: string) {
     creates: app.services.map((kind) => ({ kind, binding: kind.toUpperCase() })),
     durableObjects: [],
     error: null,
-    instances: catalogApps.find((entry) => entry.slug === app.slug)?.instances ?? [],
+    installs: catalogApps.find((entry) => entry.slug === app.slug)?.installs ?? [],
     suggestedWorkerName: app.slug === "cloudmark" ? "cloudmark-2" : app.slug,
     fixedWorkerName: false,
     subdomain: "example",

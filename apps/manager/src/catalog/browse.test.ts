@@ -23,7 +23,7 @@ function app(overrides: Partial<BrowsableApp> & { slug: string }): BrowsableApp 
     authors: [],
     categories: [],
     primitives: { ids: [] },
-    instances: [],
+    installs: [],
     popularity: null,
     ...overrides,
   };
@@ -48,7 +48,7 @@ const flaremo = app({
   categories: ["productivity", "notes"],
   primitives: { ids: ["d1", "r2", "queues", "vectorize"] },
   lastVerified: "2026-09-24T00:00:00.000Z",
-  instances: [{}],
+  installs: [{}],
   popularity: { stars: 282, installs30d: null, activeInstalls: null, installsKnown: true },
 });
 const openSeo = app({

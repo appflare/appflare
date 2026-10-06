@@ -1,4 +1,7 @@
+import { env } from "cloudflare:workers";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { createDb } from "../db/client";
+import { createAuth } from "./server";
 import { ensureAuthStorage, resetAuthStorageForTests } from "./storage.server";
 
 /** Better Auth's per-isolate state (`@better-auth/core`, context/global). */
@@ -55,5 +58,51 @@ describe("ensureAuthStorage", () => {
     const create = vi.fn(async () => undefined);
     await ensureAuthStorage({ waitUntil, create });
     expect(create).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * Whether `promise` settles while only microtasks run. Nothing that waits on
+ * the request (a D1 query, a fetch, a timer) can complete in that time, so a
+ * promise that settles here cannot be left pending by a request that ends.
+ */
+async function settlesWithoutWaiting(promise: Promise<unknown>): Promise<boolean> {
+  let settled = false;
+  promise.then(
+    () => {
+      settled = true;
+    },
+    () => {
+      settled = true;
+    },
+  );
+  for (let turn = 0; turn < 1_000 && !settled; turn++) await Promise.resolve();
+  return settled;
+}
+
+describe("Better Auth's own start-up", () => {
+  it("settles without waiting on anything, so a request that ends cannot strand the instance it built", async () => {
+    // Built as the manager builds it (server/auth.server.ts), recovery included.
+    const auth = createAuth({
+      db: createDb(env.DB),
+      secret: "test-only-better-auth-secret-0000000000000",
+      baseURL: "https://appflare.appflare-dev.workers.dev",
+      recovery: {
+        d1: env.DB,
+        accountSecret: () => undefined,
+        onAccountCodeUsed: () => {},
+        background: () => {},
+      },
+    });
+    expect(await settlesWithoutWaiting(auth.$context)).toBe(true);
+    // The schema check it starts compares the Drizzle schema object; it reads nothing from D1.
+    const context = await auth.$context;
+    expect(await settlesWithoutWaiting(Promise.resolve(context.checkSchema?.()))).toBe(true);
+  });
+
+  it("would notice a start-up that waits on D1", async () => {
+    const query = env.DB.prepare("SELECT 1 AS one").first();
+    expect(await settlesWithoutWaiting(query)).toBe(false);
+    expect(await query).toEqual({ one: 1 });
   });
 });

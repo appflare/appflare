@@ -425,6 +425,24 @@ describe("settings change job", () => {
     );
   });
 
+  it("does not say the route may be going live when it cannot verify a URL that served before", async () => {
+    const liveHost = `cut.${SUBDOMAIN}.workers.dev`;
+    const r = await reconfigure({
+      front: async (request) =>
+        new URL(request.url).host === liveHost
+          ? new Response("error code: 1042", { status: 404 })
+          : null,
+    });
+    expect(r.error).toBeNull();
+    expect(r.install).toMatchObject({ status: "installed", health_status: "unverified" });
+    const warning = r.logs.findLast((l) => l.message.startsWith("Could not verify"))?.message;
+    expect(warning).toMatch(
+      /^Could not verify https:\/\/cut\.appflare-dev\.workers\.dev\/ after \d+ attempts \(.+\)\. The new settings are in place\. Open the app to check, or check again from /,
+    );
+    expect(JSON.stringify(r.logs)).not.toContain("going live");
+    expect(JSON.stringify(r.logs)).not.toContain("Everything was created");
+  });
+
   it("keeps workers.dev as stored and checks health on the first custom domain while it is off", async () => {
     const r = await reconfigure({
       workersDev: false,

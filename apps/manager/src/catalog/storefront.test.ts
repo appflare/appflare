@@ -26,7 +26,7 @@ function app(overrides: Partial<BrowsableApp> & { slug: string }): BrowsableApp 
     lastVerified: null,
     categories: [],
     primitives: { ids: [] },
-    instances: [],
+    installs: [],
     popularity: null,
     ...overrides,
   };
@@ -56,7 +56,7 @@ describe("storefrontRows", () => {
         addedAt: "2026-09-25T00:00:00Z",
         popularity: stars(10),
       }),
-      app({ slug: "b", categories: ["email"], instances: [{}], popularity: stars(500) }),
+      app({ slug: "b", categories: ["email"], installs: [{}], popularity: stars(500) }),
       app({ slug: "c", categories: ["ai"] }),
       app({ slug: "d", categories: ["notes"] }),
     ];
@@ -129,9 +129,9 @@ describe("storefrontRows", () => {
 
   it("lists installed apps by name, with See all filtering to installed", () => {
     const apps = [
-      app({ slug: "zed", name: "Zed", instances: [{}] }),
+      app({ slug: "zed", name: "Zed", installs: [{}] }),
       app({ slug: "not" }),
-      app({ slug: "alpha", name: "Alpha", instances: [{}, {}] }),
+      app({ slug: "alpha", name: "Alpha", installs: [{}, {}] }),
     ];
     const row = storefrontRows(apps, NOW).find((r) => r.id === "installed");
     expect(ids(row?.apps ?? [])).toEqual(["alpha", "zed"]);
@@ -242,12 +242,12 @@ describe("row keyboard and arrows", () => {
 
 describe("primaryAction", () => {
   it("offers Get from the app page, and Manage for an app installed here", () => {
-    expect(primaryAction({ key: "cut", name: "Cut", instances: [] })).toEqual({
+    expect(primaryAction({ key: "cut", name: "Cut", installs: [] })).toEqual({
       label: "Get",
       href: "/catalog/cut",
       ariaLabel: "Get Cut",
     });
-    expect(primaryAction({ key: "cut", name: "Cut", instances: [{ installId: "i1" }] })).toEqual({
+    expect(primaryAction({ key: "cut", name: "Cut", installs: [{ installId: "i1" }] })).toEqual({
       label: "Manage",
       href: "/apps/i1",
       ariaLabel: "Manage Cut",
@@ -256,7 +256,7 @@ describe("primaryAction", () => {
       primaryAction({
         key: "cut",
         name: "Cut",
-        instances: [{ installId: "i1" }, { installId: "i2" }],
+        installs: [{ installId: "i1" }, { installId: "i2" }],
       }).href,
     ).toBe("/catalog/cut");
   });

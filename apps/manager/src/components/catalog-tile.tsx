@@ -21,7 +21,7 @@ export const TILE_WIDTH_REM = 14;
 /** What a tile reads from a catalog app. */
 export type TileApp = Pick<
   CatalogListItem,
-  "key" | "name" | "pitch" | "plan" | "popularity" | "images" | "instances"
+  "key" | "name" | "pitch" | "plan" | "popularity" | "images" | "installs"
 >;
 
 /** A tile's main link (`data-tile-link`), which the arrow keys move between in a row. */

@@ -34,7 +34,7 @@ export interface BrowsableApp {
   authors?: ReadonlyArray<Pick<CatalogAuthor, "name">> | undefined;
   categories: readonly string[];
   primitives: Pick<AppPrimitives, "ids">;
-  instances: readonly unknown[];
+  installs: readonly unknown[];
   popularity: AppPopularity | null;
   /** The catalog that lists it, for the catalog filter. */
   source?: { id: string } | undefined;
@@ -134,7 +134,7 @@ export function matchesSearch(app: BrowsableApp, q: string | undefined): boolean
 
 /** Whether `app` passes the query's filters (search not included). */
 export function matchesFilters(app: BrowsableApp, query: BrowseQuery): boolean {
-  if (query.installed === 1 && app.instances.length === 0) return false;
+  if (query.installed === 1 && app.installs.length === 0) return false;
   if (query.plan !== undefined && app.plan !== query.plan) return false;
   if (query.category !== undefined && !inCategory(app, query.category)) return false;
   if (query.source !== undefined && app.source?.id !== query.source) return false;

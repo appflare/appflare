@@ -258,6 +258,19 @@ describe("turning protection on", () => {
     );
   });
 
+  it("does not say the route may be going live when it cannot verify the app after protecting it", async () => {
+    const w = await world(WITH_HEALTH_PATH);
+    w.account.state.health = [{ status: 404, body: "error code: 1042" }];
+    const r = await change(w, "on");
+    expect(r.job?.status).toBe("succeeded");
+    expect(r.health).toEqual({ health_status: "unverified", health_access: 0 });
+    const warning = r.logs.findLast((l) => l.message.startsWith("Could not verify"))?.message;
+    expect(warning).toMatch(
+      /^Could not verify https:\/\/cut\.appflare-dev\.workers\.dev\/api\/health after \d+ attempts \(.+\)\. The app is protected now\. Open the app to check, or check again from /,
+    );
+    expect(JSON.stringify(r.logs)).not.toContain("going live");
+  });
+
   it("covers the app's external domains too", async () => {
     const w = await world(PLAIN);
     await env.DB.prepare(

@@ -15,7 +15,7 @@ function tile(overrides: Partial<TileApp> = {}): TileApp {
     plan: "paid",
     popularity: null,
     images: { icon: null, cover: null, screenshots: [] },
-    instances: [],
+    installs: [],
     ...overrides,
   };
 }
@@ -82,7 +82,7 @@ describe("AppTile", () => {
     const html = renderToStaticMarkup(
       createElement(AppTile, {
         app: tile({
-          instances: [{ installId: "01J", status: "installed", workerName: "cut", label: "cut" }],
+          installs: [{ installId: "01J", status: "installed", workerName: "cut", label: "cut" }],
         }),
       }),
     );
