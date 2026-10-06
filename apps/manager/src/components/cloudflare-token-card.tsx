@@ -7,7 +7,7 @@ import { appflareDevLink } from "./appflare-dev-link";
 import { CloudflareTokenForm, type SavedToken } from "./cloudflare-token-form";
 import { DescriptionItem, DescriptionList } from "./description-list";
 import { DocsLink } from "./docs-link";
-import { SuccessBanner } from "./message-text";
+import { StatusRegion, SuccessBanner } from "./message-text";
 import { Section, SectionBody } from "./section";
 import { settingsSection } from "./settings-links";
 import { Timestamp } from "./timestamp";
@@ -116,16 +116,15 @@ function RotateTokenDialog() {
         <LayerDialog.Body>
           {saved === null && <CloudflareTokenForm mode="rotate" onSaved={onSaved} />}
           {/* Mounted with the form, so screen readers announce the banner that replaces it. */}
-          <div role="status">
+          <StatusRegion>
             {saved !== null && (
               <SuccessBanner
-                // The status around it announces it; "none" drops the banner's own.
-                role="none"
+                live={false}
                 title="Token rotated"
                 description={`The new token is stored on "${saved.workerName}". Appflare redeploys itself to pick it up.`}
               />
             )}
-          </div>
+          </StatusRegion>
         </LayerDialog.Body>
         {saved !== null && (
           <LayerDialog.Actions>

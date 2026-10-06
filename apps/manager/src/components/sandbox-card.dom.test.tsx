@@ -169,7 +169,8 @@ describe("SandboxCard", () => {
 
   it("shows a running job with the moving loader, hidden from screen readers", () => {
     show({ ...OFF, activeJob: { id: "01SANDBOXJOB00000000000001", kind: "sandbox_enable" } });
-    const banner = [...document.querySelectorAll("div")].find((d) =>
+    // The innermost element that starts with the title: the banner itself.
+    const banner = [...document.querySelectorAll("div")].findLast((d) =>
       d.textContent?.startsWith("Enable sandbox builds is running"),
     );
     if (banner === undefined) throw new Error("no running banner");
@@ -182,15 +183,20 @@ describe("SandboxCard", () => {
     show({ ...OFF, workerExists: true });
     const status = [...document.querySelectorAll('[role="status"]')];
     expect(status.map((s) => s.textContent)).toEqual([""]);
+    // The empty region shares a grid item with the card's view, so it adds no gap.
+    expect(status[0]?.parentElement?.children).toHaveLength(2);
     await click(button("Connect only"));
     expect(calls.connectSandbox).toHaveBeenCalled();
     expect(status[0]?.isConnected).toBe(true);
     // The status holds the visible banner itself: one announcement, not two.
     expect(status[0]?.textContent).toContain("Sandbox builds are connected");
     expect(status[0]?.textContent).toContain("It can take a few seconds to show here.");
-    expect(status[0]?.className).not.toContain("sr-only");
     expect(document.querySelectorAll('[role="status"]')).toHaveLength(1);
     expect(page().split("Sandbox builds are connected")).toHaveLength(2);
+    // The refreshed status shows the card connected: the region and its message stay.
+    show({ ...OFF, connected: true });
+    expect(status[0]?.isConnected).toBe(true);
+    expect(status[0]?.textContent).toContain("Sandbox builds are connected");
   });
 
   it("says, without a full stop, when it could not check for the sandbox Worker", () => {

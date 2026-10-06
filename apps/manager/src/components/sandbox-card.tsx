@@ -24,6 +24,7 @@ import {
   bannerRole,
   ErrorMessageBanner,
   MessageText,
+  StatusRegion,
   SuccessBanner,
 } from "./message-text";
 import { Section, SectionBody } from "./section";
@@ -64,6 +65,10 @@ export function SandboxCard({
   capabilities: CapabilitiesView;
   isAdmin: boolean;
 }) {
+  // Kept here, above the connected and not-connected views, so the region
+  // that announces a Connect only stays mounted when the refreshed status
+  // swaps one view for the other.
+  const [justConnected, setJustConnected] = useState(false);
   return (
     <Section
       {...settingsSection("building", "sandbox")}
@@ -76,11 +81,28 @@ export function SandboxCard({
         {status.activeJob === null && status.lastFailure !== null && (
           <LastFailure failure={status.lastFailure} isAdmin={isAdmin} />
         )}
-        {status.connected ? (
-          <Connected status={status} isAdmin={isAdmin} />
-        ) : (
-          <NotConnected status={status} capabilities={capabilities} isAdmin={isAdmin} />
-        )}
+        {/* One grid item, so the empty region adds no gap. */}
+        <div>
+          <StatusRegion spacing="mb-4">
+            {justConnected && (
+              <SuccessBanner
+                live={false}
+                title={CONNECTED}
+                description="Appflare now runs with its binding to the sandbox Worker. It can take a few seconds to show here."
+              />
+            )}
+          </StatusRegion>
+          {status.connected ? (
+            <Connected status={status} isAdmin={isAdmin} />
+          ) : (
+            <NotConnected
+              status={status}
+              capabilities={capabilities}
+              isAdmin={isAdmin}
+              connect={{ done: justConnected, onDone: () => setJustConnected(true) }}
+            />
+          )}
+        </div>
       </SectionBody>
     </Section>
   );
@@ -307,14 +329,22 @@ function Connected({ status, isAdmin }: { status: SandboxCardState; isAdmin: boo
   );
 }
 
+/** Whether Connect only just worked, and what it calls when it does. */
+interface ConnectState {
+  done: boolean;
+  onDone(): void;
+}
+
 function NotConnected({
   status,
   capabilities,
   isAdmin,
+  connect,
 }: {
   status: SandboxCardState;
   capabilities: CapabilitiesView;
   isAdmin: boolean;
+  connect: ConnectState;
 }) {
   const busy = status.activeJob !== null;
   const paidDetected = capabilities.plan.source === "detected" && capabilities.plan.plan === "paid";
@@ -334,7 +364,7 @@ function NotConnected({
         </Text>
         {dangling && <DanglingBindingNote />}
         {isAdmin && status.workerExists === true && (
-          <LeftoverWorker status={status} disabled={busy} />
+          <LeftoverWorker status={status} disabled={busy} connect={connect} />
         )}
         {dangling && status.workerExists !== true && (
           <div className="flex justify-end">
@@ -381,7 +411,7 @@ function NotConnected({
           {(status.workerExists === true || dangling) && (
             <DisableDialog status={status} disabled={busy} />
           )}
-          {status.workerExists === true && <ConnectButton disabled={busy} />}
+          {status.workerExists === true && <ConnectButton disabled={busy} connect={connect} />}
           <EnableDialog status={status} disabled={busy || problems.length > 0} />
         </div>
       ) : (
@@ -409,7 +439,15 @@ function DanglingBindingNote() {
 }
 
 /** A sandbox Worker without Workers Paid detected: it can still be removed. */
-function LeftoverWorker({ status, disabled }: { status: SandboxCardState; disabled: boolean }) {
+function LeftoverWorker({
+  status,
+  disabled,
+  connect,
+}: {
+  status: SandboxCardState;
+  disabled: boolean;
+  connect: ConnectState;
+}) {
   return (
     <div className="flex flex-wrap items-center justify-between gap-3">
       <Text variant="secondary" size="sm">
@@ -417,7 +455,7 @@ function LeftoverWorker({ status, disabled }: { status: SandboxCardState; disabl
       </Text>
       <div className="flex gap-2">
         <DisableDialog status={status} disabled={disabled} />
-        <ConnectButton disabled={disabled} />
+        <ConnectButton disabled={disabled} connect={connect} />
       </div>
     </div>
   );
@@ -425,39 +463,26 @@ function LeftoverWorker({ status, disabled }: { status: SandboxCardState; disabl
 
 const CONNECTED = "Sandbox builds are connected";
 
-/** Connects to a sandbox Worker that is already there (deployed by the CLI, for example). */
-function ConnectButton({ disabled }: { disabled: boolean }) {
+/**
+ * Connects to a sandbox Worker that is already there (deployed by the CLI,
+ * for example). The card announces the result, in a region that outlives
+ * this button.
+ */
+function ConnectButton({ disabled, connect }: { disabled: boolean; connect: ConnectState }) {
   const router = useRouter();
-  const [done, setDone] = useState(false);
+  if (connect.done) return null;
   return (
-    <>
-      {/* Mounted before the click, so screen readers announce the banner it then
-          gets. While empty it stays out of the row's flow (an empty item would
-          add a gap), still in the accessibility tree. */}
-      <div role="status" className={done ? undefined : "sr-only"}>
-        {done && (
-          <SuccessBanner
-            // The status around it announces it; "none" drops the banner's own.
-            role="none"
-            title={CONNECTED}
-            description="Appflare now runs with its binding to the sandbox Worker. It can take a few seconds to show here."
-          />
-        )}
-      </div>
-      {!done && (
-        <ActionButton
-          label="Connect only"
-          icon={<PlugsConnectedIcon />}
-          variant="secondary"
-          disabled={disabled}
-          action={async () => {
-            await connectSandbox();
-            setDone(true);
-            await router.invalidate();
-          }}
-        />
-      )}
-    </>
+    <ActionButton
+      label="Connect only"
+      icon={<PlugsConnectedIcon />}
+      variant="secondary"
+      disabled={disabled}
+      action={async () => {
+        await connectSandbox();
+        connect.onDone();
+        await router.invalidate();
+      }}
+    />
   );
 }
 

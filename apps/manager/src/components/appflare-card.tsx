@@ -253,7 +253,11 @@ function CardBody({
   return (
     // The wrapper holds the sidebar's inset: a layered LayerCard is `w-full`,
     // so a margin on the card itself pushed it past the sidebar's right edge.
-    <div ref={card} tabIndex={-1} className="shrink-0 px-3 pb-3 outline-none">
+    <div
+      ref={card}
+      tabIndex={-1}
+      className="shrink-0 rounded-md px-3 pb-3 outline-none focus-visible:ring-2 focus-visible:ring-kumo-brand"
+    >
       {dialogVersion !== null && (
         <SelfUpdateDialog
           from={current}

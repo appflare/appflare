@@ -10,7 +10,7 @@ import type { RollBackManagerResult } from "../jobs/self-update/rollback.server"
 import { AppflareLoader } from "./appflare-loader";
 import { ConfirmDialog } from "./confirm-dialog";
 import { DocsLink } from "./docs-link";
-import { BANNER_ICON, SuccessBanner } from "./message-text";
+import { BANNER_ICON, StatusRegion, SuccessBanner } from "./message-text";
 import { Section, SectionBody, SectionTable } from "./section";
 import { settingsSection } from "./settings-links";
 import { Timestamp } from "./timestamp";
@@ -125,7 +125,7 @@ export function ManagerVersionsSection({
       }
     >
       {/* Mounted with the list, so screen readers announce each notice as it comes. */}
-      <div role="status">
+      <StatusRegion>
         {(notice !== null || pending || stalled) && (
           <SectionBody>
             <RollbackNotices
@@ -136,7 +136,7 @@ export function ManagerVersionsSection({
             />
           </SectionBody>
         )}
-      </div>
+      </StatusRegion>
       {state.ok && state.versions.length > 0 && (
         <SectionTable label="Appflare versions" stickyFirstColumn>
           <Table.Header>
@@ -211,7 +211,7 @@ function RollbackNotices({
     <>
       {notice !== null && (
         <SuccessBanner
-          role="none"
+          live={false}
           title={`Appflare rolled back to ${notice.version}`}
           description={
             <Link href={`/jobs/${notice.jobId}`} variant="inline">
