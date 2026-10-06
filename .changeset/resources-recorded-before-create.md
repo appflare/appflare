@@ -1,0 +1,5 @@
+---
+"@appflare/manager": patch
+---
+
+An install or update now records each resource's name before creating it. When Cloudflare created a KV namespace, D1 database, bucket, queue, Vectorize index or Hyperdrive configuration but Appflare could not record its id, the job records that id as it fails (or, if it made nothing, releases the name), so the next update finishes the resource instead of refusing its name as one Appflare does not own, and an uninstall (or Install again) deletes it, leaving nothing behind in the account. A resource of that name made outside Appflare is not taken over: only when the job cannot finish that record (the write fails, or the job is stopped from outside, for example terminated in the Cloudflare dashboard) does the name stay recorded on its own, and then the next attempt or the uninstall uses whatever resource has that name. When another Worker of a multi-Worker app fails its own preview check during an update, the secrets the update gave it are now taken off its newest version too, so its next upload keeps the values it had.

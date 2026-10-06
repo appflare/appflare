@@ -42,6 +42,8 @@ const NOW = 1_790_000_000_000;
 interface World {
   scripts: Set<string>;
   kv: Set<string>;
+  /** KV namespace titles by id, for the listing; an id without one is its own title. */
+  kvTitles?: Map<string, string>;
   d1: Set<string>;
   r2: Map<string, string[]>;
   queues: Set<string>;
@@ -200,6 +202,12 @@ function fakeWorld(over: Partial<World> = {}) {
       if (objects.length > 0) return fail(409, "The bucket you tried to delete is not empty");
       world.r2.delete(m[1]);
       return ok(null);
+    }
+    if (key === "GET /storage/kv/namespaces") {
+      return ok(
+        [...world.kv].map((id) => ({ id, title: world.kvTitles?.get(id) ?? id })),
+        { result_info: { page: 1, total_pages: 1 } },
+      );
     }
     return fail(404, `no route ${key}`);
   };
@@ -1061,16 +1069,71 @@ describe("uninstall job", () => {
     expect(fake.world.scripts).toEqual(new Set(["appflare"]));
   });
 
-  it("skips a data resource with no recorded id, marking it deleted with a warning", async () => {
+  it("deletes a data resource recorded by name only, found by that name", async () => {
+    // Its name was recorded before its create, and its id never was.
     await seedInstall();
     await env.DB.prepare("UPDATE resources SET cf_id = NULL WHERE id = 'kv'").run();
-    const fake = fakeWorld();
+    const fake = fakeWorld({ kvTitles: new Map([["kv-1", "cut-cut-kv"]]) });
     const r = await uninstall({ installId: "i1", deleteResources: ["kv"] }, fake);
     expect(r.error).toBeNull();
     expect(r.state("kv")).toBe("deleted");
-    expect(fake.world.calls.some((c) => c.includes("/storage/kv/"))).toBe(false);
+    expect(fake.world.calls).toContain("DELETE /storage/kv/namespaces/kv-1");
+    expect(fake.world.kv).toEqual(new Set());
+  });
+
+  it("marks a data resource recorded by name only deleted, with a warning, when nothing has that name", async () => {
+    await seedInstall();
+    await env.DB.prepare("UPDATE resources SET cf_id = NULL WHERE id = 'kv'").run();
+    const fake = fakeWorld({ kvTitles: new Map([["kv-1", "someone-elses"]]) });
+    const r = await uninstall({ installId: "i1", deleteResources: ["kv"] }, fake);
+    expect(r.error).toBeNull();
+    expect(r.state("kv")).toBe("deleted");
+    expect(fake.world.calls.some((c) => c.startsWith("DELETE /storage/kv/"))).toBe(false);
     expect(fake.world.kv).toEqual(new Set(["kv-1"]));
-    expect(r.logs.find((l) => l.message.startsWith("No Cloudflare id"))?.level).toBe("warn");
+    expect(
+      r.logs.find((l) => l.message.startsWith('No KV namespace named "cut-cut-kv"'))?.level,
+    ).toBe("warn");
+  });
+
+  it("never deletes, by name, a resource recorded with no id whose name another install records", async () => {
+    // Two installs' names can coincide: Worker cut with binding CUT_KV and
+    // Worker cut-cut with binding KV both name a namespace cut-cut-kv. This
+    // install recorded the name and never an id; the other created the
+    // namespace and recorded it.
+    await seedInstall();
+    await env.DB.batch([
+      env.DB.prepare("UPDATE resources SET cf_id = NULL WHERE id = 'kv'"),
+      env.DB.prepare(
+        `INSERT INTO installs (id, app_slug, worker_name, instance_name, catalog_version, artifact_url, status, installed_at, updated_at)
+         VALUES ('i2', 'other', 'cut-cut', 'cut-cut', '1.0.0', 'u', 'installed', 2, 2)`,
+      ),
+      env.DB.prepare(
+        `INSERT INTO resources (id, install_id, kind, binding, name, cf_id, created_at)
+         VALUES ('i2-kv', 'i2', 'kv', 'KV', 'cut-cut-kv', 'kv-2', 2)`,
+      ),
+    ]);
+    const fake = fakeWorld({
+      kv: new Set(["kv-2"]),
+      kvTitles: new Map([["kv-2", "cut-cut-kv"]]),
+    });
+    const r = await uninstall({ installId: "i1", deleteResources: ["kv"] }, fake);
+    expect(r.error).toBeNull();
+    expect(r.job?.status).toBe("succeeded");
+    expect(r.state("kv")).toBe("deleted");
+    expect(r.step.names).not.toContain("delete KV namespace cut-cut-kv");
+    expect(fake.world.calls.some((c) => c.includes("/storage/kv/"))).toBe(false);
+    expect(fake.world.kv).toEqual(new Set(["kv-2"]));
+    const theirs = await env.DB.prepare(
+      "SELECT deleted_at, retained_at FROM resources WHERE id = 'i2-kv'",
+    ).first();
+    expect(theirs).toEqual({ deleted_at: null, retained_at: null });
+    expect(r.logs).toContainEqual(
+      expect.objectContaining({
+        level: "warn",
+        message:
+          'KV namespace "cut-cut-kv" is recorded by the install "cut-cut" now, so it belongs to that install; left alone, and no longer recorded for this app.',
+      }),
+    );
   });
 
   it("stops when a deleted object is still listed instead of looping", async () => {
@@ -1484,6 +1547,47 @@ describe("deleting the data an uninstall kept", () => {
     expect(r.logs.at(-1)?.message).toBe(
       'Deleted everything "cut" kept that no other install uses now.',
     );
+  });
+
+  it("never deletes, by name, a resource recorded with no id whose name a later install records", async () => {
+    // The KV namespace's name was recorded and its create failed with no
+    // answer, so no id was ever recorded; the uninstall keeps that row and
+    // the database.
+    const fake = fakeWorld({ kv: new Set() });
+    await seedInstall();
+    await env.DB.prepare("UPDATE resources SET cf_id = NULL WHERE id = 'kv'").run();
+    await uninstall({ installId: "i1", deleteResources: ["r2", "queue", "vec"] }, fake);
+    // A later install under the same Worker name creates and records its own.
+    await env.DB.batch([
+      env.DB.prepare(
+        `INSERT INTO installs (id, app_slug, worker_name, instance_name, catalog_version, artifact_url, status, installed_at, updated_at)
+         VALUES ('i2', 'cut', 'cut', 'cut', '1.1.0', 'u', 'installed', 2, 2)`,
+      ),
+      env.DB.prepare(
+        `INSERT INTO resources (id, install_id, kind, binding, name, cf_id, created_at)
+         VALUES ('i2-kv', 'i2', 'kv', 'CUT_KV', 'cut-cut-kv', 'kv-2', 2)`,
+      ),
+    ]);
+    fake.world.kv.add("kv-2");
+    fake.world.kvTitles = new Map([["kv-2", "cut-cut-kv"]]);
+    fake.world.calls.length = 0;
+
+    const r = await deleteRetained(fake);
+
+    expect(r.error).toBeNull();
+    expect(r.job?.status).toBe("succeeded");
+    expect(r.step.names).toEqual(["start", "delete D1 database cut-db", "finish"]);
+    expect(fake.world.calls.some((c) => c.startsWith("DELETE /storage/kv/"))).toBe(false);
+    expect(fake.world.kv).toEqual(new Set(["kv-2"]));
+    expect(r.state("kv")).toBe("deleted");
+    expect(r.state("d1")).toBe("deleted");
+    const theirs = await env.DB.prepare(
+      "SELECT deleted_at, retained_at FROM resources WHERE id = 'i2-kv'",
+    ).first();
+    expect(theirs).toEqual({ deleted_at: null, retained_at: null });
+    expect(r.logs.filter((l) => l.level === "warn").map((l) => l.message)).toEqual([
+      'KV namespace "cut-cut-kv" is recorded by the install "cut" now, so it belongs to that install; left alone, and no longer listed as kept by this app.',
+    ]);
   });
 
   it("refuses to start when all that is left has a name a later install records", async () => {

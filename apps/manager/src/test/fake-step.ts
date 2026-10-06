@@ -7,7 +7,9 @@ import type { StepConfig, StepContext, StepRunner } from "../jobs/run-job";
  * `NonRetryableError`, and passes `{ attempt }` like the engine does. Records
  * step and sleep names and sleep durations; `onSleep` lets a test advance a
  * fake clock. Results go through a JSON round trip, as the engine persists
- * them, so a non-JSON step result fails the test.
+ * them, so a non-JSON step result fails the test. A step named in `failing`
+ * fails on every attempt without running, as one whose database never
+ * answers would.
  */
 export interface FakeStep extends StepRunner {
   names: string[];
@@ -20,7 +22,10 @@ export interface FakeStep extends StepRunner {
 }
 
 export function fakeStep(
-  options: { onSleep?: (name: string, duration: string | number) => void } = {},
+  options: {
+    onSleep?: (name: string, duration: string | number) => void;
+    failing?: readonly string[];
+  } = {},
 ): FakeStep {
   const names: string[] = [];
   const sleeps: string[] = [];
@@ -43,6 +48,7 @@ export function fakeStep(
       const config = typeof configOrCallback === "function" ? undefined : configOrCallback;
       configs.push(config);
       if (callback === undefined) throw new Error(`step ${name} has no callback`);
+      if (options.failing?.includes(name)) throw new Error("D1_ERROR: database unavailable");
       const limit = config?.retries?.limit ?? 0;
       for (let attempt = 1; ; attempt++) {
         try {

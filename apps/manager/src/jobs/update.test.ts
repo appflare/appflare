@@ -99,6 +99,8 @@ async function update(
   wrapFetch?: (fake: ReturnType<typeof fakeAccount>) => FetchLike,
   /** Runs the job in the engine that keeps Workers Free's 50 requests per invocation. */
   engine?: FakeEngine,
+  /** Steps that fail on every attempt (see `fakeStep`). */
+  failing?: readonly string[],
 ) {
   const fixture = await buildArtifactFixture(options);
   const fake = fakeAccount(fixture, {
@@ -130,7 +132,7 @@ async function update(
   );
   if (!("jobId" in started) || params === null) throw new Error("no Workflow params");
   const { jobId } = started;
-  const step = fakeStep();
+  const step = fakeStep(failing === undefined ? {} : { failing });
   const fetch = wrapFetch?.(fake) ?? fake.fetch;
   const self = fakeSelf(jobEnv(), { fetch });
   let error: unknown = null;
@@ -208,6 +210,7 @@ describe("update job", () => {
       "bookmark D1 cut-db",
       "record snapshot",
       "check KV namespace cut-cache",
+      "record KV namespace name cut-cache",
       "create KV namespace cut-cache",
       "record KV namespace cut-cache",
       "open assets upload session",
@@ -316,6 +319,153 @@ describe("update job", () => {
     expect(r.logs.at(-1)?.message).toBe(
       "Updated cut from 1.0.0 to 1.1.0 at https://cut.appflare-dev.workers.dev/ (health: verified (HTTP 200)).",
     );
+  });
+
+  it("finishes a resource an earlier attempt created but recorded only by name, without creating it again", async () => {
+    // The earlier attempt recorded the name, created the namespace, and could
+    // not record its id.
+    const r = await update(
+      NEW_APP,
+      { kv: [{ id: "kv-made", title: "cut-cache" }] },
+      { resources: [...RESOURCES, { kind: "kv", binding: "CACHE", name: "cut-cache" }] },
+    );
+    expect(r.error).toBeNull();
+    expect(r.job?.status).toBe("succeeded");
+    expect(r.fake.state.calls).not.toContain("POST /storage/kv/namespaces");
+    expect(r.fake.state.kv).toEqual([{ id: "kv-made", title: "cut-cache" }]);
+    expect(r.resources.filter((row) => row.binding === "CACHE")).toEqual([
+      { kind: "kv", binding: "CACHE", name: "cut-cache", cf_id: "kv-made", deleted_at: null },
+    ]);
+    expect(r.fake.state.versions[0]?.metadata.bindings).toContainEqual({
+      type: "kv_namespace",
+      name: "CACHE",
+      namespace_id: "kv-made",
+    });
+  });
+
+  describe("a resource whose name the failed update recorded", () => {
+    const CACHE_ROW = { kind: "kv", binding: "CACHE", name: "cut-cache" };
+
+    it("releases the name when the create never made anything", async () => {
+      // Cloudflare answers every try of the create with a 503 and makes nothing.
+      const r = await update(
+        NEW_APP,
+        {},
+        {},
+        {},
+        "self",
+        undefined,
+        (fake) => async (input, init) =>
+          new Request(input, init).method === "POST" && input.endsWith("/storage/kv/namespaces")
+            ? Response.json(
+                { success: false, errors: [{ code: 10000, message: "unavailable" }] },
+                {
+                  status: 503,
+                },
+              )
+            : fake.fetch(input, init),
+      );
+      expect(r.job?.status).toBe("failed");
+      expect(r.job?.error).toMatch(/^create KV namespace cut-cache: /);
+      expect(r.fake.state.kv).toEqual([]);
+      expect(r.step.names).toContain("resolve KV namespace name cut-cache");
+      const row = r.resources.find((x) => x.binding === "CACHE");
+      expect(row).toMatchObject({ ...CACHE_ROW, cf_id: null });
+      expect(row?.deleted_at).not.toBeNull();
+      expect(r.logs.map((l) => l.message)).toContain(
+        'No KV namespace named "cut-cache" was created; its name is released.',
+      );
+    });
+
+    it("releases the name and names the namespace when the create's last try made it but answered with a 503", async () => {
+      // Every try of the create gets a 503; the last one did create the
+      // namespace, so the job has no id for it.
+      let posts = 0;
+      const r = await update(
+        NEW_APP,
+        {},
+        {},
+        {},
+        "self",
+        undefined,
+        (fake) => async (input, init) => {
+          if (
+            new Request(input, init).method !== "POST" ||
+            !input.endsWith("/storage/kv/namespaces")
+          ) {
+            return fake.fetch(input, init);
+          }
+          posts += 1;
+          if (posts === 4) await fake.fetch(input, init);
+          return Response.json(
+            { success: false, errors: [{ code: 10000, message: "unavailable" }] },
+            { status: 503 },
+          );
+        },
+      );
+      expect(posts).toBe(4);
+      expect(r.job?.status).toBe("failed");
+      expect(r.job?.error).toMatch(/^create KV namespace cut-cache: /);
+      expect(r.fake.state.kv).toEqual([{ id: "kv-new-1", title: "cut-cache" }]);
+      const row = r.resources.find((x) => x.binding === "CACHE");
+      expect(row).toMatchObject({ ...CACHE_ROW, cf_id: null });
+      expect(row?.deleted_at).not.toBeNull();
+      // Never deleted or taken on: the admin is told what is there.
+      expect(r.fake.state.calls).not.toContain("DELETE /storage/kv/namespaces/kv-new-1");
+      const warning = r.logs.find((l) => l.message.startsWith('A KV namespace named "cut-cache"'));
+      expect(warning).toMatchObject({
+        level: "warn",
+        message:
+          'A KV namespace named "cut-cache" exists, but this job has no id of one it created, so Appflare leaves it alone and releases the name. Delete it in the Cloudflare dashboard if nothing uses it, then try again.',
+      });
+      expect(JSON.parse(warning?.data_json ?? "{}")).toMatchObject({ id: "kv-new-1" });
+    });
+
+    it("records the id of what the create made when recording it failed, so the next attempt finishes it", async () => {
+      const r = await update(NEW_APP, {}, {}, {}, "self", undefined, undefined, undefined, [
+        "record KV namespace cut-cache",
+      ]);
+      expect(r.job?.status).toBe("failed");
+      expect(r.job?.error).toBe("record KV namespace cut-cache: D1_ERROR: database unavailable");
+      expect(r.fake.state.kv).toEqual([{ id: "kv-new-1", title: "cut-cache" }]);
+      expect(r.resources.find((x) => x.binding === "CACHE")).toEqual({
+        ...CACHE_ROW,
+        cf_id: "kv-new-1",
+        deleted_at: null,
+      });
+
+      // The next attempt binds the namespace by its recorded id, creating nothing.
+      let params: UpdateJobParams | null = null;
+      await startUpdateCore(
+        {
+          db: env.DB,
+          loadApp: async () => r.fixture.index,
+          loadManifest: async () => r.fixture.manifest,
+          createJob: async (id, p) => {
+            params = p;
+            return { id };
+          },
+          newId: () => "job2",
+        },
+        { installId: INSTALL_ID, confirmNoPreview: true },
+      );
+      if (params === null) throw new Error("the update did not start");
+      await runUpdate({
+        params,
+        step: fakeStep(),
+        env: { ...jobEnv(), SELF: fakeSelf(jobEnv(), { fetch: r.fake.fetch }) },
+        deps: { fetch: r.fake.fetch, signingKeys: r.fixture.keys },
+      });
+      const job = await env.DB.prepare("SELECT status FROM jobs WHERE id = 'job2'").first();
+      expect(job).toEqual({ status: "succeeded" });
+      expect(r.fake.state.calls.filter((c) => c === "POST /storage/kv/namespaces")).toHaveLength(1);
+      expect(r.fake.state.kv).toEqual([{ id: "kv-new-1", title: "cut-cache" }]);
+      expect(r.fake.state.versions.at(-1)?.metadata.bindings).toContainEqual({
+        type: "kv_namespace",
+        name: "CACHE",
+        namespace_id: "kv-new-1",
+      });
+    });
   });
 
   it("runs the units in its own invocation when the Worker has no SELF binding", async () => {
@@ -2672,7 +2822,7 @@ describe("update job, an app of several Workers", () => {
     expect(r.install?.catalog_version).toBe("1.0.0");
   });
 
-  it("gives another Worker back the serving value of a secret it had and was given again", async () => {
+  describe("a secret the app has, which the new version asks for again", () => {
     // The new version derives a var from a secret the app has: the update
     // asks for that secret again, and both Workers' uploads carry the value.
     const vapid = (version: string, derived: boolean): ArtifactFixtureOptions => ({
@@ -2695,58 +2845,99 @@ describe("update job, an app of several Workers", () => {
           : [],
       },
     });
-    const privateKey = generateVapidPrivateKey();
-    const old = await buildArtifactFixture(vapid("1.0.0", false));
-    const jobs = fakeAccount(null, {
-      worker: "cut-jobs",
-      deployments: [{ id: "dep-j", versions: [{ version_id: JOBS_OLD, percentage: 100 }] }],
-    });
-    const r = await update(
-      vapid("1.1.0", true),
+
+    /** Runs the update with a second fake account for `cut-jobs`, serving `JOBS_OLD`. */
+    async function updateVapid(
+      privateKey: string,
+      world: Partial<FakeAccount>,
+      jobsWorld: Partial<FakeAccount>,
+    ) {
+      const old = await buildArtifactFixture(vapid("1.0.0", false));
+      const jobs = fakeAccount(null, {
+        worker: "cut-jobs",
+        deployments: [{ id: "dep-j", versions: [{ version_id: JOBS_OLD, percentage: 100 }] }],
+        ...jobsWorld,
+      });
+      const r = await update(
+        vapid("1.1.0", true),
+        world,
+        {
+          manifestJson: JSON.stringify(old.manifest),
+          resources: [
+            ...RESOURCES,
+            { kind: "secret", binding: "VAPID_PRIVATE_KEY", name: "VAPID_PRIVATE_KEY" },
+            { kind: "worker", name: "cut-jobs", cfId: "cut-jobs" },
+            { kind: "subdomain", name: "cut-jobs.appflare-dev.workers.dev" },
+          ],
+        },
+        { secrets: { VAPID_PRIVATE_KEY: privateKey } },
+        "self",
+        undefined,
+        (fake) => async (input, init) => {
+          // The secrets patch goes to `/workers/workers/<name>/versions/latest`.
+          const target = /\/workers\/(scripts|workers)\/cut-jobs\/|-cut-jobs\./.test(input)
+            ? jobs
+            : fake;
+          return target.fetch(input, init);
+        },
+      );
+      return { ...r, jobs };
+    }
+
+    it("gives another Worker back the serving value of a secret it had and was given again", async () => {
+      const privateKey = generateVapidPrivateKey();
       // The primary Worker's canary fails: neither Worker is promoted.
-      { previews: [{ status: 500, body: "boom" }] },
-      {
-        manifestJson: JSON.stringify(old.manifest),
-        resources: [
-          ...RESOURCES,
-          { kind: "secret", binding: "VAPID_PRIVATE_KEY", name: "VAPID_PRIVATE_KEY" },
-          { kind: "worker", name: "cut-jobs", cfId: "cut-jobs" },
-          { kind: "subdomain", name: "cut-jobs.appflare-dev.workers.dev" },
-        ],
-      },
-      { secrets: { VAPID_PRIVATE_KEY: privateKey } },
-      "self",
-      undefined,
-      (fake) => async (input, init) => {
-        // The secrets patch goes to `/workers/workers/<name>/versions/latest`.
-        const target = /\/workers\/(scripts|workers)\/cut-jobs\/|-cut-jobs\./.test(input)
-          ? jobs
-          : fake;
-        return target.fetch(input, init);
-      },
-    );
-    expect(r.job?.status).toBe("failed");
-    expect(r.job?.error).toMatch(/^canary check \d+:/);
-    expect(jobs.state.versions[0]?.metadata.bindings).toContainEqual({
-      type: "secret_text",
-      name: "VAPID_PRIVATE_KEY",
-      text: privateKey,
+      const r = await updateVapid(privateKey, { previews: [{ status: 500, body: "boom" }] }, {});
+      expect(r.job?.status).toBe("failed");
+      expect(r.job?.error).toMatch(/^canary check \d+:/);
+      expect(r.jobs.state.versions[0]?.metadata.bindings).toContainEqual({
+        type: "secret_text",
+        name: "VAPID_PRIVATE_KEY",
+        text: privateKey,
+      });
+      // Each Worker's newest version inherits the key its serving version has,
+      // rather than dropping it.
+      expect(r.jobs.state.versionPatches).toEqual([
+        {
+          env: { VAPID_PRIVATE_KEY: { type: "inherit", version_id: JOBS_OLD } },
+          annotations: { "workers/message": "Appflare: update job1 undone" },
+        },
+      ]);
+      expect(r.fake.state.versionPatches).toEqual([
+        {
+          env: { VAPID_PRIVATE_KEY: { type: "inherit", version_id: OLD_VERSION } },
+          annotations: { "workers/message": "Appflare: update job1 undone" },
+        },
+      ]);
+      expect(JSON.stringify(r.logs)).not.toContain(privateKey);
     });
-    // Each Worker's newest version inherits the key its serving version has,
-    // rather than dropping it.
-    expect(jobs.state.versionPatches).toEqual([
-      {
-        env: { VAPID_PRIVATE_KEY: { type: "inherit", version_id: JOBS_OLD } },
-        annotations: { "workers/message": "Appflare: update job1 undone" },
-      },
-    ]);
-    expect(r.fake.state.versionPatches).toEqual([
-      {
-        env: { VAPID_PRIVATE_KEY: { type: "inherit", version_id: OLD_VERSION } },
-        annotations: { "workers/message": "Appflare: update job1 undone" },
-      },
-    ]);
-    expect(JSON.stringify(r.logs)).not.toContain(privateKey);
+
+    it("gives the secret back when the other Worker's own canary fails", async () => {
+      const privateKey = generateVapidPrivateKey();
+      const r = await updateVapid(privateKey, {}, { previews: [{ status: 500, body: "boom" }] });
+      expect(r.job?.status).toBe("failed");
+      expect(r.job?.error).toMatch(/^canary \(Worker "cut-jobs"\) check \d+:/);
+      // Its upload carried the value; nothing was promoted.
+      expect(r.jobs.state.versions[0]?.metadata.bindings).toContainEqual({
+        type: "secret_text",
+        name: "VAPID_PRIVATE_KEY",
+        text: privateKey,
+      });
+      expect(r.jobs.state.deployments).toHaveLength(1);
+      // Its newest version inherits the serving version's key again, so the
+      // next upload of it does not carry the new one.
+      expect(r.step.names).toContain('put back the previous secrets (Worker "cut-jobs")');
+      expect(r.jobs.state.versionPatches).toEqual([
+        {
+          env: { VAPID_PRIVATE_KEY: { type: "inherit", version_id: JOBS_OLD } },
+          annotations: { "workers/message": "Appflare: update job1 undone" },
+        },
+      ]);
+      // The primary Worker never got a version, so nothing of it is undone.
+      expect(r.fake.state.calls).not.toContain("POST /workers/scripts/cut/versions");
+      expect(r.fake.state.versionPatches).toEqual([]);
+      expect(JSON.stringify(r.logs)).not.toContain(privateKey);
+    });
   });
 
   it("takes a Worker the new version keeps private off workers.dev before uploading it", async () => {

@@ -137,22 +137,19 @@ export function planQueueConsumers(
 export function diffConsumerQueues(
   queues: readonly ResourceBindingPlan[],
   recorded: readonly RecordedResource[],
-): { existing: CreatedResource[]; toCreate: ResourceBindingPlan[]; problems: string[] } {
+): { existing: CreatedResource[]; toCreate: ResourceBindingPlan[] } {
   const existing: CreatedResource[] = [];
   const toCreate: ResourceBindingPlan[] = [];
-  const problems: string[] = [];
   for (const queue of queues) {
     const row = recorded.find(
       (r) => r.kind === "queue" && r.binding === null && r.name === queue.name,
     );
-    if (row === undefined) toCreate.push(queue);
-    else if (row.cfId === null) {
-      problems.push(
-        `The queue "${row.name}" is recorded without a Cloudflare id, so its consumer cannot be set up.`,
-      );
-    } else existing.push({ binding: queue.binding, type: "queue", name: row.name, cfId: row.cfId });
+    // A row without an id was recorded before its create, whose id never
+    // was: created (or taken up) again under that name.
+    if (row?.cfId == null) toCreate.push(queue);
+    else existing.push({ binding: queue.binding, type: "queue", name: row.name, cfId: row.cfId });
   }
-  return { existing, toCreate, problems };
+  return { existing, toCreate };
 }
 
 /**

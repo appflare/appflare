@@ -217,7 +217,6 @@ describe("recorded queues and consumers", () => {
           unbound: true,
         },
       ],
-      problems: [],
     });
   });
 });

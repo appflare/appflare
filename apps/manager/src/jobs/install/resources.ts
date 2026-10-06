@@ -5,7 +5,8 @@ import type { ResourceBindingPlan } from "./bindings";
 /**
  * Finding, creating, and deleting the backing resources of an install.
  * `findResource` is used before creating (a name that exists is never adopted)
- * and by a retried create step, to pick up what its own failed attempt made.
+ * by a retried create step, to pick up what its own failed attempt made, and
+ * by a delete of a resource recorded by name only, before its create.
  */
 
 export const RESOURCE_LABEL: Record<ResourceBindingPlan["kind"], string> = {
@@ -93,42 +94,65 @@ export interface DeletableResource {
   cfId: string | null;
 }
 
+/** The plan type {@link findResource} looks each kind of resource up by. */
+const TYPE_OF_KIND = {
+  kv: "kv_namespace",
+  d1: "d1",
+  r2: "r2_bucket",
+  queue: "queue",
+  vectorize: "vectorize",
+  hyperdrive: "hyperdrive",
+  pipeline_stream: "pipelines",
+} as const satisfies Record<ResourceBindingPlan["kind"], ResourceBindingPlan["type"]>;
+
 /**
  * Deletes the resource with one API call and returns true, or returns false
- * without a call when no Cloudflare id is recorded to address it by. Throws
+ * without deleting anything when there is nothing to address. Throws
  * `CloudflareApiError` as is (a 404 means it is already gone; the caller
  * decides what that means).
+ *
+ * A row with no Cloudflare id is one whose name was recorded before its
+ * create (see `provisionResourcePhase`): the resource of that name, if any,
+ * is the one that create made, since the name was checked free just before.
+ * It is looked up by name first; false when there is none, as the create
+ * never finished. A Pipelines stream is never recorded that way, so one
+ * without an id cannot be addressed (false).
  */
 export async function deleteResource(
   api: CloudflareClient,
   res: DeletableResource,
 ): Promise<boolean> {
+  const id =
+    res.cfId ??
+    (res.kind === "r2" || res.kind === "vectorize" || res.kind === "pipeline_stream"
+      ? null
+      : await findResource(api, { type: TYPE_OF_KIND[res.kind], name: res.name }));
   switch (res.kind) {
     case "kv":
-      if (res.cfId === null) return false;
-      await api.kv.deleteNamespace(res.cfId);
+      if (id === null) return false;
+      await api.kv.deleteNamespace(id);
       return true;
     case "d1":
-      if (res.cfId === null) return false;
-      await api.d1.deleteDatabase(res.cfId);
+      if (id === null) return false;
+      await api.d1.deleteDatabase(id);
       return true;
     case "r2":
-      await api.r2.deleteBucket(res.cfId ?? res.name);
+      await api.r2.deleteBucket(id ?? res.name);
       return true;
     case "queue":
-      if (res.cfId === null) return false;
-      await api.queues.deleteQueue(res.cfId);
+      if (id === null) return false;
+      await api.queues.deleteQueue(id);
       return true;
     case "vectorize":
-      await api.vectorize.deleteIndex(res.cfId ?? res.name);
+      await api.vectorize.deleteIndex(id ?? res.name);
       return true;
     case "hyperdrive":
-      if (res.cfId === null) return false;
-      await api.hyperdrive.deleteConfig(res.cfId);
+      if (id === null) return false;
+      await api.hyperdrive.deleteConfig(id);
       return true;
     case "pipeline_stream":
-      if (res.cfId === null) return false;
-      await api.pipelines.deleteStream(res.cfId);
+      if (id === null) return false;
+      await api.pipelines.deleteStream(id);
       return true;
   }
 }

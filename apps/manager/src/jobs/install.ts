@@ -92,9 +92,12 @@ import {
   checkWorkflowNamePhase,
   d1Targets,
   lookupSubdomainPhase,
+  type NameReservation,
+  nameOnlyNote,
   provisionResourcePhase,
   type ResourceRecord,
   recordResource as recordResourceRow,
+  resolveReservedNamesPhase,
   resourceId,
   servingVersionPhase,
   uploadAssetsPhase,
@@ -262,6 +265,8 @@ export async function runInstall(ctx: JobContext): Promise<void> {
    * workers.dev with their previews before the job fails.
    */
   let uncovered: string[] = [];
+  /** Resource names recorded before their create, resolved if the job fails. */
+  const reserved: NameReservation[] = [];
   try {
     await run("start", async ({ log, orm }) => {
       await orm
@@ -615,7 +620,13 @@ export async function runInstall(ctx: JobContext): Promise<void> {
     const created: CreatedResource[] = [];
     for (const res of toCreate) {
       created.push(
-        await provisionResourcePhase(steps, params.installId, res, params.hyperdrive ?? {}),
+        await provisionResourcePhase(
+          steps,
+          params.installId,
+          res,
+          params.hyperdrive ?? {},
+          reserved,
+        ),
       );
     }
     for (const res of streams) {
@@ -1084,6 +1095,7 @@ export async function runInstall(ctx: JobContext): Promise<void> {
     const reason = `${steps.current}: ${errorMessage(error)}`;
     // Fail closed: nothing of an app meant to be behind Access stays reachable.
     if (uncovered.length > 0) await keepWorkersUnreachablePhase(steps, uncovered);
+    const nameOnly = await resolveReservedNamesPhase(steps, reserved);
     await step.do("mark install failed", async () => {
       const orm = createDb(db);
       const at = new Date(now());
@@ -1096,6 +1108,7 @@ export async function runInstall(ctx: JobContext): Promise<void> {
         .set({ status: "failed", updated_at: at })
         .where(eq(installs.id, params.installId));
       const log = new StepLog(now);
+      if (nameOnly.length > 0) log.error(nameOnlyNote(nameOnly));
       log.error(`Install failed at "${steps.current}". Resources created so far stay recorded.`);
       await log.flush(db, params.jobId);
       return {};

@@ -23,7 +23,8 @@ import { DATA_RESOURCE_KINDS } from "./resource-kinds";
  *
  * - Delete retained data: an `uninstall` job with `deleteRetained`, which
  *   runs only the uninstall's data resource steps, for everything kept. A
- *   kept bucket or index whose name another install records (see
+ *   kept resource addressed by name (a bucket or index, or one with no
+ *   Cloudflare id recorded) whose name another install records (see
  *   `namesHeldElsewhere`) is never addressed.
  * - Forget: sets `installs.forgotten_at`, which only hides the row. The
  *   resources stay in the account, recorded as kept; nothing is deleted.
@@ -77,17 +78,24 @@ export function isDeleteRetainedJob(row: { kind: string; input_json?: string | n
  * install derives from its Worker name (`<workerName>-<binding>`). A later
  * install under the same Worker name can own an object of the same name,
  * for example after the kept one was deleted in the dashboard. KV
- * namespaces, D1 databases and queues are addressed by an id Cloudflare
- * assigns, so a new one never shares it.
+ * namespaces, D1 databases, queues and Hyperdrive configs are addressed by
+ * an id Cloudflare assigns, so a new one never shares it, unless no id was
+ * recorded (the name is recorded before the create, and the id after it):
+ * such a row is looked up by name as well.
  */
 export const NAME_ADDRESSED_KINDS = ["r2", "vectorize"] as const;
+
+/** Whether a resource row is addressed by its name: a kind that always is, or no id recorded. */
+function addressedByName(row: { kind: string; cfId: string | null }): boolean {
+  return row.cfId === null || (NAME_ADDRESSED_KINDS as readonly string[]).includes(row.kind);
+}
 
 /**
  * The resources among `rows` (of install `installId`) whose kind and name,
  * or recorded Cloudflare id, another install records as not deleted: a
  * resource under that name belongs to that install now, so nothing done for
- * `installId` may address it. Returns resource id to the other install's
- * Worker name.
+ * `installId` may address it. Only rows addressed by name are considered.
+ * Returns resource id to the other install's Worker name.
  */
 export async function namesHeldElsewhere(
   d1: D1Database,
@@ -95,16 +103,17 @@ export async function namesHeldElsewhere(
   rows: ReadonlyArray<{ id: string; kind: string; name: string; cfId: string | null }>,
 ): Promise<Map<string, string>> {
   const held = new Map<string, string>();
-  const named = rows.filter((r) => (NAME_ADDRESSED_KINDS as readonly string[]).includes(r.kind));
+  const named = rows.filter(addressedByName);
   if (named.length === 0) return held;
-  const kinds = NAME_ADDRESSED_KINDS.map((k) => `'${k}'`).join(", ");
+  const kinds = [...new Set(named.map((r) => r.kind))];
   const others = await d1
     .prepare(
       `SELECT r.kind, r.name, r.cf_id, i.worker_name
        FROM resources r JOIN installs i ON i.id = r.install_id
-       WHERE r.install_id != ?1 AND r.deleted_at IS NULL AND r.kind IN (${kinds})`,
+       WHERE r.install_id != ?1 AND r.deleted_at IS NULL
+         AND r.kind IN (${kinds.map((_, i) => `?${i + 2}`).join(", ")})`,
     )
-    .bind(installId)
+    .bind(installId, ...kinds)
     .all<{ kind: string; name: string; cf_id: string | null; worker_name: string }>();
   for (const row of named) {
     const addresses = new Set([row.name, row.cfId].filter((a): a is string => a !== null));
@@ -287,9 +296,10 @@ export async function startDeleteRetainedCore(
   if (kept.length === 0) {
     throw new RemovedAppsError("Nothing this app kept is left in the account.");
   }
-  // A bucket or index whose name a later install records belongs to that
-  // install now. When that is all that is left, there is nothing to start;
-  // otherwise the job leaves those alone (and checks again when it runs).
+  // A bucket or index (or anything with no id recorded) whose name a later
+  // install records belongs to that install now. When that is all that is
+  // left, there is nothing to start; otherwise the job leaves those alone
+  // (and checks again when it runs).
   const held = await namesHeldElsewhere(deps.db, installId, kept);
   if (held.size === kept.length) {
     const names = kept.map((r) => `${r.name} (now used by "${held.get(r.id)}")`).join(", ");

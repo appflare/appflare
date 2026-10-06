@@ -441,6 +441,13 @@ export async function prepareOtherWorkerPhase(
     version: string;
     jobId: string;
     canaryAttempts: number;
+    /**
+     * Called just before the version's upload (null: it may make a version
+     * without saying which) and again with the version it made, so a caller
+     * can take the secrets it carries off again when a later step fails,
+     * this Worker's own canary included.
+     */
+    onUpload?: (versionId: string | null) => void;
   },
 ): Promise<OtherWorkerUpdate> {
   const label = workerLabel(worker);
@@ -477,6 +484,7 @@ export async function prepareOtherWorkerPhase(
     });
     return update;
   }
+  input.onUpload?.(null);
   const uploaded = await steps.run(`upload Worker version${label}`, async ({ log }) => {
     const { metadata: base, warnings } = updateMetadata(ctx, update);
     for (const warning of warnings) log.warn(warning);
@@ -507,6 +515,7 @@ export async function prepareOtherWorkerPhase(
     );
     return { versionId: result.versionId, hasPreview: result.hasPreview };
   });
+  input.onUpload?.(uploaded.versionId);
   if (!worker.workersDev || !input.wasOnWorkersDev) {
     await steps.run(`skip canary${label}`, async ({ log }) => {
       log.info(

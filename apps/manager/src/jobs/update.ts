@@ -71,10 +71,13 @@ import {
   checkWorkflowNamePhase,
   d1Targets,
   lookupSubdomainPhase,
+  type NameReservation,
+  nameOnlyNote,
   probeUntilHealthy,
   provisionResourcePhase,
   type ResourceRecord,
   recordResource,
+  resolveReservedNamesPhase,
   syncCronsPhase,
   uploadAssetsPhase,
 } from "./install/phases";
@@ -347,6 +350,8 @@ export async function runUpdate(ctx: JobContext): Promise<void> {
   /** Configurations made from connection strings given anew, and whether the records follow them yet. */
   const replacements: ConnectionReplacement[] = [];
   let replacementsRecorded = false;
+  /** Resource names recorded before their create, resolved if the job fails. */
+  const reserved: NameReservation[] = [];
   /**
    * Its other Workers' uploads that carry secrets this version introduces,
    * for a failure before their promotion to take them off again.
@@ -354,7 +359,8 @@ export async function runUpdate(ctx: JobContext): Promise<void> {
   const othersSecretsUndo: Array<{
     workerName: string;
     label: string;
-    versionId: string;
+    /** Null until the upload says which version it made (found by `uploadMessage` meanwhile). */
+    versionId: string | null;
     servingVersionId: string;
     names: string[];
     /** Those of `names` the install already had, put back rather than dropped. */
@@ -721,7 +727,7 @@ export async function runUpdate(ctx: JobContext): Promise<void> {
     const healthMode = manifest.catalog.install.health.mode;
 
     await run("plan update", async ({ log }) => {
-      const problems = [...diff.problems, ...queuePlan.problems, ...queueDiff.problems];
+      const problems = [...diff.problems, ...queuePlan.problems];
       // Checked when the update starts too; a version that must run behind
       // Cloudflare Access never serves an install Appflare does not protect.
       const accessRefusal = accessUpdateRefusal({
@@ -756,8 +762,16 @@ export async function runUpdate(ctx: JobContext): Promise<void> {
       // A string for a database the install has a configuration for replaces it.
       databases.push(...replacingDatabases);
       const connections = params.hyperdrive ?? {};
+      // A configuration an earlier attempt made and recorded by name only
+      // (the update dialog does not ask again) is taken up as it is; if it
+      // was never made, its create step fails, releases the name, and the
+      // dialog asks for the string next time.
+      const recordedByName = (binding: string) =>
+        started.resources.some(
+          (r) => r.kind === "hyperdrive" && r.binding === binding && r.cfId === null,
+        );
       for (const d of databases) {
-        if (connections[d.binding] === undefined) {
+        if (connections[d.binding] === undefined && !recordedByName(d.binding)) {
           problems.push(
             `This version connects ${d.binding} to a database elsewhere, and the update was started without its connection string; start the update again and enter it.`,
           );
@@ -962,7 +976,13 @@ export async function runUpdate(ctx: JobContext): Promise<void> {
     });
     for (const res of toCreate) {
       bound.push(
-        await provisionResourcePhase(steps, params.installId, res, params.hyperdrive ?? {}),
+        await provisionResourcePhase(
+          steps,
+          params.installId,
+          res,
+          params.hyperdrive ?? {},
+          reserved,
+        ),
       );
     }
     for (const res of newStreams) {
@@ -1182,6 +1202,31 @@ export async function runUpdate(ctx: JobContext): Promise<void> {
       if (!w.workersDev && previousOf(w.scriptName)?.workersDev !== false) {
         takenOffWorkersDev.push(w.scriptName);
       }
+      const serving = snapshot.otherVersions[w.scriptName];
+      const names = Object.keys(workerSecretValues(w.manifest.catalog.secrets, secretValues));
+      // Registered before the upload, as for the primary Worker: a failure
+      // from then on, this Worker's own canary included, takes the secrets
+      // it introduces off its newest version, even when the upload made a
+      // version and did not say which (found by its annotation).
+      const undoOther: (typeof othersSecretsUndo)[number] | null =
+        serving === undefined || names.length === 0
+          ? null
+          : {
+              workerName: w.scriptName,
+              label: workerLabel(w),
+              versionId: null,
+              servingVersionId: serving,
+              names,
+              // Those the Worker had: its installed version declares them and
+              // the install has them (all recorded ones, from a step output
+              // recorded before the declared ones were read).
+              kept: names.filter(
+                (name) =>
+                  recordedSecrets.includes(name) &&
+                  (previousOf(w.scriptName)?.secrets ?? [name]).includes(name),
+              ),
+              uploadMessage: updateVersionMessage(started.slug, params.version, params.jobId),
+            };
       const update = await prepareOtherWorkerPhase(steps, step, entryContext, w, {
         appliedDoTag: previousOf(w.scriptName)?.doTag ?? null,
         servingExports: previousOf(w.scriptName)?.exports,
@@ -1192,28 +1237,13 @@ export async function runUpdate(ctx: JobContext): Promise<void> {
         version: params.version,
         jobId: params.jobId,
         canaryAttempts: CANARY_MAX_ATTEMPTS,
+        onUpload: (versionId) => {
+          if (undoOther === null) return;
+          undoOther.versionId = versionId;
+          if (!othersSecretsUndo.includes(undoOther)) othersSecretsUndo.push(undoOther);
+        },
       });
       otherUpdates.push(update);
-      const serving = snapshot.otherVersions[w.scriptName];
-      const names = Object.keys(update.introduced);
-      if (update.versionId !== null && serving !== undefined && names.length > 0) {
-        othersSecretsUndo.push({
-          workerName: w.scriptName,
-          label: workerLabel(w),
-          versionId: update.versionId,
-          servingVersionId: serving,
-          names,
-          // Those the Worker had: its installed version declares them and
-          // the install has them (all recorded ones, from a step output
-          // recorded before the declared ones were read).
-          kept: names.filter(
-            (name) =>
-              recordedSecrets.includes(name) &&
-              (previousOf(w.scriptName)?.secrets ?? [name]).includes(name),
-          ),
-          uploadMessage: updateVersionMessage(started.slug, params.version, params.jobId),
-        });
-      }
     }
     /** The other Workers to their new versions, one by one, before the primary one. */
     /**
@@ -1717,6 +1747,7 @@ export async function runUpdate(ctx: JobContext): Promise<void> {
     // they stay recorded with no binding.
     const configsKept = !wasPromoted && mayServe ? replacements.map((r) => r.next.name) : [];
     const othersRecordJson = othersRecord === null ? null : JSON.stringify(othersRecord);
+    const nameOnly = await resolveReservedNamesPhase(steps, reserved);
     await step.do("mark update failed", async () => {
       const orm = createDb(env.DB);
       const at = new Date(now());
@@ -1739,6 +1770,7 @@ export async function runUpdate(ctx: JobContext): Promise<void> {
         await switchConnectionRecords(orm, params.installId, switchRecords);
       }
       const log = new StepLog(now);
+      if (nameOnly.length > 0) log.error(nameOnlyNote(nameOnly));
       if (configsLeft.length > 0) {
         log.error(
           `The Hyperdrive configurations made for this update (${configsLeft.join(", ")}) could not all be deleted; they are recorded, and uninstalling the app deletes them.`,
