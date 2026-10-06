@@ -92,7 +92,11 @@ describe("rollback of a version whose settings use the app's address", () => {
    * moved to its domain since; the snapshot's 1.0.0 version was uploaded
    * with `deployedWith` as its address.
    */
-  async function rollbackTo(deployedWith: { url: string; host: string }) {
+  async function rollbackTo(
+    deployedWith: { url: string; host: string },
+    /** Keys (`METHOD /path`) the fake answers once with this status instead of doing the work. */
+    failOnce: ReadonlyArray<[string, number]> = [],
+  ) {
     const old = await buildArtifactFixture({ ...APP, version: "1.0.0" });
     const current = await buildArtifactFixture({ ...APP, version: "1.1.0" });
     await seedInstall({
@@ -122,6 +126,7 @@ describe("rollback of a version whose settings use the app's address", () => {
         { id: "dep-1", versions: [{ version_id: OLD_VERSION, percentage: 100 }] },
       ],
       domainHealth: { [DOMAIN]: [{ status: 200, body: "ok" }] },
+      failOnce: new Map(failOnce),
       versionBindings: {
         [OLD_VERSION]: [
           { type: "kv_namespace", name: "CUT_KV", namespace_id: "kv-1" },
@@ -178,9 +183,45 @@ describe("rollback of a version whose settings use the app's address", () => {
       installId: INSTALL_ID,
       refreshVars: ["appUrl"],
     });
-    expect(r.logs.join("\n")).toContain(
-      `Version ${OLD_VERSION} of "cut" was deployed with another address ({{appUrl}}) than the app has now (https://${DOMAIN}).`,
+    // The one line after the final one says why the settings change runs.
+    expect(r.logs.at(-1)).toContain(
+      `This version's settings were filled in with another address ({{appUrl}}) than the app has now (https://${DOMAIN}), so a settings change (job `,
     );
+  });
+
+  it("ends its log with the final line, the version's settings read before it", async () => {
+    // The read of the version's secrets fails, so its settings are read on their own.
+    const r = await rollbackTo({ url: WORKERS_DEV, host: "cut.appflare-dev.workers.dev" }, [
+      [`GET /workers/scripts/cut/versions/${OLD_VERSION}`, 500],
+    ]);
+    expect(r.error).toBeNull();
+    expect(r.job?.status).toBe("succeeded");
+    const names = r.step.names;
+    expect(names.indexOf(`read the address settings of version ${OLD_VERSION}`)).toBeLessThan(
+      names.indexOf("finish"),
+    );
+    expect(names.indexOf("finish")).toBeLessThan(
+      names.indexOf(`check the address settings of version ${OLD_VERSION}`),
+    );
+    const final = r.logs.findIndex((m) => m.startsWith("Rolled back from 1.1.0 to 1.0.0"));
+    expect(final).toBeGreaterThan(-1);
+    // After the final line: only the settings change it starts, never a step's API calls.
+    expect(r.logs.slice(final + 1)).toEqual([
+      expect.stringContaining(
+        `than the app has now (https://${DOMAIN}), so a settings change (job `,
+      ),
+    ]);
+    expect(r.logs.slice(0, final)).toContain("API calls");
+    expect(r.created[0]?.params).toMatchObject({ kind: "reconfigure", refreshVars: ["appUrl"] });
+  });
+
+  it("writes nothing after its final line when the settings name the app's address", async () => {
+    const r = await rollbackTo({ url: `https://${DOMAIN}`, host: DOMAIN }, [
+      [`GET /workers/scripts/cut/versions/${OLD_VERSION}`, 500],
+    ]);
+    expect(r.error).toBeNull();
+    expect(r.logs.at(-1)).toMatch(/^Rolled back from 1\.1\.0 to 1\.0\.0/);
+    expect(r.created).toEqual([]);
   });
 
   it("leaves the settings alone when the version already names the app's address", async () => {

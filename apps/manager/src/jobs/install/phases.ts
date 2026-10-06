@@ -25,7 +25,7 @@ import type { StepRunner } from "../run-job";
 import { JobError, type JobSteps } from "../steps";
 import { failureError, settleUnit } from "../units/result";
 import type { ArtifactHost } from "../units/units";
-import { ACCESS_PREVIEW_REASON, cronChanges } from "../update/plan";
+import { ACCESS_PREVIEW_REASON, activeVersionId, cronChanges } from "../update/plan";
 import { fetchWhole, sha256Hex, verifyArtifactManifest } from "./artifact";
 import { planAssetParts } from "./asset-parts";
 import type { ResourceBindingPlan, WorkflowPlan } from "./bindings";
@@ -669,6 +669,65 @@ export async function lookupSubdomainPhase(steps: JobSteps): Promise<string> {
     },
   );
   return subdomain;
+}
+
+/**
+ * Install: the version a Worker serves once its secrets are set, which is
+ * the one to record. Setting a secret on the script (`PUT
+ * /workers/scripts/{name}/secrets`) deploys a new version at once, made from
+ * the one serving, so after the first secret the version the upload reported
+ * serves nothing; recorded anyway, the next update or settings change finds
+ * another version serving than Appflare recorded. One read of the Worker's
+ * deployments after its last secret, and only for a Worker that got one: the
+ * read changes nothing, so a step that runs again reads again.
+ *
+ * Never fails the install, which has set everything up by then: when
+ * Cloudflare refuses the read, or no single version serves all traffic (only
+ * a deployment made outside Appflare splits it), the uploaded version stays
+ * recorded, with a warning. `record` writes the version in the same step.
+ */
+export async function servingVersionPhase(
+  steps: JobSteps,
+  input: {
+    workerName: string;
+    /** The version the upload reported, kept when the read cannot tell. */
+    uploadedVersionId: string | null;
+    /** Names the Worker in the step and the log, for the Workers of an app of several. */
+    label?: string;
+    record?: (orm: Database, versionId: string) => Promise<void>;
+  },
+): Promise<string | null> {
+  const label = input.label ?? "";
+  const of = label === "" ? "" : ` of Worker "${input.workerName}"`;
+  const kept = input.uploadedVersionId;
+  const read = await steps
+    .run(`read serving version${label}`, async ({ log, cf, orm }) => {
+      let versionId: string | null;
+      try {
+        versionId = activeVersionId(await cf().versions.listDeployments(input.workerName));
+      } catch (error) {
+        // A 5xx or a 429 is retried by the step; a refusal will not change.
+        if (!(error instanceof CloudflareApiError) || error.status >= 500 || error.status === 429) {
+          throw error;
+        }
+        log.warn(
+          `Could not read which version${of} serves now that its secrets are set (${error.message}); Appflare records the uploaded version ${kept ?? "(unknown)"}.`,
+        );
+        return { versionId: kept };
+      }
+      if (versionId === null) {
+        log.warn(
+          `No single version${of} serves all traffic now that its secrets are set; Appflare records the uploaded version ${kept ?? "(unknown)"}.`,
+        );
+        return { versionId: kept };
+      }
+      await input.record?.(orm, versionId);
+      log.info(`Version ${versionId}${of} serves all traffic, with its secrets.`, { versionId });
+      return { versionId };
+    })
+    // Retries ran out: the step logged why, and the uploaded version stays recorded.
+    .catch(() => ({ versionId: kept }));
+  return read.versionId;
 }
 
 export interface ProbePhaseOptions {

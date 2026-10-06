@@ -5,6 +5,7 @@ import {
   accessBypassPaths,
   accessNeededOnlyIfProtected,
   accessOfferOf,
+  accountRequirements,
   catalogWorkerName,
   connectionStringProblems,
   hyperdriveDeclarations,
@@ -95,6 +96,7 @@ import {
   type ResourceRecord,
   recordResource as recordResourceRow,
   resourceId,
+  servingVersionPhase,
   uploadAssetsPhase,
 } from "./install/phases";
 import {
@@ -336,7 +338,10 @@ export async function runInstall(ctx: JobContext): Promise<void> {
           "this app needs Workers Paid; confirm the account is on Workers Paid to install it",
         );
       }
-      const { requires } = manifest.catalog;
+      // What the account must offer: the manager features the entry lists
+      // (`"secret-keys"` and the like) are this manager's own, so they are
+      // neither logged nor confirmed as the account's.
+      const requires = accountRequirements(manifest.catalog.requires);
       // Cloudflare Access, when the entry needs it only while the app is
       // protected, is no requirement to confirm: protection is checked itself.
       const toConfirm = requirementsToConfirm(manifest.catalog);
@@ -893,10 +898,12 @@ export async function runInstall(ctx: JobContext): Promise<void> {
     // 7. Secrets. An optional secret the admin left unset gets no step, and
     // a seed-only one (used by the seed above) is never set on the Worker.
     // Values come by the secret's key; the Worker reads it by its name.
+    let secretsSet = 0;
     for (const secret of primaryManifest.catalog.secrets) {
       if (isSeedOnly(secret)) continue;
       const key = secretKey(secret);
       if (isOptionalSecret(secret) && (params.secrets[key] ?? "").length === 0) continue;
+      secretsSet += 1;
       await run(`set secret ${secret.name}`, async ({ log, cf, orm }) => {
         const value = params.secrets[key];
         if (value === undefined || value.length === 0) {
@@ -914,6 +921,21 @@ export async function runInstall(ctx: JobContext): Promise<void> {
         return {};
       });
     }
+    // Each secret deployed a version of its own: the last one serves, and is
+    // the version recorded (and the one the next update's snapshot expects).
+    const servingVersionId =
+      secretsSet === 0
+        ? upload.versionId
+        : await servingVersionPhase(steps, {
+            workerName: params.workerName,
+            uploadedVersionId: upload.versionId,
+            record: async (orm, versionId) => {
+              await orm
+                .update(installs)
+                .set({ current_version_id: versionId, updated_at: new Date(now()) })
+                .where(eq(installs.id, params.installId));
+            },
+          });
 
     // 8. Cron triggers, queue consumers, then the workers.dev route.
     if (crons.length > 0) {
@@ -1015,7 +1037,7 @@ export async function runInstall(ctx: JobContext): Promise<void> {
           .update(installs)
           .set({
             status: "installed",
-            current_version_id: upload.versionId,
+            current_version_id: servingVersionId,
             ...(others.before.length + others.after.length === 0
               ? {}
               : { worker_versions_json: JSON.stringify(otherVersions) }),

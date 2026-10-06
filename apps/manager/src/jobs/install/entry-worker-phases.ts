@@ -33,7 +33,13 @@ import {
 import type { ResourceBindingPlan } from "./bindings";
 import { CronLimitError, putSchedulesChecked } from "./cron-limit";
 import { buildScriptMetadata, type CreatedResource, installVars } from "./metadata";
-import { probeUntilHealthy, recordResource, resourceId, uploadAssetsPhase } from "./phases";
+import {
+  probeUntilHealthy,
+  recordResource,
+  resourceId,
+  servingVersionPhase,
+  uploadAssetsPhase,
+} from "./phases";
 import { type ConsumerPlan, planQueueConsumers } from "./queue-consumers";
 import { putWorkflowsPhase, type WorkflowTarget, workflowsOf } from "./workflows";
 
@@ -148,7 +154,8 @@ export function planEntryQueueConsumers(
 /**
  * Install: one other Worker of the app, after the resources exist and the
  * Workers it binds to are deployed. Its assets, the script (recorded before
- * the upload, like the primary Worker's), its secrets, cron triggers, queue
+ * the upload, like the primary Worker's), its secrets (and the version serving
+ * once they are set, which is the one returned), cron triggers, queue
  * consumers, and its workers.dev address: on, unless the catalog entry keeps
  * the Worker off workers.dev, in which case it is turned off with its version
  * previews. Only the primary Worker is the app's address.
@@ -255,6 +262,7 @@ export async function deployOtherWorkerPhase(
   // An uploaded script starts off workers.dev (the manager, unlike wrangler,
   // never turns it on); saying so explicitly guards a Worker kept private.
   if (!worker.workersDev) await otherWorkerRoutePhase(steps, ctx.installId, worker, ctx.subdomain);
+  let secretsSet = 0;
   for (const secret of own.catalog.secrets) {
     // A seed-only secret serves the install's seed statements, never a Worker.
     if (isSeedOnly(secret)) continue;
@@ -262,6 +270,7 @@ export async function deployOtherWorkerPhase(
     const key = secretKey(secret);
     const value = input.secrets[key];
     if (isOptionalSecret(secret) && (value ?? "").length === 0) continue;
+    secretsSet += 1;
     await run(`set secret ${secret.name}${label}`, async ({ log, cf, orm }) => {
       if (value === undefined || value.length === 0) {
         throw new JobError(`no value was provided for the secret ${key}`);
@@ -277,6 +286,16 @@ export async function deployOtherWorkerPhase(
       return {};
     });
   }
+  // Each secret deployed a version of its own: the last one serves, and is
+  // the version the install records for this Worker.
+  const versionId =
+    secretsSet === 0
+      ? upload.versionId
+      : await servingVersionPhase(steps, {
+          workerName: name,
+          uploadedVersionId: upload.versionId,
+          label,
+        });
   const crons = [...new Set(own.worker.crons)];
   if (crons.length > 0) {
     await run(`set cron triggers${label}`, async ({ log, cf }) => {
@@ -296,7 +315,7 @@ export async function deployOtherWorkerPhase(
     await otherWorkerRoutePhase(steps, ctx.installId, worker, ctx.subdomain);
   }
   // A step output recorded before tags were read has none.
-  return { versionId: upload.versionId, tag: upload.tag ?? null };
+  return { versionId, tag: upload.tag ?? null };
 }
 
 /**

@@ -1,5 +1,6 @@
 import {
   type ArtifactManifest,
+  accountRequirements,
   appServices,
   boundToWorker,
   combinedWorkerFacts,
@@ -127,7 +128,11 @@ export function reviewBuild(
   // something the built Worker runs: an installed Worker cannot declare
   // Containers (the packer refuses the section). What it runs on comes from
   // the built Worker's bindings, and any other requirement the catalog lists.
-  const declared = manifest.catalog.requires.filter((r) => r !== BUILD_CONTAINER_REQUIREMENT);
+  // The manager features it lists (`"secret-keys"` and the like) are this
+  // manager's own, nothing the account must offer.
+  const declared = accountRequirements(manifest.catalog.requires).filter(
+    (r) => r !== BUILD_CONTAINER_REQUIREMENT,
+  );
   const services = appServices({ ...manifest.catalog, requires: declared }, facts).ids;
   const requires = [
     ...new Set([
