@@ -163,6 +163,15 @@ export const SETTING = {
    * pass, so each run goes on from there; "0" (or absent) starts from the first.
    */
   workflowRepairCursor: "workflow_repair_cursor",
+  /**
+   * ISO 8601 time Appflare first found the sandbox Worker gone while its own
+   * Worker still binds `SANDBOX` to it (sandbox/worker-deleted.ts): written
+   * by the disable job once it deleted that Worker and by any check that
+   * finds the binding pointing at nothing; deleted when connecting,
+   * enabling, disconnecting or a self-update finishes, or when a call through
+   * the binding answers.
+   */
+  sandboxWorkerDeleted: "sandbox_worker_deleted",
 } as const;
 
 export type SettingKey = (typeof SETTING)[keyof typeof SETTING];

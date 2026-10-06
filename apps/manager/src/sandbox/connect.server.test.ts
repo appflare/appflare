@@ -5,7 +5,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { createDb } from "../db/client";
 import { createMigrator } from "../db/migrate";
 import { migrations } from "../db/migrations/index";
-import { SETTING, writeSettings } from "../db/settings";
+import { readSettings, SETTING, writeSettings } from "../db/settings";
 import { buildArtifactFixture } from "../test/artifact-fixture";
 import {
   ACC,
@@ -24,6 +24,7 @@ import {
   readSandboxStatus,
   sandboxBindingDangles,
 } from "./connect.server";
+import { markSandboxWorkerDeleted } from "./worker-deleted";
 
 /**
  * "Connect sandbox builds" against the stateful fake account: a new version
@@ -83,6 +84,17 @@ beforeEach(async () => {
 });
 
 describe("connectSandboxCore", () => {
+  it("clears the record of a deleted sandbox Worker once connected", async () => {
+    await markSandboxWorkerDeleted(createDb(env.DB));
+    const r = await connect({
+      versionBindings: { [SERVING]: [{ type: "d1", name: "DB", id: "db-1" }, DANGLING_SANDBOX] },
+    });
+    expect(r.error).toBeNull();
+    expect(r.result?.alreadyConnected).toBe(false);
+    const after = await readSettings(createDb(env.DB), [SETTING.sandboxWorkerDeleted]);
+    expect(after.sandbox_worker_deleted).toBeUndefined();
+  });
+
   it("patches the latest version with SANDBOX only, checks its preview, then deploys it", async () => {
     const r = await connect();
     expect(r.error).toBeNull();
@@ -318,6 +330,7 @@ describe("readSandboxStatus", () => {
       problem: null,
       workerExists: null,
       danglingBinding: false,
+      answered: true,
     });
   });
 
@@ -340,6 +353,7 @@ describe("readSandboxStatus", () => {
     });
     expect(asked).toBe(false);
     expect(status.connected).toBe(true);
+    expect(status.answered).toBe(true);
     expect(status.problem).toMatch(/speaks protocol 2, this manager speaks 1; update Appflare/);
   });
 
@@ -363,6 +377,7 @@ describe("readSandboxStatus", () => {
       problem: null,
       workerExists: false,
       danglingBinding: true,
+      answered: false,
     });
   });
 
@@ -373,6 +388,7 @@ describe("readSandboxStatus", () => {
       problem: "Network connection lost.",
       workerExists: null,
       danglingBinding: false,
+      answered: false,
     };
     // The sandbox Worker is there but does not answer.
     expect(await readSandboxStatus({ binding: lost, bindingDangles: async () => false })).toEqual(

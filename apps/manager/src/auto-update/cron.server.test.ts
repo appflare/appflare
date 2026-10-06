@@ -1,6 +1,7 @@
 import { reset } from "cloudflare:test";
 import { env } from "cloudflare:workers";
 import { beforeEach, describe, expect, it } from "vitest";
+import { CATALOG_INDEX_KEY } from "../catalog/index.server";
 import { MANAGER_LATEST_KEY } from "../catalog/manager-releases.server";
 import { createDb } from "../db/client";
 import { createMigrator } from "../db/migrate";
@@ -9,8 +10,10 @@ import { SETTING, writeSettings } from "../db/settings";
 import {
   type ArtifactFixture,
   type ArtifactFixtureOptions,
+  baseCatalog,
   buildArtifactFixture,
 } from "../test/artifact-fixture";
+import { sandboxIndexApp } from "../test/fake-sandbox";
 import { cacheIndex, INSTALL_ID, type SeedResource, seedInstall } from "../test/seed-install";
 import { runScheduledUpdates, type ScheduledUpdatesEnv, scheduledUpdatesLog } from "./cron.server";
 
@@ -503,5 +506,56 @@ describe("runScheduledUpdates", () => {
       expect(r.outcome.selfUpdate).toEqual({ status: "skipped", reason: "up-to-date" });
       expect(r.created).toEqual([]);
     });
+  });
+});
+
+describe("the sandbox check during a run", () => {
+  it("makes no call through the binding while every sandbox app's update waits for an admin's approval", async () => {
+    await settings({ apps: "on" });
+    const app = await buildArtifactFixture({
+      ...NEW_APP,
+      keyId: "unsigned",
+      catalog: { install: { ...baseCatalog().install, tier: "sandbox" } },
+    });
+    await env.KV.put(
+      CATALOG_INDEX_KEY,
+      JSON.stringify({
+        generatedAt: "2026-09-23T00:00:00.000Z",
+        apps: [await sandboxIndexApp(app)],
+      }),
+    );
+    for (const id of ["s1", "s2"]) {
+      await env.DB.prepare(
+        `INSERT INTO installs (id, app_slug, worker_name, instance_name, catalog_version,
+           artifact_url, status, build_kind, installed_at, updated_at)
+         VALUES (?1, 'cut', ?1, ?1, '1.0.0', 'https://artifacts.test/cut/old.zip', 'installed', 'sandbox', 0, 0)`,
+      )
+        .bind(id)
+        .run();
+    }
+    // A binding that fails as one to a deleted Worker does.
+    let bindingCalls = 0;
+    const SANDBOX = {
+      info: async () => {
+        bindingCalls += 1;
+        throw new Error("Network connection lost.");
+      },
+    };
+    const outcome = await runScheduledUpdates(
+      {
+        DB: env.DB,
+        KV: env.KV,
+        JOBS: jobs(),
+        APPFLARE_VERSION: "0.5.0",
+        CF_API_TOKEN: "cf-token",
+        SANDBOX,
+      },
+      { now: () => new Date("2026-09-24T12:00:00.000Z") },
+    );
+    expect(outcome.apps.filter((a) => a.installId.startsWith("s"))).toEqual([
+      { installId: "s1", slug: "cut", status: "skipped", reason: "needs-approval" },
+      { installId: "s2", slug: "cut", status: "skipped", reason: "needs-approval" },
+    ]);
+    expect(bindingCalls).toBe(0);
   });
 });

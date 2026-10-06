@@ -6,8 +6,9 @@ import { refreshManagerReleases } from "../catalog/manager-releases.server";
 import { createDb } from "../db/client";
 import { createMigrator } from "../db/migrate";
 import { migrations } from "../db/migrations/index";
-import { SETTING, writeSettings } from "../db/settings";
+import { readSettings, SETTING, writeSettings } from "../db/settings";
 import { startUpdateCore, VersionActionError } from "../installs/versions.server";
+import { markSandboxWorkerDeleted } from "../sandbox/worker-deleted";
 import { type ArtifactFixture, buildArtifactFixture } from "../test/artifact-fixture";
 import {
   ACC,
@@ -18,6 +19,7 @@ import {
   TOKEN,
 } from "../test/fake-account";
 import { fakeGithub, GITHUB_TOKEN, githubRelease } from "../test/fake-releases";
+import { DANGLING_SANDBOX } from "../test/fake-sandbox-account";
 import { fakeSelf } from "../test/fake-self";
 import { fakeStep } from "../test/fake-step";
 import { INSTALL_ID, seedInstall } from "../test/seed-install";
@@ -332,7 +334,30 @@ describe("self_update job", () => {
     }
   });
 
+  it("binds the sandbox Worker in place of a SANDBOX left pointing at a deleted one, and clears that record", async () => {
+    // An enable deployed the sandbox Worker but stopped before connecting
+    // Appflare, whose binding still points at the Worker a disable deleted.
+    await markSandboxWorkerDeleted(createDb(env.DB));
+    const r = await selfUpdate({
+      world: {
+        bindings: [...RUNNING_BINDINGS, DANGLING_SANDBOX],
+        otherScripts: ["appflare-sandbox"],
+      },
+    });
+    expect(r.error).toBeNull();
+    expect(r.job?.status).toBe("succeeded");
+    expect(r.fake.state.versions[0]?.metadata.bindings).toContainEqual({
+      type: "service",
+      name: "SANDBOX",
+      service: "appflare-sandbox",
+      entrypoint: "SandboxBuilds",
+    });
+    const after = await readSettings(createDb(env.DB), [SETTING.sandboxWorkerDeleted]);
+    expect(after.sandbox_worker_deleted).toBeUndefined();
+  });
+
   it("fails before promotion when the preview reports another version", async () => {
+    await markSandboxWorkerDeleted(createDb(env.DB));
     const r = await selfUpdate({ world: { previews: [healthy(FROM)] } });
     expect(r.error).not.toBeNull();
     expect(r.job?.status).toBe("failed");
@@ -344,6 +369,9 @@ describe("self_update job", () => {
     expect(r.fake.state.calls).not.toContain(`POST /workers/scripts/${WORKER}/deployments`);
     expect(r.fake.state.deployments).toHaveLength(1);
     expect(r.history).toBeNull();
+    // The running version keeps its bindings, so the record of a deleted sandbox Worker stays.
+    const kept = await readSettings(createDb(env.DB), [SETTING.sandboxWorkerDeleted]);
+    expect(kept.sandbox_worker_deleted).toBeDefined();
     expect(r.logs.at(-1)?.message).toBe(
       `Self-update failed at "canary check 1". Version ${NEW_VERSION} was uploaded but never promoted; Appflare ${FROM} keeps serving all traffic.`,
     );

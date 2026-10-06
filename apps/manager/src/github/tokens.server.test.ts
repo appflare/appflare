@@ -2,13 +2,16 @@ import { reset } from "cloudflare:test";
 import { env } from "cloudflare:workers";
 import type { SandboxInfo } from "@appflare/schema";
 import { beforeEach, describe, expect, it } from "vitest";
+import { createDb } from "../db/client";
 import { createMigrator } from "../db/migrate";
 import { migrations } from "../db/migrations/index";
+import { markSandboxWorkerDeleted } from "../sandbox/worker-deleted";
 import { githubTokenUses } from "./tokens";
 import {
   addGithubTokenCore,
   deleteGithubTokenCore,
   type GithubTokenDeps,
+  githubSandboxState,
   githubTokenCount,
   githubTokenViews,
   readGithubTokens,
@@ -203,6 +206,30 @@ describe("addGithubTokenCore", () => {
     ).rejects.toThrow(/busy/);
     for (const attempt of [off, old, busy]) expect(attempt.calls).toEqual([]);
     expect(await githubTokenCount(env.DB)).toBe(0);
+  });
+});
+
+describe("githubSandboxState", () => {
+  it("reads a binding to a sandbox Worker recorded as deleted as off, without calling it", async () => {
+    let calls = 0;
+    const SANDBOX = {
+      info: async () => {
+        calls += 1;
+        return INFO;
+      },
+    };
+    expect(await githubSandboxState({ DB: env.DB, SANDBOX })).toEqual({
+      connected: true,
+      info: INFO,
+    });
+    await markSandboxWorkerDeleted(createDb(env.DB));
+    // Sandbox builds read as off, so the card says so instead of offering "Add a token".
+    expect(await githubSandboxState({ DB: env.DB, SANDBOX })).toEqual({
+      connected: false,
+      info: null,
+    });
+    expect(calls).toBe(1);
+    expect(await githubSandboxState({ DB: env.DB })).toEqual({ connected: false, info: null });
   });
 });
 

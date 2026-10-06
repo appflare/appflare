@@ -18,6 +18,7 @@ import { planSandboxBindingChange, SandboxConnectError } from "./connect.server"
 import { isSandboxWorker } from "./deploy-plan";
 import { requireSelf } from "./enable-job";
 import { NO_CONTAINERS_PERMISSION_REASON } from "./preflight";
+import { clearSandboxWorkerDeleted, markSandboxWorkerDeleted } from "./worker-deleted";
 
 /**
  * The `sandbox_disable` job: removes sandbox builds from the account, leaving
@@ -32,7 +33,9 @@ import { NO_CONTAINERS_PERMISSION_REASON } from "./preflight";
  *    plain delete (code 10142) while any version of another Worker binds it,
  *    and the manager's serving version still does. Its Durable Object
  *    namespaces go with it, and so do its secrets: the records of the
- *    GitHub access tokens it held are deleted next.
+ *    GitHub access tokens it held are deleted next. The same step records
+ *    the binding as pointing at a deleted Worker (./worker-deleted.ts), so
+ *    pages read sandbox builds as off from then on.
  * 2. Delete the container applications, which outlive the Worker.
  * 3. Empty the build bucket, a page per job unit, and delete it.
  * 4. Disconnect the manager: a new version of its Worker without `SANDBOX`,
@@ -50,7 +53,7 @@ import { NO_CONTAINERS_PERMISSION_REASON } from "./preflight";
  * it fails much as it would with no binding; disabling is refused while any
  * install needs the sandbox Worker, so no app depends on it meanwhile. A run
  * that stops in between leaves Settings reading sandbox builds as off, with
- * Disable offered again to finish.
+ * Disable offered again to finish; the disconnect clears the record.
  */
 
 export const sandboxDisableJobParams = z.object({
@@ -105,10 +108,11 @@ export async function runSandboxDisable(ctx: JobContext): Promise<void> {
     steps.setAccountId(started.accountId);
 
     // 1. The Worker, while the manager still binds it (hence `force`).
-    await run(`delete Worker ${SANDBOX_WORKER_NAME}`, async ({ log, cf }) => {
+    await run(`delete Worker ${SANDBOX_WORKER_NAME}`, async ({ log, cf, orm }) => {
       const api = cf();
       if (!(await api.workers.listScripts()).some((s) => s.id === SANDBOX_WORKER_NAME)) {
         log.info(`There is no Worker "${SANDBOX_WORKER_NAME}"; nothing to delete there.`);
+        await markSandboxWorkerDeleted(orm, new Date(now()));
         return {};
       }
       if (!isSandboxWorker(await api.workers.getBindings(SANDBOX_WORKER_NAME))) {
@@ -123,6 +127,7 @@ export async function runSandboxDisable(ctx: JobContext): Promise<void> {
         if (!isNotFound(error)) throw error;
         log.info(`The Worker "${SANDBOX_WORKER_NAME}" was already gone.`);
       }
+      await markSandboxWorkerDeleted(orm, new Date(now()));
       return {};
     });
 
@@ -240,6 +245,7 @@ export async function runSandboxDisable(ctx: JobContext): Promise<void> {
         }),
         log,
       );
+      await clearSandboxWorkerDeleted(orm);
       await orm
         .update(jobs)
         .set({ status: "succeeded", finished_at: new Date(now()) })

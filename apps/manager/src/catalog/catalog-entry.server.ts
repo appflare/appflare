@@ -31,8 +31,8 @@ import { type InstallVarField, installVarFields } from "../installs/install-vars
 import { suggestWorkerName } from "../installs/instance-names";
 import { entryBindings } from "../jobs/entry-workers";
 import { planBindings } from "../jobs/install/bindings";
-import { sandboxBinding } from "../sandbox/binding";
 import { type SandboxReadiness, sandboxReadinessOf } from "../sandbox/readiness";
+import { sandboxBound } from "../sandbox/worker-deleted";
 import { appFacts, NO_APP_FACTS } from "./app-facts";
 import { getCatalogManifest } from "./app-manifest.server";
 import { moduleBytes } from "./app-page";
@@ -165,7 +165,10 @@ export interface CatalogDetail {
    * at the pinned commit, known only once it is built.
    */
   createsKnown: boolean;
-  /** This manager has its `SANDBOX` binding (sandbox tier apps need it). */
+  /**
+   * This manager has its `SANDBOX` binding, to a sandbox Worker not recorded
+   * as deleted (sandbox tier apps need it).
+   */
   sandboxConnected: boolean;
   /**
    * Sandbox builds: on, turned on first by an install that needs them, or
@@ -269,7 +272,7 @@ export async function readCatalogEntry(
   const statsRead = official ? readCatalogStats(env.KV) : Promise.resolve(null);
   // Not left unhandled when the page ends before the stats are used.
   statsRead.catch(() => {});
-  const [session, capabilities, lookup, active, settings] = await Promise.all([
+  const [session, capabilities, lookup, active, settings, bound] = await Promise.all([
     loadSession(),
     readCapabilitiesView(db),
     // Reads only: a catalog not cached yet is fetched below, once the
@@ -277,11 +280,12 @@ export async function readCatalogEntry(
     startCatalogLookup(env, slug),
     activeInstalls(),
     readSettings(db, [SETTING.accountId, SETTING.accountSubdomain]),
+    sandboxBound(env, db),
   ]);
   // No I/O when the index was cached; one fetch when it was not.
   const read = await finishCatalogLookup(env, lookup);
   const accountPlan = capabilities.plan.plan;
-  const sandbox = sandboxReadinessOf(capabilities, sandboxBinding(env) !== undefined);
+  const sandbox = sandboxReadinessOf(capabilities, bound);
   const empty = {
     key: null,
     source: null,
@@ -295,7 +299,7 @@ export async function readCatalogEntry(
     varFields: [],
     subdomain: null,
     createsKnown: true,
-    sandboxConnected: sandboxBinding(env) !== undefined,
+    sandboxConnected: bound,
     sandbox,
     cronTriggers: 0,
     moduleBytes: null,

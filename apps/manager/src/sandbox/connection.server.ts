@@ -5,6 +5,7 @@ import { createDb } from "../db/client";
 import { readSettings, SETTING } from "../db/settings";
 import { sandboxBinding } from "./binding";
 import { readSandboxStatus, sandboxBindingDangles } from "./connect.server";
+import { recordSandboxCheck } from "./worker-deleted";
 
 /**
  * Whether the serving version of Appflare's Worker binds `SANDBOX` to a
@@ -29,7 +30,8 @@ export function bindingDanglesWith(
  * before its last step leaves one) is not a connection, so the start turns
  * sandbox builds on first as it does with no binding. A binding that fails
  * otherwise, or when the API cannot tell, counts as connected, and what
- * uses it reports the failure.
+ * uses it reports the failure. What it finds is recorded for the pages that
+ * show whether sandbox builds are on (./worker-deleted.ts).
  */
 export async function readSandboxConnection(
   env: CfClientEnv & { SANDBOX?: unknown },
@@ -39,5 +41,6 @@ export async function readSandboxConnection(
     binding: sandboxBinding(env),
     bindingDangles: bindingDanglesWith(env.DB, client),
   });
+  await recordSandboxCheck(createDb(env.DB), status);
   return { connected: status.connected, info: status.info };
 }
