@@ -265,7 +265,8 @@ webhook or a bot that was removed from the chat, is given up at once.
 
 ## Change or remove a channel
 
-Each channel's menu (**⋯**) holds **Edit**, **Replace signing secret** and **Remove**.
+Each channel's menu (**⋯**) holds **Edit** and **Remove**. A webhook channel's menu also
+holds **Replace signing secret**, except while its credentials are unreadable (see below).
 
 **Edit** changes a channel's name and events. To replace its credentials, enter new
 ones; leave the fields empty to keep the stored ones. A channel's kind cannot
