@@ -477,14 +477,14 @@ export function diffBindings(
       used.add(same);
       if (same.cfId === null) {
         // Its name was recorded before its create, whose id was never
-        // recorded: this update creates it under that name. A resource of
-        // that name is refused, as nothing shows that create made it.
-        if (res.type !== "pipelines") {
-          diff.toCreate.push({ ...res, name: same.name });
-          continue;
-        }
-        diff.problems.push(
-          `The ${res.kind} resource of binding ${res.binding} (${same.name}) is recorded without a Cloudflare id, so the update cannot bind it.`,
+        // recorded: this update creates it under that name (a stream is made
+        // afresh, with its sink and pipeline; a sink is only ever made once
+        // its stream's id is recorded). A resource of that name is refused,
+        // as nothing shows that create made it.
+        diff.toCreate.push(
+          res.type === "pipelines"
+            ? { ...res, name: same.name, pipeline: { ...res.pipeline, streamName: same.name } }
+            : { ...res, name: same.name },
         );
         continue;
       }
@@ -600,31 +600,43 @@ export function diffBindings(
   return diff;
 }
 
-/** Whether the install records a stream's sink and pipeline, by their planned names. */
+/**
+ * Whether the install records a stream's sink and pipeline, by their planned
+ * names, with their ids: one recorded by name only may never have been made.
+ */
 function streamParts(
-  recorded: ReadonlyArray<Pick<RecordedResource, "kind" | "name">>,
+  recorded: ReadonlyArray<Pick<RecordedResource, "kind" | "name" | "cfId">>,
   names: { sinkName: string; pipelineName: string },
 ): { sink: boolean; pipeline: boolean } {
+  const has = (kind: string, name: string) =>
+    recorded.some((r) => r.kind === kind && r.name === name && r.cfId !== null);
   return {
-    sink: recorded.some((r) => r.kind === PIPELINE_SINK_KIND && r.name === names.sinkName),
-    pipeline: recorded.some((r) => r.kind === PIPELINE_KIND && r.name === names.pipelineName),
+    sink: has(PIPELINE_SINK_KIND, names.sinkName),
+    pipeline: has(PIPELINE_KIND, names.pipelineName),
   };
 }
 
-/** The install's record of the bucket a stream's sink writes to, if it has one. */
+/**
+ * The install's record of the bucket a stream's sink writes to, if it has
+ * one with its id. A bucket recorded by name only is not used: nothing
+ * shows the bucket of that name is the one its create made.
+ */
 function recordedBucket(
   plan: Pick<PipelinePlan, "bucket">,
-  recorded: ReadonlyArray<Pick<RecordedResource, "kind" | "binding" | "name">>,
+  recorded: ReadonlyArray<Pick<RecordedResource, "kind" | "binding" | "name" | "cfId">>,
 ) {
   return recorded.find(
-    (r) => r.kind === "r2" && (r.binding === plan.bucket.key || r.name === plan.bucket.name),
+    (r) =>
+      r.kind === "r2" &&
+      r.cfId !== null &&
+      (r.binding === plan.bucket.key || r.name === plan.bucket.name),
   );
 }
 
 /** The name of the bucket a stream's sink writes to: the recorded one, or as planned. */
 function bucketNameOf(
   plan: Pick<PipelinePlan, "bucket">,
-  recorded: ReadonlyArray<Pick<RecordedResource, "kind" | "binding" | "name">>,
+  recorded: ReadonlyArray<Pick<RecordedResource, "kind" | "binding" | "name" | "cfId">>,
 ): string {
   return recordedBucket(plan, recorded)?.name ?? plan.bucket.name;
 }
@@ -638,7 +650,7 @@ function bucketNameOf(
  */
 function withRecordedBucket(
   plan: PipelinePlan,
-  recorded: ReadonlyArray<Pick<RecordedResource, "kind" | "binding" | "name">>,
+  recorded: ReadonlyArray<Pick<RecordedResource, "kind" | "binding" | "name" | "cfId">>,
 ): PipelinePlan {
   const { bucket } = plan;
   const row = recordedBucket(plan, recorded);
@@ -715,12 +727,15 @@ export function replaceableDatabases(
 export function newStreamTokenSecrets(
   workerName: string,
   streams: CatalogPipelines | undefined,
-  recorded: ReadonlyArray<Pick<RecordedResource, "kind" | "binding" | "name">>,
+  recorded: ReadonlyArray<Pick<RecordedResource, "kind" | "binding" | "name" | "cfId">>,
 ): string[] {
   const out = new Set<string>();
   for (const [binding, declared] of Object.entries(streams ?? {})) {
     const names = pipelineNames(workerName, binding);
-    const stream = recorded.some((r) => r.kind === PIPELINE_STREAM_KIND && r.binding === binding);
+    // A stream recorded by name only is made afresh, with its sink.
+    const stream = recorded.some(
+      (r) => r.kind === PIPELINE_STREAM_KIND && r.binding === binding && r.cfId !== null,
+    );
     const parts = streamParts(recorded, { sinkName: names.sink, pipelineName: names.pipeline });
     if (!stream || !parts.sink) out.add(declared.sink.tokenSecret);
   }

@@ -66,8 +66,11 @@ export function ExternalDomainsSection({
   install: InstallDetail;
   isAdmin: boolean;
 }) {
+  // Without the gateway there is nothing to add a domain to: the empty state
+  // below says where it is set up instead.
   const canAdd =
     isAdmin &&
+    install.gatewayReady &&
     install.status === "installed" &&
     install.activeJobId === null &&
     install.wildcard === null;

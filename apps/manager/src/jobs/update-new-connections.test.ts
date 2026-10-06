@@ -115,6 +115,8 @@ function sideServices() {
     calls: [] as string[],
     /** The manager's token lacks Pipelines: every Pipelines call answers 403, code 100. */
     pipelinesRefused: false,
+    /** Calls (`METHOD /path`) answered 503 every time, making nothing. */
+    unavailable: new Set<string>(),
   };
   const ok = (result: unknown, extra: Record<string, unknown> = {}) =>
     Response.json({ success: true, errors: [], messages: [], result, ...extra });
@@ -165,6 +167,7 @@ function sideServices() {
     if (list === null && one === null && !hyperdrive && !buckets) return null;
     state.calls.push(key);
     if (auth !== `Bearer ${TOKEN}`) return refuse(403, 10000, "auth");
+    if (state.unavailable.has(key)) return refuse(503, 10000, "unavailable");
     if (one !== null) {
       // A stream with the schema it was made with; a sink with where it writes, never its token.
       if (state.pipelinesRefused) return refuse(403, 100, "Forbidden");
@@ -300,8 +303,13 @@ async function start(
   return { result, params };
 }
 
-async function run(w: World, params: UpdateJobParams) {
-  const step = fakeStep();
+async function run(
+  w: World,
+  params: UpdateJobParams,
+  /** Steps that fail on every attempt (see `fakeStep`). */
+  failing?: readonly string[],
+) {
+  const step = fakeStep(failing === undefined ? {} : { failing });
   let error: unknown = null;
   try {
     await runUpdate({
@@ -1017,6 +1025,156 @@ describe("a version that streams events", () => {
       type: "pipelines",
       name: "EVENTS",
       stream: "streams-1",
+    });
+  });
+
+  describe("a name the update recorded before its create", () => {
+    const secrets = { ...request, secrets: { CATALOG_TOKEN: SINK_TOKEN } };
+
+    it("records the id of a stream whose record failed for good, so the next update finishes it", async () => {
+      const w = await world(WITH_STREAM);
+      const { params } = await start(w, secrets);
+      if (params === null) throw new Error("the update did not start");
+      const r = await run(w, params, ["record Pipelines stream cut_events_stream"]);
+      expect(r.job?.status).toBe("failed");
+      expect(r.job?.error).toBe(
+        "record Pipelines stream cut_events_stream: D1_ERROR: database unavailable",
+      );
+      expect(r.step.names).toContain("resolve Pipelines stream name cut_events_stream");
+      // Created, and recorded with its id when the update failed.
+      expect(w.side.state.streams.map((x) => x.id)).toEqual(["streams-1"]);
+      expect(r.resources).toContainEqual({
+        kind: "pipeline_stream",
+        binding: "EVENTS",
+        name: "cut_events_stream",
+        cf_id: "streams-1",
+        deleted_at: null,
+      });
+      expect(r.logs.map((l) => l.message)).toContain(
+        'Recorded the id of the Pipelines stream "cut_events_stream" this job created, so the next attempt and the uninstall find it.',
+      );
+
+      const again = await start(w, secrets, "job2");
+      if (again.params === null) throw new Error("the update did not start");
+      const next = await run(w, again.params);
+      expect(next.job?.status).toBe("succeeded");
+      expect(next.step.names).not.toContain("create Pipelines stream cut_events_stream");
+      expect(w.side.state.streams).toHaveLength(1);
+      expect(w.side.state.sinks.map((x) => x.name)).toEqual(["cut_events_sink"]);
+      expect(w.side.state.pipelines.map((x) => x.name)).toEqual(["cut_events_pipeline"]);
+      expect(uploadedBindings(w)).toContainEqual({
+        type: "pipelines",
+        name: "EVENTS",
+        stream: "streams-1",
+      });
+    });
+
+    it("releases the sink's name when every try of its create gets a 5xx, and the next update makes it", async () => {
+      const w = await world(WITH_STREAM);
+      w.side.state.unavailable.add("POST /pipelines/v1/sinks");
+      const { params } = await start(w, secrets);
+      if (params === null) throw new Error("the update did not start");
+      const r = await run(w, params);
+      expect(r.job?.status).toBe("failed");
+      expect(r.job?.error).toMatch(/^create Pipelines sink cut_events_sink: /);
+      expect(w.side.state.sinks).toEqual([]);
+      expect(r.step.names).toContain("resolve Pipelines sink name cut_events_sink");
+      const sinkRow = r.resources.find((x) => x.kind === "pipeline_sink");
+      expect(sinkRow).toMatchObject({ name: "cut_events_sink", cf_id: null });
+      expect(sinkRow?.deleted_at).not.toBeNull();
+      expect(r.logs.map((l) => l.message)).toContain(
+        'No Pipelines sink named "cut_events_sink" was created; its name is released.',
+      );
+      // The stream before it was recorded with its id.
+      expect(r.resources).toContainEqual(
+        expect.objectContaining({ kind: "pipeline_stream", cf_id: "streams-1", deleted_at: null }),
+      );
+
+      w.side.state.unavailable.clear();
+      const again = await start(w, secrets, "job2");
+      if (again.params === null) throw new Error("the update did not start");
+      const next = await run(w, again.params);
+      expect(next.job?.status).toBe("succeeded");
+      expect(next.step.names).not.toContain("create Pipelines stream cut_events_stream");
+      expect(w.side.state.streams).toHaveLength(1);
+      expect(w.side.state.sinks.map((x) => x.id)).toEqual(["sinks-1"]);
+      expect(next.resources.filter((x) => x.kind === "pipeline_sink")).toEqual([
+        {
+          kind: "pipeline_sink",
+          binding: null,
+          name: "cut_events_sink",
+          cf_id: "sinks-1",
+          deleted_at: null,
+        },
+      ]);
+    });
+
+    it("refuses a stream of the name an earlier, stopped job recorded without its id, and makes it once that one is deleted", async () => {
+      // The earlier job recorded the stream's name and was stopped before it
+      // recorded an id: the stream of that name may be the one it made, or not.
+      const w = await world(WITH_STREAM, {
+        resources: [
+          ...RESOURCES,
+          { kind: "pipeline_stream", binding: "EVENTS", name: "cut_events_stream" },
+        ],
+      });
+      w.side.state.streams.push({ id: "streams-made", name: "cut_events_stream", body: {} });
+      const asked = await start(w, request);
+      if ("jobId" in asked.result) throw new Error("the update started");
+      // Made afresh, so with its sink and the sink's token.
+      expect(asked.result.streamTokens).toEqual(["CATALOG_TOKEN"]);
+      const { params } = await start(w, secrets);
+      if (params === null) throw new Error("the update did not start");
+      const r = await run(w, params);
+      expect(r.job?.status).toBe("failed");
+      expect(r.job?.error).toBe(
+        "check Pipelines names for EVENTS: a Pipelines stream named cut_events_stream already exists in this account; it may be one an earlier, stopped job started making, but Appflare did not record its id, so it cannot tell. Delete it in the Cloudflare dashboard if it is not in use, then try again",
+      );
+      expect(w.side.state.calls.filter((c) => c.startsWith("POST"))).toEqual([]);
+      expect(w.side.state.streams.map((x) => x.id)).toEqual(["streams-made"]);
+      expect(r.resources.filter((x) => x.kind === "pipeline_stream")).toEqual([
+        {
+          kind: "pipeline_stream",
+          binding: "EVENTS",
+          name: "cut_events_stream",
+          cf_id: null,
+          deleted_at: null,
+        },
+      ]);
+
+      // Deleted in the dashboard: the update after that makes it and records its id.
+      w.side.state.streams = [];
+      const again = await start(w, secrets, "job2");
+      if (again.params === null) throw new Error("the update did not start");
+      const next = await run(w, again.params);
+      expect(next.job?.status).toBe("succeeded");
+      expect(w.side.state.streams.map((x) => x.id)).toEqual(["streams-1"]);
+      expect(next.resources.filter((x) => x.kind === "pipeline_stream")).toEqual([
+        {
+          kind: "pipeline_stream",
+          binding: "EVENTS",
+          name: "cut_events_stream",
+          cf_id: "streams-1",
+          deleted_at: null,
+        },
+      ]);
+    });
+
+    it("refuses the stream's own bucket of the name a stopped job recorded without its id", async () => {
+      const w = await world(WITH_STREAM, {
+        resources: [...RESOURCES, { kind: "r2", key: "WAREHOUSE", name: "cut-warehouse" }],
+      });
+      w.side.state.buckets.push("cut-warehouse");
+      const { params } = await start(w, secrets);
+      if (params === null) throw new Error("the update did not start");
+      const r = await run(w, params);
+      expect(r.job?.status).toBe("failed");
+      expect(r.job?.error).toBe(
+        "check Pipelines names for EVENTS: an R2 bucket named cut-warehouse already exists in this account; it may be one an earlier, stopped job started making, but Appflare did not record its id, so it cannot tell. Delete it in the Cloudflare dashboard if it is not in use, then try again",
+      );
+      // Neither used as the sink's bucket nor given a Data Catalog.
+      expect(w.side.state.calls.filter((c) => c.startsWith("POST"))).toEqual([]);
+      expect(w.side.state.catalogCalls).toEqual([]);
     });
   });
 

@@ -673,7 +673,9 @@ export async function runUninstall(ctx: JobContext): Promise<void> {
       await run(
         `delete ${pipelineObjectLabel(target.kind)} ${target.name}`,
         async ({ log, cf, orm }) => {
-          log.info(await deletePipelineObject(cf(), target));
+          const outcome = await deletePipelineObject(cf(), target);
+          if (outcome.level === "warn") log.warn(outcome.message);
+          else log.info(outcome.message);
           await orm
             .update(resources)
             .set({ deleted_at: new Date(now()) })
@@ -834,6 +836,14 @@ export async function deleteDataResourcesPhase(
         .update(resources)
         .set({ deleted_at: new Date(now()) })
         .where(eq(resources.id, target.id));
+      // A bucket recorded by name only kept its catalog, if any, out of
+      // reach too: a catalog is addressed by its bucket's name.
+      if (target.kind === "r2" && target.cfId === null && target.catalogId !== undefined) {
+        await orm
+          .update(resources)
+          .set({ deleted_at: new Date(now()) })
+          .where(eq(resources.id, target.catalogId));
+      }
       return {};
     });
   }

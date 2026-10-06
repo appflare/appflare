@@ -1711,6 +1711,44 @@ describe("install job", () => {
       });
     });
 
+    it("records the id of a sink whose record failed for good, and says where the install failed", async () => {
+      const failed = await install(options, {}, input, {}, undefined, "self", undefined, [
+        "record Pipelines sink cut_events_sink",
+      ]);
+      expect(failed.job?.status).toBe("failed");
+      expect(failed.job?.error).toBe(
+        "record Pipelines sink cut_events_sink: D1_ERROR: database unavailable",
+      );
+      expect(failed.step.names).toEqual(
+        expect.arrayContaining([
+          "record Pipelines sink name cut_events_sink",
+          "create Pipelines sink cut_events_sink",
+          "resolve Pipelines sink name cut_events_sink",
+        ]),
+      );
+      expect(failed.logs.at(-1)).toMatchObject({
+        level: "error",
+        message:
+          'Install failed at "record Pipelines sink cut_events_sink". Resources created so far stay recorded.',
+      });
+      // Created once, and recorded with its id when the install failed, so
+      // the uninstall deletes it by that id.
+      expect(failed.fake.state.sinks.map((x) => x.id)).toEqual(["sinks-1"]);
+      expect(failed.resources).toEqual(
+        expect.arrayContaining([
+          { kind: "r2", binding: null, name: "cut-warehouse", cf_id: "cut-warehouse" },
+          {
+            kind: "pipeline_stream",
+            binding: "EVENTS",
+            name: "cut_events_stream",
+            cf_id: "streams-1",
+          },
+          { kind: "pipeline_sink", binding: null, name: "cut_events_sink", cf_id: "sinks-1" },
+        ]),
+      );
+      expect(failed.fake.state.pipelines).toEqual([]);
+    });
+
     it("names only the permission when the account is known to be on Workers Paid", async () => {
       const r = await install(
         options,

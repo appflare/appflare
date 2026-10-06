@@ -98,7 +98,11 @@ export interface DeletableResource {
  * an uninstall marks deleted without a call: the name proves nothing.
  */
 export function unrecordedNote(kind: ResourceBindingPlan["kind"], name: string): string {
-  const label = RESOURCE_LABEL[kind];
+  return unrecordedObjectNote(RESOURCE_LABEL[kind], name);
+}
+
+/** {@link unrecordedNote} for anything recorded, by what it is called (such as "Pipelines sink"). */
+export function unrecordedObjectNote(label: string, name: string): string {
   return `Appflare did not finish recording the ${label} "${name}", so it cannot tell whether a ${label} of that name is this app's; nothing was deleted. If it is, delete it in the Cloudflare dashboard. Marked deleted.`;
 }
 
