@@ -57,7 +57,7 @@ export interface InstalledRef {
   status: string;
   workerName: string;
   /** What the UI calls the install (`distinctLabels`). */
-  instanceName: string;
+  label: string;
 }
 
 /**
@@ -118,7 +118,7 @@ export async function activeInstalls(): Promise<ActiveInstalls> {
       installId: r.id,
       status: r.status,
       workerName: r.worker,
-      instanceName: labels.get(r.id) ?? r.worker,
+      label: labels.get(r.id) ?? r.worker,
     });
     bySlug.set(key, list);
   }

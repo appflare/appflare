@@ -1,6 +1,7 @@
 import { isInstallId, type TelemetryLock, telemetryLock } from "@appflare/schema";
 import { createDb } from "../db/client";
 import { readSettings, SETTING, type SettingKey, writeSettings } from "../db/settings";
+import { runningVersion } from "../server/build-version";
 import { utcDay } from "./events";
 import type { TelemetryStatus } from "./telemetry";
 
@@ -43,7 +44,7 @@ export async function readTelemetryStatus(env: TelemetryEnv): Promise<TelemetryS
   return {
     state: row.telemetry === "off" ? "off" : "on",
     lockedBy: lockOf(env),
-    devBuild: isDevBuild(env.APPFLARE_VERSION),
+    devBuild: isDevBuild(runningVersion(env)),
   };
 }
 
@@ -145,7 +146,7 @@ export async function markOpenedToday(
   role: "admin" | "member",
   now: number = Date.now(),
 ): Promise<void> {
-  if (isDevBuild(env.APPFLARE_VERSION) || lockOf(env) !== null) return;
+  if (isDevBuild(runningVersion(env)) || lockOf(env) !== null) return;
   const day = utcDay(now);
   if (openedMarkedDay === day) return;
   const result = await env.DB.prepare(

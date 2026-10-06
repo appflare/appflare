@@ -11,6 +11,7 @@ import { installAppKey } from "../catalog/sources";
 import { plainMessage } from "../components/message-links";
 import { createDb } from "../db/client";
 import { readSettings, SETTING, type SettingKey, writeSettings } from "../db/settings";
+import { runningVersion } from "../server/build-version";
 import { classifyJobError, cloudflareErrorCodes, splitJobError } from "./classify";
 import { type JobRow, jobKind, jobProperties, managerBase, uuidV5 } from "./events";
 import {
@@ -286,7 +287,7 @@ async function buildPreview(
   const properties = failureReportProperties({
     job,
     names,
-    managerVersion: env.APPFLARE_VERSION,
+    managerVersion: runningVersion(env),
     plan,
     usageDataOff: off,
     officialCatalog: isOfficialCatalog(env),
@@ -307,14 +308,14 @@ async function buildPreview(
     jobId: row.id,
     reportedAt: job.reportedAt === null ? null : new Date(job.reportedAt).toISOString(),
     usageDataOff: off,
-    devBuild: isDevBuild(env.APPFLARE_VERSION),
+    devBuild: isDevBuild(runningVersion(env)),
     summary: {
       kind: row.kind,
       restore: kind === "restore",
       deleteRetained: kind === "delete_retained",
       app: typeof properties.slug === "string" ? properties.slug : null,
       version: typeof properties.catalog_version === "string" ? properties.catalog_version : null,
-      managerVersion: env.APPFLARE_VERSION,
+      managerVersion: runningVersion(env),
       plan,
       cloudflareCodes: (properties.cf_codes as readonly string[]).map(Number),
       failedStep: typeof properties.failed_step === "string" ? properties.failed_step : null,
@@ -368,7 +369,7 @@ export async function sendFailureReport(
   note: string,
   opts: FailureReportOptions = {},
 ): Promise<SendOutcome> {
-  if (isDevBuild(env.APPFLARE_VERSION)) throw new FailureReportError(FAILURE_REPORT_COPY.devBuild);
+  if (isDevBuild(runningVersion(env))) throw new FailureReportError(FAILURE_REPORT_COPY.devBuild);
   const now = (opts.now ?? Date.now)();
   const { job, settings } = await load(env, jobId);
   if (job.reportedAt !== null) {

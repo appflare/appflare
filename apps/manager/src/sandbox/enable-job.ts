@@ -26,6 +26,7 @@ import { createJobSteps, errorMessage, isNotFound, JobError } from "../jobs/step
 import { settleUnit } from "../jobs/units/result";
 import type { ArtifactHost } from "../jobs/units/units";
 import { activeVersionId } from "../jobs/update/plan";
+import { runningVersion } from "../server/build-version";
 import {
   type ContainerWait,
   containerChange,
@@ -77,7 +78,7 @@ export const sandboxEnableJobParams = z.object({
   jobId: z.string().min(1),
   /** The sandbox Worker release to deploy (the manager's pin when the job started). */
   version: z.string().min(1),
-  /** The running `APPFLARE_VERSION` when the job started. */
+  /** The running Appflare version (`runningVersion`) when the job started. */
   managerVersion: z.string().min(1),
   /**
    * The install or build job that turned sandbox builds on at first need,
@@ -461,7 +462,7 @@ export async function runSandboxEnable(ctx: JobContext): Promise<void> {
           accountId: steps.accountId(),
           workerName: started.workerName,
           subdomain,
-          currentVersion: env.APPFLARE_VERSION ?? params.managerVersion,
+          currentVersion: runningVersion(env) ?? params.managerVersion,
           connect: true,
         }),
         log,

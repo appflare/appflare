@@ -220,7 +220,7 @@ const catalogApps = catalogIndex.apps.map((app) => ({
       installId: install.id,
       status: install.status,
       workerName: install.workerName,
-      instanceName: install.label,
+      label: install.label,
     })),
   images: media(app),
   popularity: popularityBySlug[app.slug],

@@ -140,7 +140,7 @@ export interface RollBackManagerDeps {
   db: D1Database;
   /** The Cloudflare client, reporting every API call to `onRequest` (the job log). */
   api(onRequest: (entry: RequestLog) => void): Promise<ManagerVersionsApi>;
-  /** The running `APPFLARE_VERSION`. */
+  /** The running Appflare version (`runningVersion`). */
   currentVersion: string;
   /** For settling jobs whose Workflow instance died, so they do not block the rollback. */
   workflows?: WorkflowLookup;

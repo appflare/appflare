@@ -66,7 +66,7 @@ export interface SandboxAutoEnableDeps {
   releaseProblem(version: string): Promise<string | null>;
   /** Creates the enable job's Workflow instance. */
   createJob(id: string, params: SandboxEnableJobParams): Promise<{ id: string }>;
-  /** The running `APPFLARE_VERSION`. */
+  /** The running Appflare version (`runningVersion`). */
   currentVersion: string;
   /** The sandbox Worker release to deploy; the manager's pin. */
   sandboxVersion?: string;

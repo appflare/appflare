@@ -8,6 +8,7 @@ import {
   readInstallLabels,
 } from "../installs/install-names.server";
 import { pendingUpdates } from "../installs/pending-updates";
+import { runningVersion } from "../server/build-version";
 import type { AppRef, NotificationFacts } from "./messages";
 import {
   type ChannelRow,
@@ -334,7 +335,7 @@ export async function detectConditions(
           buildKind: r.build_kind,
         })),
         new Map([...apps].map(([key, l]) => [key, { version: l.app.version, tier: l.app.tier }])),
-        { current: env.APPFLARE_VERSION, latest: null, updateAvailable: false, activeJobId: null },
+        { current: runningVersion(env), latest: null, updateAvailable: false, activeJobId: null },
       );
       const byId = new Map(installs.map((r) => [r.id, r]));
       for (const update of pending.apps) {
@@ -359,7 +360,7 @@ export async function detectConditions(
   }
 
   if (wants(channels, "manager_update_available")) {
-    const view = managerUpdateView(env.APPFLARE_VERSION, await readManagerLatest(env.KV));
+    const view = managerUpdateView(runningVersion(env), await readManagerLatest(env.KV));
     if (view.updateAvailable && view.latest !== null) {
       await emit({
         type: "manager_update_available",

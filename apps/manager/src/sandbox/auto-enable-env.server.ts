@@ -1,6 +1,7 @@
 import { releaseFetch } from "../catalog/release-fetch";
 import { type CfClientEnv, getCfClient } from "../cloudflare/client.server";
 import { jobCreator } from "../jobs/create-job.server";
+import { runningVersion } from "../server/build-version";
 import type { SandboxAutoEnableDeps } from "./auto-enable.server";
 import type { SandboxEnableJobParams } from "./enable-job";
 import { sandboxReleaseProblem } from "./release";
@@ -16,7 +17,7 @@ export function sandboxAutoEnableDeps(
     };
   },
 ): SandboxAutoEnableDeps {
-  const userAgent = `Appflare/${env.APPFLARE_VERSION}`;
+  const userAgent = `Appflare/${runningVersion(env)}`;
   const viaApi = typeof env.GITHUB_TOKEN === "string" && env.GITHUB_TOKEN.trim().length > 0;
   return {
     client: () => getCfClient(env),
@@ -28,6 +29,6 @@ export function sandboxAutoEnableDeps(
         { viaApi },
       ),
     createJob: jobCreator(env.JOBS),
-    currentVersion: env.APPFLARE_VERSION,
+    currentVersion: runningVersion(env),
   };
 }

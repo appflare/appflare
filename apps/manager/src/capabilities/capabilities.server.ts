@@ -63,7 +63,7 @@ function keepOnFailure<T extends { state: string }>(next: T, previous: T | undef
 
 export interface RefreshOptions {
   now?: Date;
-  /** The running Appflare version (`APPFLARE_VERSION`), stored with the answer. */
+  /** The running Appflare version (`runningVersion`), stored with the answer. */
   version?: string;
 }
 

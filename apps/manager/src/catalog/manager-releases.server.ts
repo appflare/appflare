@@ -2,6 +2,7 @@ import type { FetchLike } from "@appflare/cf-api";
 import { z } from "zod";
 import { releaseTokenOptions, releaseTokenSecret } from "../github/release-access.server";
 import { GITHUB_ACCESS_PLACE } from "../github/tokens";
+import { runningVersion } from "../server/build-version";
 import { pickReleaseNotes } from "../whats-new/release-notes";
 import { storeReleaseNotes } from "../whats-new/release-notes.server";
 import { releaseAssetsSchema } from "./release-assets";
@@ -15,7 +16,7 @@ import { compareVersions, isUpdateAvailable, parseVersion } from "./versions";
  * reads the releases list, picks the newest published (not draft, not
  * pre-release) manager release, and keeps it in KV under `manager:latest`
  * with the time of the check. Whether an update is available is computed at
- * read time against the running `APPFLARE_VERSION`. The same list also
+ * read time against the running version (`runningVersion`). The same list also
  * gives "What's new" its release notes (whats-new/).
  *
  * KV writes are scarce on the free plan (1,000 a day): one write per check,
@@ -173,7 +174,7 @@ export async function refreshManagerReleases(
   const authenticated = releaseFetchAuthenticated(tokenOptions);
   const fetchImpl = releaseFetch(opts.fetch ?? ((input, init) => fetch(input, init)), {
     ...tokenOptions,
-    userAgent: `Appflare/${env.APPFLARE_VERSION}`,
+    userAgent: `Appflare/${runningVersion(env)}`,
   });
   const where = `${url.host}${url.pathname}`;
   let response: Response;
@@ -239,7 +240,7 @@ export async function readManagerLatest(
 }
 
 export interface ManagerUpdateView {
-  /** The running `APPFLARE_VERSION`. */
+  /** The running Appflare version (`runningVersion`). */
   current: string;
   latest: { version: string; tag: string; publishedAt: string | null } | null;
   updateAvailable: boolean;

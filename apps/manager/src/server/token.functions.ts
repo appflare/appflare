@@ -11,6 +11,7 @@ import { readSettings, SETTING } from "../db/settings";
 import { managerOrigin } from "../domains/manager-origin.server";
 import { recordSetupFinished } from "../telemetry/state.server";
 import { requireRole, requireSession } from "./auth.server";
+import { runningVersion } from "./build-version";
 import { cfTokenInput } from "./schemas";
 import {
   type RotateTokenResult,
@@ -74,7 +75,7 @@ async function checkCapabilities(accountId: string, token: string): Promise<void
     accountId,
     token,
     onRequest: logCfRequest,
-    version: env.APPFLARE_VERSION,
+    version: runningVersion(env),
     ...apiBaseOption(env),
   });
 }

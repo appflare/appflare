@@ -4,6 +4,7 @@ import { isVersionPreviewHost } from "../../cloudflare/worker-name";
 import { createDb } from "../../db/client";
 import { jobs } from "../../db/schema";
 import { readSettings, SETTING, writeSettings } from "../../db/settings";
+import { runningVersion } from "../../server/build-version";
 import type { StepConfig, StepRunner } from "../run-job";
 import { StepLog } from "../step-log";
 import { appendVersionHistory } from "./plan";
@@ -153,12 +154,12 @@ export async function finalizeSelfUpdates(
       and(
         eq(jobs.kind, "self_update"),
         eq(jobs.status, "running"),
-        eq(jobs.promoting_version, env.APPFLARE_VERSION),
+        eq(jobs.promoting_version, runningVersion(env)),
       ),
     );
   const candidates = rows.flatMap((row) => {
     const input = parseInput(row.input);
-    return input !== null && input.version === env.APPFLARE_VERSION ? [{ id: row.id, input }] : [];
+    return input !== null && input.version === runningVersion(env) ? [{ id: row.id, input }] : [];
   });
   if (candidates.length === 0) return { completed: 0, previewHost: false };
   if (opts.host !== undefined) {

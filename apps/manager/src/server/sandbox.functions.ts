@@ -26,6 +26,7 @@ import type { SandboxReadiness } from "../sandbox/readiness";
 import { readSandboxReadiness } from "../sandbox/readiness.server";
 import { PINNED_SANDBOX_VERSION, sandboxUpdateAvailable } from "../sandbox/release";
 import { requireRole, requireSession } from "./auth.server";
+import { runningVersion } from "./build-version";
 
 export type { SandboxStatus } from "../sandbox/connect.server";
 
@@ -115,7 +116,7 @@ export const connectSandbox = createServerFn({ method: "POST" }).handler(
       return await connectSandboxCore({
         db: env.DB,
         client: await getCfClient(env),
-        currentVersion: env.APPFLARE_VERSION,
+        currentVersion: runningVersion(env),
         fetch: (input, init) => fetch(input, init),
         sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
         workflows: env.JOBS,
@@ -147,7 +148,7 @@ export const startSandboxJob = createServerFn({ method: "POST" })
           client: () => getCfClient(env),
           workflows: env.JOBS,
           createJob: jobCreator(env.JOBS),
-          currentVersion: env.APPFLARE_VERSION,
+          currentVersion: runningVersion(env),
           deployedSandboxVersion: await deployedSandboxVersion(),
         },
         data,

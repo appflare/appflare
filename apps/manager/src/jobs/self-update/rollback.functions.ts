@@ -3,6 +3,7 @@ import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 import { CfTokenNotConfiguredError, getCfClient } from "../../cloudflare/client.server";
 import { requireRole, requireSession } from "../../server/auth.server";
+import { runningVersion } from "../../server/build-version";
 import {
   listManagerVersionsCore,
   ManagerRollbackError,
@@ -52,7 +53,7 @@ export const rollBackManager = createServerFn({ method: "POST" })
         {
           db: env.DB,
           api: (onRequest) => getCfClient(env, { onRequest }),
-          currentVersion: env.APPFLARE_VERSION,
+          currentVersion: runningVersion(env),
           workflows: env.JOBS,
         },
         data,

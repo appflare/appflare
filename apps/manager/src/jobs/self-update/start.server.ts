@@ -29,7 +29,7 @@ export interface StartSelfUpdateDeps {
   db: D1Database;
   /** The stored newest release (`manager:latest`), or null. */
   latest: ManagerRelease | null;
-  /** The running `APPFLARE_VERSION`. */
+  /** The running Appflare version (`runningVersion`). */
   currentVersion: string;
   /** `CF_API_TOKEN` is bound to the running version. */
   hasToken: boolean;

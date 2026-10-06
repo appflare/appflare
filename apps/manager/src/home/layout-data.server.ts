@@ -107,7 +107,7 @@ export async function readLayoutData(session: AuthSession): Promise<LayoutData> 
   // Admins: the failed and rolled-back updates (2 queries), only while an update exists.
   const needs = isAdmin ? await readUpdateNeeds(env.DB, rows, listed) : new Map<string, string>();
   const [protectedIds, accessRequired] = await Promise.all([protectedRead, requiredRead]);
-  const manager = managerUpdateView(env.APPFLARE_VERSION, latest);
+  const manager = managerUpdateView(runningVersion(env), latest);
   const downgraded = schemaDowngrade(migrated.schemaVersion);
   const downgrade: Downgrade | null =
     downgraded === null

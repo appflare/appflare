@@ -5,6 +5,7 @@ import { jobCreator } from "../jobs/create-job.server";
 import { activeSelfUpdateJob } from "../jobs/self-update/guard";
 import { SelfUpdateError, startSelfUpdateCore } from "../jobs/self-update/start.server";
 import { requireRole, requireSession } from "../server/auth.server";
+import { runningVersion } from "../server/build-version";
 import {
   ManagerReleasesError,
   type ManagerUpdateView,
@@ -25,7 +26,7 @@ async function state(): Promise<ManagerUpdateState> {
     readManagerLatest(env.KV),
     activeSelfUpdateJob(env.DB, env.JOBS),
   ]);
-  return { ...managerUpdateView(env.APPFLARE_VERSION, latest), activeJobId };
+  return { ...managerUpdateView(runningVersion(env), latest), activeJobId };
 }
 
 /** Any signed-in user: the running version, the newest release, and whether it is newer. */
@@ -63,7 +64,7 @@ export const startSelfUpdate = createServerFn({ method: "POST" })
         {
           db: env.DB,
           latest: await readManagerLatest(env.KV),
-          currentVersion: env.APPFLARE_VERSION,
+          currentVersion: runningVersion(env),
           hasToken: typeof env.CF_API_TOKEN === "string" && env.CF_API_TOKEN.length > 0,
           workflows: env.JOBS,
           createJob: jobCreator(env.JOBS),
