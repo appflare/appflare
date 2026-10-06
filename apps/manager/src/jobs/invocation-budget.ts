@@ -207,3 +207,46 @@ export function countedUnits(api: JobUnitsApi, onCall: () => void): JobUnitsApi 
   }
   return counted as JobUnitsApi;
 }
+
+/**
+ * A binding the job calls directly (the sandbox Worker's `SANDBOX`, the job
+ * Workflow `JOBS`), each call counted before it is made as the one
+ * subrequest it costs the job, failed ones too. A Workflow binding's `get()`
+ * measured at one; a service binding call or `fetch` is one, like a unit
+ * call. Only the binding's own methods are counted: what they return (a
+ * Workflow instance) is not wrapped, and the jobs only start Workflows.
+ */
+export function countedBinding<T extends object>(binding: T, budget: InvocationBudget): T {
+  return new Proxy(binding, {
+    get(target, prop) {
+      const value: unknown = Reflect.get(target, prop);
+      if (typeof prop === "symbol" || prop === "then" || typeof value !== "function") return value;
+      return (...args: unknown[]) => {
+        budget.add(1);
+        const method = (target as Record<string, ((...a: unknown[]) => unknown) | undefined>)[prop];
+        if (method === undefined) throw new TypeError(`${prop} is not a function`);
+        // Called on the binding, as RPC stubs need, and never through
+        // `.apply`, which a stub would read as a remote property.
+        return Reflect.apply(method, target, args);
+      };
+    },
+  });
+}
+
+/**
+ * The job's env with the bindings it calls directly counted against `budget`
+ * ({@link countedBinding}). `SELF` stays as it is: the step runner counts
+ * its unit calls itself.
+ */
+export function countedEnv<E extends { SANDBOX?: unknown; JOBS?: unknown }>(
+  env: E,
+  budget: InvocationBudget,
+): E {
+  const wrap = (binding: unknown) =>
+    typeof binding === "object" && binding !== null ? countedBinding(binding, budget) : binding;
+  return {
+    ...env,
+    ...(env.SANDBOX === undefined ? {} : { SANDBOX: wrap(env.SANDBOX) }),
+    ...(env.JOBS === undefined ? {} : { JOBS: wrap(env.JOBS) }),
+  };
+}

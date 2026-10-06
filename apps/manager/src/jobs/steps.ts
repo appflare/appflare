@@ -114,7 +114,7 @@ export function createJobSteps(ctx: JobContext, jobId: string): JobSteps {
   const now = deps.now ?? Date.now;
   // Counted per run of the job: a job resumed after a long sleep runs again
   // from the top, in a fresh invocation, and replays its steps for free.
-  const budget = new InvocationBudget();
+  const budget = ctx.budget ?? new InvocationBudget();
   const baseFetch: FetchLike = budget.countingFetch(
     deps.fetch ?? ((input, init) => fetch(input, init)),
   );

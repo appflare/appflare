@@ -4,6 +4,7 @@ import type { FetchLike } from "@appflare/cf-api";
 import { beforeEach, describe, expect, it } from "vitest";
 import { createMigrator } from "../db/migrate";
 import { migrations } from "../db/migrations/index";
+import { sandboxBinding } from "../sandbox/binding";
 import { ACC, TOKEN } from "../test/fake-account";
 import { fakeEngine, TOO_MANY_SUBREQUESTS } from "../test/fake-invocations";
 import { checkLiveHealthPhase } from "./install/phases";
@@ -13,7 +14,14 @@ import {
   InvocationBudget,
   SPEND_BEFORE_STEP,
 } from "./invocation-budget";
-import type { JobEnv, JobParams, StepRunner } from "./run-job";
+import {
+  JOB_HANDLERS,
+  type JobEnv,
+  type JobHandler,
+  type JobParams,
+  runJob as runJobOf,
+  type StepRunner,
+} from "./run-job";
 import { createJobSteps, FRESH_INVOCATION_NOTE, type JobSteps, OWN_LIMIT_NOTE } from "./steps";
 import type { JobUnitsApi } from "./units/units";
 
@@ -278,5 +286,52 @@ describe("a step that runs out inside a job unit", () => {
     expect(String(r.error)).not.toContain(OWN_LIMIT_NOTE);
     expect(r.engine.sleeps).toEqual([]);
     expect(r.engine.ran.some((s) => s.name.endsWith("(again)"))).toBe(false);
+  });
+});
+
+describe("bindings a job calls directly", () => {
+  it("counts each call to SANDBOX and JOBS, failed ones too, in the run's budget", async () => {
+    const created: string[] = [];
+    const sandbox = {
+      fetch: async () => new Response("object"),
+      info: async () => ({ version: "1" }),
+      cleanup: async () => {
+        throw new Error("refused");
+      },
+    };
+    const jobs = {
+      create: async (options: { id: string }) => {
+        created.push(options.id);
+        return { id: options.id };
+      },
+    };
+    let spent: number[] = [];
+    const handler: JobHandler = async (ctx) => {
+      const steps = createJobSteps(ctx, JOB);
+      steps.setAccountId(ACC);
+      spent = [];
+      await steps.run("call the bindings", async () => {
+        const binding = sandboxBinding(ctx.env);
+        if (binding === undefined) throw new Error("no SANDBOX");
+        await binding.fetch("https://sandbox.appflare.internal/object");
+        spent.push(steps.invocation.spent);
+        await binding.info();
+        await binding.cleanup({}).catch(() => null);
+        spent.push(steps.invocation.spent);
+        await ctx.env.JOBS?.create({ id: "next", params: { kind: "reconfigure", jobId: "next" } });
+        spent.push(steps.invocation.spent);
+        return {};
+      });
+      // A second step runner of the same run shares the count.
+      spent.push(createJobSteps(ctx, JOB).invocation.spent);
+    };
+    await runJobOf(
+      { kind: "install", jobId: JOB },
+      fakeEngine().step,
+      { DB: env.DB, CF_API_TOKEN: TOKEN, SANDBOX: sandbox, JOBS: jobs },
+      { ...JOB_HANDLERS, install: handler },
+    );
+    expect(spent).toEqual([1, 3, 4, 4]);
+    expect(created).toEqual(["next"]);
   });
 });
