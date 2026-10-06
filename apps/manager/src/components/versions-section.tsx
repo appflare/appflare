@@ -20,7 +20,13 @@ import { BusyMark, busyActionProps } from "./busy-button";
 import { ConfirmDialog } from "./confirm-dialog";
 import { FLUSH_RING_CLASS } from "./hash-target";
 import { useJobStarted } from "./job-started";
-import { BANNER_ICON, ErrorMessageBanner, MessageText, SuccessBanner } from "./message-text";
+import {
+  BANNER_ICON,
+  ErrorMessageBanner,
+  MessageText,
+  StatusRegion,
+  SuccessBanner,
+} from "./message-text";
 import { Section, SectionBody, SectionRows, SectionTable } from "./section";
 import { StatusBadge } from "./status-badge";
 import { Timestamp } from "./timestamp";
@@ -350,10 +356,10 @@ function RestoreDatabaseDialog({
            * result when it lands; the banner in it is not a live region of
            * its own.
            */}
-          <div role="status">
+          <StatusRegion>
             {done !== null && (
               <SuccessBanner
-                role="none"
+                live={false}
                 title={`Restored ${done.databaseName}`}
                 description={
                   done.previousBookmark === null
@@ -362,7 +368,7 @@ function RestoreDatabaseDialog({
                 }
               />
             )}
-          </div>
+          </StatusRegion>
           {done !== null && (
             <div className="mt-5 grid gap-5">
               {done.previousBookmark !== null && (
