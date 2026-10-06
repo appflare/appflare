@@ -83,7 +83,14 @@ import {
 import { assignRateLimitsPhase } from "./install/rate-limits";
 import { applyLifecycleRulesPhase, applyMetadataIndexesPhase } from "./install/resource-settings";
 import { RESOURCE_LABEL } from "./install/resources";
-import { putWorkflowsPhase, workflowTargets } from "./install/workflows";
+import {
+  putWorkflowsPhase,
+  scheduledWorkflowsLeft,
+  scheduledWorkflowsOf,
+  unscheduleWorkflowPhase,
+  type WorkflowTarget,
+  workflowTargets,
+} from "./install/workflows";
 import { deleteSupersededPhase, supersededConfigs } from "./reconfigure/hyperdrive";
 import { secretSlots, storedVarsJson } from "./reconfigure/plan";
 import { undoSecretChangesPhase } from "./reconfigure/secrets";
@@ -455,6 +462,18 @@ export async function runUpdate(ctx: JobContext): Promise<void> {
         ] as string[] | undefined,
         origin,
         resources: recorded,
+        // The Workflows the installed version runs on a schedule, under the
+        // names the install recorded (absent in a step output recorded
+        // before schedules were followed).
+        scheduledWorkflows: scheduledWorkflowsOf(
+          install.manifest_json,
+          install.worker_name,
+          Object.fromEntries(
+            rows.flatMap((r) =>
+              r.kind === "workflow" && r.binding !== null ? [[r.binding, r.name]] : [],
+            ),
+          ),
+        ) as WorkflowTarget[] | undefined,
       };
     });
     steps.setAccountId(started.accountId);
@@ -1077,18 +1096,25 @@ export async function runUpdate(ctx: JobContext): Promise<void> {
     });
 
     // Every Workflow the version defines, now that its Workers run their
-    // classes: a new one is created, a kept one updated (its class may have
-    // changed, and one an earlier manager never created is created too). A
-    // Workflow the version no longer defines stays, as every resource does
-    // on update, until the uninstall deletes it.
+    // classes: a new one is created, a kept one updated (its class or
+    // settings may have changed, and one an earlier manager never created is
+    // created too). A Workflow the version no longer defines stays, as every
+    // resource does on update, until the uninstall deletes it; nothing of
+    // the version starts it, but a schedule the installed version gave it
+    // would, each instance failing on a class the version lacks, so that
+    // schedule is taken off.
     const newWorkflows = new Set(diff.newWorkflows.map((wf) => wf.binding));
+    const workflows = workflowTargets(manifest, workerName, diff.workflowNames);
     await putWorkflowsPhase(
       steps,
       params.installId,
-      workflowTargets(manifest, workerName, diff.workflowNames),
+      workflows,
       (wf) => newWorkflows.has(wf.binding),
       "serving",
     );
+    for (const wf of scheduledWorkflowsLeft(started.scheduledWorkflows ?? [], workflows)) {
+      await unscheduleWorkflowPhase(steps, params.installId, wf, `version ${params.version}`);
+    }
 
     // Queue consumers belong to the script too: set them once the version
     // serves, each Worker's own; the primary Worker's sync, last, removes

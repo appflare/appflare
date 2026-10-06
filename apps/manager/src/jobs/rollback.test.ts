@@ -156,11 +156,134 @@ describe("rollback job", () => {
     expect(r.error).toBeNull();
     expect(r.job?.status).toBe("succeeded");
     expect(r.fake.state.workflowDefs).toEqual({
-      "cut-jobs": { script_name: "cut", class_name: "Jobs" },
+      "cut-jobs": { script_name: "cut", class_name: "Jobs", schedules: [] },
     });
     expect(r.step.names.indexOf("deploy snapshot version")).toBeLessThan(
       r.step.names.indexOf("update Workflow cut-jobs"),
     );
+  });
+
+  it("puts a Workflow back on the settings the snapshot's version gives it", async () => {
+    // The snapshot's version sets a step limit and a retention; the serving
+    // one set a concurrency limit instead.
+    const settings = { limits: { steps: 300 }, default_retention: { success_retention: "2 days" } };
+    const old = await buildArtifactFixture({
+      bindings: [{ type: "workflow", name: "JOBS", workflow_name: "jobs", class_name: "Jobs" }],
+      tweak: (m) => {
+        m.worker.workflowSettings = { JOBS: settings };
+      },
+    });
+    await env.DB.prepare("UPDATE snapshots SET manifest_json = ?1 WHERE id = 'upd1'")
+      .bind(JSON.stringify(old.manifest))
+      .run();
+    await env.DB.prepare(
+      `INSERT INTO resources (id, install_id, kind, binding, name, cf_id, created_at)
+       VALUES ('i1:workflow:JOBS', ?1, 'workflow', 'JOBS', 'cut-jobs', 'wf-cut-jobs', 1)`,
+    )
+      .bind(INSTALL_ID)
+      .run();
+    const r = await rollback({
+      workflows: ["cut-jobs"],
+      workflowDefs: {
+        "cut-jobs": { script_name: "cut", class_name: "Jobs", concurrency: { limit: 2 } },
+      },
+    });
+    expect(r.error).toBeNull();
+    expect(r.job?.status).toBe("succeeded");
+    expect(r.fake.state.workflowDefs).toEqual({
+      "cut-jobs": { script_name: "cut", class_name: "Jobs", schedules: [], ...settings },
+    });
+  });
+
+  describe("a Workflow on a schedule only the serving version defines", () => {
+    // The serving version adds SWEEP, run hourly; the snapshot's version has JOBS only.
+    const seed = async () => {
+      const jobs = { type: "workflow", name: "JOBS", workflow_name: "jobs", class_name: "Jobs" };
+      const old = await buildArtifactFixture({ bindings: [jobs] });
+      const serving = await buildArtifactFixture({
+        version: "1.1.0",
+        bindings: [
+          jobs,
+          { type: "workflow", name: "SWEEP", workflow_name: "sweep", class_name: "Sweep" },
+        ],
+        catalog: { plan: "paid" },
+        tweak: (m) => {
+          m.worker.workflowSettings = {
+            SWEEP: { schedules: ["0 * * * *"], concurrency: { limit: 1 } },
+          };
+        },
+      });
+      await env.DB.prepare("UPDATE snapshots SET manifest_json = ?1 WHERE id = 'upd1'")
+        .bind(JSON.stringify(old.manifest))
+        .run();
+      await env.DB.prepare("UPDATE installs SET manifest_json = ?1 WHERE id = ?2")
+        .bind(JSON.stringify(serving.manifest), INSTALL_ID)
+        .run();
+      await env.DB.prepare(
+        `INSERT INTO resources (id, install_id, kind, binding, name, cf_id, created_at) VALUES
+         ('i1:worker:cut', ?1, 'worker', NULL, 'cut', 'cut', 1),
+         ('i1:workflow:JOBS', ?1, 'workflow', 'JOBS', 'cut-jobs', 'wf-cut-jobs', 1),
+         ('i1:workflow:SWEEP', ?1, 'workflow', 'SWEEP', 'cut-sweep', 'wf-cut-sweep', 1)`,
+      )
+        .bind(INSTALL_ID)
+        .run();
+    };
+    const world = (): Partial<FakeAccount> => ({
+      workflows: ["cut-jobs", "cut-sweep"],
+      workflowDefs: {
+        "cut-jobs": { script_name: "cut", class_name: "Jobs" },
+        "cut-sweep": {
+          script_name: "cut",
+          class_name: "Sweep",
+          concurrency: { limit: 1 },
+          schedules: [{ cron: "0 * * * *" }],
+        },
+      },
+    });
+    const logsOf = async () =>
+      (
+        await env.DB.prepare(
+          "SELECT level, message FROM job_logs WHERE job_id = 'rb1' ORDER BY id",
+        ).all<{ level: string; message: string }>()
+      ).results;
+
+    it("takes its schedule off once the snapshot's version serves", async () => {
+      await seed();
+      const r = await rollback(world());
+      expect(r.error).toBeNull();
+      expect(r.job?.status).toBe("succeeded");
+      expect(r.step.names.indexOf("update Workflow cut-jobs")).toBeLessThan(
+        r.step.names.indexOf("take Workflow cut-sweep off its schedule"),
+      );
+      // Still there for the uninstall, on its class and other settings, without a schedule.
+      expect(r.fake.state.workflowDefs["cut-sweep"]).toEqual({
+        script_name: "cut",
+        class_name: "Sweep",
+        concurrency: { limit: 1 },
+        schedules: [],
+      });
+      expect(await logsOf()).toContainEqual({
+        level: "info",
+        message:
+          'Appflare took the Workflow "cut-sweep" off its schedule "0 * * * *": version 1.0.0 does not define it, so each instance the schedule started would fail. A version that defines it puts the schedule back.',
+      });
+    });
+
+    it("warns, saying what to do, when Cloudflare refuses to take it off", async () => {
+      await seed();
+      const r = await rollback({
+        ...world(),
+        failOnce: new Map([["PUT /workflows/cut-sweep", 400]]),
+      });
+      expect(r.error).toBeNull();
+      expect(r.job?.status).toBe("succeeded");
+      const warning = (await logsOf()).find(
+        (l) => l.level === "warn" && l.message.includes('"cut-sweep"'),
+      );
+      expect(warning?.message).toMatch(
+        /^The Workflow "cut-sweep" still starts on the schedule "0 \* \* \* \*", but version 1\.0\.0 does not define it, so each instance it starts fails: Cloudflare refused to take the schedule off \(.+\)\. Delete the Workflow in the Cloudflare dashboard, or update the app to a version that defines it\.$/,
+      );
+    });
   });
 
   it("redeploys the snapshot's version and restores the install's catalog state, not its data", async () => {

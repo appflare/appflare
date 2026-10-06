@@ -10,6 +10,7 @@ import {
   installWorkerNames,
   isInstallWorkflow,
   type WorkflowTarget,
+  workflowPutBody,
   workflowTargets,
 } from "../jobs/install/workflows";
 
@@ -21,7 +22,8 @@ import {
  * or updated carries its Cloudflare id; one an update or rollback could not
  * update (Cloudflare refused the call) loses it. This looks at the recorded
  * ones without, of apps that are installed (not mid-job): each the installed
- * version defines is created, or updated, for its Worker and class; one that
+ * version defines is created, or updated, for its Worker and class, with the
+ * settings that version gives it, as the jobs do; one that
  * version no longer defines gets its id when it exists and is marked gone
  * when it does not, since nothing runs it. A Workflow of that name that runs
  * another script is left alone. What it could not fix stays without an id,
@@ -196,13 +198,10 @@ export async function repairWorkflows(deps: {
         report.failed.push({ name: row.name, reason: "a job is changing the app" });
         continue;
       }
-      // One that exists is put on the installed version's Worker and class
-      // too: a row loses its id when an update's call was refused, which may
-      // have left the Workflow on the previous version's class.
-      const put = await api.workflows.putWorkflow(target.name, {
-        script_name: target.scriptName,
-        class_name: target.className,
-      });
+      // One that exists is put on the installed version's Worker, class and
+      // settings too: a row loses its id when an update's call was refused,
+      // which may have left the Workflow on the previous version's.
+      const put = await api.workflows.putWorkflow(target.name, workflowPutBody(target));
       await setId(row.id, put.id);
       (existing === null ? report.created : report.updated).push(row.name);
     } catch (error) {

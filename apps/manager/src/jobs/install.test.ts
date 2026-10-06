@@ -1,6 +1,13 @@
 import { reset } from "cloudflare:test";
 import { env } from "cloudflare:workers";
-import { type CatalogD1Seed, type SigningKey, withRevisedCatalog } from "@appflare/schema";
+import type { WorkflowPutBody } from "@appflare/cf-api";
+import {
+  type ArtifactManifest,
+  type ArtifactWorker,
+  type CatalogD1Seed,
+  type SigningKey,
+  withRevisedCatalog,
+} from "@appflare/schema";
 import bcrypt from "bcryptjs";
 import { beforeEach, describe, expect, it } from "vitest";
 import { readCatalogRevision } from "../catalog/revisions.server";
@@ -86,9 +93,9 @@ interface FakeState {
    * none; `PUT /workflows/{name}` does, and `workflowDefs` keeps what it set.
    */
   workflows: string[];
-  workflowDefs: Record<string, { script_name: string; class_name: string }>;
-  /** When set, `PUT /workflows/<name>` is refused with `status`. */
-  workflowRefusal?: { name: string; status: number };
+  workflowDefs: Record<string, WorkflowPutBody>;
+  /** When set, `PUT /workflows/<name>` is refused with `status` (and Cloudflare's `code`, default 10001). */
+  workflowRefusal?: { name: string; status: number; code?: number };
   /** Keys (`METHOD /path`) whose next call does its work and then answers 500. */
   failAfter: Set<string>;
   /** The query that applies this migration file answers `status`, without running, `times` times. */
@@ -531,11 +538,14 @@ function fakeWorld(fixture: ArtifactFixture, over: Partial<FakeState> = {}) {
       if (workflow[1] === "PUT") {
         if (state.workflowRefusal?.name === name) {
           return Response.json(
-            { success: false, errors: [{ code: 10001, message: "workflow refused" }] },
+            {
+              success: false,
+              errors: [{ code: state.workflowRefusal.code ?? 10001, message: "workflow refused" }],
+            },
             { status: state.workflowRefusal.status },
           );
         }
-        const body = (await request.json()) as { script_name: string; class_name: string };
+        const body = (await request.json()) as WorkflowPutBody;
         if (!state.workflows.includes(name)) state.workflows.push(name);
         state.workflowDefs[name] = body;
         return ok({ id: `wf-${name}`, name, ...body });
@@ -1818,7 +1828,7 @@ describe("install job", () => {
     );
     expect(ok.step.names).toContain("create Workflow cut-jobs");
     expect(ok.fake.state.workflowDefs).toEqual({
-      "cut-jobs": { script_name: "cut", class_name: "JobWorkflow" },
+      "cut-jobs": { script_name: "cut", class_name: "JobWorkflow", schedules: [] },
     });
     expect(ok.resources).toContainEqual({
       kind: "workflow",
@@ -1835,6 +1845,83 @@ describe("install job", () => {
       'check Workflow cut-jobs: a Workflow named cut-jobs already exists in this account (script "appflare"); Appflare does not adopt existing Workflows',
     );
     expect(taken.fake.state.calls).not.toContain("POST /storage/kv/namespaces");
+  });
+
+  describe("Workflow settings", () => {
+    const bindings = [
+      { type: "kv_namespace", name: "CUT_KV" },
+      { type: "workflow", name: "JOBS", workflow_name: "jobs", class_name: "JobWorkflow" },
+    ];
+    const settings = {
+      limits: { steps: 500 },
+      concurrency: { limit: 3 },
+      default_retention: { success_retention: "1 day", error_retention: 3_600_000 },
+    };
+    const withSettings = (workflowSettings: NonNullable<ArtifactWorker["workflowSettings"]>) => ({
+      bindings,
+      tweak: (m: ArtifactManifest) => {
+        m.worker.workflowSettings = workflowSettings;
+      },
+    });
+
+    it("creates the Workflow with the settings the app's config gives it, and uploads the binding without them", async () => {
+      const r = await install(withSettings({ JOBS: settings }));
+      expect(r.error).toBeNull();
+      expect(r.job?.status).toBe("succeeded");
+      expect(r.fake.state.workflowDefs).toEqual({
+        "cut-jobs": { script_name: "cut", class_name: "JobWorkflow", schedules: [], ...settings },
+      });
+      expect(
+        ((r.fake.state.metadata?.bindings ?? []) as Array<Record<string, unknown>>).filter(
+          (b) => b.type === "workflow",
+        ),
+      ).toEqual([
+        { type: "workflow", name: "JOBS", workflow_name: "cut-jobs", class_name: "JobWorkflow" },
+      ]);
+      expect(r.logs.map((l) => l.message)).toContain(
+        'Workflow "cut-jobs" runs JobWorkflow of Worker "cut", at most 500 steps, 3 instances at once, successful instances kept 1 day, failed instances kept 1 hour.',
+      );
+    });
+
+    it("sends each cron expression of a schedule as wrangler does", async () => {
+      const r = await install(
+        {
+          ...withSettings({ JOBS: { schedules: ["0 3 * * *", "*/30 * * * *"] } }),
+          catalog: { plan: "paid" },
+        },
+        {},
+        { paidConfirmed: true },
+      );
+      expect(r.error).toBeNull();
+      expect(r.fake.state.workflowDefs["cut-jobs"]).toEqual({
+        script_name: "cut",
+        class_name: "JobWorkflow",
+        schedules: [{ cron: "0 3 * * *" }, { cron: "*/30 * * * *" }],
+      });
+    });
+
+    it("fails, saying why, when Cloudflare refuses a schedule on Workers Free", async () => {
+      const r = await install(
+        { ...withSettings({ JOBS: { schedules: ["0 3 * * *"] } }), catalog: { plan: "paid" } },
+        { workflowRefusal: { name: "cut-jobs", status: 403, code: 10208 } },
+        { paidConfirmed: true },
+      );
+      expect(r.job?.status).toBe("failed");
+      expect(r.job?.error).toBe(
+        'create Workflow cut-jobs: the Workflow "cut-jobs" runs on a schedule, which needs the Workers Paid plan',
+      );
+      expect(r.resources.find((row) => row.kind === "workflow")).toMatchObject({ cf_id: null });
+    });
+
+    it("fails naming the settings when Cloudflare refuses the Workflow", async () => {
+      const r = await install(withSettings({ JOBS: { limits: { steps: 5000 } } }), {
+        workflowRefusal: { name: "cut-jobs", status: 400, code: 10002 },
+      });
+      expect(r.job?.status).toBe("failed");
+      expect(r.job?.error).toMatch(
+        /^create Workflow cut-jobs: Cloudflare refused the Workflow "cut-jobs" \(.*workflow refused.*; the app asks for at most 5000 steps\)$/,
+      );
+    });
   });
 
   it("retries a create whose response was lost without creating twice", async () => {
@@ -2999,8 +3086,8 @@ describe("install job, an app of several Workers", () => {
       // only through its binding); and recorded once, for the uninstall to
       // delete by name.
       expect(r.fake.state.workflowDefs).toEqual({
-        "cut-site-audit": { script_name: "cut-audit", class_name: "SiteAudit" },
-        "cut-rank": { script_name: "cut", class_name: "Rank" },
+        "cut-site-audit": { script_name: "cut-audit", class_name: "SiteAudit", schedules: [] },
+        "cut-rank": { script_name: "cut", class_name: "Rank", schedules: [] },
       });
       expect(calls.filter((c) => c.startsWith("PUT /workflows/"))).toEqual([
         "PUT /workflows/cut-site-audit",
@@ -3024,6 +3111,33 @@ describe("install job, an app of several Workers", () => {
         },
         { kind: "workflow", binding: "RANK", name: "cut-rank", cf_id: "wf-cut-rank" },
       ]);
+    });
+
+    it("creates it with the settings the Worker that defines it gives it", async () => {
+      const r = await install({
+        ...auditApp(),
+        tweak: (m) => {
+          const audit = m.workers?.[0];
+          if (audit === undefined) throw new Error("no audit Worker");
+          audit.worker.workflowSettings = { SITE_AUDIT: { concurrency: { limit: 2 } } };
+          m.worker.workflowSettings = { RANK: { limits: { steps: 100 } } };
+        },
+      });
+      expect(r.error).toBeNull();
+      expect(r.fake.state.workflowDefs).toEqual({
+        "cut-site-audit": {
+          script_name: "cut-audit",
+          class_name: "SiteAudit",
+          schedules: [],
+          concurrency: { limit: 2 },
+        },
+        "cut-rank": {
+          script_name: "cut",
+          class_name: "Rank",
+          limits: { steps: 100 },
+          schedules: [],
+        },
+      });
     });
 
     it("names the Workflow the same under another binding name", async () => {

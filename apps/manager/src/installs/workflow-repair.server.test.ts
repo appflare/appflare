@@ -90,7 +90,7 @@ describe("repair of installed apps' Workflows", () => {
       "PUT /workflows/cut-jobs",
     ]);
     expect(fake.state.workflowDefs).toEqual({
-      "cut-jobs": { script_name: "cut", class_name: "Jobs" },
+      "cut-jobs": { script_name: "cut", class_name: "Jobs", schedules: [] },
     });
     expect((await startInstance(fake, "cut-jobs")).status).toBe(200);
     expect(await rows()).toEqual([
@@ -100,6 +100,28 @@ describe("repair of installed apps' Workflows", () => {
     // Nothing left: the next runs make no Cloudflare call, today or later.
     expect(await workflowRepairNeeded(env.DB, NOW)).toBe(false);
     expect(await workflowRepairNeeded(env.DB, new Date("2026-10-05T12:00:00.000Z"))).toBe(false);
+  });
+
+  it("creates it with the settings the installed version gives it", async () => {
+    const settings = {
+      limits: { steps: 200 },
+      concurrency: { limit: 4 },
+      default_retention: { error_retention: "7 days" },
+    };
+    await seed(
+      {
+        bindings: [jobs],
+        tweak: (m) => {
+          m.worker.workflowSettings = { JOBS: settings };
+        },
+      },
+      [prefix],
+    );
+    const { fake, report } = await repair();
+    expect(report.created).toEqual(["cut-jobs"]);
+    expect(fake.state.workflowDefs).toEqual({
+      "cut-jobs": { script_name: "cut", class_name: "Jobs", schedules: [], ...settings },
+    });
   });
 
   it("creates a cross-Worker Workflow for the Worker that defines it, as OpenSEO's", async () => {
@@ -139,8 +161,16 @@ describe("repair of installed apps' Workflows", () => {
     const { fake, report } = await repair();
     expect(report.created).toEqual(["cut-site-audit-workflow", "cut-rank-check-workflow"]);
     expect(fake.state.workflowDefs).toEqual({
-      "cut-site-audit-workflow": { script_name: "cut-audit", class_name: "SiteAuditWorkflow" },
-      "cut-rank-check-workflow": { script_name: "cut", class_name: "RankCheckWorkflow" },
+      "cut-site-audit-workflow": {
+        script_name: "cut-audit",
+        class_name: "SiteAuditWorkflow",
+        schedules: [],
+      },
+      "cut-rank-check-workflow": {
+        script_name: "cut",
+        class_name: "RankCheckWorkflow",
+        schedules: [],
+      },
     });
   });
 
@@ -154,7 +184,7 @@ describe("repair of installed apps' Workflows", () => {
     expect(report.updated).toEqual(["cut-jobs"]);
     expect(fake.state.calls).toEqual(["GET /workflows/cut-jobs", "PUT /workflows/cut-jobs"]);
     expect(fake.state.workflowDefs).toEqual({
-      "cut-jobs": { script_name: "cut", class_name: "Jobs" },
+      "cut-jobs": { script_name: "cut", class_name: "Jobs", schedules: [] },
     });
     expect(await rows()).toEqual([
       { binding: "JOBS", name: "cut-jobs", cf_id: "wf-cut-jobs", live: 1 },
@@ -191,7 +221,7 @@ describe("repair of installed apps' Workflows", () => {
     const { fake, report } = await repair();
     expect(report.created).toEqual(["cut-jobs"]);
     expect(fake.state.workflowDefs).toEqual({
-      "cut-jobs": { script_name: "cut", class_name: "Tasks" },
+      "cut-jobs": { script_name: "cut", class_name: "Tasks", schedules: [] },
     });
     expect(await rows()).toEqual([
       { binding: "JOBS", name: "cut-jobs", cf_id: "wf-cut-jobs", live: 1 },

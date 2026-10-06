@@ -2047,8 +2047,8 @@ describe("update job, Workflows of an app of one Worker", () => {
       order.indexOf("create Workflow cut-mail"),
     );
     expect(r.fake.state.workflowDefs).toEqual({
-      "cut-jobs": { script_name: "cut", class_name: "JobsV2" },
-      "cut-mail": { script_name: "cut", class_name: "Mail" },
+      "cut-jobs": { script_name: "cut", class_name: "JobsV2", schedules: [] },
+      "cut-mail": { script_name: "cut", class_name: "Mail", schedules: [] },
     });
     expect(
       r.resources
@@ -2058,6 +2058,165 @@ describe("update job, Workflows of an app of one Worker", () => {
       ["JOBS", "cut-jobs", "wf-cut-jobs", null],
       ["MAIL", "cut-mail", "wf-cut-mail", null],
     ]);
+  });
+
+  it("puts a kept Workflow on the settings the version gives it, once it serves", async () => {
+    const settings = { limits: { steps: 800 }, concurrency: { limit: 5 } };
+    const r = await update(
+      {
+        ...NEW_APP,
+        bindings: [...(NEW_APP.bindings ?? []), jobs("Jobs")],
+        tweak: (m) => {
+          m.worker.workflowSettings = { JOBS: settings };
+        },
+      },
+      existing(),
+      { resources: [...RESOURCES, recorded] },
+    );
+    expect(r.error).toBeNull();
+    expect(r.job?.status).toBe("succeeded");
+    expect(r.step.names.indexOf("promote version")).toBeLessThan(
+      r.step.names.indexOf("update Workflow cut-jobs"),
+    );
+    expect(r.fake.state.workflowDefs).toEqual({
+      "cut-jobs": { script_name: "cut", class_name: "Jobs", schedules: [], ...settings },
+    });
+    // The version's binding is uploaded without them.
+    const version = r.fake.state.versions[0]?.metadata.bindings as Array<Record<string, unknown>>;
+    expect(version.filter((b) => b.type === "workflow")).toEqual([
+      { type: "workflow", name: "JOBS", workflow_name: "cut-jobs", class_name: "Jobs" },
+    ]);
+  });
+
+  it("names the settings when Cloudflare refuses them once the version serves", async () => {
+    const r = await update(
+      {
+        ...NEW_APP,
+        bindings: [...(NEW_APP.bindings ?? []), jobs("Jobs")],
+        tweak: (m) => {
+          m.worker.workflowSettings = { JOBS: { concurrency: { limit: 500 } } };
+        },
+      },
+      { ...existing(), failOnce: new Map([["PUT /workflows/cut-jobs", 400]]) },
+      { resources: [...RESOURCES, recorded] },
+    );
+    expect(r.error).toBeNull();
+    expect(r.job?.status).toBe("succeeded");
+    expect(
+      r.logs.some(
+        (l) =>
+          l.level === "warn" &&
+          l.message.includes('Cloudflare refused the Workflow "cut-jobs"') &&
+          l.message.includes("the app asks for 500 instances at once"),
+      ),
+    ).toBe(true);
+    expect(r.resources.find((row) => row.kind === "workflow")?.cf_id).toBeNull();
+  });
+
+  describe("a Workflow on a schedule the version no longer defines", () => {
+    const scheduled = { schedules: ["0 * * * *"], limits: { steps: 50 } };
+    // The installed version defines JOBS and runs it hourly; NEW_APP does not define it.
+    const installed = async () =>
+      JSON.stringify(
+        (
+          await buildArtifactFixture({
+            ...NEW_APP,
+            version: "1.0.0",
+            bindings: [...(NEW_APP.bindings ?? []), jobs("Jobs")],
+            catalog: { plan: "paid" },
+            tweak: (m) => {
+              m.worker.workflowSettings = { JOBS: scheduled };
+            },
+          })
+        ).manifest,
+      );
+    const onSchedule = (scriptName = "cut"): Partial<FakeAccount> => ({
+      workflows: ["cut-jobs"],
+      workflowDefs: {
+        "cut-jobs": {
+          script_name: scriptName,
+          class_name: "Jobs",
+          limits: { steps: 50 },
+          schedules: [{ cron: "0 * * * *" }],
+        },
+      },
+    });
+
+    it("takes its schedule off once the version serves, and keeps the Workflow", async () => {
+      const r = await update(NEW_APP, onSchedule(), {
+        manifestJson: await installed(),
+        resources: [...RESOURCES, recorded],
+      });
+      expect(r.error).toBeNull();
+      expect(r.job?.status).toBe("succeeded");
+      expect(r.step.names.indexOf("promote version")).toBeLessThan(
+        r.step.names.indexOf("take Workflow cut-jobs off its schedule"),
+      );
+      expect(r.fake.state.workflowDefs).toEqual({
+        "cut-jobs": {
+          script_name: "cut",
+          class_name: "Jobs",
+          limits: { steps: 50 },
+          schedules: [],
+        },
+      });
+      expect(r.logs).toContainEqual(
+        expect.objectContaining({
+          level: "info",
+          message:
+            'Appflare took the Workflow "cut-jobs" off its schedule "0 * * * *": version 1.1.0 does not define it, so each instance the schedule started would fail. A version that defines it puts the schedule back.',
+        }),
+      );
+      expect(
+        r.resources
+          .filter((row) => row.kind === "workflow")
+          .map((row) => [row.name, row.cf_id, row.deleted_at]),
+      ).toEqual([["cut-jobs", "wf-cut-jobs", null]]);
+    });
+
+    it("warns, saying what to do, when Cloudflare still lists the schedule", async () => {
+      const r = await update(
+        NEW_APP,
+        onSchedule(),
+        { manifestJson: await installed(), resources: [...RESOURCES, recorded] },
+        {},
+        "self",
+        undefined,
+        // Cloudflare answers the call but keeps the schedule.
+        (fake) => async (input, init) => {
+          if (init?.method === "PUT" && new URL(input).pathname.endsWith("/workflows/cut-jobs")) {
+            return Response.json({
+              success: true,
+              errors: [],
+              messages: [],
+              result: { id: "wf-cut-jobs", name: "cut-jobs" },
+            });
+          }
+          return fake.fetch(input, init);
+        },
+      );
+      expect(r.error).toBeNull();
+      expect(r.job?.status).toBe("succeeded");
+      expect(r.logs).toContainEqual(
+        expect.objectContaining({
+          level: "warn",
+          message:
+            'The Workflow "cut-jobs" still starts on the schedule "0 * * * *", but version 1.1.0 does not define it, so each instance it starts fails: Cloudflare still lists the schedule after Appflare took it off. Delete the Workflow in the Cloudflare dashboard, or update the app to a version that defines it.',
+        }),
+      );
+    });
+
+    it("leaves alone a Workflow of that name another script runs", async () => {
+      const r = await update(NEW_APP, onSchedule("someone"), {
+        manifestJson: await installed(),
+        resources: [...RESOURCES, recorded],
+      });
+      expect(r.error).toBeNull();
+      expect(r.job?.status).toBe("succeeded");
+      expect(r.fake.state.calls).toContain("GET /workflows/cut-jobs");
+      expect(r.fake.state.calls).not.toContain("PUT /workflows/cut-jobs");
+      expect(r.fake.state.workflowDefs["cut-jobs"]?.schedules).toEqual([{ cron: "0 * * * *" }]);
+    });
   });
 
   it("keeps the Workflow's name when the version renames its binding", async () => {
@@ -2102,7 +2261,7 @@ describe("update job, Workflows of an app of one Worker", () => {
     );
     expect(r.error).toBeNull();
     expect(r.fake.state.workflowDefs).toEqual({
-      "cut-jobs": { script_name: "cut", class_name: "Jobs" },
+      "cut-jobs": { script_name: "cut", class_name: "Jobs", schedules: [] },
     });
     expect(r.resources.find((row) => row.kind === "workflow")?.cf_id).toBe("wf-cut-jobs");
   });
@@ -2380,7 +2539,7 @@ describe("update job, an app of several Workers", () => {
         order.indexOf("update Workflow cut-site-audit"),
       );
       expect(r.fake.state.workflowDefs).toEqual({
-        "cut-site-audit": { script_name: "cut-jobs", class_name: "SiteAudit" },
+        "cut-site-audit": { script_name: "cut-jobs", class_name: "SiteAudit", schedules: [] },
       });
       expect(r.resources.filter((row) => row.kind === "workflow")).toEqual([
         {
@@ -2399,7 +2558,7 @@ describe("update job, an app of several Workers", () => {
       expect(r.step.names).toContain("check Workflow cut-site-audit");
       expect(r.step.names).toContain("create Workflow cut-site-audit");
       expect(r.fake.state.workflowDefs).toEqual({
-        "cut-site-audit": { script_name: "cut-jobs", class_name: "SiteAudit" },
+        "cut-site-audit": { script_name: "cut-jobs", class_name: "SiteAudit", schedules: [] },
       });
       expect(
         r.resources.filter((row) => row.kind === "workflow").map((row) => [row.name, row.cf_id]),

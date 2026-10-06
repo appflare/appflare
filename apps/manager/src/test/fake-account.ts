@@ -1,3 +1,4 @@
+import type { WorkflowPutBody } from "@appflare/cf-api";
 import type { ArtifactFixture } from "./artifact-fixture";
 
 /**
@@ -53,7 +54,7 @@ export interface FakeAccount {
    * (code 10200).
    */
   workflows: string[];
-  workflowDefs: Record<string, { script_name: string; class_name: string }>;
+  workflowDefs: Record<string, WorkflowPutBody>;
   /** Instances started, by Workflow name. */
   workflowInstances: Record<string, number>;
   calls: string[];
@@ -468,18 +469,25 @@ export function fakeAccount(fixture: ArtifactFixture | null, over: Partial<FakeA
     if (m?.[2] !== undefined) {
       const name = m[2];
       if (m[1] === "PUT") {
-        const body = (await request.json()) as { script_name: string; class_name: string };
+        const body = (await request.json()) as WorkflowPutBody;
         if (!state.workflows.includes(name)) state.workflows.push(name);
         state.workflowDefs[name] = body;
         return ok({ id: `wf-${name}`, name, ...body });
       }
-      return state.workflows.includes(name)
-        ? ok({
-            id: `wf-${name}`,
-            name,
-            script_name: state.workflowDefs[name]?.script_name ?? "someone",
-          })
-        : workflowNotFound();
+      if (!state.workflows.includes(name)) return workflowNotFound();
+      // As Cloudflare answers: its schedules only when it has some, and none
+      // of its other settings.
+      const def = state.workflowDefs[name];
+      const schedules = def?.schedules ?? [];
+      return ok({
+        id: `wf-${name}`,
+        name,
+        script_name: def?.script_name ?? "someone",
+        ...(def === undefined ? {} : { class_name: def.class_name }),
+        ...(schedules.length === 0
+          ? {}
+          : { schedules: schedules.map((s) => ({ ...s, next_instance: "2026-10-06T00:00:00Z" })) }),
+      });
     }
     m = /^POST \/workflows\/([^/]+)\/instances$/.exec(key);
     if (m?.[1] !== undefined) {

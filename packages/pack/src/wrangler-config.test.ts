@@ -4,6 +4,7 @@ import {
   collectBindings,
   collectQueueConsumers,
   collectWorkerSettings,
+  collectWorkflowSettings,
   HyperdriveDeclarationError,
   mainModuleName,
   PipelineDeclarationError,
@@ -11,8 +12,10 @@ import {
   type ResolvedWranglerConfig,
   ServiceBindingError,
   UnsafeBindingError,
+  unknownWorkflowSettingFields,
   VectorizeDeclarationError,
   varPlaceholderProblems,
+  WorkflowSettingsError,
   withoutSecretVars,
 } from "./wrangler-config.ts";
 
@@ -168,6 +171,42 @@ describe("collectBindings", () => {
         script_name: "someone-else",
       },
     ]);
+  });
+
+  it("treats a Workflow binding naming its own Worker as one that defines it, in an app of one Worker", () => {
+    const config = {
+      name: "relay",
+      workflows: [{ binding: "JOBS", name: "jobs", class_name: "Jobs", script_name: "relay" }],
+    } as unknown as ResolvedWranglerConfig;
+    expect(collectBindings(config)).toEqual([
+      { type: "workflow", name: "JOBS", workflow_name: "jobs", class_name: "Jobs" },
+    ]);
+  });
+
+  it("refuses Workflow settings on a binding that runs another Worker's Workflow", () => {
+    const config = {
+      name: "open-seo",
+      workflows: [
+        {
+          binding: "AUDIT",
+          name: "site-audit",
+          class_name: "SiteAudit",
+          script_name: "open-seo-audit",
+          concurrency: { limit: 2 },
+          schedules: "0 3 * * *",
+        },
+      ],
+    } as unknown as ResolvedWranglerConfig;
+    const entryWorkers = new Map([
+      ["open-seo", "app"],
+      ["open-seo-audit", "audit"],
+    ]);
+    for (const options of [{ entryWorkers }, {}]) {
+      expect(() => collectBindings(config, undefined, options)).toThrow(WorkflowSettingsError);
+    }
+    expect(() => collectBindings(config, undefined, { entryWorkers })).toThrow(
+      'the Workflow binding AUDIT sets concurrency and schedules, but it runs the Workflow "site-audit" of the Worker "open-seo-audit"; a Workflow\'s settings belong in the config of the Worker that defines it, and wrangler refuses them anywhere else',
+    );
   });
 
   it("refuses a Vectorize binding the catalog manifest does not declare, naming the field", () => {
@@ -599,5 +638,96 @@ describe("collectWorkerSettings", () => {
   it("collects worker_loaders as worker_loader bindings", () => {
     const bindings = collectBindings({ worker_loaders: [{ binding: "LOADER" }] });
     expect(bindings).toEqual([{ type: "worker_loader", name: "LOADER" }]);
+  });
+});
+
+describe("collectWorkflowSettings", () => {
+  it("records the settings of each Workflow the Worker defines, by binding", () => {
+    const config = {
+      name: "relay",
+      workflows: [
+        {
+          binding: "JOBS",
+          name: "jobs",
+          class_name: "Jobs",
+          limits: { steps: 500 },
+          concurrency: { limit: 3 },
+          schedules: "0 3 * * *",
+          default_retention: { success_retention: "1 day", error_retention: 3_600_000 },
+        },
+        // Its own name: defined here too.
+        {
+          binding: "SWEEP",
+          name: "sweep",
+          class_name: "Sweep",
+          script_name: "relay",
+          schedules: ["*/30 * * * *", "0 0 * * 1"],
+        },
+        // No settings: nothing recorded.
+        { binding: "PLAIN", name: "plain", class_name: "Plain" },
+      ],
+    } as unknown as ResolvedWranglerConfig;
+    const expected = {
+      JOBS: {
+        limits: { steps: 500 },
+        concurrency: { limit: 3 },
+        // One cron expression becomes a list.
+        schedules: ["0 3 * * *"],
+        default_retention: { success_retention: "1 day", error_retention: 3_600_000 },
+      },
+      SWEEP: { schedules: ["*/30 * * * *", "0 0 * * 1"] },
+    };
+    expect(collectWorkflowSettings(config)).toEqual(expected);
+    expect(collectWorkerSettings(config)).toEqual({ workflowSettings: expected });
+  });
+
+  it("records only the fields wrangler knows, and names the others", () => {
+    const config = {
+      name: "relay",
+      workflows: [
+        {
+          binding: "JOBS",
+          name: "jobs",
+          class_name: "Jobs",
+          limits: { steps: 500, cpu_ms: 100 },
+          concurrency: { limit: 3, burst: 2 },
+          default_retention: { error_retention: "1 day", info_retention: "2 days" },
+        },
+        // Another Worker's Workflow: collectBindings refuses its settings.
+        {
+          binding: "AUDIT",
+          name: "site-audit",
+          class_name: "SiteAudit",
+          script_name: "audit",
+          limits: { cpu_ms: 100 },
+        },
+      ],
+    } as unknown as ResolvedWranglerConfig;
+    expect(collectWorkflowSettings(config)).toEqual({
+      JOBS: {
+        limits: { steps: 500 },
+        concurrency: { limit: 3 },
+        default_retention: { error_retention: "1 day" },
+      },
+    });
+    expect(unknownWorkflowSettingFields(config)).toEqual([
+      { binding: "JOBS", field: "limits.cpu_ms" },
+      { binding: "JOBS", field: "concurrency.burst" },
+      { binding: "JOBS", field: "default_retention.info_retention" },
+    ]);
+  });
+
+  it("records nothing when no Workflow the Worker defines has a setting", () => {
+    const config = {
+      name: "open-seo",
+      workflows: [
+        { binding: "RANK", name: "rank", class_name: "Rank" },
+        // Another Worker's Workflow: never a source of settings.
+        { binding: "AUDIT", name: "site-audit", class_name: "SiteAudit", script_name: "audit" },
+      ],
+    } as unknown as ResolvedWranglerConfig;
+    expect(collectWorkflowSettings(config)).toBeUndefined();
+    expect(collectWorkflowSettings({} as ResolvedWranglerConfig)).toBeUndefined();
+    expect(collectWorkerSettings(config)).toEqual({});
   });
 });

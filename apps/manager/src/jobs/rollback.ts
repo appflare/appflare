@@ -49,7 +49,14 @@ import {
   recordedQueues,
   syncQueueConsumersPhase,
 } from "./install/queue-consumers";
-import { putWorkflowsPhase, type WorkflowTarget, workflowTargets } from "./install/workflows";
+import {
+  putWorkflowsPhase,
+  scheduledWorkflowsLeft,
+  scheduledWorkflowsOf,
+  unscheduleWorkflowPhase,
+  type WorkflowTarget,
+  workflowTargets,
+} from "./install/workflows";
 import {
   liveHyperdriveIds,
   reconcileHyperdriveRecords,
@@ -479,16 +486,13 @@ export async function runRollback(ctx: JobContext): Promise<void> {
             isNull(resources.deleted_at),
           ),
         );
+      const workflowNames: Record<string, string> = Object.fromEntries(
+        workflowRows.flatMap((r) => (r.binding === null ? [] : [[r.binding, r.name]])),
+      );
       const workflows: WorkflowTarget[] =
         snapshotManifest === null
           ? []
-          : workflowTargets(
-              snapshotManifest,
-              install.worker_name,
-              Object.fromEntries(
-                workflowRows.flatMap((r) => (r.binding === null ? [] : [[r.binding, r.name]])),
-              ),
-            );
+          : workflowTargets(snapshotManifest, install.worker_name, workflowNames);
       return {
         accountId: settings.account_id,
         workerName: install.worker_name,
@@ -515,6 +519,13 @@ export async function runRollback(ctx: JobContext): Promise<void> {
         }),
         sameCode,
         workflows: workflows as WorkflowTarget[] | undefined,
+        // The Workflows the serving version runs on a schedule (absent in a
+        // step output recorded before schedules were followed).
+        scheduledWorkflows: scheduledWorkflowsOf(
+          install.manifest_json,
+          install.worker_name,
+          workflowNames,
+        ) as WorkflowTarget[] | undefined,
         usesHyperdrive: hyperdriveRow !== undefined,
         versionId: snapshot.worker_version_id,
         toVersion: snapshot.catalog_version,
@@ -700,12 +711,14 @@ export async function runRollback(ctx: JobContext): Promise<void> {
       return {};
     });
 
-    // Its Workflows back on its classes (absent in a step output recorded
-    // before Workflows were followed); a refusal is a warning, as after an
-    // update's promotion. A Workflow only a newer version defines is not in
-    // the snapshot's version: it stays, still pointing at a class the older
-    // script lacks (nothing of that version starts it), and the uninstall
-    // deletes it by name like every Workflow the install recorded.
+    // Its Workflows back on its classes and settings (absent in a step
+    // output recorded before Workflows were followed); a refusal is a
+    // warning, as after an update's promotion. A Workflow only a newer
+    // version defines is not in the snapshot's version: it stays, still
+    // pointing at a class the older script lacks, and the uninstall deletes
+    // it by name like every Workflow the install recorded. Nothing of the
+    // older version starts it, but a schedule the newer one gave it would,
+    // each instance failing: that schedule is taken off.
     await putWorkflowsPhase(
       steps,
       params.installId,
@@ -713,6 +726,17 @@ export async function runRollback(ctx: JobContext): Promise<void> {
       () => false,
       "serving",
     );
+    for (const wf of scheduledWorkflowsLeft(
+      started.scheduledWorkflows ?? [],
+      started.workflows ?? [],
+    )) {
+      await unscheduleWorkflowPhase(
+        steps,
+        params.installId,
+        wf,
+        started.toVersion === null ? "the snapshot's version" : `version ${started.toVersion}`,
+      );
+    }
 
     // The public paths of the snapshot's version, now that its manifest is recorded.
     if (access?.protected === true) await syncAccessPhase(steps, params.installId);

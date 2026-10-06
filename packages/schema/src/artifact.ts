@@ -21,6 +21,11 @@ import {
   entryWorkerProblems,
   workerManifest,
 } from "./workers";
+import {
+  scheduledWorkflowPlanProblem,
+  workflowSettingsByBindingSchema,
+  workflowSettingsProblems,
+} from "./workflow-settings";
 
 /**
  * Schemas for the machine-generated artifact manifest `manifest.json`.
@@ -461,6 +466,14 @@ export const artifactWorkerSchema = z.object({
   exports: workerExportsSchema.optional(),
   /** The config's `cache` block, uploaded as `cache_options`. Omitted when unset. */
   cacheOptions: workerCacheOptionsSchema.optional(),
+  /**
+   * The settings the wrangler config gives the Workflows the Worker defines,
+   * by binding (`workflow-settings.ts`), sent when each is created or
+   * updated. Omitted when none has any, and Cloudflare's defaults apply. A
+   * manager from before this field strips it and creates the Workflows
+   * with those defaults.
+   */
+  workflowSettings: workflowSettingsByBindingSchema.optional(),
 });
 export type ArtifactWorker = z.infer<typeof artifactWorkerSchema>;
 
@@ -760,18 +773,36 @@ export type ArtifactFormat = typeof LATEST_ARTIFACT_FORMAT;
 
 /**
  * The issue when the artifact's Workers bind something only Workers Paid
- * offers and its catalog manifest does not say `plan: "paid"`, or null.
+ * offers, or run a Workflow on a schedule, and its catalog manifest does not
+ * say `plan: "paid"`, or null.
  */
 function planIssue(manifest: {
   worker: ArtifactWorker;
   workers?: ReadonlyArray<{ worker: ArtifactWorker }> | undefined;
   catalog: Pick<CatalogManifest, "plan">;
 }): { code: "custom"; path: string[]; message: string } | null {
-  const bindings = [manifest.worker, ...(manifest.workers ?? []).map((w) => w.worker)].flatMap(
-    (w) => w.bindings,
-  );
-  const message = workersPaidBindingProblem(bindings, manifest.catalog.plan);
+  const workers = [manifest.worker, ...(manifest.workers ?? []).map((w) => w.worker)];
+  const message =
+    workersPaidBindingProblem(
+      workers.flatMap((w) => w.bindings),
+      manifest.catalog.plan,
+    ) ?? scheduledWorkflowPlanProblem(workers, manifest.catalog.plan);
   return message === null ? null : { code: "custom", path: ["catalog", "plan"], message };
+}
+
+/** The issues of every Worker whose Workflow settings name no Workflow it defines. */
+function workflowSettingsIssues(
+  manifest: ArtifactManifest,
+): Array<{ code: "custom"; path: Array<string | number>; message: string }> {
+  return appWorkers(manifest).flatMap((w, index) =>
+    workflowSettingsProblems(w.worker).map((message) => ({
+      code: "custom" as const,
+      path: w.primary
+        ? ["worker", "workflowSettings"]
+        : ["workers", index - 1, "worker", "workflowSettings"],
+      message: w.name === null ? message : `The Worker "${w.name}": ${message}`,
+    })),
+  );
 }
 
 /**
@@ -848,6 +879,7 @@ export const artifactManifestSchema = z
     const plan = planIssue(manifest);
     if (plan !== null) ctx.addIssue(plan);
     for (const issue of assetsOnlyIssues(manifest)) ctx.addIssue(issue);
+    for (const issue of workflowSettingsIssues(manifest)) ctx.addIssue(issue);
     const workers = manifest.workers;
     if (workers !== undefined) {
       for (const message of entryWorkerProblems({ ...manifest, workers })) {
