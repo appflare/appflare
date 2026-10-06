@@ -292,6 +292,9 @@ describe("the tray under the address", () => {
     try {
       const popup = await showReason();
       expect(popup?.getAttribute("data-side")).toBe("bottom");
+      // A keyboard reaches it too.
+      const text = container.querySelector("[data-address-status-text]");
+      expect(text?.getAttribute("tabindex")).toBe("0");
     } finally {
       scroll.mockRestore();
       client.mockRestore();
@@ -300,6 +303,10 @@ describe("the tray under the address", () => {
 
   it("has no tooltip for a reason that fits", async () => {
     expect(await showReason()).toBeUndefined();
+    // Nothing to open, so no tab stop either.
+    expect(container.querySelector("[data-address-status-text]")?.hasAttribute("tabindex")).toBe(
+      false,
+    );
   });
 
   it("has no tooltip for a reason that fits but measures a rounded pixel over", async () => {

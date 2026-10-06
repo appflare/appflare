@@ -871,7 +871,7 @@ function TrayLine({ status, url }: { status: AddressStatus | null; url: string |
 
 /**
  * A reason in at most two lines. Where the lines cut it, the whole reason
- * shows in Kumo's tooltip on hover, below the tray so it never covers the
+ * shows in Kumo's tooltip on hover or keyboard focus, below the tray so it never covers the
  * name being typed; a reason that fits gets no tooltip. The element always
  * holds the whole text, so a screen reader reads all of it.
  */
@@ -895,7 +895,15 @@ function ClampedReason({ text }: { text: string }) {
       content={text}
       side="bottom"
       disabled={!clamped}
-      render={<span ref={ref} data-address-status-text="" className="min-w-0 line-clamp-2" />}
+      render={
+        <span
+          ref={ref}
+          data-address-status-text=""
+          // A cut reason takes focus, so a keyboard can open its tooltip too.
+          tabIndex={clamped ? 0 : undefined}
+          className="min-w-0 line-clamp-2 rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-kumo-brand"
+        />
+      }
     >
       {text}
     </Tooltip>
