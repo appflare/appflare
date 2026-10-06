@@ -1,6 +1,7 @@
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { InstallDetail } from "../installs/installs.functions";
 import type { UpdateNeeds } from "../installs/versions.server";
 import { secretsOf } from "../test/artifact-fixture";
 
@@ -11,7 +12,7 @@ const calls = vi.hoisted(() => ({
 vi.mock("../installs/versions.functions", () => ({ startUpdate: calls.startUpdate }));
 vi.mock("./job-started", () => ({ useJobStarted: () => calls.jobStarted }));
 
-const { useStartUpdate } = await import("./update-banner");
+const { UpdateBanner, useStartUpdate } = await import("./update-banner");
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -220,5 +221,23 @@ describe("the update dialog of a version whose database an earlier update connec
     expect(calls.startUpdate).toHaveBeenLastCalledWith({
       data: expect.objectContaining({ hyperdrive: { HYPERDRIVE: connection } }),
     });
+  });
+});
+
+describe("the banner while an update runs", () => {
+  it("shows the moving mark as decoration, with the link to the log", () => {
+    const install = {
+      id: "i1",
+      status: "updating",
+      activeJobId: "job1",
+      jobs: [{ id: "job1", kind: "update" }],
+      build: { kind: "artifact", image: null, builtAt: null, installer: null, stage: null },
+    } as Partial<InstallDetail> as InstallDetail;
+    act(() => root.render(<UpdateBanner install={install} isAdmin />));
+    expect(container.textContent).toContain("Updating");
+    expect(container.querySelector('a[href="/jobs/job1"]')?.textContent).toContain("View log");
+    // The banner says what runs; the mark in it is not a second "Loading" status.
+    expect(container.querySelector("svg")?.closest('[aria-hidden="true"]')).not.toBeNull();
+    expect(container.querySelector('[role="status"]')).toBeNull();
   });
 });

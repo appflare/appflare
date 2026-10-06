@@ -1,22 +1,17 @@
 import { Banner, Checkbox, LayerDialog, LinkButton, Text } from "@cloudflare/kumo";
-import {
-  ArrowCircleUpIcon,
-  ArrowRightIcon,
-  EnvelopeSimpleIcon,
-  InfoIcon,
-  WarningIcon,
-} from "@phosphor-icons/react";
+import { ArrowCircleUpIcon, ArrowRightIcon, EnvelopeSimpleIcon } from "@phosphor-icons/react";
 import { type FormEvent, type ReactNode, useId, useState } from "react";
 import type { InstallDetail } from "../installs/installs.functions";
 import { reinstallSentence } from "../installs/tier-change";
 import { startUpdate } from "../installs/versions.functions";
 import type { UpdateNeeds } from "../installs/versions.server";
 import { appLink } from "./app-links";
+import { AppflareLoader } from "./appflare-loader";
 import { BusyButton, BusyMark, busyActionProps } from "./busy-button";
 import { CronTriggersField } from "./cron-triggers-field";
 import { connectionsComplete, DatabaseFields, optionalConnectionsValid } from "./database-fields";
 import { useJobStarted } from "./job-started";
-import { ErrorMessageBanner } from "./message-text";
+import { BANNER_ICON, ErrorMessageBanner } from "./message-text";
 import { SandboxBuildConfirmation } from "./sandbox-build-confirmation";
 import {
   initialSecretValues,
@@ -47,7 +42,7 @@ export function UpdateBanner({ install, isAdmin }: { install: InstallDetail; isA
     return (
       <Banner
         variant="secondary"
-        icon={<InfoIcon weight="fill" />}
+        icon={<AppflareLoader size="sm" aria-hidden />}
         title={
           job?.kind === "rollback"
             ? "Rolling back"
@@ -80,7 +75,7 @@ export function UpdateBanner({ install, isAdmin }: { install: InstallDetail; isA
     return (
       <Banner
         variant="alert"
-        icon={<WarningIcon weight="fill" />}
+        icon={BANNER_ICON.alert}
         title={`${install.latestVersion} takes a reinstall`}
         description={`Installed: ${install.version}. ${reinstallSentence(install.build.kind)}`}
         action={
@@ -314,7 +309,7 @@ function UpdateDialog({
               <div className="grid gap-3">
                 <Banner
                   variant="alert"
-                  icon={<WarningIcon weight="fill" />}
+                  icon={BANNER_ICON.alert}
                   title="No preview check for this update"
                   description={`${needs.skipsPreview}.`}
                 />
@@ -329,7 +324,7 @@ function UpdateDialog({
             {needs.emailRouting !== undefined && (
               <Banner
                 variant="secondary"
-                icon={<EnvelopeSimpleIcon />}
+                icon={<EnvelopeSimpleIcon weight="fill" />}
                 title="Email changes with this version"
                 description={needs.emailRouting}
               />

@@ -1,12 +1,15 @@
-import { Badge, Banner, Checkbox, Empty, Link, LinkButton, Table, Text } from "@cloudflare/kumo";
 import {
-  ArrowRightIcon,
-  CheckCircleIcon,
-  GitBranchIcon,
-  TrashIcon,
-  WarningCircleIcon,
-  WarningIcon,
-} from "@phosphor-icons/react";
+  Badge,
+  Banner,
+  Button,
+  Checkbox,
+  Empty,
+  Link,
+  LinkButton,
+  Table,
+  Text,
+} from "@cloudflare/kumo";
+import { ArrowRightIcon, GitBranchIcon, TrashIcon } from "@phosphor-icons/react";
 import { createFileRoute, useRouter } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 import { z } from "zod";
@@ -17,8 +20,8 @@ import { cronTriggerCount } from "../../../catalog/cron-triggers";
 import { analyticsEngineRefusal } from "../../../catalog/requirement-checks";
 import { requirementSentence } from "../../../catalog/requirements";
 import { AppflareLoader } from "../../../components/appflare-loader";
-import { BusyButton } from "../../../components/busy-button";
 import { PrimitiveBadges } from "../../../components/catalog-badges";
+import { ConfirmDialog } from "../../../components/confirm-dialog";
 import { DescriptionItem, DescriptionList } from "../../../components/description-list";
 import { DocsLink, RequirementDocsLink } from "../../../components/docs-link";
 import { TechnicalNamesSwitch, useShowTechnicalNames } from "../../../components/field-label";
@@ -26,7 +29,12 @@ import { resourceKindLabel } from "../../../components/format";
 import { InstallAgainBanner } from "../../../components/install-again-banner";
 import { InstallAgainBuildGone } from "../../../components/install-again-build-gone";
 import { InstallForm } from "../../../components/install-form";
-import { MessageText } from "../../../components/message-text";
+import {
+  BANNER_ICON,
+  bannerRole,
+  MessageText,
+  SuccessBanner,
+} from "../../../components/message-text";
 import { OriginBadge } from "../../../components/origin-badge";
 import { PageHeader } from "../../../components/page-header";
 import { Section, SectionBody, SectionRows, SectionTable } from "../../../components/section";
@@ -221,37 +229,31 @@ function InstallAgainState({ build, again }: { build: SourceBuildView; again: Ag
   );
 }
 
-function DiscardButton({ buildId }: { buildId: string }) {
+/**
+ * "Throw away", after a confirmation: the build's files are deleted, and
+ * getting it back means building it again.
+ */
+function DiscardButton({ buildId, failed = false }: { buildId: string; failed?: boolean }) {
   const router = useRouter();
-  const [pending, setPending] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  async function discard() {
-    setPending(true);
-    setError(null);
-    try {
-      await discardSourceBuild({ data: { buildId } });
-      await router.invalidate();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Could not throw the build away.");
-    }
-    setPending(false);
-  }
   return (
-    <span className="inline-flex flex-wrap items-center gap-2">
-      <BusyButton
-        pending={pending}
-        variant="secondary-destructive"
-        icon={<TrashIcon />}
-        onClick={() => void discard()}
-      >
-        Throw away
-      </BusyButton>
-      {error !== null && (
-        <Text as="span" variant="error" size="sm">
-          {error}
-        </Text>
+    <ConfirmDialog
+      trigger={(p) => (
+        <Button {...p} variant="secondary-destructive" icon={<TrashIcon />}>
+          Throw away
+        </Button>
       )}
-    </span>
+      title="Throw away this build"
+      description={
+        failed
+          ? "Its log is deleted. Build again to try once more."
+          : "Its files are deleted from your sandbox Worker's bucket. Getting it back means building it again."
+      }
+      actionLabel="Throw away"
+      onConfirm={async () => {
+        await discardSourceBuild({ data: { buildId } });
+        await router.invalidate();
+      }}
+    />
   );
 }
 
@@ -270,7 +272,7 @@ function BuildState({
       return (
         <Banner
           variant="secondary"
-          icon={<AppflareLoader size="sm" />}
+          icon={<AppflareLoader size="sm" aria-hidden />}
           title="Building in your sandbox Worker"
           description={`This page shows the review once the build is done${again === null ? "" : `, with the install form filled in from ${again.record.label}`}. Its log shows each step as it runs.`}
           action={
@@ -284,7 +286,8 @@ function BuildState({
       return (
         <Banner
           variant="error"
-          icon={<WarningCircleIcon weight="fill" />}
+          icon={BANNER_ICON.error}
+          role={bannerRole("error")}
           title="The build failed"
           description={
             <span className="grid gap-2">
@@ -301,7 +304,7 @@ function BuildState({
               </span>
             </span>
           }
-          action={isAdmin ? <DiscardButton buildId={build.id} /> : undefined}
+          action={isAdmin ? <DiscardButton buildId={build.id} failed /> : undefined}
         />
       );
     case "discarding":
@@ -309,7 +312,7 @@ function BuildState({
       return (
         <Banner
           variant="secondary"
-          icon={<TrashIcon />}
+          icon={<TrashIcon weight="fill" />}
           title="This build was thrown away"
           description={`An admin threw it away, or nobody used it within ${UNUSED_BUILD_DAYS} days. Its files ${build.status === "discarding" ? "are being" : "are"} deleted from your sandbox Worker's bucket. Build again to install it.`}
         />
@@ -318,9 +321,7 @@ function BuildState({
       // Installed again from here, it is the failed install's: the state above says what happens.
       if (again?.own === true) return null;
       return (
-        <Banner
-          variant="default"
-          icon={<CheckCircleIcon weight="fill" />}
+        <SuccessBanner
           title={
             build.purpose === "update"
               ? "The install was updated from this build"
@@ -374,7 +375,8 @@ function Review({
       {refused && (
         <Banner
           variant="error"
-          icon={<WarningCircleIcon weight="fill" />}
+          icon={BANNER_ICON.error}
+          role={bannerRole("error")}
           title={
             build.purpose === "update"
               ? "This build cannot be deployed"
@@ -393,7 +395,7 @@ function Review({
         (review.baseline.added.length > 0 || review.baseline.removed.length > 0) && (
           <Banner
             variant="alert"
-            icon={<WarningIcon weight="fill" />}
+            icon={BANNER_ICON.alert}
             title="This commit's bindings differ from the catalog's release"
             description={
               <span className="grid gap-1">
@@ -720,7 +722,7 @@ function Requirements({
         {checks.pending.length > 0 ? (
           <Banner
             variant="alert"
-            icon={<WarningIcon weight="fill" />}
+            icon={BANNER_ICON.alert}
             title={build.purpose === "update" ? "Before you update" : "Before you install"}
             description={
               <div className="grid gap-2">

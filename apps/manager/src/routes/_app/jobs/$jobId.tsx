@@ -1,13 +1,12 @@
-import { Badge, Banner, Empty, LinkButton, Table, Text } from "@cloudflare/kumo";
+import { Badge, Banner, Code, Empty, LinkButton, Table, Text } from "@cloudflare/kumo";
 import {
   ArrowCounterClockwiseIcon,
   ArrowRightIcon,
-  ArrowsClockwiseIcon,
   GitBranchIcon,
   ListChecksIcon,
-  WarningCircleIcon,
 } from "@phosphor-icons/react";
 import { createFileRoute } from "@tanstack/react-router";
+import { useLayoutEffect, useRef } from "react";
 import { startedByLabel } from "../../../auto-update/auto-update";
 import { AppflareLoader } from "../../../components/appflare-loader";
 import { DescriptionItem, DescriptionList } from "../../../components/description-list";
@@ -15,10 +14,10 @@ import { DocsLink } from "../../../components/docs-link";
 import { TechnicalNamesSwitch, useShowTechnicalNames } from "../../../components/field-label";
 import { formatTime, jobKindLabel } from "../../../components/format";
 import { SendReportButton } from "../../../components/job-report-dialog";
-import { MessageText } from "../../../components/message-text";
+import { BANNER_ICON, bannerRole, MessageText } from "../../../components/message-text";
 import { OpenAppButton } from "../../../components/open-app-button";
 import { PageHeader } from "../../../components/page-header";
-import { Section, SectionBody, SectionTable } from "../../../components/section";
+import { Section, SectionBody, SectionEmpty, SectionTable } from "../../../components/section";
 import { SeedCredentialsCard } from "../../../components/seed-credentials-card";
 import { StatusBadge } from "../../../components/status-badge";
 import { Timestamp } from "../../../components/timestamp";
@@ -134,7 +133,7 @@ function JobPage() {
       {switching && (
         <Banner
           variant="secondary"
-          icon={<ArrowsClockwiseIcon />}
+          icon={<AppflareLoader size="sm" aria-hidden />}
           title="Appflare is switching versions…"
           description={
             job.kind === "self_rollback"
@@ -146,7 +145,8 @@ function JobPage() {
       {job.status === "failed" && (
         <Banner
           variant="error"
-          icon={<WarningCircleIcon weight="fill" />}
+          icon={BANNER_ICON.error}
+          role={bannerRole("error")}
           title="The job failed"
           description={job.error === null ? undefined : <MessageText message={job.error} />}
           action={
@@ -195,9 +195,11 @@ function JobPage() {
         title="Log"
         empty={
           job.logs.length === 0 ? (
-            <Text variant="secondary">
-              {isActive(job) ? "Waiting for the first step…" : "No log lines were written."}
-            </Text>
+            <SectionEmpty
+              size="sm"
+              icon={<ListChecksIcon size={32} className="text-kumo-inactive" />}
+              title={isActive(job) ? "Waiting for the first step…" : "No log lines were written"}
+            />
           ) : null
         }
       >
@@ -220,8 +222,23 @@ function JobPage() {
   );
 }
 
-/** Live output of the sandbox build the job waits on; the job log gets it when the build ends. */
+/** Within this many pixels of the end, the output counts as read to the end. */
+const AT_END_PX = 24;
+
+/**
+ * Live output of the sandbox build the job waits on; the job log gets it
+ * when the build ends. The output is a box of its own that keeps up with
+ * new lines, unless the admin scrolled up to read an earlier one.
+ */
 function BuildProgress({ build }: { build: BuildProgressView }) {
+  const output = useRef<HTMLDivElement>(null);
+  const atEnd = useRef(true);
+  const text = build.lines.join("\n");
+  // biome-ignore lint/correctness/useExhaustiveDependencies: runs again for each new output
+  useLayoutEffect(() => {
+    const box = output.current;
+    if (box !== null && atEnd.current) box.scrollTop = box.scrollHeight;
+  }, [text]);
   return (
     <Section
       title={
@@ -241,19 +258,26 @@ function BuildProgress({ build }: { build: BuildProgressView }) {
           Last output at {formatTime(build.updatedAt)}. The end of the output goes to the log below
           when the {build.kind === "installer" ? "run" : "build"} ends.
         </Text>
-        <div className="grid gap-0.5 overflow-x-auto">
-          {build.lines.length === 0 ? (
-            <Text variant="mono-secondary">No output yet.</Text>
-          ) : (
-            build.lines.map((line, i) => (
-              // Output lines are not unique; they only ever render in order.
-              // biome-ignore lint/suspicious/noArrayIndexKey: display-only list in output order
-              <Text key={i} variant="mono-secondary">
-                {line.length > 0 ? line : " "}
-              </Text>
-            ))
-          )}
-        </div>
+        {build.lines.length === 0 ? (
+          <Text variant="mono-secondary">No output yet.</Text>
+        ) : (
+          // Kumo's code block, as a box that scrolls; focusable so a keyboard can scroll it.
+          <div
+            ref={output}
+            // biome-ignore lint/a11y/useSemanticElements: a named, scrollable output box, not a group of form controls
+            role="group"
+            aria-label={build.kind === "installer" ? "Installer output" : "Build output"}
+            // biome-ignore lint/a11y/noNoninteractiveTabindex: a scrolling box must take focus to be scrolled by keyboard
+            tabIndex={0}
+            onScroll={(event) => {
+              const box = event.currentTarget;
+              atEnd.current = box.scrollHeight - box.scrollTop - box.clientHeight <= AT_END_PX;
+            }}
+            className="max-h-96 min-w-0 overflow-auto rounded-md border border-kumo-fill bg-kumo-base p-2.5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-kumo-brand"
+          >
+            <Code lang="bash" code={text} />
+          </div>
+        )}
       </SectionBody>
     </Section>
   );

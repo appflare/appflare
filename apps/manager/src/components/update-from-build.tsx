@@ -1,12 +1,12 @@
 import { Banner, Checkbox, Text } from "@cloudflare/kumo";
-import { ArrowCircleUpIcon, EnvelopeSimpleIcon, WarningIcon } from "@phosphor-icons/react";
+import { ArrowCircleUpIcon, EnvelopeSimpleIcon } from "@phosphor-icons/react";
 import { type FormEvent, useState } from "react";
 import type { SourceBuildReview, SourceBuildView } from "../installs/source-builds.functions";
 import { updateFromSourceBuild } from "../installs/source-builds.functions";
 import { BusyButton } from "./busy-button";
 import { connectionsComplete, DatabaseFields, optionalConnectionsValid } from "./database-fields";
 import { useJobStarted } from "./job-started";
-import { ErrorMessageBanner } from "./message-text";
+import { BANNER_ICON, ErrorMessageBanner } from "./message-text";
 import {
   initialSecretValues,
   SecretFields,
@@ -87,7 +87,7 @@ export function UpdateFromBuild({
             <div className="grid gap-3">
               <Banner
                 variant="alert"
-                icon={<WarningIcon weight="fill" />}
+                icon={BANNER_ICON.alert}
                 title="No preview check for this update"
                 description={`${review.skipsPreview}.`}
               />
@@ -102,7 +102,7 @@ export function UpdateFromBuild({
           {review.emailRouting !== null && (
             <Banner
               variant="secondary"
-              icon={<EnvelopeSimpleIcon />}
+              icon={<EnvelopeSimpleIcon weight="fill" />}
               title="Email changes with this version"
               description={review.emailRouting}
             />

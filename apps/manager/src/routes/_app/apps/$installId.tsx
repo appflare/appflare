@@ -12,9 +12,8 @@ import {
 import {
   ArrowCounterClockwiseIcon,
   ArrowRightIcon,
-  InfoIcon,
   PackageIcon,
-  WarningCircleIcon,
+  StackIcon,
 } from "@phosphor-icons/react";
 import { createFileRoute, useLocation, useNavigate } from "@tanstack/react-router";
 import { useEffect, useRef, useState } from "react";
@@ -32,6 +31,7 @@ import {
   appSectionTab,
 } from "../../../components/app-links";
 import { AppSettingsSection } from "../../../components/app-settings-section";
+import { AppflareLoader } from "../../../components/appflare-loader";
 import { AppIcon } from "../../../components/catalog-media";
 import { CatalogSourceBadge } from "../../../components/catalog-source-badge";
 import { CustomDomainsSection } from "../../../components/custom-domains-section";
@@ -44,6 +44,7 @@ import { jobKindLabel, resourceKindLabel } from "../../../components/format";
 import { FLUSH_RING_CLASS } from "../../../components/hash-target";
 import { InstallHealth } from "../../../components/install-health";
 import { Markdown } from "../../../components/markdown";
+import { BANNER_ICON, bannerRole } from "../../../components/message-text";
 import { OpenAppButton } from "../../../components/open-app-button";
 import { OriginBadge } from "../../../components/origin-badge";
 import { PageHeader } from "../../../components/page-header";
@@ -53,6 +54,7 @@ import { revealSelectedTab } from "../../../components/reveal-tab";
 import {
   Section,
   SectionBody,
+  SectionEmpty,
   SectionRow,
   SectionRows,
   SectionTable,
@@ -409,7 +411,11 @@ function ResourcesTab({ install }: { install: InstallDetail }) {
           action={!kept && install.resources.length > 0 ? namesSwitch : null}
           empty={
             install.resources.length === 0 ? (
-              <Text variant="secondary">No resources have been created yet.</Text>
+              <SectionEmpty
+                size="sm"
+                icon={<StackIcon size={32} className="text-kumo-inactive" />}
+                title="No resources have been created yet"
+              />
             ) : null
           }
         >
@@ -596,7 +602,8 @@ function FailedInstallState({ install, isAdmin }: { install: InstallDetail; isAd
   return (
     <Banner
       variant="error"
-      icon={<WarningCircleIcon weight="fill" />}
+      icon={BANNER_ICON.error}
+      role={bannerRole("error")}
       title="The install did not finish"
       description={
         again
@@ -631,7 +638,7 @@ function UninstallState({ install }: { install: InstallDetail }) {
     return (
       <Banner
         variant="secondary"
-        icon={<InfoIcon weight="fill" />}
+        icon={BANNER_ICON.secondary}
         title="Uninstalled"
         description={
           <>
@@ -655,7 +662,7 @@ function UninstallState({ install }: { install: InstallDetail }) {
     return (
       <Banner
         variant="secondary"
-        icon={<InfoIcon weight="fill" />}
+        icon={<AppflareLoader size="sm" aria-hidden />}
         title="Uninstalling"
         action={
           <LinkButton
@@ -672,7 +679,8 @@ function UninstallState({ install }: { install: InstallDetail }) {
   return (
     <Banner
       variant="error"
-      icon={<WarningCircleIcon weight="fill" />}
+      icon={BANNER_ICON.error}
+      role={bannerRole("error")}
       title="The uninstall did not finish"
       description={
         <>
