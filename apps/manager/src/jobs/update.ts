@@ -1646,9 +1646,11 @@ export async function runUpdate(ctx: JobContext): Promise<void> {
     }
     // Configurations made from connection strings given anew: deleted when
     // no version of this update ever served (a full deploy that started may
-    // have), otherwise recorded as the bound ones, as on success.
+    // have, and so may another Worker that could not be put back), otherwise
+    // recorded as the bound ones, as on success.
+    const mayServe = scriptDeployStarted || othersPromoted.length > 0;
     let unusedConfigs: "removed" | "left" | null = null;
-    if (!wasPromoted && !scriptDeployStarted && replacements.length > 0) {
+    if (!wasPromoted && !mayServe && replacements.length > 0) {
       try {
         for (const r of replacements) {
           await deleteConfigPhase(steps, r.next, ", made for this update, which never served");
@@ -1660,10 +1662,10 @@ export async function runUpdate(ctx: JobContext): Promise<void> {
     }
     const switchRecords = wasPromoted && !replacementsRecorded ? [...replacements] : [];
     const configsLeft = unusedConfigs === "left" ? replacements.map((r) => r.next.name) : [];
-    // A full deploy that started may serve with them: neither deleted nor
-    // switched, they stay recorded with no binding.
-    const configsKept =
-      !wasPromoted && scriptDeployStarted ? replacements.map((r) => r.next.name) : [];
+    // A version that may serve with them (a full deploy that started, or
+    // another Worker still on the new version): neither deleted nor switched,
+    // they stay recorded with no binding.
+    const configsKept = !wasPromoted && mayServe ? replacements.map((r) => r.next.name) : [];
     const othersRecordJson = othersRecord === null ? null : JSON.stringify(othersRecord);
     await step.do("mark update failed", async () => {
       const orm = createDb(env.DB);
@@ -1694,7 +1696,7 @@ export async function runUpdate(ctx: JobContext): Promise<void> {
       }
       if (configsKept.length > 0) {
         log.error(
-          `The Hyperdrive configurations made for this update (${configsKept.join(", ")}) stay in place, as the deploy that started may have made the new version use them; the bindings keep the configurations they had, and uninstalling the app deletes these.`,
+          `The Hyperdrive configurations made for this update (${configsKept.join(", ")}) stay in place, as the new version may be serving with them; the bindings keep the configurations they had, and uninstalling the app deletes these.`,
         );
       }
       if (aheadOfCode.length > 0) {

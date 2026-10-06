@@ -652,7 +652,91 @@ describe("a version that connects to a database elsewhere", () => {
       ]);
       expect(r.logs).toContainEqual({
         level: "error",
-        message: `The Hyperdrive configurations made for this update (${REPLACEMENT}) stay in place, as the deploy that started may have made the new version use them; the bindings keep the configurations they had, and uninstalling the app deletes these.`,
+        message: `The Hyperdrive configurations made for this update (${REPLACEMENT}) stay in place, as the new version may be serving with them; the bindings keep the configurations they had, and uninstalling the app deletes these.`,
+      });
+    });
+
+    it("keeps the configuration it made, unbound, when another Worker binding it cannot be put back", async () => {
+      const JOBS_OLD = "11111111-2222-4333-8444-555555555555";
+      // Both Workers bind HYPERDRIVE in the new version; neither does in the installed one.
+      const old = await buildArtifactFixture({
+        ...BASE,
+        version: "1.0.0",
+        otherWorkers: [{ name: "jobs" }],
+      });
+      const w = await world(
+        {
+          ...WITH_DATABASE,
+          otherWorkers: [{ name: "jobs", bindings: [{ type: "hyperdrive", name: "HYPERDRIVE" }] }],
+        },
+        {
+          manifestJson: JSON.stringify(old.manifest),
+          resources: [...seeded.resources, { kind: "worker", name: "cut-jobs", cfId: "cut-jobs" }],
+        },
+        // The primary Worker's promotion is refused, after the other Worker's.
+        { failOnce: new Map([["POST /workers/scripts/cut/deployments", 400]]) },
+      );
+      await env.DB.prepare("UPDATE installs SET worker_versions_json = ?1 WHERE id = ?2")
+        .bind(JSON.stringify({ "cut-jobs": JOBS_OLD }), INSTALL_ID)
+        .run();
+      w.side.state.hyperdrive.push({ id: "hd-9", name: "cut-hyperdrive", body: {} });
+      const jobs = fakeAccount(null, {
+        worker: "cut-jobs",
+        deployments: [{ id: "dep-j", versions: [{ version_id: JOBS_OLD, percentage: 100 }] }],
+      });
+      // The other Worker's return to the snapshot's version is refused: it
+      // keeps serving the new version, which binds the new configuration.
+      let deploys = 0;
+      const inner = w.fetch;
+      w.fetch = async (input, init) => {
+        const toJobs = input.includes("/workers/scripts/cut-jobs") || input.includes("-cut-jobs.");
+        if (toJobs && init?.method === "POST" && input.includes("/cut-jobs/deployments")) {
+          deploys += 1;
+          if (deploys > 1) {
+            return Response.json(
+              { success: false, errors: [{ code: 10000, message: "injected refusal" }] },
+              { status: 400 },
+            );
+          }
+        }
+        return toJobs ? jobs.fetch(input, init) : inner(input, init);
+      };
+      const { params } = await start(
+        w,
+        { offerChoices: true, hyperdrive: { HYPERDRIVE: CONNECTION } },
+        "job2",
+      );
+      if (params === null) throw new Error("the update did not start");
+      const r = await run(w, params);
+      expect(r.job?.status).toBe("failed");
+      expect(jobs.state.versions.at(-1)?.metadata.bindings).toContainEqual({
+        type: "hyperdrive",
+        name: "HYPERDRIVE",
+        id: "hd-2",
+      });
+      // Not deleted while that Worker may serve with it; the install's
+      // configuration keeps the binding.
+      expect(w.side.state.calls).not.toContain("DELETE /hyperdrive/configs/hd-2");
+      expect(w.side.state.hyperdrive.map((c) => c.id)).toEqual(["hd-9", "hd-2"]);
+      expect(r.resources.filter((x) => x.kind.startsWith("hyperdrive"))).toEqual([
+        {
+          kind: "hyperdrive",
+          binding: "HYPERDRIVE",
+          name: "cut-hyperdrive",
+          cf_id: "hd-9",
+          deleted_at: null,
+        },
+        { kind: "hyperdrive", binding: null, name: REPLACEMENT, cf_id: "hd-2", deleted_at: null },
+      ]);
+      expect(r.logs).toContainEqual({
+        level: "error",
+        message: `The Hyperdrive configurations made for this update (${REPLACEMENT}) stay in place, as the new version may be serving with them; the bindings keep the configurations they had, and uninstalling the app deletes these.`,
+      });
+      expect(r.logs).toContainEqual({
+        level: "error",
+        message: expect.stringContaining(
+          `The app's Workers "cut-jobs" may still serve the new version`,
+        ),
       });
     });
   });
