@@ -19,6 +19,7 @@ import {
   SANDBOX_FEATURE_WRANGLER_CONFIG_INLINE,
   SANDBOX_PROTOCOL_VERSION,
   SANDBOX_URL_ORIGIN,
+  SANDBOX_WORKER_NAME,
   type SandboxInfo,
   type SelfManagedOutcome,
   type SelfManagedStatus,
@@ -43,6 +44,30 @@ import { UPDATE_SANDBOX_HINT } from "./connect-copy";
 
 /** The binding's name on the manager's Worker. */
 export const SANDBOX_BINDING = "SANDBOX";
+
+/**
+ * Whose a `SANDBOX` binding is, as Cloudflare reports it on Appflare's own
+ * Worker (a version's bindings, or the script's):
+ *
+ * - `ours`: a service binding to the sandbox Worker.
+ * - `dangling`: a service binding to a Worker that was deleted. Deleting a
+ *   Worker with `?force=true`, as disabling sandbox builds does while
+ *   Appflare still binds it, leaves every binding to it in place as
+ *   `{ type: "service", service: "", service_deleted: true, entrypoint: null }`,
+ *   and a new Worker by the same name does not bring it back. Which Worker
+ *   it named is gone with it, but a binding to nothing serves nothing, so
+ *   Appflare removes or replaces it as its own.
+ * - `foreign`: anything else by that name (a service binding to another
+ *   Worker, one in a shape Cloudflare was not seen to report, or a binding
+ *   of another type), which Appflare leaves alone.
+ */
+export function sandboxBindingKind(
+  binding: Record<string, unknown>,
+): "ours" | "dangling" | "foreign" {
+  if (binding.type !== "service") return "foreign";
+  if (binding.service_deleted === true || binding.service === "") return "dangling";
+  return binding.service === SANDBOX_WORKER_NAME ? "ours" : "foreign";
+}
 
 /** The RPC surface of `SandboxBuilds`, as the manager calls it. */
 export interface SandboxBuildsBinding {

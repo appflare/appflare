@@ -133,7 +133,7 @@ async function install(opts: {
     {
       db: env.DB,
       loadApp: async () => ({ app, manifest: catalogOnlyManifest(catalog) }),
-      sandboxConnected: opts.sandboxConnected ?? sandbox !== undefined,
+      sandboxConnected: async () => opts.sandboxConnected ?? sandbox !== undefined,
       createJob: async (id, p) => {
         if (p.kind === "install") params = p;
         return { id };
@@ -641,7 +641,7 @@ describe("updating and uninstalling a sandbox tier app", () => {
         throw new Error("a sandbox tier app has no artifact manifest to load");
       },
       loadCatalog: async () => fixture.manifest.catalog,
-      sandboxConnected: sandbox !== undefined,
+      sandboxConnected: async () => sandbox !== undefined,
       createJob: async (id: string, p: UpdateJobParams) => {
         params = p;
         return { id };

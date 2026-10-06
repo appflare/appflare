@@ -29,7 +29,8 @@ import { readRepositoryRefs, repositoryReader } from "../github/access.server";
 import { jobCreator } from "../jobs/create-job.server";
 import { reconcileJobs } from "../jobs/reconcile.server";
 import { sandboxAutoEnableDeps } from "../sandbox/auto-enable-env.server";
-import { sandboxBinding, sandboxInfo } from "../sandbox/binding";
+import { sandboxBinding } from "../sandbox/binding";
+import { readSandboxConnection } from "../sandbox/connection.server";
 import { requireRole, requireSession } from "../server/auth.server";
 import { installLabel } from "./display-name";
 import { installAgainBuildRequest, sandboxBuildFiles } from "./install-again.server";
@@ -71,15 +72,7 @@ function asUserError(error: unknown): never {
   throw error;
 }
 
-async function sandboxState() {
-  const binding = sandboxBinding(env);
-  if (binding === undefined) return { connected: false, info: null };
-  try {
-    return { connected: true, info: await sandboxInfo(binding) };
-  } catch {
-    return { connected: true, info: null };
-  }
-}
+const sandboxState = () => readSandboxConnection(env);
 
 /** The app an app key names, with its catalog manifest verified with its own catalog's keys. */
 async function loadCatalogApp(key: string) {

@@ -19,8 +19,11 @@ import { JobError, type JobSteps } from "./steps";
  * An instance is expected to pick up that version when it resumes after a
  * sleep (seen for an instance cut off by such a deploy; not yet verified
  * live for a sleeping one), so once the enable job succeeded the wait goes
- * on, a minute at a time, until this invocation has the binding, and gives
- * up after a few minutes asking for the job to be started again.
+ * on, a minute at a time, until the binding answers in this invocation, and
+ * gives up after a few minutes asking for the job to be started again. Having
+ * the binding is not enough: one to a sandbox Worker that was deleted (a
+ * disable that stopped before its last step leaves it) is there, but every
+ * call through it fails.
  */
 
 /** The job params field: the enable job to wait for. */
@@ -50,7 +53,19 @@ function pollName(poll: number): string {
   return `wait for sandbox builds (${poll})`;
 }
 
-/** Steps "wait for sandbox builds (n)": returns once the enable job succeeded and `SANDBOX` is bound. */
+/** Whether `SANDBOX` is bound in this invocation and a call through it answers. */
+async function sandboxAnswers(env: JobEnv): Promise<boolean> {
+  const binding = sandboxBinding(env);
+  if (binding === undefined) return false;
+  try {
+    await binding.info();
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** Steps "wait for sandbox builds (n)": returns once the enable job succeeded and `SANDBOX` answers. */
 export async function awaitSandboxEnabledPhase(
   steps: JobSteps,
   step: StepRunner,
@@ -92,8 +107,8 @@ export async function awaitSandboxEnabledPhase(
           `sandbox builds could not be turned on (job ${enableJobId}): ${firstLine(job.error) ?? "it failed"}; nothing of this job was started`,
         );
       }
-      const bound = sandboxBinding(env) !== undefined;
-      if (job.status === "succeeded" && bound) {
+      const bound = job.status === "succeeded" && (await sandboxAnswers(env));
+      if (bound) {
         log.info("Sandbox builds are on; continuing.");
       }
       return { status: job.status, lastLogId: lines.at(-1)?.id ?? lastLogId, bound };

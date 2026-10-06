@@ -11,6 +11,7 @@ import { getCfClient } from "../cloudflare/client.server";
 import { jobCreator } from "../jobs/create-job.server";
 import { sandboxAutoEnableDeps } from "../sandbox/auto-enable-env.server";
 import { sandboxBinding } from "../sandbox/binding";
+import { readSandboxConnection } from "../sandbox/connection.server";
 import { requireRole, requireSession } from "../server/auth.server";
 import { displayNameInput } from "./display-name";
 import { RenameInstallError, renameInstallCore } from "./display-name.server";
@@ -58,7 +59,7 @@ export const startInstall = createServerFn({ method: "POST" })
             };
           },
           createJob: jobCreator(env.JOBS),
-          sandboxConnected: binding !== undefined,
+          sandboxConnected: async () => (await readSandboxConnection(env)).connected,
           sandboxAutoEnable: sandboxAutoEnableDeps(env),
           ...(binding === undefined
             ? {}

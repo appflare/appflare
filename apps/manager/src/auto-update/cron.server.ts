@@ -19,7 +19,7 @@ import type { WorkflowLookup } from "../jobs/reconcile.server";
 import type { SelfUpdateJobParams } from "../jobs/self-update";
 import { SelfUpdateError, startSelfUpdateCore } from "../jobs/self-update/start.server";
 import type { UpdateJobParams } from "../jobs/update";
-import { sandboxBinding } from "../sandbox/binding";
+import { readSandboxConnection } from "../sandbox/connection.server";
 import { runningVersion } from "../server/build-version";
 import { isDevBuild } from "../telemetry/state.server";
 import {
@@ -273,7 +273,7 @@ export async function startUnattendedUpdate(
         if (!read.ok) throw new VersionActionError(read.error);
         return read.catalog;
       },
-      sandboxConnected: sandboxBinding(env) !== undefined,
+      sandboxConnected: async () => (await readSandboxConnection(env)).connected,
     },
     { installId },
   );

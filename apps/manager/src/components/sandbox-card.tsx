@@ -49,6 +49,10 @@ const SANDBOX_WORKER = "appflare-sandbox";
  *   (confirmed the same way) when this Appflare pins a newer release;
  *   "Disable sandbox builds" behind the typed name, refused while an app
  *   still needs it.
+ * - Off, with Appflare still bound to a sandbox Worker that was deleted (a
+ *   disable that stopped before its last step leaves that): a note saying
+ *   so, and "Disable sandbox builds" to remove the binding; enabling
+ *   replaces it.
  * - When the last enable, update or disable job failed and none has
  *   succeeded since, its first error line and a link to its log, so a
  *   stopped run does not look like a card that was never used.
@@ -318,6 +322,7 @@ function NotConnected({
     containers: capabilities.containers,
     accountId: capabilities.accountId,
   });
+  const dangling = isAdmin && status.danglingBinding;
   if (!paidDetected) {
     return (
       <div className="grid gap-2">
@@ -326,8 +331,14 @@ function NotConnected({
           account is on Workers Paid, add Containers: Edit to Appflare's token (or Billing: Read)
           and choose Check again under What this account can run, on Your account.
         </Text>
+        {dangling && <DanglingBindingNote />}
         {isAdmin && status.workerExists === true && (
           <LeftoverWorker status={status} disabled={busy} />
+        )}
+        {dangling && status.workerExists !== true && (
+          <div className="flex justify-end">
+            <DisableDialog status={status} disabled={busy} />
+          </div>
         )}
       </div>
     );
@@ -356,6 +367,7 @@ function NotConnected({
           }
         />
       )}
+      {dangling && <DanglingBindingNote />}
       {status.workerExists === null && isAdmin && (
         <Banner
           variant="alert"
@@ -365,7 +377,9 @@ function NotConnected({
       )}
       {isAdmin ? (
         <div className="flex flex-wrap items-start justify-end gap-2">
-          {status.workerExists === true && <DisableDialog status={status} disabled={busy} />}
+          {(status.workerExists === true || dangling) && (
+            <DisableDialog status={status} disabled={busy} />
+          )}
           {status.workerExists === true && <ConnectButton disabled={busy} />}
           <EnableDialog status={status} disabled={busy || problems.length > 0} />
         </div>
@@ -375,6 +389,21 @@ function NotConnected({
         </Text>
       )}
     </div>
+  );
+}
+
+/**
+ * Appflare's Worker still binds a sandbox Worker that was deleted. Calls
+ * through that binding fail, so sandbox builds are off.
+ */
+function DanglingBindingNote() {
+  return (
+    <Banner
+      variant="alert"
+      icon={<WarningIcon weight="fill" />}
+      title="Appflare still has a binding to a deleted sandbox Worker"
+      description="Sandbox builds are off. Disabling them removes the binding, and enabling them replaces it."
+    />
   );
 }
 
@@ -432,7 +461,7 @@ function DisableDialog({ status, disabled }: { status: SandboxCardState; disable
         </Button>
       )}
       title="Disable sandbox builds"
-      description="Appflare disconnects from the sandbox Worker, then deletes it with the containers it builds in and the storage that holds every build and its log. GitHub access tokens are kept on the sandbox Worker, so they are removed too."
+      description="Appflare deletes the sandbox Worker with the containers it builds in and the storage that holds every build and its log, then disconnects from it. GitHub access tokens are kept on the sandbox Worker, so they are removed too."
       {...(inUse ? {} : { confirmText: SANDBOX_WORKER })}
       actionLabel="Disable and delete"
       disabled={inUse}

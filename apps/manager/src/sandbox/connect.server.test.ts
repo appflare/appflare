@@ -16,7 +16,14 @@ import {
   TOKEN,
 } from "../test/fake-account";
 import { fakeSandbox } from "../test/fake-sandbox";
-import { changeSandboxBinding, connectSandboxCore, readSandboxStatus } from "./connect.server";
+import { DANGLING_SANDBOX } from "../test/fake-sandbox-account";
+import type { SandboxBuildsBinding } from "./binding";
+import {
+  changeSandboxBinding,
+  connectSandboxCore,
+  readSandboxStatus,
+  sandboxBindingDangles,
+} from "./connect.server";
 
 /**
  * "Connect sandbox builds" against the stateful fake account: a new version
@@ -123,6 +130,28 @@ describe("connectSandboxCore", () => {
     });
     expect(r.result).toEqual({ alreadyConnected: true, versionId: null });
     expect(r.account.state.versionPatches).toEqual([]);
+  });
+
+  it("replaces a SANDBOX binding to a deleted Worker instead of refusing it", async () => {
+    const r = await connect({
+      versionBindings: { [SERVING]: [{ type: "d1", name: "DB", id: "db-1" }, DANGLING_SANDBOX] },
+    });
+    expect(r.error).toBeNull();
+    expect(r.result).toEqual({ alreadyConnected: false, versionId: NEW_VERSION });
+    expect(r.account.state.versionPatches).toEqual([
+      {
+        env: {
+          SANDBOX: { type: "service", service: "appflare-sandbox", entrypoint: "SandboxBuilds" },
+        },
+        annotations: {
+          "workers/message": "Appflare: connect sandbox builds",
+          "workers/tag": SERVING,
+        },
+      },
+    ]);
+    expect(r.account.state.deployments[0]?.versions).toEqual([
+      { version_id: NEW_VERSION, percentage: 100 },
+    ]);
   });
 
   it("refuses a SANDBOX binding to another Worker", async () => {
@@ -240,6 +269,23 @@ describe("changeSandboxBinding (disconnect)", () => {
     ]);
   });
 
+  it("removes a SANDBOX binding to a deleted Worker, as deleting the sandbox Worker leaves it", async () => {
+    const account = world([DANGLING_SANDBOX]);
+    expect(await disconnect(account)).toEqual({ unchanged: false, versionId: NEW_VERSION });
+    expect(account.state.versionPatches).toEqual([
+      {
+        env: { SANDBOX: null },
+        annotations: {
+          "workers/message": "Appflare: disconnect sandbox builds",
+          "workers/tag": SERVING,
+        },
+      },
+    ]);
+    expect(account.state.deployments[0]?.versions).toEqual([
+      { version_id: NEW_VERSION, percentage: 100 },
+    ]);
+  });
+
   it("changes nothing when the serving version has no SANDBOX of Appflare's", async () => {
     for (const serving of [[], [{ type: "service", name: "SANDBOX", service: "billing" }]]) {
       const account = world(serving);
@@ -271,6 +317,7 @@ describe("readSandboxStatus", () => {
       },
       problem: null,
       workerExists: null,
+      danglingBinding: false,
     });
   });
 
@@ -282,9 +329,66 @@ describe("readSandboxStatus", () => {
         image: "docker.io/mendylanda/appflare-sandbox:1.0.0",
       },
     });
-    const status = await readSandboxStatus({ binding });
+    // It answered, so its Worker is there: no need to read the bindings.
+    let asked = false;
+    const status = await readSandboxStatus({
+      binding,
+      bindingDangles: async () => {
+        asked = true;
+        return true;
+      },
+    });
+    expect(asked).toBe(false);
     expect(status.connected).toBe(true);
     expect(status.problem).toMatch(/speaks protocol 2, this manager speaks 1; update Appflare/);
+  });
+
+  /** A binding whose calls fail, as one to a deleted Worker does. */
+  const lost = {
+    info: async () => {
+      throw new Error("Network connection lost.");
+    },
+  } as unknown as SandboxBuildsBinding;
+
+  it("reads a binding to a deleted Worker as off, for admins, and says whether a sandbox Worker exists", async () => {
+    expect(
+      await readSandboxStatus({
+        binding: lost,
+        listWorkers: async () => ["appflare"],
+        bindingDangles: async () => true,
+      }),
+    ).toEqual({
+      connected: false,
+      info: null,
+      problem: null,
+      workerExists: false,
+      danglingBinding: true,
+    });
+  });
+
+  it("reports a binding that does not answer as connected with its problem otherwise", async () => {
+    const notAnswering = {
+      connected: true,
+      info: null,
+      problem: "Network connection lost.",
+      workerExists: null,
+      danglingBinding: false,
+    };
+    // The sandbox Worker is there but does not answer.
+    expect(await readSandboxStatus({ binding: lost, bindingDangles: async () => false })).toEqual(
+      notAnswering,
+    );
+    // Could not tell.
+    expect(
+      await readSandboxStatus({
+        binding: lost,
+        bindingDangles: async () => {
+          throw new Error("API down");
+        },
+      }),
+    ).toEqual(notAnswering);
+    // Members: no Cloudflare call.
+    expect(await readSandboxStatus({ binding: lost })).toEqual(notAnswering);
   });
 
   it("tells whether the sandbox Worker exists when not connected", async () => {
@@ -295,5 +399,26 @@ describe("readSandboxStatus", () => {
       }),
     ).toMatchObject({ connected: false, workerExists: true });
     expect(await readSandboxStatus({ binding: undefined })).toMatchObject({ workerExists: null });
+  });
+});
+
+describe("sandboxBindingDangles", () => {
+  it("is true only when the serving version binds SANDBOX to a deleted Worker", async () => {
+    const dangles = (serving: unknown[]) => {
+      const account = fakeAccount(null, {
+        worker: "appflare",
+        deployments: [{ id: "dep-0", versions: [{ version_id: SERVING, percentage: 100 }] }],
+        versionBindings: { [SERVING]: serving },
+      });
+      return sandboxBindingDangles(
+        createClient({ accountId: ACC, token: TOKEN, fetch: account.fetch }),
+        "appflare",
+      );
+    };
+    expect(await dangles([DANGLING_SANDBOX])).toBe(true);
+    expect(await dangles([{ type: "service", name: "SANDBOX", service: "appflare-sandbox" }])).toBe(
+      false,
+    );
+    expect(await dangles([])).toBe(false);
   });
 });

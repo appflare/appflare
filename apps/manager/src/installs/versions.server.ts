@@ -206,8 +206,11 @@ export interface StartUpdateDeps extends StartJobDeps<UpdateJobParams> {
    * unavailable.
    */
   loadCatalog?(app: IndexApp): Promise<CatalogManifest>;
-  /** Whether this manager has its `SANDBOX` binding to the sandbox Worker. */
-  sandboxConnected?: boolean;
+  /**
+   * Whether this manager is connected to the sandbox Worker (see
+   * `readSandboxConnection`); asked only for an app that needs it.
+   */
+  sandboxConnected?: () => Promise<boolean>;
 }
 
 export interface StartUpdateRequest {
@@ -324,7 +327,7 @@ export async function startUpdateCore(
   /** Cron triggers of the new version; unknown for a sandbox build (and it needs Workers Paid anyway). */
   let newCrons: number | null = null;
   if (sandbox !== null) {
-    if (deps.sandboxConnected !== true) {
+    if ((await deps.sandboxConnected?.()) !== true) {
       throw new VersionActionError(
         `${app.name} is built in this account's sandbox Worker, and Appflare is not connected to one. Connect sandbox builds in ${ENABLE_SANDBOX_PLACE} first.`,
       );
@@ -491,7 +494,7 @@ async function startSelfDeployingUpdate(
   if (installer === null || install.build_kind !== "self-deploying") {
     throw new VersionActionError(reinstallRefusal(app.name, install.build_kind));
   }
-  if (deps.sandboxConnected !== true) {
+  if ((await deps.sandboxConnected?.()) !== true) {
     throw new VersionActionError(
       `${app.name} is deployed by its own installer in this account's sandbox Worker, and Appflare is not connected to one. Connect sandbox builds in ${ENABLE_SANDBOX_PLACE} first.`,
     );

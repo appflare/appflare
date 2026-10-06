@@ -13,8 +13,40 @@ import {
   buildEnvRefusal,
   d1BaselineRefusal,
   d1SeedRefusal,
+  sandboxBindingKind,
   wranglerConfigInlineRefusal,
 } from "./binding";
+
+describe("sandboxBindingKind", () => {
+  it("tells Appflare's binding from one to a deleted Worker and from someone else's", () => {
+    expect(
+      sandboxBindingKind({
+        type: "service",
+        name: "SANDBOX",
+        service: "appflare-sandbox",
+        entrypoint: "SandboxBuilds",
+        environment: "production",
+      }),
+    ).toBe("ours");
+    // As Cloudflare reports it once the sandbox Worker was deleted with ?force=true.
+    expect(
+      sandboxBindingKind({
+        entrypoint: null,
+        environment: "",
+        name: "SANDBOX",
+        service: "",
+        service_deleted: true,
+        type: "service",
+      }),
+    ).toBe("dangling");
+    // Never seen without a service name: left alone like someone else's.
+    expect(sandboxBindingKind({ type: "service", name: "SANDBOX" })).toBe("foreign");
+    expect(sandboxBindingKind({ type: "service", name: "SANDBOX", service: "billing" })).toBe(
+      "foreign",
+    );
+    expect(sandboxBindingKind({ type: "plain_text", name: "SANDBOX", text: "" })).toBe("foreign");
+  });
+});
 
 describe("assetsOnlyRefusal", () => {
   const old = { sandboxVersion: "0.1.6", features: [SANDBOX_FEATURE_INSTALL_DIRS] };

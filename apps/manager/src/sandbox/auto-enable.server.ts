@@ -14,8 +14,10 @@ import { PINNED_SANDBOX_VERSION } from "./release";
 /**
  * Sandbox builds turned on at first need. When an install of an app built
  * in the account (or deployed by its own installer), or a build from a
- * repository, starts while this manager has no `SANDBOX` binding, and the
- * account has what sandbox builds need, the start also claims a
+ * repository, starts while this manager is not connected to the sandbox
+ * Worker (no `SANDBOX` binding, or one to a sandbox Worker that was deleted:
+ * see sandbox/connection.server.ts), and the account has what sandbox builds
+ * need, the start also claims a
  * `sandbox_enable` job, and the install or build job waits for it before
  * its first step that uses the sandbox Worker (jobs/sandbox-enable-wait.ts).
  *
@@ -25,8 +27,8 @@ import { PINNED_SANDBOX_VERSION } from "./release";
  * deploy in the same instance; the waiting job instead sleeps, and is
  * expected to resume on the version that has the binding (an instance cut
  * off by that deploy was seen resuming on the new version; a sleeping one
- * has not been verified live, so the wait checks for the binding and gives
- * up with a clear message). Its own instance also keeps the enable's
+ * has not been verified live, so the wait checks that the binding answers
+ * and gives up with a clear message). Its own instance also keeps the enable's
  * subrequests (about 40) out of the other job's budget, and it is the same
  * job Settings starts, so Settings shows its progress, its failure, and its
  * Disable, and usage data counts it as `sandbox_enable` (with trigger

@@ -65,8 +65,9 @@ import { SANDBOX_CONTAINER_WAIT } from "./units";
  * 8. Each container application: create it, or patch it and roll it out to
  *    the release's image.
  * 9. Wait until the applications are ready for builds (job units poll them).
- * 10. Connect the manager (its `SANDBOX` binding), unless it already is, and
- *     record the job as done. Always the last step: it may deploy the
+ * 10. Connect the manager (its `SANDBOX` binding, in place of one to a
+ *     deleted Worker if an earlier disable left it), unless it already is,
+ *     and record the job as done. Always the last step: it may deploy the
  *     manager's own Worker, which this Workflow instance runs on.
  *
  * A failure leaves what was made in place: enabling again continues, and

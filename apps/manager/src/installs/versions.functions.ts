@@ -5,7 +5,7 @@ import { getAppManifest, getCatalogManifest } from "../catalog/app-manifest.serv
 import { findCatalogApp, type ListedApp } from "../catalog/merged.server";
 import { getCfClient } from "../cloudflare/client.server";
 import { jobCreator } from "../jobs/create-job.server";
-import { sandboxBinding } from "../sandbox/binding";
+import { readSandboxConnection } from "../sandbox/connection.server";
 import { requireRole } from "../server/auth.server";
 import {
   type RestoreDatabaseResult,
@@ -68,7 +68,7 @@ export const startUpdate = createServerFn({ method: "POST" })
             if (!read.ok) throw new VersionActionError(read.error);
             return read.catalog;
           },
-          sandboxConnected: sandboxBinding(env) !== undefined,
+          sandboxConnected: async () => (await readSandboxConnection(env)).connected,
           createJob: jobCreator(env.JOBS),
         },
         data,
