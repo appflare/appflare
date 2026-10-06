@@ -24,6 +24,7 @@ import { AppflareLoader } from "./appflare-loader";
 import { BusyButton, BusyMark, busyActionProps } from "./busy-button";
 import { ConfirmDialog } from "./confirm-dialog";
 import { DescriptionItem, DescriptionList } from "./description-list";
+import { ErrorMessageBanner, MessageBanner } from "./message-text";
 import { Section, SectionBody } from "./section";
 import { settingsSection } from "./settings-links";
 import { Timestamp } from "./timestamp";
@@ -124,11 +125,13 @@ function EnabledDetails({ status, isAdmin }: { status: AccessStatus; isAdmin: bo
           </DescriptionItem>
         )}
       </DescriptionList>
-      {error !== null && (
-        <Banner variant="error" icon={<WarningCircleIcon weight="fill" />} title={error} />
-      )}
+      {error !== null && <ErrorMessageBanner message={error} />}
       {notice !== null && (
-        <Banner variant="secondary" icon={<CheckCircleIcon weight="fill" />} title={notice} />
+        <MessageBanner
+          message={notice}
+          variant="secondary"
+          icon={<CheckCircleIcon weight="fill" />}
+        />
       )}
       {isAdmin && (
         <div className="flex flex-wrap justify-end gap-2">
@@ -216,9 +219,7 @@ function TurnOnDialog({ viewerEmail }: { viewerEmail: string }) {
         </LayerDialog.Description>
         <LayerDialog.Body>
           <div className="grid gap-4">
-            {error !== null && (
-              <Banner variant="error" icon={<WarningCircleIcon weight="fill" />} title={error} />
-            )}
+            {error !== null && <ErrorMessageBanner message={error} newTab />}
 
             {state.step === "checking" && error === null && (
               <div className="flex items-center gap-3">

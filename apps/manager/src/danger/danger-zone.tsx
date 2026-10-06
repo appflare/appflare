@@ -5,6 +5,7 @@ import { type ReactNode, useState } from "react";
 import { appLink } from "../components/app-links";
 import { AppflareLoader } from "../components/appflare-loader";
 import { ConfirmDialog } from "../components/confirm-dialog";
+import { MessageText } from "../components/message-text";
 import { Section, SectionRow, SectionRows } from "../components/section";
 import { settingsSection } from "../components/settings-links";
 import { Timestamp } from "../components/timestamp";
@@ -161,7 +162,7 @@ function RemoveAppflareDialog() {
           variant="error"
           icon={<WarningCircleIcon weight="fill" />}
           title="Appflare could not read what it would remove"
-          description={state.message}
+          description={<MessageText message={state.message} newTab />}
         />
       )}
       {review !== null && <RemovalReviewBody review={review} />}

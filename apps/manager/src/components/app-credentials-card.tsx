@@ -1,10 +1,11 @@
 import type { TokenPermission } from "@appflare/schema";
-import { Banner, Input, Text } from "@cloudflare/kumo";
+import { Input, Text } from "@cloudflare/kumo";
 import { CheckCircleIcon, KeyIcon, WarningCircleIcon } from "@phosphor-icons/react";
 import { type FormEvent, useState } from "react";
 import { replaceAppCredentials } from "../installs/app-credentials.functions";
 import { AppTokenHelp } from "./app-token-permissions";
 import { BusyButton } from "./busy-button";
+import { MessageBanner } from "./message-text";
 import { Section, SectionBody } from "./section";
 
 /**
@@ -97,12 +98,12 @@ export function AppCredentialsCard({
             ))}
           </fieldset>
           {result !== null && (
-            <Banner
+            <MessageBanner
+              message={result.message}
               variant={result.ok ? "secondary" : "error"}
               icon={
                 result.ok ? <CheckCircleIcon weight="fill" /> : <WarningCircleIcon weight="fill" />
               }
-              title={result.message}
             />
           )}
           {canEdit && (

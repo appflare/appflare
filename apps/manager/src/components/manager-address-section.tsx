@@ -3,7 +3,6 @@ import {
   ArrowSquareOutIcon,
   ArrowUUpLeftIcon,
   GlobeIcon,
-  WarningCircleIcon,
   WarningIcon,
 } from "@phosphor-icons/react";
 import { useRouter } from "@tanstack/react-router";
@@ -32,6 +31,7 @@ import {
   useAddressFields,
   useAddressMove,
 } from "./manager-address-move";
+import { ErrorMessageBanner } from "./message-text";
 import { Section, SectionBody, SectionRow, SectionRows } from "./section";
 import { settingsSection } from "./settings-links";
 import { Timestamp } from "./timestamp";
@@ -471,7 +471,7 @@ function MoveAddressContent({
               <Text variant="secondary">Reading the account's domains…</Text>
             </div>
           ) : (
-            <Banner variant="error" icon={<WarningCircleIcon weight="fill" />} title={loadError} />
+            <ErrorMessageBanner message={loadError} newTab />
           )
         ) : (
           <form id={formId} className="grid gap-4" onSubmit={onSubmit}>

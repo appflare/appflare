@@ -45,7 +45,7 @@ import {
 } from "./field-label";
 import { FLUSH_RING_CLASS } from "./hash-target";
 import { useJobStarted } from "./job-started";
-import { ErrorMessageBanner } from "./message-text";
+import { ErrorMessageBanner, MessageBanner } from "./message-text";
 import { placeholderOptions } from "./placeholder-chips";
 import { SandboxBuildConfirmation } from "./sandbox-build-confirmation";
 import { generatedSecret, MultilineSecretInput } from "./secret-fields";
@@ -246,10 +246,10 @@ export function AppSettingsSection({
             />
           )}
           {notice === "unavailable" && settings.unavailable !== null && (
-            <Banner
+            <MessageBanner
+              message={settings.unavailable}
               variant="secondary"
               icon={<InfoIcon weight="fill" />}
-              title={settings.unavailable}
             />
           )}
           {nothingToEdit ? (

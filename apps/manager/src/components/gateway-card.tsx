@@ -7,7 +7,6 @@ import {
   InfoIcon,
   KeyIcon,
   TrashIcon,
-  WarningCircleIcon,
   WarningIcon,
 } from "@phosphor-icons/react";
 import { useRouter } from "@tanstack/react-router";
@@ -27,7 +26,7 @@ import { BusyButton } from "./busy-button";
 import { ConfirmDialog } from "./confirm-dialog";
 import { DescriptionItem, DescriptionList } from "./description-list";
 import { DocsLink } from "./docs-link";
-import { MessageText } from "./message-text";
+import { ErrorMessageBanner, MessageText } from "./message-text";
 import { Section, SectionBody } from "./section";
 import { settingsSection } from "./settings-links";
 import { Timestamp } from "./timestamp";
@@ -271,9 +270,7 @@ function ChooseZone({
           description={`Setting up adds a proxied DNS record appflare-gateway.${check.zoneName}, makes it the domain's fallback origin (unless it has one), creates the Worker ${GATEWAY_WORKER_NAME} with a KV namespace for its routing table, and routes every request of ${check.zoneName} to that Worker.`}
         />
       )}
-      {error !== null && (
-        <Banner variant="error" icon={<WarningCircleIcon weight="fill" />} title={error} />
-      )}
+      {error !== null && <ErrorMessageBanner message={error} />}
       <div className="flex justify-end">
         <BusyButton
           pending={settingUp}
@@ -387,9 +384,7 @@ function GatewayDetails({
           }
         />
       )}
-      {error !== null && (
-        <Banner variant="error" icon={<WarningCircleIcon weight="fill" />} title={error} />
-      )}
+      {error !== null && <ErrorMessageBanner message={error} />}
       {isAdmin && (
         <div className="flex justify-end">
           <TurnOffDialog gateway={gateway} />

@@ -14,6 +14,7 @@ import type { HeaderAction, Provenance } from "../catalog/app-page";
 import { type AuthorLink, authorLinks } from "../catalog/authors";
 import { avatarSrc } from "../catalog/avatar";
 import { AppIcon, AuthorAvatar } from "./catalog-media";
+import { MessageText } from "./message-text";
 import { Tooltip } from "./tooltip";
 
 /**
@@ -80,7 +81,9 @@ export function AppPageHeader({
           {/* A member's reason stays visible here: touch screens have no hover for the tooltip. */}
           {action.kind === "install" && action.reason !== null && (
             <Text as="span" variant="secondary" size="xs">
-              <span className="block sm:text-center">{action.reason}</span>
+              <span className="block sm:text-center">
+                <MessageText message={action.reason} />
+              </span>
             </Text>
           )}
         </div>

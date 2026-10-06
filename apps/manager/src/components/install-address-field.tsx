@@ -45,6 +45,7 @@ import {
 import type { WorkerNameCheck } from "../installs/worker-name-check";
 import { AppflareLoader } from "./appflare-loader";
 import { MoreText, useTechnicalNames } from "./field-label";
+import { ErrorMessageBanner } from "./message-text";
 import { settingsLink } from "./settings-links";
 import { WildcardNotes } from "./wildcard-notes";
 import { UNCHECKED_NOTE } from "./worker-name-field";
@@ -563,9 +564,7 @@ export function InstallAddressField({
         </div>
       )}
 
-      {loadError !== null && (
-        <Banner variant="error" icon={<WarningCircleIcon weight="fill" />} title={loadError} />
-      )}
+      {loadError !== null && <ErrorMessageBanner message={loadError} newTab />}
 
       {wildcard !== null && zone !== null && zoneCheck?.ok === true && (
         <WildcardNotes

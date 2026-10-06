@@ -4,6 +4,7 @@ import { useState } from "react";
 import { serverErrorMessage } from "../auth/sign-in-errors";
 import { issuePasswordRecoveryCode, sendPasswordResetLink } from "../server/recovery.functions";
 import { BusyMark, busyActionProps } from "./busy-button";
+import { ErrorMessageBanner } from "./message-text";
 
 type Way = "link" | "code";
 
@@ -78,9 +79,7 @@ export function ResetPasswordDialog({
         </LayerDialog.Description>
         <LayerDialog.Body>
           <div className="grid gap-4">
-            {error !== null && (
-              <Banner variant="error" icon={<WarningCircleIcon weight="fill" />} title={error} />
-            )}
+            {error !== null && <ErrorMessageBanner message={error} newTab />}
             {outcome === null && emailReset && (
               <Radio.Group
                 legend="How"

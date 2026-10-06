@@ -1,5 +1,5 @@
-import { Banner, Button, Input, LayerDialog } from "@cloudflare/kumo";
-import { PencilSimpleIcon, WarningCircleIcon } from "@phosphor-icons/react";
+import { Button, Input, LayerDialog } from "@cloudflare/kumo";
+import { PencilSimpleIcon } from "@phosphor-icons/react";
 import { useRouter } from "@tanstack/react-router";
 import { type FormEvent, useId, useRef, useState } from "react";
 import {
@@ -10,6 +10,7 @@ import {
 } from "../installs/display-name";
 import { renameInstall } from "../installs/installs.functions";
 import { BusyMark, busyActionProps } from "./busy-button";
+import { ErrorMessageBanner } from "./message-text";
 
 /**
  * "Rename" on the app page (admins): a pencil button beside the title that
@@ -106,9 +107,7 @@ export function RenameInstallDialog({
               error={problem ?? undefined}
               description={`Leave empty to use the app's name, ${install.name}.`}
             />
-            {failure !== null && (
-              <Banner variant="error" icon={<WarningCircleIcon weight="fill" />} title={failure} />
-            )}
+            {failure !== null && <ErrorMessageBanner message={failure} newTab />}
           </form>
         </LayerDialog.Body>
         <LayerDialog.Actions dismissLabel="Cancel">

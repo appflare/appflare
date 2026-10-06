@@ -49,7 +49,7 @@ import { InstallAccessField, useAppAccessCheck } from "./install-access-field";
 import { InstallAddressField } from "./install-address-field";
 import { foldStartsOpen, foldSummary, installFormGroups } from "./install-form-groups";
 import { useJobStarted } from "./job-started";
-import { ErrorMessageBanner } from "./message-text";
+import { ErrorMessageBanner, MessageText, messageHasLinks } from "./message-text";
 import { hasChips, placeholderOptions } from "./placeholder-chips";
 import { SandboxBuildConfirmation } from "./sandbox-build-confirmation";
 import {
@@ -78,6 +78,39 @@ export function installFormNotice(
   if (blockedReason !== null) return { title: blockedReason, link: blockedLink };
   if (!canInstall) return { title: "Only admins can install apps.", link: null };
   return null;
+}
+
+/**
+ * The notice as a banner. Kumo's banner title is plain text, so a notice
+ * with links of its own (why sandbox builds cannot be turned on names the
+ * account's dashboard page) goes in the description instead. The notice is
+ * Appflare's own wording, so its dashboard addresses show as short links.
+ */
+function InstallFormNoticeBanner({
+  notice,
+}: {
+  notice: NonNullable<ReturnType<typeof installFormNotice>>;
+}) {
+  const link =
+    notice.link === null ? undefined : <Link href={notice.link.href}>{notice.link.label}</Link>;
+  return (
+    <Banner
+      variant="secondary"
+      icon={<InfoIcon weight="fill" />}
+      {...(messageHasLinks(notice.title)
+        ? {
+            description: (
+              <span className="grid gap-2">
+                <span>
+                  <MessageText message={notice.title} newTab dashboardLinks="short" />
+                </span>
+                {link}
+              </span>
+            ),
+          }
+        : { title: notice.title, description: link })}
+    />
+  );
 }
 
 /**
@@ -514,18 +547,7 @@ export function InstallForm({
         <form className="grid min-w-0" onSubmit={onSubmit}>
           <TechnicalNamesProvider value={showNames}>
             <fieldset disabled={disabled} className="grid min-w-0 gap-8 px-5 pt-5 pb-6">
-              {notice !== null && (
-                <Banner
-                  variant="secondary"
-                  icon={<InfoIcon weight="fill" />}
-                  title={notice.title}
-                  description={
-                    notice.link === null ? undefined : (
-                      <Link href={notice.link.href}>{notice.link.label}</Link>
-                    )
-                  }
-                />
-              )}
+              {notice !== null && <InstallFormNoticeBanner notice={notice} />}
 
               {installer !== null ? (
                 <Text variant="secondary" size="sm">

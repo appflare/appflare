@@ -16,13 +16,7 @@ import {
   Text,
   useKumoToastManager,
 } from "@cloudflare/kumo";
-import {
-  CheckCircleIcon,
-  PencilSimpleIcon,
-  PlusIcon,
-  TrashIcon,
-  WarningCircleIcon,
-} from "@phosphor-icons/react";
+import { CheckCircleIcon, PencilSimpleIcon, PlusIcon, TrashIcon } from "@phosphor-icons/react";
 import { useRouter } from "@tanstack/react-router";
 import { type FormEvent, useEffect, useId, useState } from "react";
 import {
@@ -45,6 +39,7 @@ import { CatalogSourceBadge } from "./catalog-source-badge";
 import { ConfirmDialog } from "./confirm-dialog";
 import { DescriptionItem, DescriptionList } from "./description-list";
 import { DocsLink } from "./docs-link";
+import { ErrorMessageBanner } from "./message-text";
 import { Section, SectionRow, SectionRows } from "./section";
 import { settingsSection } from "./settings-links";
 import { Timestamp } from "./timestamp";
@@ -172,9 +167,7 @@ function CatalogRow({ catalog, isAdmin }: { catalog: CatalogView; isAdmin: boole
             </DescriptionItem>
           )}
         </DescriptionList>
-        {error !== null && (
-          <Banner variant="error" icon={<WarningCircleIcon weight="fill" />} title={error} />
-        )}
+        {error !== null && <ErrorMessageBanner message={error} />}
         {isAdmin && !catalog.official && (
           <div className="flex flex-wrap gap-2">
             <CatalogDialog editing={catalog} />
@@ -419,9 +412,7 @@ function CatalogDialog({ editing }: { editing: CatalogView | null }) {
                 }}
               />
             </span>
-            {failure !== null && (
-              <Banner variant="error" icon={<WarningCircleIcon weight="fill" />} title={failure} />
-            )}
+            {failure !== null && <ErrorMessageBanner message={failure} newTab />}
           </form>
         </LayerDialog.Body>
         <LayerDialog.Actions dismissLabel="Cancel">

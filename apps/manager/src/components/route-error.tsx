@@ -2,6 +2,7 @@ import { Banner } from "@cloudflare/kumo";
 import { ArrowClockwiseIcon, WarningCircleIcon } from "@phosphor-icons/react";
 import type { ErrorComponentProps } from "@tanstack/react-router";
 import { ACCESS_DENIED_MESSAGE, isAccessDenied } from "../access/denied";
+import { MessageText } from "./message-text";
 
 /**
  * Default route error: the message only (server functions never put secrets in
@@ -31,7 +32,9 @@ export function RouteError({ error }: ErrorComponentProps) {
         variant="error"
         icon={<WarningCircleIcon weight="fill" />}
         title="Something went wrong"
-        description={error instanceof Error ? error.message : "Unexpected error."}
+        description={
+          <MessageText message={error instanceof Error ? error.message : "Unexpected error."} />
+        }
       />
     </div>
   );

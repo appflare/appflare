@@ -13,6 +13,7 @@ import { getEmailZoneOptions, previewEmailRouting } from "../installs/email-rout
 import type { EmailRoutingPreview, EmailZoneOptions } from "../installs/email-routing.server";
 import { WORKER_NAME_PATTERN } from "../installs/install-input";
 import { AppflareLoader } from "./appflare-loader";
+import { ErrorMessageBanner, MessageBanner } from "./message-text";
 import { settingsLink } from "./settings-links";
 import { useAccountId } from "./use-account-id";
 
@@ -136,9 +137,7 @@ export function EmailRoutingFields({
           <Text variant="secondary">Reading the account's domains…</Text>
         </div>
       )}
-      {loadError !== null && (
-        <Banner variant="error" icon={<WarningCircleIcon weight="fill" />} title={loadError} />
-      )}
+      {loadError !== null && <ErrorMessageBanner message={loadError} newTab />}
       {options?.noZones && (
         <PermissionsBanner
           title="Appflare cannot see any domain in this account"
@@ -168,9 +167,7 @@ export function EmailRoutingFields({
           <Text variant="secondary">Reading Email Routing on {zoneName ?? "the domain"}…</Text>
         </div>
       )}
-      {previewFailure !== null && (
-        <Banner variant="error" icon={<WarningCircleIcon weight="fill" />} title={previewFailure} />
-      )}
+      {previewFailure !== null && <ErrorMessageBanner message={previewFailure} newTab />}
       {preview !== null && <PreviewDetails preview={preview} workerName={workerName} />}
     </div>
   );
@@ -270,7 +267,7 @@ function PreviewDetails({
         />
       )}
       {preview.warnings.map((w) => (
-        <Banner key={w} variant="alert" icon={<WarningIcon weight="fill" />} title={w} />
+        <MessageBanner key={w} message={w} variant="alert" icon={<WarningIcon weight="fill" />} />
       ))}
       {preview.problems.length === 0 && steps.length > 0 && (
         <Banner

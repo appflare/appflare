@@ -1,4 +1,4 @@
-import { Badge, Banner, Button, LinkButton, Text } from "@cloudflare/kumo";
+import { Badge, Button, LinkButton, Text } from "@cloudflare/kumo";
 import {
   ArrowCircleUpIcon,
   ArrowRightIcon,
@@ -18,6 +18,7 @@ import { BusyButton } from "./busy-button";
 import { ConfirmDialog } from "./confirm-dialog";
 import { DescriptionItem, DescriptionList } from "./description-list";
 import { useJobStarted } from "./job-started";
+import { MessageBanner } from "./message-text";
 import { Section, SectionBody, SectionFormActions, SectionRows } from "./section";
 import { settingsSection } from "./settings-links";
 import { Timestamp } from "./timestamp";
@@ -124,7 +125,7 @@ export function AppflareUpdatesCard({
             </DescriptionItem>
           </DescriptionList>
           {notice !== null && (
-            <Banner variant="secondary" icon={<InfoIcon weight="fill" />} title={notice} />
+            <MessageBanner message={notice} variant="secondary" icon={<InfoIcon weight="fill" />} />
           )}
           {(state.activeJobId !== null || update !== null) && (
             <SectionFormActions>
