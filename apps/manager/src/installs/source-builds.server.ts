@@ -1122,7 +1122,9 @@ export async function updateFromSourceBuildCore(
     }
   }
   const given = input.secrets ?? {};
-  const unknown = Object.keys(given).filter((n) => !needs.needsSecrets.some((s) => secretKey(s) === n));
+  const unknown = Object.keys(given).filter(
+    (n) => !needs.needsSecrets.some((s) => secretKey(s) === n),
+  );
   if (unknown.length > 0) throw fail(`This update does not take: ${unknown.join(", ")}.`);
   const entered: Record<string, string> = {};
   for (const secret of needs.needsSecrets) {
