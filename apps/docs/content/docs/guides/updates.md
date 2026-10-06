@@ -33,8 +33,8 @@ Admins select **Update**. A dialog opens first when:
   which case applies. You confirm with **Update without checking the new version
   first**.
 - the new version receives other email than the installed one. The dialog says which
-  addresses and whether the catch-all change on the app's domain; selecting **Update**
-  confirms it. See [Updates and rollbacks](/guides/email-apps/#updates-and-rollbacks).
+  addresses change and whether the catch-all changes on the app's domain; selecting
+  **Update** confirms it. See [Updates and rollbacks](/guides/email-apps/#updates-and-rollbacks).
 
 ![Update review asking for a new secret before the app changes](/screenshots/updates-review.png)
 
