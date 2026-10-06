@@ -154,6 +154,8 @@ a deploy without a preview check and you did not accept it, the update stops bef
 anything changes and you can start it again. After a
 successful update the sandbox Worker keeps the builds of the new version and the one
 before it and deletes older ones. Uninstalling deletes all of the install's builds. A
+build made for review ([from a repository or from source](/guides/install-from-a-repository/))
+that nobody installs, updates from or throws away is deleted after 7 days. A
 rollback returns to the snapshot's Worker version and its recorded provenance; it does
 not rebuild anything.
 

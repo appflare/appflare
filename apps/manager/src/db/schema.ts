@@ -486,7 +486,14 @@ export const catalog_revisions = sqliteTable("catalog_revisions", {
   recorded_at: timestamp("recorded_at").notNull(),
 });
 
-export const SOURCE_BUILD_STATUSES = ["building", "built", "failed", "used", "discarded"] as const;
+export const SOURCE_BUILD_STATUSES = [
+  "building",
+  "built",
+  "failed",
+  "used",
+  "discarding",
+  "discarded",
+] as const;
 export type SourceBuildStatus = (typeof SOURCE_BUILD_STATUSES)[number];
 
 /** What a source build is for: a new install, or an update of an existing one. */
@@ -498,7 +505,9 @@ export type SourceBuildPurpose = (typeof SOURCE_BUILD_PURPOSES)[number];
  * sandbox Worker, waiting for an admin's review. Its id is its
  * `source_build` job's. `status`: `building` while the job runs, `built`
  * once the artifact is stored and verified, `failed`, `used` once an install
- * or update job took it, `discarded` when the admin threw it away. The
+ * or update job took it, `discarding` once thrown away (by an admin, or by
+ * the cron after a week unused) until its files are deleted, then
+ * `discarded`. The
  * artifact lives in the sandbox Worker's bucket under
  * `builds/<install_id>/<version>/`; `install_id` is the install it is for,
  * which for a new install does not exist until the admin installs.

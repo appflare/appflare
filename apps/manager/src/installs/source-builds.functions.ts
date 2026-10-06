@@ -48,6 +48,7 @@ import {
   readSourceBuild,
   SourceBuildError,
   type SourceChanges,
+  sandboxBuildCleanup,
   sourceUpdateNeeds,
   startSourceBuildCore,
   updateFromSourceBuildCore,
@@ -366,21 +367,8 @@ export const discardSourceBuild = createServerFn({ method: "POST" })
   .validator(sourceBuildIdInput)
   .handler(async ({ data }): Promise<{ ok: true }> => {
     await requireRole("admin");
-    const binding = sandboxBinding(env);
     try {
-      await discardSourceBuildCore(
-        {
-          db: env.DB,
-          ...(binding === undefined
-            ? {}
-            : {
-                cleanup: async (installId, keepVersions) => {
-                  await binding.cleanup({ installId, keepVersions });
-                },
-              }),
-        },
-        data.buildId,
-      );
+      await discardSourceBuildCore({ db: env.DB, ...sandboxBuildCleanup(env) }, data.buildId);
       return { ok: true };
     } catch (error) {
       asUserError(error);
