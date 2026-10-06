@@ -87,8 +87,8 @@ no mail is sent to a Worker that no longer exists:
 1. It deletes each routing rule the install created. A rule you already deleted
    counts as removed.
 2. It puts the catch-all back as the install found it (for example off, or set to
-   drop), but only if it still delivers to the app. A catch-all you pointed elsewhere
-   since is left alone.
+   drop), but only if it is still on and delivers to the app. A catch-all you pointed
+   elsewhere or turned off since is left alone.
 3. If this install turned Email Routing on for the zone, it turns it off again, which
    removes the MX records, but only when no other routing rule is left there and the
    catch-all is off or set to drop. Otherwise Email Routing stays on.

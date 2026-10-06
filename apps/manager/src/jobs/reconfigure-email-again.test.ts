@@ -606,7 +606,7 @@ describe("setting an app's email up again", () => {
     expect(r.logs).toContainEqual({
       level: "warn",
       message:
-        'The routing rule for old@example.com no longer delivers to "cut" (it goes to forwarding to me@example.net now), so it was left alone; Appflare no longer counts it as the app\'s.',
+        "The routing rule for old@example.com was changed since Appflare set it up (it is forwarding to me@example.net now), so it was left alone; Appflare no longer counts it as the app's.",
     });
     expect(await routes()).toContainEqual({
       name: "old@example.com",

@@ -384,6 +384,49 @@ describe("undoing an install's email routes", () => {
     expect(world.rules.map((r) => r.id)).toEqual(["r1"]);
   });
 
+  it("with the address named too, leaves a rule turned off or matching more since", async () => {
+    const to = (address: string) => [{ type: "literal", field: "to", value: address }];
+    const worker = [{ type: "worker", value: ["cut"] }];
+    const { api, world } = setup({
+      rules: [
+        { id: "off", enabled: false, matchers: to("a@example.com"), actions: worker },
+        {
+          id: "more",
+          enabled: true,
+          matchers: [...to("b@example.com"), { type: "literal", field: "from", value: "x@y.z" }],
+          actions: worker,
+        },
+        { id: "ours", enabled: true, matchers: to("c@example.com"), actions: worker },
+      ],
+    });
+    const check = (ruleId: string, address: string) =>
+      removeEmailRule(api, { zoneId: ZONE_ID, ruleId, workerName: "cut", address });
+    expect(await check("off", "A@example.com")).toEqual({
+      outcome: "not-ours",
+      action: "the Worker cut, turned off",
+    });
+    expect(await check("more", "b@example.com")).toEqual({
+      outcome: "not-ours",
+      action: "the Worker cut, also matching on other conditions",
+    });
+    expect(await check("ours", "C@example.com")).toEqual({ outcome: "deleted" });
+    expect(world.rules.map((r) => r.id)).toEqual(["off", "more"]);
+  });
+
+  it("leaves a catch-all of the Worker that was turned off since", async () => {
+    const off = {
+      enabled: false,
+      matchers: [{ type: "all" }],
+      actions: [{ type: "worker", value: ["inbox"] }],
+    };
+    const { api, world } = setup({ catchAll: off });
+    const previous = { enabled: true, actions: [{ type: "drop" }] };
+    expect(await resetEmailCatchAll(api, { zoneId: ZONE_ID, workerName: "inbox", previous })).toBe(
+      "not-ours",
+    );
+    expect(world.catchAll).toEqual(off);
+  });
+
   it("restores the catch-all only while it still delivers to the Worker", async () => {
     const ours = {
       enabled: true,

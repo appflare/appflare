@@ -364,7 +364,7 @@ export function permissionMessage(error: unknown, what: string, permission: stri
 export type RuleRemoval =
   | { outcome: "deleted" }
   | { outcome: "gone" }
-  /** It no longer delivers to the Worker (`action`: what it does now), so it was left. */
+  /** It no longer is the rule Appflare set up (`action`: what it does now), so it was left. */
   | { outcome: "not-ours"; action: string };
 
 /**
@@ -375,7 +375,7 @@ export type RuleRemoval =
  */
 export async function removeEmailRule(
   api: CloudflareClient,
-  target: { zoneId: string; ruleId: string; workerName?: string },
+  target: { zoneId: string; ruleId: string; workerName?: string; address?: string },
 ): Promise<RuleRemoval> {
   try {
     if (target.workerName !== undefined) {
@@ -383,9 +383,13 @@ export async function removeEmailRule(
         (r) => r.id === target.ruleId,
       );
       if (current === undefined) return { outcome: "gone" };
-      if (!deliversTo(current.actions, target.workerName)) {
-        return { outcome: "not-ours", action: describeAction(current.actions) };
-      }
+      // With the address, the whole rule must still be the one Appflare set
+      // up (on, that address only, to the Worker); without it, its action.
+      const ours =
+        target.address === undefined
+          ? deliversTo(current.actions, target.workerName)
+          : routesAddressTo(current, target.address.toLowerCase(), target.workerName);
+      if (!ours) return { outcome: "not-ours", action: describeRule(current) };
     }
     await api.emailRouting.deleteRule(target.zoneId, target.ruleId);
     return { outcome: "deleted" };
@@ -401,14 +405,18 @@ export type CatchAllReset = "restored" | "not-ours";
 /**
  * Puts the zone's catch-all back as it was before the install (`previous`;
  * without a record of it, drop and off, as Cloudflare starts a zone), if it
- * still delivers to `workerName`; one changed since is left alone.
+ * is on and still delivers to `workerName`; one changed since is left alone.
  */
 export async function resetEmailCatchAll(
   api: CloudflareClient,
   target: { zoneId: string; workerName: string; previous: SavedCatchAll | null },
 ): Promise<CatchAllReset> {
   const current = await api.emailRouting.getCatchAll(target.zoneId);
-  if (!deliversTo(current.actions, target.workerName)) return "not-ours";
+  // One turned off since is left as it is: restoring the earlier state could
+  // turn a dropping catch-all back on.
+  if (current.enabled === false || !deliversTo(current.actions, target.workerName)) {
+    return "not-ours";
+  }
   const previous = target.previous ?? DEFAULT_CATCH_ALL;
   await api.emailRouting.updateCatchAll(target.zoneId, {
     actions: previous.actions.length > 0 ? previous.actions : DEFAULT_CATCH_ALL.actions,

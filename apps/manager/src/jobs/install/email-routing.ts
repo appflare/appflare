@@ -377,11 +377,11 @@ export async function removeEmailRoutesPhase(
         try {
           const removal = await removeEmailRule(cf(), {
             ...target,
-            ...(options.onlyDelivering === true ? { workerName } : {}),
+            ...(options.onlyDelivering === true ? { workerName, address: route.name } : {}),
           });
           if (removal.outcome === "not-ours") {
             log.warn(
-              `The routing rule for ${route.name} no longer delivers to "${workerName}" (it goes to ${removal.action} now), so it was left alone; Appflare no longer counts it as the app's.`,
+              `The routing rule for ${route.name} was changed since Appflare set it up (it is ${removal.action} now), so it was left alone; Appflare no longer counts it as the app's.`,
             );
           } else {
             log.info(
