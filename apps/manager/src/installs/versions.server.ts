@@ -488,7 +488,7 @@ export async function startUpdateCore(
     };
   }
   const given = request.secrets ?? {};
-  const unknown = Object.keys(given).filter((name) => !needed.some((s) => s.name === name));
+  const unknown = Object.keys(given).filter((name) => !needed.some((s) => secretKey(s) === name));
   if (unknown.length > 0) {
     throw new VersionActionError(`This update does not take: ${unknown.join(", ")}.`);
   }
@@ -599,7 +599,7 @@ async function startSelfDeployingUpdate(
     };
   }
   const given = request.secrets ?? {};
-  const unknown = Object.keys(given).filter((name) => !needed.some((s) => s.name === name));
+  const unknown = Object.keys(given).filter((name) => !needed.some((s) => secretKey(s) === name));
   if (unknown.length > 0) {
     throw new VersionActionError(`This update does not take: ${unknown.join(", ")}.`);
   }
