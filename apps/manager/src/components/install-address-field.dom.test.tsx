@@ -248,7 +248,8 @@ describe("the tray under the address", () => {
   const reason =
     "This name is taken by another Worker in the account, so the install would replace it.";
 
-  async function showReason() {
+  /** Renders a taken name's reason, then hovers it (or focuses it, as a keyboard does). */
+  async function showReason(openBy: "pointer" | "focus" = "pointer") {
     await act(async () =>
       root.render(
         <TooltipProvider delay={0}>
@@ -273,11 +274,15 @@ describe("the tray under the address", () => {
     expect(text?.textContent).toBe(reason);
     expect(container.querySelector("[title]")).toBeNull();
     await act(async () => {
-      text?.dispatchEvent(
-        new PointerEvent("pointerenter", { bubbles: true, pointerType: "mouse" }),
-      );
-      text?.dispatchEvent(new MouseEvent("mouseenter", { bubbles: true }));
-      text?.dispatchEvent(new MouseEvent("mousemove", { bubbles: true }));
+      if (openBy === "focus") {
+        text?.focus();
+      } else {
+        text?.dispatchEvent(
+          new PointerEvent("pointerenter", { bubbles: true, pointerType: "mouse" }),
+        );
+        text?.dispatchEvent(new MouseEvent("mouseenter", { bubbles: true }));
+        text?.dispatchEvent(new MouseEvent("mousemove", { bubbles: true }));
+      }
       await new Promise((done) => setTimeout(done, 50));
     });
     return [...document.body.querySelectorAll("[data-side]")].find((el) =>
@@ -295,6 +300,19 @@ describe("the tray under the address", () => {
       // A keyboard reaches it too.
       const text = container.querySelector("[data-address-status-text]");
       expect(text?.getAttribute("tabindex")).toBe("0");
+    } finally {
+      scroll.mockRestore();
+      client.mockRestore();
+    }
+  });
+
+  it("opens a cut reason's tooltip from the keyboard too", async () => {
+    const scroll = vi.spyOn(HTMLElement.prototype, "scrollHeight", "get").mockReturnValue(60);
+    const client = vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(40);
+    try {
+      const popup = await showReason("focus");
+      expect(document.activeElement).toBe(container.querySelector("[data-address-status-text]"));
+      expect(popup?.getAttribute("data-side")).toBe("bottom");
     } finally {
       scroll.mockRestore();
       client.mockRestore();
