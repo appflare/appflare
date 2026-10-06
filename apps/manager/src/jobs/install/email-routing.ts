@@ -1,6 +1,6 @@
 import { CloudflareApiError } from "@appflare/cf-api";
 import type { CatalogEmailRouting } from "@appflare/schema";
-import { and, eq, isNull } from "drizzle-orm";
+import { and, eq, isNotNull, isNull } from "drizzle-orm";
 import { z } from "zod";
 import { resources } from "../../db/schema";
 import {
@@ -23,10 +23,10 @@ import {
   resetEmailCatchAll,
 } from "../../installs/email-routing.server";
 import { EMAIL_ROUTE_KIND } from "../../installs/resource-kinds";
-import { JobError, type JobSteps } from "../steps";
+import { JobError, type JobSteps, type StepTools } from "../steps";
 import { zoneIdSchema } from "../units/email-routing";
 import { settleUnit } from "../units/result";
-import { type ResourceRecord, recordResource, resourceId } from "./phases";
+import { type ResourceRecord, resourceId } from "./phases";
 
 /**
  * The install job's Email Routing phases, for apps whose catalog manifest
@@ -48,7 +48,42 @@ import { type ResourceRecord, recordResource, resourceId } from "./phases";
  * What is recorded before its call (Email Routing turned on, the catch-all)
  * is recorded first, like the Worker: a call whose answer is lost has still
  * changed the zone, and the uninstall must undo it.
+ *
+ * An update or a rollback sets up the routes a version adds through the same
+ * provisioning phase, and removes the ones it drops through the uninstall's
+ * (see ../update/email-routing.ts).
  */
+
+/**
+ * Records an `email_route` resource. A record that exists is kept as it is
+ * (a retried step, whose catch-all record already keeps the catch-all as the
+ * first attempt found it); one an earlier job marked removed (an update
+ * that dropped the route, now set up again by a rollback) becomes live again
+ * with what was set up this time.
+ */
+export async function recordEmailRoute(
+  orm: StepTools["orm"],
+  installId: string,
+  row: ResourceRecord,
+  at: Date,
+): Promise<void> {
+  await orm
+    .insert(resources)
+    .values({
+      id: resourceId(installId, row.kind, row.key),
+      install_id: installId,
+      kind: row.kind,
+      binding: row.binding,
+      name: row.name,
+      cf_id: row.cfId,
+      created_at: at,
+    })
+    .onConflictDoUpdate({
+      target: resources.id,
+      set: { name: row.name, cf_id: row.cfId, created_at: at, deleted_at: null },
+      setWhere: isNotNull(resources.deleted_at),
+    });
+}
 
 /** The zone the admin chose for an app that receives email; part of the install job's payload. */
 export const emailRoutingJobInput = z.object({ zoneId: zoneIdSchema });
@@ -175,7 +210,7 @@ export async function provisionEmailRoutingPhase(
     }
     // Recorded before the call: an answer lost after Cloudflare turned it on
     // still leaves a record for the uninstall.
-    await recordResource(orm, installId, row, now());
+    await recordEmailRoute(orm, installId, row, now());
     try {
       await api.emailRouting.enableRouting(zoneId);
     } catch (error) {
@@ -232,7 +267,7 @@ export async function provisionEmailRoutingPhase(
       } else {
         log.info(`Mail to ${address} already goes to the Worker "${workerName}".`);
       }
-      await recordResource(
+      await recordEmailRoute(
         orm,
         installId,
         record("rule", { kind: "rule", zoneId, ruleId }, address),
@@ -247,7 +282,7 @@ export async function provisionEmailRoutingPhase(
       // The catch-all as the check found it, which the uninstall puts back.
       const previous = inspection.catchAll?.state === "free" ? inspection.catchAll.previous : null;
       const row = record("catch_all", { kind: "catch_all", zoneId, previous });
-      await recordResource(orm, installId, row, now());
+      await recordEmailRoute(orm, installId, row, now());
       if (inspection.catchAll?.state === "ours") {
         log.info(`The catch-all of ${zoneName} already goes to the Worker "${workerName}".`);
         return {};
@@ -296,13 +331,20 @@ export interface EmailRouteRecord {
  * off for each zone Appflare turned it on for, unless another rule or an
  * active catch-all remains there. One step per record; a rule is one request,
  * the catch-all two, routing up to four. Each record is marked deleted when
- * its step ends, whatever it found.
+ * its step ends, whatever it found. An update or rollback removes the routes
+ * the version it moves to no longer has the same way, with two options:
+ * `retry` names what to do once a missing permission is added, and
+ * `keepInUseRouting` keeps the record that Appflare turned routing on when
+ * something else still uses it, so the install stays the one to turn it off
+ * (a rollback that needs it again finds it on, and records nothing itself).
  */
 export async function removeEmailRoutesPhase(
   steps: JobSteps,
   routes: readonly EmailRouteRecord[],
   workerName: string,
+  options: { retry?: string; keepInUseRouting?: boolean } = {},
 ): Promise<void> {
+  const retry = options.retry ?? "retry the uninstall";
   const now = () => new Date(steps.now());
   const parsed = routes.map((r) => ({ ...r, target: parseEmailRouteCfId(r.cfId) }));
   const order: Record<EmailRouteTarget["kind"], number> = { rule: 0, catch_all: 1, routing: 2 };
@@ -324,7 +366,7 @@ export async function removeEmailRoutesPhase(
       const denied = (error: unknown, what: string, permission: string): never => {
         const message = permissionMessage(error, what, permission);
         if (message === null) throw error;
-        throw new JobError(`${message}, then retry the uninstall`);
+        throw new JobError(`${message}, then ${retry}`);
       };
       if (target === null) {
         log.warn(
@@ -376,6 +418,7 @@ export async function removeEmailRoutesPhase(
               log.info(
                 `Left Email Routing on for ${route.name}: ${released.rules} other routing rule(s)${released.catchAll ? " and an active catch-all" : ""} still use it.`,
               );
+              if (options.keepInUseRouting === true) return {};
               break;
           }
         } catch (error) {

@@ -110,9 +110,26 @@ To receive email for another zone, change it on the **Settings** tab of the app'
 [Move email to another zone](/guides/settings/#move-email-to-another-zone). The new
 zone is set up first, then the old one is cleaned up as described above.
 
-Updating or rolling back an app does not change Email Routing, so a rollback does not
-move email back to a zone it left. If a new version asks for other addresses, the job log
-says so; uninstall and install the app again, or change the rules in the dashboard.
+## Updates and rollbacks
+
+When a new version receives other email than the one installed, the update dialog says
+what changes before you start it, and automatic updates and **Update all** leave the
+update for you. The update changes Email Routing to match once the new version serves, on the zone the app receives email
+for: it adds the routing rules and catch-all the version asks for (with the same checks
+as an install), then removes the ones it no longer needs (the same way as an uninstall).
+A rollback does the same for the version it returns to, so it puts back what the update
+changed. A version that receives no email removes every route of the app, and turns
+Email Routing off again where the install turned it on and nothing else uses it.
+
+Appflare never changes a routing rule or catch-all it did not set up. If the new version
+asks for an address that already has a rule, or for the catch-all while it already sends
+mail somewhere, that part is left out and the job log says so; the rest is set up, and
+the next update or rollback tries again. The same goes for a change Cloudflare refuses
+(a missing token permission, say): the version still serves, and the job log says what
+is left. If the app did not receive email before, the
+update cannot know which zone to use: choose it on the **Settings** tab of the app's page.
+
+A rollback does not move email back to a zone it left.
 
 ## Limits
 

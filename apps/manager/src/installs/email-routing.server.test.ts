@@ -105,13 +105,14 @@ describe("inspectEmailRouting", () => {
       ],
     });
     const got = await inspect(api, { catchAll: false, rules: ["inbox", "bills"] });
+    const conflict =
+      "inbox@example.com already has a routing rule (forwarding to me@example.net). Appflare does not replace it; delete the rule in the Cloudflare dashboard or choose another zone.";
+    // The conflict is named on its address too, so an update can leave out that one alone.
     expect(got.addresses).toEqual([
-      { address: "inbox@example.com", existingRuleId: null },
+      { address: "inbox@example.com", existingRuleId: null, conflict },
       { address: "bills@example.com", existingRuleId: "r-ours" },
     ]);
-    expect(got.problems).toEqual([
-      "inbox@example.com already has a routing rule (forwarding to me@example.net). Appflare does not replace it; delete the rule in the Cloudflare dashboard or choose another zone.",
-    ]);
+    expect(got.problems).toEqual([conflict]);
   });
 
   it("refuses a catch-all that already delivers elsewhere, but not drop or its own", async () => {
@@ -122,7 +123,10 @@ describe("inspectEmailRouting", () => {
         actions: [{ type: "forward", value: ["me@example.net"] }],
       },
     });
-    expect((await inspect(taken.api, { rules: [], catchAll: true })).catchAll?.state).toBe("taken");
+    const takenInspection = await inspect(taken.api, { rules: [], catchAll: true });
+    expect(takenInspection.catchAll?.state).toBe("taken");
+    expect(takenInspection.catchAll?.problem).toBeDefined();
+    expect(takenInspection.problems).toEqual([takenInspection.catchAll?.problem]);
     const dropping = setup({
       catchAll: { enabled: true, matchers: [{ type: "all" }], actions: [{ type: "drop" }] },
     });

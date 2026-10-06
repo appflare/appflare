@@ -152,6 +152,8 @@ interface RunOptions {
   front?: (request: Request) => Promise<Response | null>;
   /** The install's stored workers.dev choice (on unless set). */
   workersDev?: boolean;
+  /** Runs once the install is seeded, before the change is started. */
+  afterSeed?: () => Promise<void>;
 }
 
 async function reconfigure(opts: RunOptions = {}) {
@@ -176,6 +178,7 @@ async function reconfigure(opts: RunOptions = {}) {
     buildKind: opts.buildKind ?? "artifact",
     ...(opts.resources === undefined ? {} : { resources: opts.resources }),
   });
+  await opts.afterSeed?.();
   // A revision the catalog listed for the installed release, as the Settings
   // section records it before the admin sees the form.
   if (fixture.revised !== null) await recordRevision(fixture);
@@ -1399,6 +1402,82 @@ describe("rolling back a settings change", () => {
 
 describe("moving an app's email to another zone", () => {
   const OLD_ZONE = "a".repeat(32);
+
+  it("moves email back to a zone it left, bringing that zone's removed records back", async () => {
+    // Email moved from old.test to example.com earlier: old.test's records are removed.
+    const oldZone = fakeEmailRouting(ACC, {
+      zone: {
+        id: OLD_ZONE,
+        name: "old.test",
+        status: "active",
+        type: "full",
+        account: { id: ACC },
+      },
+    });
+    const newZone = fakeEmailRouting(ACC, {
+      routingEnabled: true,
+      rules: [
+        {
+          id: "rule-new",
+          enabled: true,
+          matchers: [{ type: "literal", field: "to", value: "inbox@example.com" }],
+          actions: [{ type: "worker", value: ["cut"] }],
+        },
+      ],
+    });
+    const r = await reconfigure({
+      app: {
+        ...APP,
+        catalog: {
+          ...APP.catalog,
+          install: { ...baseCatalog().install, emailRouting: { rules: ["inbox"] } },
+        },
+      },
+      resources: [
+        ...RESOURCES,
+        { kind: "email_route", name: "old.test", cfId: `routing:${OLD_ZONE}` },
+        { kind: "email_route", name: "inbox@old.test", cfId: `rule:${OLD_ZONE}:rule-old` },
+        { kind: "email_route", name: "example.com", cfId: `routing:${ZONE_ID}` },
+        { kind: "email_route", name: "inbox@example.com", cfId: `rule:${ZONE_ID}:rule-new` },
+      ],
+      afterSeed: async () => {
+        await env.DB.prepare(
+          "UPDATE resources SET deleted_at = 1 WHERE kind = 'email_route' AND cf_id LIKE ?1",
+        )
+          .bind(`%:${OLD_ZONE}%`)
+          .run();
+      },
+      request: {
+        vars: { HOME_PAGE: "admin" },
+        secrets: { set: {}, unset: [] },
+        emailRouting: { zoneId: OLD_ZONE },
+      },
+      front: async (request) => (await oldZone.handle(request)) ?? (await newZone.handle(request)),
+    });
+    expect(r.error).toBeNull();
+    expect(oldZone.world.routingEnabled).toBe(true);
+    expect(oldZone.world.rules.map((x) => x.matchers[0]?.value)).toEqual(["inbox@old.test"]);
+    expect(newZone.world.rules).toEqual([]);
+    expect(newZone.world.routingEnabled).toBe(false);
+    const routes = (
+      await env.DB.prepare(
+        "SELECT name, cf_id, deleted_at FROM resources WHERE install_id = ?1 AND kind = 'email_route' ORDER BY name",
+      )
+        .bind(INSTALL_ID)
+        .all<{ name: string; cf_id: string; deleted_at: number | null }>()
+    ).results;
+    const newRule = oldZone.world.rules[0]?.id ?? "";
+    expect(routes).toEqual([
+      { name: "example.com", cf_id: `routing:${ZONE_ID}`, deleted_at: expect.any(Number) },
+      {
+        name: "inbox@example.com",
+        cf_id: `rule:${ZONE_ID}:rule-new`,
+        deleted_at: expect.any(Number),
+      },
+      { name: "inbox@old.test", cf_id: `rule:${OLD_ZONE}:${newRule}`, deleted_at: null },
+      { name: "old.test", cf_id: `routing:${OLD_ZONE}`, deleted_at: null },
+    ]);
+  });
 
   it("sets up the new zone first, then removes the old zone's routes, deploying nothing", async () => {
     const oldZone = fakeEmailRouting(ACC, {

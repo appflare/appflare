@@ -22,7 +22,9 @@ import { createDb } from "../db/client";
 import { installs, jobs, resources, source_builds } from "../db/schema";
 import { readSettings, SETTING } from "../db/settings";
 import { secretsToSet } from "../installs/derived-secrets";
-import { emailRoutingChangeWarning, emailRoutingOfManifest } from "../installs/email-routing";
+import { emailRoutingChangeNote, emailRoutingOfManifest } from "../installs/email-routing";
+import { type VarsRefreshReason, varsNeedRefresh } from "../installs/install-vars";
+import { EMAIL_ROUTE_KIND } from "../installs/resource-kinds";
 import { appSlugLabel } from "../installs/source-review";
 import { wildcardHostnameOf } from "../installs/wildcard-domain-input";
 import { appBaseUrl, domainHostnames, workersDevSubdomain } from "../installs/workers-dev";
@@ -100,6 +102,14 @@ import { StepLog } from "./step-log";
 import { createJobSteps, errorMessage, JobError, type StepTools } from "./steps";
 import { settleUnit } from "./units/result";
 import {
+  type AppAddress,
+  changedAddress,
+  describeValues,
+  readAppAddress,
+  settingsRefreshPhase,
+} from "./update/address-settings";
+import { changeEmailRoutingPhase } from "./update/email-routing";
+import {
   accessUpdateRefusal,
   appliedDurableObjectTag,
   canarySkipReason,
@@ -155,6 +165,9 @@ import { takeSnapshotPhase } from "./update/snapshot";
  *    into its kept R2 buckets' own. Only now, so a rule that deletes objects
  *    never reaches a bucket the previous version goes on serving from after
  *    a failed update; no rule is ever removed, a rollback's included.
+ *    Email Routing follows last: the routing rules and catch-all the version
+ *    adds are set up on the app's email domain, then those it drops are
+ *    removed (./update/email-routing.ts).
  * 9. Health check on the app's address (its workers.dev URL, or its first custom
  *    domain while workers.dev is off). The version already serves, so
  *    the result is recorded on the install and never fails the job.
@@ -438,6 +451,9 @@ export async function runUpdate(ctx: JobContext): Promise<void> {
           consumers: consumerPlans(w.manifest.worker.queueConsumers),
         })),
         emailRouting: emailRoutingOfManifest(install.manifest_json),
+        // Routes on record, which a version without email removes even when
+        // the installed one's manifest does not say it receives any.
+        hasEmailRoutes: rows.some((r) => r.kind === EMAIL_ROUTE_KIND) as boolean | undefined,
         userVars: { ...parseVars(install.config_json), ...(params.vars ?? {}) },
         workersDev: install.workers_dev_enabled,
         servedDomain: install.served_domain,
@@ -648,17 +664,13 @@ export async function runUpdate(ctx: JobContext): Promise<void> {
       for (const secret of newSecrets) {
         log.info(`New secret ${secret.name}: set with the new version.`);
       }
-      // TODO: apply `install.emailRouting` changes between versions (create and
-      // delete routing rules, take over or give back the catch-all). The zone the
-      // admin chose and the records of what the install set up exist only from the
-      // install; until an update can reconcile them, the job warns in its log and
-      // leaves Email Routing as the install set it up.
-      const emailChange = emailRoutingChangeWarning(
+      // Email Routing follows the version once it serves (below).
+      const emailChange = emailRoutingChangeNote(
         started.emailRouting,
         manifest.catalog.install.emailRouting,
         params.version,
       );
-      if (emailChange !== null) log.warn(emailChange);
+      if (emailChange !== null) log.info(emailChange);
       if (fullDeploy !== null) {
         log.warn(
           `Durable Object migrations up to "${fullDeploy.new_tag}" are pending, so this update deploys the whole Worker at once instead of checking a preview first.`,
@@ -1180,6 +1192,18 @@ export async function runUpdate(ctx: JobContext): Promise<void> {
     // by versions before this update's snapshot, which is the latest now.
     await deleteSupersededPhase(steps, supersededConfigs(started.resources));
 
+    // Email Routing to what this version receives, now that it serves: the
+    // routes it adds, then those it drops, on the app's email domain.
+    const emailTarget = manifest.catalog.install.emailRouting ?? null;
+    // Never throws: a part it cannot do is a warning for the next job.
+    if (emailTarget !== null || started.emailRouting != null || started.hasEmailRoutes === true) {
+      await changeEmailRoutingPhase(steps, {
+        installId: params.installId,
+        workerName,
+        target: emailTarget,
+      });
+    }
+
     // 9. Live health check, recorded rather than fatal: the version already serves.
     const url = `${appBase}${healthPath}`;
     const health = await checkLiveHealthPhase(steps, step, url, healthMode, {
@@ -1235,6 +1259,33 @@ export async function runUpdate(ctx: JobContext): Promise<void> {
     // A protected app's public paths follow the new version's catalog entry
     // (`access.bypass`), recorded with it. Never throws.
     if (started.access != null) await syncAccessPhase(steps, params.installId);
+    // Settings filled in with the app's address were rendered from the
+    // address the install had when the job started. A domain that went live
+    // or was removed meanwhile could not deploy them again (its settings
+    // refresh is refused while the update runs), so that happens now. Never throws.
+    if (
+      workers.some((w) =>
+        varsNeedRefresh(w.manifest, started.userVars, ["appUrl", "wildcardHostname"]),
+      )
+    ) {
+      const used: AppAddress = {
+        appUrl: appBase,
+        wildcardHostname: started.wildcardHostname ?? null,
+      };
+      const moved = await run("check the app's address", async ({ orm }) => {
+        const now = await readAppAddress(orm, params.installId, subdomain);
+        return { changed: now === null ? [] : changedAddress(used, now) };
+      }).catch(() => ({ changed: [] as VarsRefreshReason[] }));
+      if (moved.changed.length > 0) {
+        await settingsRefreshPhase(
+          steps,
+          env,
+          params.installId,
+          moved.changed,
+          `The app's ${describeValues(moved.changed)} changed while the update ran, and its settings use it`,
+        );
+      }
+    }
   } catch (error) {
     const reason = `${steps.current}: ${errorMessage(error)}`;
     const failedAt = steps.current;

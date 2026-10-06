@@ -612,6 +612,7 @@ describe("listSnapshotsCore", () => {
         sameCode: false,
         crossesDoMigration: false,
         lostDatabase: null,
+        emailNote: null,
         databases: [
           {
             resourceId: `${INSTALL_ID}:d1:DB`,

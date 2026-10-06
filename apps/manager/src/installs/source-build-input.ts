@@ -46,6 +46,11 @@ export const updateFromSourceBuildInput = z.object({
   /** Values of the secrets the rebuild introduces. */
   secrets: z.record(z.string().max(200), z.string().max(4096)).optional(),
   confirmNoPreview: z.boolean().optional(),
+  /** The admin saw how the rebuild changes the app's Email Routing. */
+  confirmEmailRouting: z
+    .string()
+    .regex(/^[0-9a-f]{64}$/)
+    .optional(),
 });
 export type UpdateFromSourceBuildInput = z.infer<typeof updateFromSourceBuildInput>;
 

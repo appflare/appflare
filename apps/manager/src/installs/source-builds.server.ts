@@ -31,12 +31,14 @@ import { type InstallOrigin, installs, jobs, resources, source_builds } from "..
 import { readSettings, SETTING } from "../db/settings";
 import type { UsedGithubToken } from "../github/access.server";
 import type { InstallJobParams } from "../jobs/install";
+import { sha256Hex } from "../jobs/install/artifact";
 import type { PrebuiltBuildParams } from "../jobs/install/artifact-source";
 import type { WorkflowLookup } from "../jobs/reconcile.server";
 import { parseStoredVars } from "../jobs/reconfigure/plan";
 import { NO_ACTIVE_SELF_UPDATE_SQL, refuseDuringSelfUpdate } from "../jobs/self-update/guard";
 import { type SourceBuildJobParams, sourceBuildRunId } from "../jobs/source-build";
 import type { UpdateJobParams } from "../jobs/update";
+import { readEmailChangeNote } from "../jobs/update/email-routing";
 import {
   lastDurableObjectTagOf,
   missingSecrets,
@@ -62,6 +64,7 @@ import {
   sourcesOfUnsetDerivedVars,
   withDerivedSecrets,
 } from "./derived-secrets";
+import { emailRoutingOfManifest } from "./email-routing";
 import { GitRefError, type RemoteRefs, resolveRef } from "./git-refs";
 import type { InstallDomainInput, StartInstallInput } from "./install-input";
 import { UNUSED_BUILD_MS } from "./source-builds-retention";
@@ -868,6 +871,23 @@ export interface SourceUpdateNeeds {
   heldSecrets?: string[];
   /** Why the new version cannot be checked on a preview first; null when it can. */
   skipsPreview: string | null;
+  /**
+   * The rebuild receives other email than the installed version: what the
+   * update changes about the app's Email Routing once it serves, which the
+   * admin sees and confirms before it starts. Absent when the email stays.
+   */
+  emailRouting?: string;
+  /**
+   * A fingerprint of `emailRouting` (SHA-256 of the note, hex), which the
+   * admin's confirmation carries: a note that changed since the review (the
+   * install was updated, or its email moved) does not match it.
+   */
+  emailRoutingKey?: string;
+}
+
+/** The fingerprint of an email note that a confirmation carries. */
+async function emailNoteKey(note: string): Promise<string> {
+  return sha256Hex(new TextEncoder().encode(note));
 }
 
 /** What updating the install from `manifest` asks for. */
@@ -900,9 +920,20 @@ export async function sourceUpdateNeeds(
     needsSecrets,
     recorded.map((r) => r.name),
   );
+  // The same note, and the same confirmation, as an update from the catalog.
+  const emailNote = await readEmailChangeNote(
+    createDb(db),
+    install.id,
+    emailRoutingOfManifest(install.manifest_json),
+    manifest.catalog.install.emailRouting,
+    manifest.version,
+  );
   return {
     needsSecrets,
     ...(held.length === 0 ? {} : { heldSecrets: held }),
+    ...(emailNote === null
+      ? {}
+      : { emailRouting: emailNote, emailRoutingKey: await emailNoteKey(emailNote) }),
     skipsPreview: updatePath(
       manifest,
       install.do_migration_tag ?? lastDurableObjectTagOf(install.manifest_json),
@@ -919,7 +950,16 @@ export async function sourceUpdateNeeds(
  */
 export async function updateFromSourceBuildCore(
   deps: StartJobDeps<UpdateJobParams>,
-  input: { buildId: string; secrets?: Record<string, string>; confirmNoPreview?: boolean },
+  input: {
+    buildId: string;
+    secrets?: Record<string, string>;
+    confirmNoPreview?: boolean;
+    /**
+     * The fingerprint (`emailRoutingKey`) of the note on how the rebuild
+     * changes the app's Email Routing that the admin saw.
+     */
+    confirmEmailRouting?: string;
+  },
 ): Promise<{ jobId: string }> {
   const fail = (message: string) => new SourceBuildError(message);
   const built = builtOf(await readSourceBuild(deps.db, input.buildId));
@@ -933,6 +973,16 @@ export async function updateFromSourceBuildCore(
   const needs = await sourceUpdateNeeds(deps.db, install, manifest);
   if (needs.skipsPreview !== null && input.confirmNoPreview !== true) {
     throw fail(`${needs.skipsPreview}. Confirm updating without a preview check.`);
+  }
+  if (needs.emailRouting !== undefined) {
+    if (input.confirmEmailRouting === undefined) {
+      throw fail(`${needs.emailRouting} Confirm this change to the app's email to update.`);
+    }
+    if (input.confirmEmailRouting !== needs.emailRoutingKey) {
+      throw fail(
+        "The change to the app's email is different now (the app was updated, or its email moved, since this page was loaded); reload the page to review it.",
+      );
+    }
   }
   const given = input.secrets ?? {};
   const unknown = Object.keys(given).filter((n) => !needs.needsSecrets.some((s) => s.name === n));

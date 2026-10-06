@@ -39,6 +39,7 @@ import {
 } from "../jobs/self-update/guard";
 import { StepLog } from "../jobs/step-log";
 import type { UpdateJobParams } from "../jobs/update";
+import { readEmailChangeNote } from "../jobs/update/email-routing";
 import {
   accessUpdateRefusal,
   hyperdriveRollbackRefusal,
@@ -58,6 +59,7 @@ import {
   sourcesOfUnsetDerivedVars,
   withDerivedSecrets,
 } from "./derived-secrets";
+import { emailRoutingOfManifest } from "./email-routing";
 import { snapshotHasSameCode } from "./rollback-copy";
 import { reinstallRefusal, tierChanged } from "./tier-change";
 
@@ -228,6 +230,12 @@ export interface StartUpdateRequest {
   paidConfirmed?: boolean;
   /** With `paidConfirmed`: also record Workers Paid as the account's plan in Settings. */
   rememberPaidPlan?: boolean;
+  /**
+   * The version whose change to the app's Email Routing the admin saw
+   * (`UpdateNeeds.emailRouting`); a confirmation of another version counts
+   * for nothing.
+   */
+  confirmEmailRouting?: string;
 }
 
 /** What the admin must provide or confirm before the update can start. */
@@ -259,6 +267,13 @@ export interface UpdateNeeds {
    * free plan's limit and offers to confirm Workers Paid.
    */
   cronTriggers: number | null;
+  /**
+   * The new version receives other email than the installed one: what the
+   * update changes about the app's Email Routing once it serves (routing
+   * rules, the catch-all, routing turned on or off), for the admin to see
+   * before it starts. Absent when the email stays the same.
+   */
+  emailRouting?: string;
 }
 
 export type StartUpdateResult = { jobId: string } | UpdateNeeds;
@@ -371,11 +386,25 @@ export async function startUpdateCore(
     newCrons !== null && newCrons > recordedCrons && catalog.plan !== "paid" && !accountPaid
       ? newCrons
       : null;
+  // The job changes Email Routing to match the new version once it serves
+  // (it may take the catch-all, create rules, or turn routing on), which an
+  // admin sees first, as the install form shows it: an update nobody started
+  // (automatic, or "Update all") waits for one.
+  const emailNote = await readEmailChangeNote(
+    createDb(deps.db),
+    install.id,
+    emailRoutingOfManifest(install.manifest_json),
+    catalog.install.emailRouting,
+    app.version,
+  );
   if (
     (needed.length > 0 && request.secrets === undefined) ||
     (skipPreview !== null && request.confirmNoPreview !== true) ||
     (sandbox !== null && request.buildConfirmed !== true) ||
-    (cronTriggers !== null && request.paidConfirmed === undefined)
+    (cronTriggers !== null && request.paidConfirmed === undefined) ||
+    // Confirmed for the version the admin saw: a newer one the catalog
+    // published meanwhile is shown again.
+    (emailNote !== null && request.confirmEmailRouting !== app.version)
   ) {
     const held = heldSecrets(
       needed,
@@ -392,6 +421,7 @@ export async function startUpdateCore(
       skipsPreview: skipPreview,
       build: sandbox,
       cronTriggers,
+      ...(emailNote === null ? {} : { emailRouting: emailNote }),
     };
   }
   const given = request.secrets ?? {};
@@ -814,6 +844,12 @@ export interface SnapshotView {
    * reach its databases (or recorded none).
    */
   lostDatabase: string | null;
+  /**
+   * How a rollback to this snapshot changes the app's email (its routing
+   * rules and catch-all follow the version), as the update dialog says it;
+   * null when nothing changes or the snapshot kept no readable manifest.
+   */
+  emailNote: string | null;
   /** D1 databases of the install this snapshot holds a bookmark for (bookmarks for admins only). */
   databases: Array<{
     resourceId: string;
@@ -876,7 +912,22 @@ export async function listSnapshotsCore(
   const liveDatabases = databases.filter(
     (d) => d.cf_id !== null && d.deleted_at === null && d.retained_at === null,
   );
-  return rows.map((row) => {
+  // Read only for snapshots whose version receives other email than the serving one.
+  const servingEmail = emailRoutingOfManifest(install.manifestJson);
+  const emailNotes = await Promise.all(
+    rows.map((row) =>
+      row.manifest_json === null
+        ? null
+        : readEmailChangeNote(
+            orm,
+            installId,
+            servingEmail,
+            emailRoutingOfManifest(row.manifest_json),
+            row.catalog_version ?? "this version",
+          ),
+    ),
+  );
+  return rows.map((row, index) => {
     const job = jobById.get(row.job_id);
     const bookmarks = parseBookmarks(row.d1_bookmarks_json);
     return {
@@ -905,6 +956,7 @@ export async function listSnapshotsCore(
         parseSnapshotHyperdrive(row.hyperdrive_json) ?? {},
         liveConfigs,
       ),
+      emailNote: emailNotes[index] ?? null,
       databases: liveDatabases.flatMap((d) => {
         const bookmark = d.cf_id === null ? undefined : bookmarks[d.cf_id];
         return d.cf_id === null || bookmark === undefined

@@ -226,23 +226,23 @@ function RollbackDialog({ install, snapshot }: { install: InstallDetail; snapsho
           description="If the newer version changed its data, the older code may not read it. Restore a database from this snapshot separately if you need its data as it was."
         />
       )}
-      {install.emailRoutes.length > 0 && (
+      {(snapshot.emailNote !== null || install.emailRoutes.length > 0) && (
         <Banner
           variant="secondary"
           icon={<InfoIcon weight="fill" />}
-          title="Email Routing is not changed"
+          title={
+            snapshot.emailNote !== null ? "Email changes with this version" : "Email stays as it is"
+          }
           description={
             <MessageText
-              message={`A rollback does not move the app's email back to another zone. If email moved since this snapshot, move it back under ${appPlace(install.id, "email-zone", "Email in the app's settings")}.`}
+              message={`${snapshot.emailNote ?? "This version receives the same email as the one serving now."}${install.emailRoutes.length > 0 ? ` A rollback does not move the app's email back to another domain; if email moved since this snapshot, move it back under ${appPlace(install.id, "email-zone", "Email in the app's settings")}.` : ""}`}
               newTab
             />
           }
         />
       )}
       {!copy.warnData && install.emailRoutes.length === 0 && (
-        <Text variant="secondary">
-          Databases, custom domains and Email Routing are not changed.
-        </Text>
+        <Text variant="secondary">Databases and custom domains are not changed.</Text>
       )}
     </ConfirmDialog>
   );
