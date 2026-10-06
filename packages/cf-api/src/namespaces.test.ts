@@ -547,11 +547,12 @@ describe("r2 / queues / vectorize", () => {
     expect(paged.calls[1]?.query.get("cursor")).toBe("c2");
   });
 
-  it("queues.listQueues -> GET /queues", async () => {
+  it("queues.listQueues -> GET /queues (paginated)", async () => {
     const { fake, client } = make({ result: [{ queue_id: "q1", queue_name: "jobs" }] });
     expect(await client.queues.listQueues()).toEqual([{ queue_id: "q1", queue_name: "jobs" }]);
     expect(fake.last().method).toBe("GET");
-    expect(fake.last().url).toBe(`${A}/queues`);
+    expect(fake.last().url.split("?")[0]).toBe(`${A}/queues`);
+    expect(fake.last().query.get("page")).toBe("1");
   });
 
   it("queues.createConsumer -> POST /queues/{id}/consumers with a Worker consumer body", async () => {

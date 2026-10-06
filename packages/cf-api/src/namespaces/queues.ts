@@ -11,9 +11,9 @@ export function createQueues(http: HttpApi) {
       return http.result("POST", http.acct("/queues"), { json: { queue_name: queueName } });
     },
 
-    /** `GET /queues`: every queue in the account (a single, unpaginated page). */
+    /** `GET /queues`: every queue in the account, across all pages. */
     listQueues(): Promise<Queue[]> {
-      return http.result("GET", http.acct("/queues"));
+      return http.list("GET", http.acct("/queues"));
     },
 
     /** `DELETE /queues/{id}`. */
