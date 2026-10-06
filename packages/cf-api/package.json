@@ -14,6 +14,11 @@
       "types": "./dist/capabilities.d.ts",
       "import": "./dist/capabilities.js"
     },
+    "./oauth": {
+      "@appflare/source": "./src/oauth.ts",
+      "types": "./dist/oauth.d.ts",
+      "import": "./dist/oauth.js"
+    },
     "./dev": {
       "@appflare/source": "./src/dev.ts",
       "types": "./dist/dev.d.ts",
@@ -33,6 +38,10 @@
       "./capabilities": {
         "types": "./dist/capabilities.d.ts",
         "import": "./dist/capabilities.js"
+      },
+      "./oauth": {
+        "types": "./dist/oauth.d.ts",
+        "import": "./dist/oauth.js"
       },
       "./dev": {
         "types": "./dist/dev.d.ts",

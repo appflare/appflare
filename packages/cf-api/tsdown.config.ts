@@ -27,6 +27,15 @@ export default defineConfig([
     target: "es2023",
     clean: false,
   },
+  // `./oauth`: Cloudflare OAuth and the manager's scope list alone, for the
+  // deploy page, which runs in the browser and needs nothing else.
+  {
+    ...shared,
+    entry: ["src/oauth.ts"],
+    platform: "neutral",
+    target: "es2023",
+    clean: false,
+  },
   // `./dev`: loadDevContext() reads `.env` from disk; Node only.
   { ...shared, entry: ["src/dev.ts"], platform: "node", target: "node22", clean: false },
 ]);
