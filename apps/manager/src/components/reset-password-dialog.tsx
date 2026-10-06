@@ -20,12 +20,15 @@ export function ResetPasswordDialog({
   emailReset,
   open,
   onOpenChange,
+  onOpenChangeComplete,
 }: {
   user: { id: string; name: string; email: string };
   /** Password reset emails are on. */
   emailReset: boolean;
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  /** The dialog finished opening or closing, its animation included. */
+  onOpenChangeComplete?: (open: boolean) => void;
 }) {
   // The way picked when emails are on; with them off only a code is possible,
   // whatever was picked, as the setting may change while the dialog is mounted.
@@ -66,7 +69,12 @@ export function ResetPasswordDialog({
   }
 
   return (
-    <LayerDialog.Root open={open} onOpenChange={onOpenChange} dismissDisabled={pending}>
+    <LayerDialog.Root
+      open={open}
+      onOpenChange={onOpenChange}
+      dismissDisabled={pending}
+      {...(onOpenChangeComplete === undefined ? {} : { onOpenChangeComplete })}
+    >
       <LayerDialog.Content>
         <LayerDialog.Title>{`Reset ${user.name}'s password`}</LayerDialog.Title>
         <LayerDialog.Description>

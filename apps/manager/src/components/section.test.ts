@@ -129,6 +129,14 @@ describe("Section", () => {
     expect(html).toContain('href="/settings/building#sandbox"');
   });
 
+  it("announces an error that is not a message string as an alert too", () => {
+    const html = renderToStaticMarkup(
+      h(Section, { title: "Needs attention", error: h("ul", null, h("li", null, "Cut: busy")) }),
+    );
+    expect(count(html, 'role="alert"')).toBe(1);
+    expect(text(html)).toContain("Cut: busy");
+  });
+
   it("shows the empty state in the body instead of the content", () => {
     const html = renderToStaticMarkup(
       h(

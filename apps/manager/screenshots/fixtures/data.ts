@@ -373,6 +373,7 @@ function installDetail(id: string) {
             },
           ]
         : [],
+    gatewayReady: true,
     emailRoutes: [],
     uninstall: "start",
     forgotten: false,

@@ -11,7 +11,7 @@ import {
 } from "@cloudflare/kumo";
 import { ArrowRightIcon, GitBranchIcon, TrashIcon } from "@phosphor-icons/react";
 import { createFileRoute, useRouter } from "@tanstack/react-router";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { z } from "zod";
 import { requirementBadge } from "../../../capabilities/capabilities";
 import { CapabilityBadge } from "../../../capabilities/capability-badge";
@@ -25,6 +25,7 @@ import { ConfirmDialog } from "../../../components/confirm-dialog";
 import { DescriptionItem, DescriptionList } from "../../../components/description-list";
 import { DocsLink, RequirementDocsLink } from "../../../components/docs-link";
 import { TechnicalNamesSwitch, useShowTechnicalNames } from "../../../components/field-label";
+import { focusAfterDialog } from "../../../components/focus-after-dialog";
 import { resourceKindLabel } from "../../../components/format";
 import { InstallAgainBanner } from "../../../components/install-again-banner";
 import { InstallAgainBuildGone } from "../../../components/install-again-build-gone";
@@ -143,6 +144,11 @@ function ReviewPage() {
   const { viewer } = Route.useRouteContext();
   const router = useRouter();
   const isAdmin = viewer.role === "admin";
+  // Thrown away from here: its dialog and both buttons go with the reload, so
+  // the focus goes to the banner that says so. Kept by build id, since the
+  // page stays mounted when only the build changes.
+  const [threwAwayId, setThrewAwayId] = useState<string | null>(null);
+  const threwAway = build !== null && threwAwayId === build.id;
   const building = build?.status === "building";
   useEffect(() => {
     if (!building) return;
@@ -188,9 +194,21 @@ function ReviewPage() {
         }
       />
       {again !== null && <InstallAgainState build={build} again={again} />}
-      <BuildState build={build} isAdmin={isAdmin} again={again} />
+      <BuildState
+        build={build}
+        isAdmin={isAdmin}
+        again={again}
+        threwAway={threwAway}
+        onThrownAway={() => setThrewAwayId(build.id)}
+      />
       {build.review !== null && (
-        <Review build={build} review={build.review} isAdmin={isAdmin} again={again} />
+        <Review
+          build={build}
+          review={build.review}
+          isAdmin={isAdmin}
+          again={again}
+          onThrownAway={() => setThrewAwayId(build.id)}
+        />
       )}
     </>
   );
@@ -231,9 +249,18 @@ function InstallAgainState({ build, again }: { build: SourceBuildView; again: Ag
 
 /**
  * "Throw away", after a confirmation: the build's files are deleted, and
- * getting it back means building it again.
+ * getting it back means building it again. `onThrownAway` runs once it is,
+ * before the page reads the build again.
  */
-function DiscardButton({ buildId, failed = false }: { buildId: string; failed?: boolean }) {
+function DiscardButton({
+  buildId,
+  failed = false,
+  onThrownAway,
+}: {
+  buildId: string;
+  failed?: boolean;
+  onThrownAway: () => void;
+}) {
   const router = useRouter();
   return (
     <ConfirmDialog
@@ -251,6 +278,7 @@ function DiscardButton({ buildId, failed = false }: { buildId: string; failed?: 
       actionLabel="Throw away"
       onConfirm={async () => {
         await discardSourceBuild({ data: { buildId } });
+        onThrownAway();
         await router.invalidate();
       }}
     />
@@ -262,10 +290,15 @@ function BuildState({
   build,
   isAdmin,
   again,
+  threwAway,
+  onThrownAway,
 }: {
   build: SourceBuildView;
   isAdmin: boolean;
   again: AgainHere | null;
+  /** An admin threw it away from this page just now. */
+  threwAway: boolean;
+  onThrownAway: () => void;
 }) {
   switch (build.status) {
     case "building":
@@ -304,19 +337,16 @@ function BuildState({
               </span>
             </span>
           }
-          action={isAdmin ? <DiscardButton buildId={build.id} failed /> : undefined}
+          action={
+            isAdmin ? (
+              <DiscardButton buildId={build.id} failed onThrownAway={onThrownAway} />
+            ) : undefined
+          }
         />
       );
     case "discarding":
     case "discarded":
-      return (
-        <Banner
-          variant="secondary"
-          icon={<TrashIcon weight="fill" />}
-          title="This build was thrown away"
-          description={`An admin threw it away, or nobody used it within ${UNUSED_BUILD_DAYS} days. Its files ${build.status === "discarding" ? "are being" : "are"} deleted from your sandbox Worker's bucket. Build again to install it.`}
-        />
-      );
+      return <ThrownAwayBanner deleting={build.status === "discarding"} focus={threwAway} />;
     case "used":
       // Installed again from here, it is the failed install's: the state above says what happens.
       if (again?.own === true) return null;
@@ -345,16 +375,38 @@ function BuildState({
   }
 }
 
+/** The build is gone; with `focus`, the banner takes the focus as it appears. */
+function ThrownAwayBanner({ deleting, focus }: { deleting: boolean; focus: boolean }) {
+  const banner = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    // The confirmation unmounts with the reload that shows this banner.
+    if (focus) focusAfterDialog(() => banner.current);
+  }, [focus]);
+  return (
+    <Banner
+      ref={banner}
+      tabIndex={-1}
+      className="outline-none focus-visible:ring-2 focus-visible:ring-kumo-brand"
+      variant="secondary"
+      icon={<TrashIcon weight="fill" />}
+      title="This build was thrown away"
+      description={`An admin threw it away, or nobody used it within ${UNUSED_BUILD_DAYS} days. Its files ${deleting ? "are being" : "are"} deleted from your sandbox Worker's bucket. Build again to install it.`}
+    />
+  );
+}
+
 function Review({
   build,
   review,
   isAdmin,
   again,
+  onThrownAway,
 }: {
   build: SourceBuildView;
   review: SourceBuildReview;
   isAdmin: boolean;
   again: AgainHere | null;
+  onThrownAway: () => void;
 }) {
   // Never carried over from an install that did not finish: confirmed again every time.
   const [requirementsConfirmed, setRequirementsConfirmed] = useState(false);
@@ -454,7 +506,7 @@ function Review({
           <Text as="span" variant="secondary" size="sm">
             {UNUSED_BUILD_NOTE}
           </Text>
-          <DiscardButton buildId={build.id} />
+          <DiscardButton buildId={build.id} onThrownAway={onThrownAway} />
         </div>
       )}
     </>

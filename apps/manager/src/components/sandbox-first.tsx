@@ -1,7 +1,7 @@
 import { Banner, Link, Text } from "@cloudflare/kumo";
-import { PowerIcon, WarningCircleIcon } from "@phosphor-icons/react";
+import { PowerIcon } from "@phosphor-icons/react";
 import { SANDBOX_CAPABILITY_HREF, SANDBOX_FIRST_NOTE } from "../sandbox/readiness";
-import { MessageText } from "./message-text";
+import { BANNER_ICON, MessageText } from "./message-text";
 
 /**
  * Sandbox builds turned on at first need, as the install and build
@@ -34,7 +34,7 @@ export function SandboxMissingBanner({ title, missing }: { title: string; missin
   return (
     <Banner
       variant="error"
-      icon={<WarningCircleIcon weight="fill" />}
+      icon={BANNER_ICON.error}
       title={title}
       description={
         <div className="grid gap-2">

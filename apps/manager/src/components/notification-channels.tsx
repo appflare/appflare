@@ -24,7 +24,6 @@ import { useRouter } from "@tanstack/react-router";
 import {
   type ComponentProps,
   type FormEvent,
-  type Ref,
   type RefObject,
   useEffect,
   useId,
@@ -68,6 +67,7 @@ import {
   SuccessBanner,
 } from "./message-text";
 import { Section, SectionBody, SectionEmpty, SectionRow, SectionRows } from "./section";
+import { setRef } from "./set-ref";
 import { settingsSection } from "./settings-links";
 import { Timestamp } from "./timestamp";
 
@@ -93,12 +93,6 @@ const mono = "font-mono text-[0.9em]";
 
 function errorText(err: unknown, fallback: string): string {
   return err instanceof Error ? err.message : fallback;
-}
-
-/** Sets a ref of either kind. */
-function setRef<T>(ref: Ref<T> | undefined, value: T | null) {
-  if (typeof ref === "function") ref(value);
-  else if (ref != null) ref.current = value;
 }
 
 /**

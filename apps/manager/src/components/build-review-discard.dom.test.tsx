@@ -127,6 +127,26 @@ describe("throwing a build away", () => {
     expect(calls.invalidate).toHaveBeenCalled();
   });
 
+  it("moves the focus to the banner that says so once the page shows it", async () => {
+    calls.discardSourceBuild.mockResolvedValue(undefined);
+    // The page reads the build again: thrown away, so the dialog and its button are gone.
+    calls.invalidate.mockImplementationOnce(async () => {
+      loader.current = { build: { ...FAILED, status: "discarding" }, again: null };
+      const Page = Route.options.component as ComponentType;
+      root.render(<Page />);
+    });
+    await click(button("Throw away", container));
+    const open = dialog();
+    if (open === null) throw new Error("no dialog");
+    await click(button("Throw away", open));
+    await act(async () => new Promise((resolve) => setTimeout(resolve, 50)));
+    expect(container.textContent).not.toContain("The build failed");
+    expect(dialog()).toBeNull();
+    const focused = document.activeElement;
+    expect(focused?.textContent).toContain("This build was thrown away");
+    expect(focused?.getAttribute("tabindex")).toBe("-1");
+  });
+
   it("keeps the dialog open with the reason when it fails", async () => {
     calls.discardSourceBuild.mockRejectedValue(new Error("The build is still in use."));
     await click(button("Throw away", container));

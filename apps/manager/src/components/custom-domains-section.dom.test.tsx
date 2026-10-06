@@ -71,7 +71,10 @@ const VERIFIED: CustomDomainCheck = {
   settingsNote: null,
 };
 
-function install(domains: CustomDomainView[]): InstallDetail {
+function install(
+  domains: CustomDomainView[],
+  externalDomains: CustomDomainView[] = [],
+): InstallDetail {
   return {
     id: "install-1",
     label: "Links",
@@ -79,6 +82,7 @@ function install(domains: CustomDomainView[]): InstallDetail {
     activeJobId: null,
     wildcard: null,
     domains,
+    externalDomains,
     workersDevChoice: "auto",
     workersDevEnabled: true,
   } as InstallDetail;
@@ -182,11 +186,18 @@ describe("CustomDomainsSection", () => {
     expect(container.querySelector('[role="alert"]')).toBeNull();
   });
 
-  it("shows an empty state, with Add domain in the header", async () => {
+  it("says in one line that there is none, with Add domain in the header", async () => {
     await show(install([]));
-    expect(container.textContent).toContain("No custom domains");
-    expect(container.textContent).toContain("The app is served on its workers.dev URL only.");
+    expect(container.textContent).toContain(
+      "No custom domains. The app is served on its workers.dev URL only.",
+    );
     expect(button("Add domain")).toBeDefined();
+  });
+
+  it("claims no workers.dev only while the app has an external domain", async () => {
+    await show(install([], [{ ...LINKS, id: "external-1", hostname: "go.example.org" }]));
+    expect(container.textContent).toContain("No custom domains.");
+    expect(container.textContent).not.toContain("workers.dev URL only");
   });
 
   it("picks the zone in the add dialog from a searchable list", async () => {

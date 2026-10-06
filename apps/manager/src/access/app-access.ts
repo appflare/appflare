@@ -210,4 +210,4 @@ export function pendingPublicPathsLine(paths: readonly string[]): string {
 
 /** The warning on an unprotected app whose catalog entry now requires protection. */
 export const ACCESS_NOW_REQUIRED_TITLE =
-  "The catalog now says this app must run behind Cloudflare Access.";
+  "The catalog now says this app must run behind Cloudflare Access";

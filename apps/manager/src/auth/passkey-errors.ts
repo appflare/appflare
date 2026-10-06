@@ -32,7 +32,7 @@ export const PASSKEY_MESSAGES = {
     "Passkeys cannot be used at this address. Open the manager at its own address and try again.",
   rateLimited: "Too many sign-in attempts. Wait a minute, then try again.",
   signInFailed: "Passkey sign-in failed. Try again, or sign in with your email and password.",
-  registerUnsupported: "This browser does not support passkeys.",
+  registerUnsupported: "This browser does not support passkeys",
   alreadyRegistered: "This device already has a passkey for your account.",
   registerCancelled: "The passkey prompt was closed before a passkey was created.",
   staleSession:

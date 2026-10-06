@@ -208,7 +208,7 @@ export interface TestResult {
 export const SIGNATURE_HEADER = "X-Appflare-Signature";
 
 export const NOTIFICATION_COPY = {
-  membersOnly: "Only admins can view and change notification channels.",
+  membersOnly: "Only admins can view and change notification channels",
   empty: "No channels yet. Add one to hear about updates, finished jobs and failing health checks.",
   privacy:
     "Messages name the app, its version and Worker, and link to this manager. They never include secrets or tokens. Credentials you enter here are stored encrypted.",

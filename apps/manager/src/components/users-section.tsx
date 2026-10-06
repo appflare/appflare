@@ -20,7 +20,7 @@ import {
   UserPlusIcon,
 } from "@phosphor-icons/react";
 import { useRouter } from "@tanstack/react-router";
-import { type FormEvent, useId, useState } from "react";
+import { type FormEvent, type RefObject, useEffect, useId, useRef, useState } from "react";
 import type { Role } from "../auth/roles";
 import {
   type AccessPolicyOutcome,
@@ -35,9 +35,11 @@ import { accountRoleLabel } from "./account";
 import { appEntryMemo } from "./app-entry-memo";
 import { BusyMark, busyActionProps } from "./busy-button";
 import { ConfirmDialog } from "./confirm-dialog";
+import { focusAfterDialog } from "./focus-after-dialog";
 import { BANNER_ICON, bannerRole, ErrorMessageBanner } from "./message-text";
 import { ResetPasswordDialog } from "./reset-password-dialog";
 import { Section, SectionBody, SectionTable } from "./section";
+import { setRef } from "./set-ref";
 import { settingsSection } from "./settings-links";
 import { Timestamp } from "./timestamp";
 import { readOnlyNote, type UserAction, userActions } from "./user-actions";
@@ -47,6 +49,10 @@ import { readOnlyNote, type UserAction, userActions } from "./user-actions";
  * read-only note. Admins get "Add user" at the right of the header, and
  * "Reset password" on the rows of other users but the owner; the owner also
  * changes roles, transfers ownership to an admin, and deletes.
+ *
+ * A dialog opened from a row's menu gives the focus back to the menu's button
+ * when it closes, or to "Add user" when the row (or its menu) is gone: after
+ * deleting the user, or transferring ownership to them.
  */
 export function UsersSection({
   users,
@@ -60,11 +66,12 @@ export function UsersSection({
   /** Password reset emails are on, so a reset can be a link. */
   emailReset: boolean;
 }) {
+  const addButton = useRef<HTMLButtonElement>(null);
   return (
     <Section
       {...settingsSection("users", "users")}
       description="Who can sign in to this manager, and what each of them can change."
-      action={users !== null ? <AddUserDialog /> : null}
+      action={users !== null ? <AddUserDialog button={addButton} /> : null}
     >
       {users === null ? (
         <SectionBody>
@@ -81,6 +88,7 @@ export function UsersSection({
           viewerId={viewerId}
           viewerIsOwner={viewerIsOwner}
           emailReset={emailReset}
+          addButton={addButton}
         />
       )}
     </Section>
@@ -92,18 +100,53 @@ function UsersTable({
   viewerId,
   viewerIsOwner,
   emailReset,
+  addButton,
 }: {
   users: UserRow[];
   viewerId: string;
   viewerIsOwner: boolean;
   emailReset: boolean;
+  /** The header's "Add user", which takes the focus once a row is gone. */
+  addButton: RefObject<HTMLButtonElement | null>;
 }) {
   const [picked, setPicked] = useState<{ user: UserRow; action: UserAction } | null>(null);
   const [open, setOpen] = useState(false);
+  // Each row's menu button, by user id, to give the focus back to.
+  const menus = useRef(new Map<string, HTMLButtonElement>());
+  // A user just deleted; their row goes once the list no longer has them.
+  const [removed, setRemoved] = useState<string | null>(null);
+  // The user whose dialog has just finished closing: the focus goes back.
+  const [closed, setClosed] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (closed === null) return;
+    if (closed === removed) {
+      // The list may come back without the row after the dialog has closed.
+      if (users.some((u) => u.id === removed)) return;
+      setRemoved(null);
+      setClosed(null);
+      focusAfterDialog(() => addButton.current);
+      return;
+    }
+    setClosed(null);
+    // A transfer can leave the row without a menu: the new owner's row has
+    // nothing for an admin who is no longer the owner.
+    focusAfterDialog(() => {
+      const menu = menus.current.get(closed);
+      return menu?.isConnected ? menu : addButton.current;
+    });
+  }, [closed, removed, users, addButton]);
 
   function pick(user: UserRow, action: UserAction) {
     setPicked({ user, action });
     setOpen(true);
+  }
+
+  function menuRef(userId: string) {
+    return (node: HTMLButtonElement | null) => {
+      if (node === null) menus.current.delete(userId);
+      else menus.current.set(userId, node);
+    };
   }
 
   const owner = users.find((u) => u.isOwner);
@@ -150,7 +193,12 @@ function UsersTable({
                 <Timestamp iso={u.createdAt} dateOnly />
               </Table.Cell>
               <Table.Cell className="text-right">
-                <UserRowMenu user={u} actions={userActions(viewer, u)} onPick={pick} />
+                <UserRowMenu
+                  user={u}
+                  actions={userActions(viewer, u)}
+                  onPick={pick}
+                  buttonRef={menuRef(u.id)}
+                />
               </Table.Cell>
             </Table.Row>
           ))}
@@ -160,6 +208,10 @@ function UsersTable({
         picked={picked}
         open={open}
         onOpenChange={setOpen}
+        onClosed={() => {
+          if (picked !== null) setClosed(picked.user.id);
+        }}
+        onDeleted={setRemoved}
         emailReset={emailReset}
       />
     </>
@@ -192,10 +244,12 @@ function UserRowMenu({
   user,
   actions,
   onPick,
+  buttonRef,
 }: {
   user: UserRow;
   actions: UserAction[];
   onPick: (user: UserRow, action: UserAction) => void;
+  buttonRef: (node: HTMLButtonElement | null) => void;
 }) {
   if (actions.length === 0) return null;
   const safe = actions.filter((a) => a.kind !== "delete");
@@ -203,6 +257,7 @@ function UserRowMenu({
   return (
     <DropdownMenu>
       <DropdownMenu.Trigger
+        ref={buttonRef}
         render={
           <Button variant="ghost" size="sm" shape="square" aria-label={`Actions for ${user.email}`}>
             <DotsThreeIcon weight="bold" size={16} />
@@ -264,14 +319,23 @@ function UserActionDialogs({
   picked,
   open,
   onOpenChange,
+  onClosed,
+  onDeleted,
   emailReset,
 }: {
   /** The last action picked; kept after closing so the dialog's content stays while it animates out. */
   picked: { user: UserRow; action: UserAction } | null;
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  /** The open dialog has finished closing, its animation included. */
+  onClosed: () => void;
+  /** A user was deleted. */
+  onDeleted: (userId: string) => void;
   emailReset: boolean;
 }) {
+  const onOpenChangeComplete = (opened: boolean) => {
+    if (!opened) onClosed();
+  };
   const action = picked === null || picked.action.kind === "reset" ? null : picked.action;
   return (
     <>
@@ -280,12 +344,15 @@ function UserActionDialogs({
         emailReset={emailReset}
         open={open && picked?.action.kind === "reset"}
         onOpenChange={onOpenChange}
+        onOpenChangeComplete={onOpenChangeComplete}
       />
       <UserConfirmDialog
         user={action === null ? null : (picked?.user ?? null)}
         action={action}
         open={open && action !== null}
         onOpenChange={onOpenChange}
+        onOpenChangeComplete={onOpenChangeComplete}
+        onDeleted={onDeleted}
       />
     </>
   );
@@ -296,11 +363,15 @@ function UserConfirmDialog({
   action,
   open,
   onOpenChange,
+  onOpenChangeComplete,
+  onDeleted,
 }: {
   user: UserRow | null;
   action: Exclude<UserAction, { kind: "reset" }> | null;
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  onOpenChangeComplete: (open: boolean) => void;
+  onDeleted: (userId: string) => void;
 }) {
   const router = useRouter();
   const toasts = useKumoToastManager();
@@ -367,6 +438,7 @@ function UserConfirmDialog({
           confirmText: u.email,
           onConfirm: async () => {
             const { accessPolicy, appAccessPolicy } = await deleteUser({ data: { userId: u.id } });
+            onDeleted(u.id);
             reportAccess(accessPolicy, appAccessPolicy);
             await router.invalidate();
           },
@@ -379,7 +451,14 @@ function UserConfirmDialog({
       ? { ...spec(user, action), actionLabel: actionLabel(action) }
       : // Nothing picked yet: the dialog stays closed.
         { destructive: true, title: "", actionLabel: "", onConfirm: async () => {} };
-  return <ConfirmDialog {...shown} open={open} onOpenChange={onOpenChange} />;
+  return (
+    <ConfirmDialog
+      {...shown}
+      open={open}
+      onOpenChange={onOpenChange}
+      onOpenChangeComplete={onOpenChangeComplete}
+    />
+  );
 }
 
 /** The roles a new user can get, as the add dialog offers them. */
@@ -407,9 +486,9 @@ type Created = {
 
 /**
  * Creates a user with a random temporary password, shown once in this dialog.
- * Closing the dialog discards it from memory.
+ * Closing the dialog discards it from memory. `button` holds its button.
  */
-export function AddUserDialog() {
+export function AddUserDialog({ button }: { button: RefObject<HTMLButtonElement | null> }) {
   const router = useRouter();
   const formId = useId();
   const [open, setOpen] = useState(false);
@@ -458,7 +537,16 @@ export function AddUserDialog() {
     <LayerDialog.Root open={open} onOpenChange={onOpenChange} dismissDisabled={pending}>
       <LayerDialog.Trigger
         render={(p) => (
-          <Button {...p} variant="primary" icon={<UserPlusIcon />}>
+          <Button
+            {...p}
+            // The dialog's own ref on the button, and this one.
+            ref={(node: HTMLButtonElement | null) => {
+              setRef(p.ref, node);
+              button.current = node;
+            }}
+            variant="primary"
+            icon={<UserPlusIcon />}
+          >
             Add user
           </Button>
         )}
