@@ -48,6 +48,7 @@ vi.mock("../auto-update/auto-update.functions", () => ({
 vi.mock("../installs/app-credentials.functions", () => ({ replaceAppCredentials: vi.fn() }));
 vi.mock("../installs/reconfigure.functions", () => ({
   startReconfigure: vi.fn(),
+  startEmailAgain: vi.fn(),
 }));
 vi.mock("../installs/email-routing.functions", () => ({
   getEmailZoneOptions: vi.fn(),
@@ -243,5 +244,70 @@ describe("the app page, opened from a link to a section", () => {
     root = createRoot(container);
     renderAt("#nothing");
     expect(selectedTab()).toBe("Overview");
+  });
+});
+
+describe("the Email section of Domains and email", () => {
+  const zoneId = "0123456789abcdef0123456789abcdef";
+  /** The app's settings, as an update that left email out leaves them. */
+  function withEmail(leftover: string[]) {
+    loader.current = {
+      ...(loader.current as object),
+      settings: {
+        slug: "cut",
+        kind: "artifact",
+        unavailable: null,
+        fields: [],
+        placeholders: {
+          workerName: "cut-links",
+          workerUrl: null,
+          appUrl: null,
+          wildcardHostname: null,
+        },
+        secrets: [],
+        databases: [],
+        canRemoveSecrets: true,
+        email: {
+          zoneId,
+          zoneName: "example.com",
+          leftover,
+          again: {
+            zoneId,
+            zoneName: "example.com",
+            addresses: ["inbox@example.com"],
+            catchAll: false,
+            remove: [],
+          },
+        },
+        skipsPreview: null,
+        installer: null,
+        appToken: null,
+      },
+    };
+  }
+
+  it("says what an update left out of the app's email, and where to set it up again", () => {
+    withEmail([]);
+    renderAt("#email");
+    expect(selectedTab()).toBe("Domains and email");
+    const email = container.querySelector("#email");
+    expect(email?.textContent).toContain("Part of the app's email is not set up");
+    expect(email?.textContent).toContain(
+      "Mail to inbox@example.com is not routed to the app. An update or a rollback left this out. Set it up again under Email in the app's settings.",
+    );
+    expect(email?.querySelector('a[href="/apps/i1#email-zone"]')).not.toBeNull();
+    // No route is set up now; the zone is still the app's.
+    expect(email?.textContent).toContain(
+      "None of the app's email routes are set up on example.com now.",
+    );
+    expect(email?.textContent).not.toContain("does not receive email through Email Routing");
+  });
+
+  it("says nothing of it while a move to another domain is unfinished", () => {
+    withEmail(["old.test"]);
+    renderAt("#email");
+    const email = container.querySelector("#email");
+    expect(email?.textContent).not.toContain("Part of the app's email is not set up");
+    expect(email?.textContent).toContain("This app does not receive email through Email Routing.");
   });
 });

@@ -115,6 +115,47 @@ describe("inspectEmailRouting", () => {
     expect(got.problems).toEqual([conflict]);
   });
 
+  it("takes a rule to the Worker as its own only when it is on and matches the address alone", async () => {
+    const worker = [{ type: "worker", value: ["inbox"] }];
+    const { api } = setup({
+      routingEnabled: true,
+      rules: [
+        {
+          id: "r-off",
+          enabled: false,
+          matchers: [{ type: "literal", field: "to", value: "inbox@example.com" }],
+          actions: worker,
+        },
+        {
+          id: "r-sender",
+          enabled: true,
+          matchers: [
+            { type: "literal", field: "to", value: "bills@example.com" },
+            { type: "literal", field: "from", value: "bank@example.net" },
+          ],
+          actions: worker,
+        },
+        {
+          id: "r-ours",
+          enabled: true,
+          matchers: [{ type: "literal", field: "to", value: "Hello@example.com" }],
+          actions: worker,
+        },
+      ],
+    });
+    const got = await inspect(api, { catchAll: false, rules: ["inbox", "bills", "hello"] });
+    const off =
+      "inbox@example.com already has a routing rule (the Worker inbox, turned off). Appflare does not replace it; delete the rule in the Cloudflare dashboard or choose another zone.";
+    const sender =
+      "bills@example.com already has a routing rule (the Worker inbox, also matching on other conditions). Appflare does not replace it; delete the rule in the Cloudflare dashboard or choose another zone.";
+    expect(got.addresses).toEqual([
+      { address: "inbox@example.com", existingRuleId: null, conflict: off },
+      { address: "bills@example.com", existingRuleId: null, conflict: sender },
+      { address: "hello@example.com", existingRuleId: "r-ours" },
+    ]);
+    expect(got.problems).toEqual([off, sender]);
+  });
+
   it("refuses a catch-all that already delivers elsewhere, but not drop or its own", async () => {
     const taken = setup({
       catchAll: {
@@ -315,9 +356,32 @@ describe("undoing an install's email routes", () => {
     const { api, world } = setup({
       rules: [{ id: "r1", enabled: true, matchers: [], actions: [] }],
     });
-    expect(await removeEmailRule(api, { zoneId: ZONE_ID, ruleId: "r1" })).toBe("deleted");
+    expect(await removeEmailRule(api, { zoneId: ZONE_ID, ruleId: "r1" })).toEqual({
+      outcome: "deleted",
+    });
     expect(world.rules).toEqual([]);
-    expect(await removeEmailRule(api, { zoneId: ZONE_ID, ruleId: "r1" })).toBe("gone");
+    expect(await removeEmailRule(api, { zoneId: ZONE_ID, ruleId: "r1" })).toEqual({
+      outcome: "gone",
+    });
+  });
+
+  it("with the Worker named, leaves a rule that no longer delivers to it", async () => {
+    const forward = [{ type: "forward", value: ["me@example.net"] }];
+    const { api, world } = setup({
+      rules: [
+        { id: "r1", enabled: true, matchers: [], actions: forward },
+        { id: "r2", enabled: true, matchers: [], actions: [{ type: "worker", value: ["cut"] }] },
+      ],
+    });
+    const check = (ruleId: string) =>
+      removeEmailRule(api, { zoneId: ZONE_ID, ruleId, workerName: "cut" });
+    expect(await check("r1")).toEqual({
+      outcome: "not-ours",
+      action: "forwarding to me@example.net",
+    });
+    expect(await check("r2")).toEqual({ outcome: "deleted" });
+    expect(await check("r2")).toEqual({ outcome: "gone" });
+    expect(world.rules.map((r) => r.id)).toEqual(["r1"]);
   });
 
   it("restores the catch-all only while it still delivers to the Worker", async () => {

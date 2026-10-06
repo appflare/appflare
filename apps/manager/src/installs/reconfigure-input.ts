@@ -32,3 +32,20 @@ export const startReconfigureInput = z.object({
   buildConfirmed: z.boolean().optional(),
 });
 export type StartReconfigureInput = z.input<typeof startReconfigureInput>;
+
+/**
+ * Client-safe input of the server function that sets an app's email up
+ * again: what the confirmation named, which must still be what is left out.
+ */
+export const startEmailAgainInput = z.object({
+  installId: z.string().min(1).max(64),
+  parts: z.object({
+    zoneId: z.string().min(1).max(64),
+    addresses: z.array(z.string().min(1).max(320)).max(100),
+    catchAll: z.boolean(),
+    remove: z
+      .array(z.object({ kind: z.enum(["rule", "catch_all"]), name: z.string().min(1).max(320) }))
+      .max(100),
+  }),
+});
+export type StartEmailAgainInput = z.infer<typeof startEmailAgainInput>;

@@ -468,6 +468,70 @@ describe("update and rollback of an app that receives email", () => {
     });
   });
 
+  it("does not offer to set up again a catch-all on record that something else took since", async () => {
+    const r = await updateThenRollback({
+      installed: { rules: ["inbox"], catchAll: true },
+      next: { rules: ["inbox"], catchAll: true },
+      email: {
+        routingEnabled: true,
+        rules: [ourRule("inbox-rule", "inbox@example.com")],
+        catchAll: { enabled: true, matchers: [{ type: "all" }], actions: FORWARD },
+      },
+      seed: async () => {
+        await seedInbox();
+        await seedRoute({ kind: "catch_all", zoneId: ZONE_ID, previous: DEFAULT_CATCH_ALL });
+      },
+    });
+    expect(r.job?.status).toBe("succeeded");
+    expect(r.email.world.catchAll.actions).toEqual(FORWARD);
+    const warning = r.logs.find((l) =>
+      l.message.startsWith("The catch-all of example.com already sends mail"),
+    );
+    expect(warning?.message).toContain(
+      "The next update or rollback of the app sets it up once that is resolved.",
+    );
+    // The records still say the catch-all is set up, so the app's settings offer nothing for it.
+    expect(warning?.message).not.toContain("Set up email again");
+  });
+
+  it("takes an address's rule as its own only when it is on and delivers that address alone", async () => {
+    const r = await updateThenRollback({
+      installed: { rules: ["inbox"], catchAll: false },
+      next: { rules: ["inbox", "sales", "alerts"], catchAll: false },
+      email: {
+        routingEnabled: true,
+        rules: [
+          ourRule("inbox-rule", "inbox@example.com"),
+          { ...ourRule("sales-off", "sales@example.com"), enabled: false },
+          ourRule("alerts-hand", "alerts@example.com"),
+        ],
+      },
+      seed: seedInbox,
+    });
+    expect(r.job?.status).toBe("succeeded");
+    // Alerts is taken as it is; the rule that is off stays off, and sales is left out.
+    expect(r.email.world.rules.map((x) => x.id)).toEqual([
+      "inbox-rule",
+      "sales-off",
+      "alerts-hand",
+    ]);
+    expect(r.email.world.rules[1]?.enabled).toBe(false);
+    expect(r.email.world.calls).not.toContain(`POST /zones/${ZONE_ID}/email/routing/rules`);
+    expect(await routes()).toContainEqual({
+      name: "alerts@example.com",
+      cf_id: `rule:${ZONE_ID}:alerts-hand`,
+      deleted_at: null,
+    });
+    expect((await routes()).map((x) => x.name)).not.toContain("sales@example.com");
+    const warnings = r.logs.filter((l) => l.level === "warn").map((l) => l.message);
+    expect(warnings).toContainEqual(
+      expect.stringContaining(
+        "sales@example.com already has a routing rule (the Worker cut, turned off). Appflare does not replace it",
+      ),
+    );
+    expect(warnings.join("\n")).toContain("to set it up sooner, select Set up email again under");
+  });
+
   it("changes nothing for a version that receives the same email", async () => {
     const r = await updateThenRollback({
       installed: { rules: ["inbox"], catchAll: false },

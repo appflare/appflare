@@ -254,6 +254,55 @@ describe("install with Email Routing", () => {
     expect(r.email.world.routingEnabled).toBe(false);
   });
 
+  it("takes a rule that already delivers the address to the Worker as its own", async () => {
+    const r = await install(
+      { catchAll: false, rules: ["inbox"] },
+      {
+        routingEnabled: true,
+        rules: [
+          {
+            id: "rule-hand",
+            enabled: true,
+            matchers: [{ type: "literal", field: "to", value: "inbox@example.com" }],
+            actions: [{ type: "worker", value: ["cut"] }],
+          },
+        ],
+      },
+    );
+    expect(r.job?.status).toBe("succeeded");
+    expect(r.email.world.rules.map((x) => x.id)).toEqual(["rule-hand"]);
+    expect(r.email.world.calls).not.toContain(`POST /zones/${ZONE_ID}/email/routing/rules`);
+    expect(r.routes.map((x) => x.cf_id)).toEqual([`rule:${ZONE_ID}:rule-hand`]);
+  });
+
+  it("stops at a rule to the Worker that is off, or also matches the sender", async () => {
+    const worker = [{ type: "worker", value: ["cut"] }];
+    const to = { type: "literal", field: "to", value: "inbox@example.com" };
+    for (const rule of [
+      { id: "rule-off", enabled: false, matchers: [to], actions: worker },
+      {
+        id: "rule-sender",
+        enabled: true,
+        matchers: [to, { type: "literal", field: "from", value: "bank@example.net" }],
+        actions: worker,
+      },
+    ]) {
+      await reset();
+      await createMigrator(migrations).ensure(env.DB);
+      await writeSettings(createDb(env.DB), { [SETTING.accountId]: ACC });
+      const r = await install(
+        { catchAll: false, rules: ["inbox"] },
+        { routingEnabled: true, rules: [rule] },
+      );
+      expect(r.job?.status).toBe("failed");
+      expect(r.job?.error).toContain(
+        "inbox@example.com already has a routing rule (the Worker cut,",
+      );
+      expect(r.kinds).toEqual([]);
+      expect(r.email.world.rules).toEqual([rule]);
+    }
+  });
+
   it("names the permissions the token lacks and creates nothing", async () => {
     const r = await install(
       { catchAll: false, rules: ["inbox"] },

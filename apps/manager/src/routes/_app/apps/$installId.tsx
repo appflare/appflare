@@ -38,6 +38,7 @@ import { CustomDomainsSection } from "../../../components/custom-domains-section
 import { DescriptionItem, DescriptionList } from "../../../components/description-list";
 import { DocsLink } from "../../../components/docs-link";
 import { DomainName, DomainNameList } from "../../../components/domain-name";
+import { emailLeftOutSummary } from "../../../components/email-again";
 import { ExternalDomainsSection } from "../../../components/external-domains-section";
 import { TechnicalNamesSwitch, useShowTechnicalNames } from "../../../components/field-label";
 import { jobKindLabel, resourceKindLabel } from "../../../components/format";
@@ -192,7 +193,9 @@ function InstallPage() {
       {tab === "settings" && (
         <SettingsTab install={install} settings={settings} isAdmin={isAdmin} />
       )}
-      {tab === "domains" && <DomainsTab install={install} access={access} isAdmin={isAdmin} />}
+      {tab === "domains" && (
+        <DomainsTab install={install} access={access} settings={settings} isAdmin={isAdmin} />
+      )}
       {tab === "resources" && <ResourcesTab install={install} />}
       {tab === "jobs" && <JobsTab install={install} snapshots={snapshots} isAdmin={isAdmin} />}
     </>
@@ -313,12 +316,18 @@ function SecretNamesSection({ names }: { names: readonly string[] }) {
 function DomainsTab({
   install,
   access,
+  settings,
   isAdmin,
 }: {
   install: InstallDetail;
   access: InstallAccessView | null;
+  settings: InstallSettings | null;
   isAdmin: boolean;
 }) {
+  // What an update or a rollback left out of the app's email; the settings set
+  // it up again, once a move to another domain is finished (as they show it).
+  const emailAgain =
+    settings?.email != null && settings.email.leftover.length === 0 ? settings.email.again : null;
   return (
     <>
       {isAdmin && install.build.kind !== "self-deploying" && (
@@ -349,8 +358,26 @@ function DomainsTab({
       {access !== null && <AppAccessSection install={install} access={access} isAdmin={isAdmin} />}
       <Section id="email" title="Email" className={FLUSH_RING_CLASS}>
         <SectionBody className="gap-3">
+          {emailAgain !== null && (
+            <Banner
+              variant="alert"
+              icon={BANNER_ICON.alert}
+              title="Part of the app's email is not set up"
+              description={
+                <>
+                  {emailLeftOutSummary(emailAgain)} An update or a rollback left this out.{" "}
+                  {isAdmin ? "Set it up again under" : "An admin can set it up again under"}{" "}
+                  <Link href={appLink(install.id, "email-zone")}>Email in the app's settings</Link>.
+                </>
+              }
+            />
+          )}
           {install.emailRoutes.length === 0 ? (
-            <Text variant="secondary">This app does not receive email through Email Routing.</Text>
+            <Text variant="secondary">
+              {emailAgain === null
+                ? "This app does not receive email through Email Routing."
+                : `None of the app's email routes are set up on ${emailAgain.zoneName} now.`}
+            </Text>
           ) : (
             <>
               <ul className="grid list-disc gap-1 pl-5">

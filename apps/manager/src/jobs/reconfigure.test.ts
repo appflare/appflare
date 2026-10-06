@@ -1688,6 +1688,8 @@ describe("moving an app's email to another zone", () => {
       zoneId: ZONE_ID,
       zoneName: "example.com",
       leftover: ["old.test"],
+      // The new zone has all the version asks for: nothing to set up again there.
+      again: null,
     });
 
     // Finishing: the same zone again, once the token can delete the rule.
@@ -1722,7 +1724,12 @@ describe("moving an app's email to another zone", () => {
       { db: env.DB, sandboxConnected: false, subdomain: SUBDOMAIN },
       INSTALL_ID,
     );
-    expect(after?.email).toEqual({ zoneId: ZONE_ID, zoneName: "example.com", leftover: [] });
+    expect(after?.email).toEqual({
+      zoneId: ZONE_ID,
+      zoneName: "example.com",
+      leftover: [],
+      again: null,
+    });
   });
 });
 

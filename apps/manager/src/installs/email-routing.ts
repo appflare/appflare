@@ -78,6 +78,37 @@ export function deliversTo(
   return first?.type === "worker" && first.value?.[0] === workerName;
 }
 
+/**
+ * Whether a routing rule is one Appflare could have set up for `address`
+ * (lowercase): on, matching that one address and nothing else, and
+ * delivering to exactly this Worker. Only such a rule is taken as the
+ * install's own; a rule that is off, or also matches on something else (a
+ * sender), is someone else's even when it names the Worker.
+ */
+export function routesAddressTo(
+  rule: {
+    enabled?: boolean | undefined;
+    matchers: ReadonlyArray<{
+      type: string;
+      field?: string | undefined;
+      value?: string | undefined;
+    }>;
+    actions: ReadonlyArray<{ type: string; value?: string[] | undefined }>;
+  },
+  address: string,
+  workerName: string,
+): boolean {
+  const [matcher, ...others] = rule.matchers;
+  return (
+    rule.enabled !== false &&
+    others.length === 0 &&
+    matcher?.type === "literal" &&
+    matcher.field === "to" &&
+    matcher.value?.toLowerCase() === address &&
+    deliversTo(rule.actions, workerName)
+  );
+}
+
 /** An action for people: "the Worker inbox", "forwarding to me@example.net", "drop". */
 export function describeAction(
   actions: ReadonlyArray<{ type: string; value?: string[] | undefined }>,

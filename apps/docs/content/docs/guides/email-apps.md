@@ -126,10 +126,44 @@ asks for an address that already has a rule, or for the catch-all while it alrea
 mail somewhere, that part is left out and the job log says so; the rest is set up, and
 the next update or rollback tries again. The same goes for a change Cloudflare refuses
 (a missing token permission, say): the version still serves, and the job log says what
-is left. If the app did not receive email before, the
-update cannot know which zone to use: choose it on the **Settings** tab of the app's page.
+is left. To finish it sooner, [set up the email again](#set-up-email-again). If the app
+did not receive email before, the update cannot know which zone to use: choose it on the
+**Settings** tab of the app's page.
 
 A rollback does not move email back to a zone it left.
+
+## Set up email again
+
+When an update or a rollback left part of the app's email out, the app's page says
+**Part of the app's email is not set up** under **Email** on the **Domains** tab and in
+the Email group of the **Settings** tab, with what is missing: an address that is not
+routed to the app, the catch-all, or a routing rule Appflare set up that the installed
+version no longer asks for. Appflare works this out from its own records of what it set
+up, so the note stays until those records match the installed version. It does not read
+the zone for this: a route deleted by hand in the dashboard is not noticed here, and a
+catch-all on record that no longer sends mail to the app is checked again only by the
+next update or rollback.
+
+To finish it without waiting for the next update:
+
+1. Delete or change what was in the way in the Cloudflare dashboard (Email Service,
+   Email Routing): the rule another address already had, or the catch-all that sends
+   mail somewhere else. The job log of the update or rollback names it.
+2. On the **Settings** tab, select **Set up email again**. Admins only, and not while
+   another job of the app runs. The confirmation lists each rule it sets up or removes.
+3. Confirm. The page opens the job's log.
+
+The job sets up only what the installed version asks for, on the zone the app receives
+email for, and removes only routes Appflare set up that still send mail to the app's
+Worker; a rule changed since is left alone, and Appflare stops counting it as the app's.
+It checks the zone first, with the same checks as an install. A rule that already sends
+an address to the app's Worker counts as set up only when it is on and matches that
+address alone; a rule that is off, or that also matches on something else such as the
+sender, is in the way like any other. If a routing rule or catch-all Appflare did not set up is
+still in the way, or the token lacks a permission, it stops before it changes anything,
+and its log says what to delete or change in the dashboard. Nothing is deployed: routing
+rules name the Worker, not a version. Running it again once everything is set up changes
+nothing.
 
 ## Limits
 

@@ -15,6 +15,7 @@ import {
   EMAIL_ROUTING_RULES_PER_DOMAIN,
   isCloudflareMx,
   planEmailRouting,
+  routesAddressTo,
   type SavedCatchAll,
   saveCatchAll,
   sendsEmail,
@@ -98,6 +99,14 @@ function isGone(error: unknown): boolean {
 function literalAddress(rule: EmailRoutingRule): string | null {
   const literal = rule.matchers.find((m) => m.type === "literal" && m.field !== "from");
   return literal?.value?.toLowerCase() ?? null;
+}
+
+/** A rule in the way, for people: what it does, and why it is not taken as the install's. */
+function describeRule(rule: EmailRoutingRule): string {
+  const action = describeAction(rule.actions);
+  if (rule.enabled === false) return `${action}, turned off`;
+  if (rule.matchers.length > 1) return `${action}, also matching on other conditions`;
+  return action;
 }
 
 /** Whether a catch-all hands mail to something other than drop. */
@@ -213,13 +222,16 @@ export async function inspectEmailRouting(
     } else {
       const regular = regularRules(rules);
       for (const address of plan.addresses) {
-        const existing = regular.find((r) => literalAddress(r) === address);
-        if (existing === undefined) {
+        const existing = regular.filter((r) => literalAddress(r) === address);
+        // Only a rule the install could have set up is taken as its own; any
+        // other rule for the address is in the way.
+        const foreign = existing.find((r) => !routesAddressTo(r, address, request.workerName));
+        if (existing[0] === undefined) {
           result.addresses.push({ address, existingRuleId: null });
-        } else if (deliversTo(existing.actions, request.workerName)) {
-          result.addresses.push({ address, existingRuleId: existing.id });
+        } else if (foreign === undefined) {
+          result.addresses.push({ address, existingRuleId: existing[0].id });
         } else {
-          const conflict = `${address} already has a routing rule (${describeAction(existing.actions)}). Appflare does not replace it; delete the rule in the Cloudflare dashboard or choose another zone.`;
+          const conflict = `${address} already has a routing rule (${describeRule(foreign)}). Appflare does not replace it; delete the rule in the Cloudflare dashboard or choose another zone.`;
           result.addresses.push({ address, existingRuleId: null, conflict });
           result.problems.push(conflict);
         }
@@ -349,18 +361,36 @@ export function permissionMessage(error: unknown, what: string, permission: stri
 }
 
 /** What removing a recorded routing rule did. */
-export type RuleRemoval = "deleted" | "gone";
+export type RuleRemoval =
+  | { outcome: "deleted" }
+  | { outcome: "gone" }
+  /** It no longer delivers to the Worker (`action`: what it does now), so it was left. */
+  | { outcome: "not-ours"; action: string };
 
-/** Deletes a routing rule Appflare created; one already gone counts as removed. */
+/**
+ * Deletes a routing rule Appflare created; one already gone counts as
+ * removed. With `workerName`, the rule is read first (one listing of the
+ * zone's rules) and left alone when it no longer delivers to that Worker,
+ * as `resetEmailCatchAll` does for the catch-all: someone changed it since.
+ */
 export async function removeEmailRule(
   api: CloudflareClient,
-  target: { zoneId: string; ruleId: string },
+  target: { zoneId: string; ruleId: string; workerName?: string },
 ): Promise<RuleRemoval> {
   try {
+    if (target.workerName !== undefined) {
+      const current = (await api.emailRouting.listRules(target.zoneId)).find(
+        (r) => r.id === target.ruleId,
+      );
+      if (current === undefined) return { outcome: "gone" };
+      if (!deliversTo(current.actions, target.workerName)) {
+        return { outcome: "not-ours", action: describeAction(current.actions) };
+      }
+    }
     await api.emailRouting.deleteRule(target.zoneId, target.ruleId);
-    return "deleted";
+    return { outcome: "deleted" };
   } catch (error) {
-    if (isGone(error)) return "gone";
+    if (isGone(error)) return { outcome: "gone" };
     throw error;
   }
 }
