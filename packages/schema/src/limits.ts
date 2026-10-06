@@ -23,7 +23,9 @@ export const FREE_PLAN_SUBREQUESTS = 50;
 /**
  * Subrequests one Workers Paid invocation may make by default (a Worker may
  * raise it in its `limits`; the manager does not). For a Workflow the limit
- * is per instance, not per step: every step of a job shares it
+ * is per invocation, not per step: the steps an instance runs back to back
+ * share it, and only a sleep long enough to resume the instance in a new
+ * invocation (5 minutes, measured on Workers Free) starts a fresh count
  * (developers.cloudflare.com/workflows/reference/limits).
  */
 export const PAID_PLAN_SUBREQUESTS = 10_000;

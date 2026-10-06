@@ -78,7 +78,15 @@ job works on all of them as one app. The snapshot holds the serving version of e
 Worker, together with the D1 bookmarks. Each Worker's new version is uploaded and
 checked at its own preview URL, D1 migrations run before any Worker switches, and
 then the Workers switch to their new versions one at a time, with the app's own
-Worker last. A rollback returns every Worker to its version in the snapshot.
+Worker last. A rollback returns every Worker to its version in the snapshot. On
+Workers Free, the job of an app with many Workers pauses for 5 minutes now and then
+to get a fresh allowance of requests from Cloudflare, as its install did. It never
+pauses while the Workers switch: it waits before the switch instead, so that all of
+them move to the new version within seconds of each other, and the same holds for a
+rollback, for undoing a failed update, and for the preview and health checks, whose
+probes run back to back. The one exception is a rollback of an app of 24 Workers,
+the most an app may have: its switch may wait for a fresh allowance halfway, leaving
+the Workers on mixed versions for a few minutes.
 
 A Worker the app keeps off `workers.dev` has no preview URL, so its new version is
 not checked before it switches. When a new version changes whether a Worker is on

@@ -10,6 +10,7 @@ import { z } from "zod";
 import { writeAcceptedBypass } from "../access/accepted-paths.server";
 import { readAccessPlaceholderValues } from "../access/placeholder-values.server";
 import { storedBypassPaths, storedCatalogAccess } from "../access/stored-access.server";
+import { readAccountPlan } from "../account/plan.server";
 import { effectiveAutoUpdate, settingOn } from "../auto-update/auto-update";
 import { type StoredRelease, storedEffectiveManifest } from "../catalog/revisions.server";
 import { appPlace } from "../components/app-links";
@@ -618,6 +619,8 @@ export async function runRollback(ctx: JobContext): Promise<void> {
           : workflowTargets(snapshotManifest, install.worker_name, workflowNames);
       return {
         accountId: settings.account_id,
+        // Absent in a step output recorded before it was read: not known to be paid.
+        accountPaid: (await readAccountPlan(orm)) === "paid",
         workerName: install.worker_name,
         fromVersion: install.catalog_version,
         otherWorkers: Object.entries(otherVersions).map(([scriptName, versionId]) => {
@@ -708,6 +711,11 @@ export async function runRollback(ctx: JobContext): Promise<void> {
     });
     steps.setAccountId(started.accountId);
     const { workerName } = started;
+    // An app of several Workers may need more requests than one invocation
+    // makes on Workers Free: its steps then spread over invocations.
+    if ((started.otherWorkers ?? []).length > 0 && started.accountPaid !== true) {
+      steps.spreadOverInvocations();
+    }
 
     // A version that binds a Hyperdrive configuration deleted since would
     // serve without its database: refuse before anything changes. Read from
@@ -755,50 +763,56 @@ export async function runRollback(ctx: JobContext): Promise<void> {
       knownSubdomainForUndo ??= await lookupSubdomainPhase(steps);
       return knownSubdomainForUndo;
     };
-    for (const other of otherWorkers) {
-      // A Worker the snapshot's version keeps off workers.dev goes off it
-      // before that version serves; one it puts back on, after (below).
-      // Absent in a job started before the flag existed.
-      if (other.workersDev === false) {
-        const subdomain = await subdomainOf();
-        // Listed before the step: a step that fails may still have turned it off.
-        if (other.workersDevNow) takenOffWorkersDev.push(other.scriptName);
-        await otherWorkerRoutePhase(
+    // Every Worker back on its version in one invocation, the primary one
+    // last, so no wait for a fresh one leaves them on different versions for
+    // minutes: a deployment each, the route of one the snapshot's version
+    // keeps off workers.dev, and the subdomain lookup.
+    await steps.reserve("the rollback", 2 * otherWorkers.length + 2, async () => {
+      for (const other of otherWorkers) {
+        // A Worker the snapshot's version keeps off workers.dev goes off it
+        // before that version serves; one it puts back on, after (below).
+        // Absent in a job started before the flag existed.
+        if (other.workersDev === false) {
+          const subdomain = await subdomainOf();
+          // Listed before the step: a step that fails may still have turned it off.
+          if (other.workersDevNow) takenOffWorkersDev.push(other.scriptName);
+          await otherWorkerRoutePhase(
+            steps,
+            params.installId,
+            { primary: false, scriptName: other.scriptName, workersDev: false },
+            subdomain,
+          );
+        }
+        movedOthers.push(other.scriptName);
+        await deployOtherWorkerVersionPhase(
           steps,
-          params.installId,
-          { primary: false, scriptName: other.scriptName, workersDev: false },
-          subdomain,
+          { primary: false, scriptName: other.scriptName },
+          other.versionId,
+          started.toVersion ?? started.versionId,
         );
+        deployedOthers.push(other.scriptName);
       }
-      movedOthers.push(other.scriptName);
-      await deployOtherWorkerVersionPhase(
-        steps,
-        { primary: false, scriptName: other.scriptName },
-        other.versionId,
-        started.toVersion ?? started.versionId,
-      );
-      deployedOthers.push(other.scriptName);
-    }
 
-    // The API call is a step of its own, so the moment it returns the job
-    // knows the snapshot's version serves traffic.
-    await run("deploy snapshot version", async ({ log, cf }) => {
-      // Forced: without it Cloudflare blocks a rollback to a version whose
-      // secrets differ from the current ones (an update may have added one),
-      // and the admin already confirmed this rollback explicitly.
-      await cf().versions.createDeployment(workerName, {
-        versions: [{ version_id: started.versionId, percentage: 100 }],
-        annotations: {
-          "workers/message": `Appflare: roll back to ${started.toVersion ?? started.versionId}`,
-        },
-        force: true,
+      // The API call is a step of its own, so the moment it returns the job
+      // knows the snapshot's version serves traffic.
+      await run("deploy snapshot version", async ({ log, cf }) => {
+        // Forced: without it Cloudflare blocks a rollback to a version whose
+        // secrets differ from the current ones (an update may have added one),
+        // and the admin already confirmed this rollback explicitly.
+        await cf().versions.createDeployment(workerName, {
+          versions: [{ version_id: started.versionId, percentage: 100 }],
+          annotations: {
+            "workers/message": `Appflare: roll back to ${started.toVersion ?? started.versionId}`,
+          },
+          force: true,
+        });
+        log.info(
+          `Version ${started.versionId} now serves all traffic (deployment forced, so a secret changed since that version does not block the rollback).`,
+        );
+        return {};
       });
-      log.info(
-        `Version ${started.versionId} now serves all traffic (deployment forced, so a secret changed since that version does not block the rollback).`,
-      );
-      return {};
+      deployed = true;
     });
-    deployed = true;
     // The version brought its own secrets back; the records follow them so
     // the install page lists what the Worker has. A failed read only warns.
     // The same read names the Hyperdrive configurations the version binds.
@@ -1044,24 +1058,27 @@ export async function runRollback(ctx: JobContext): Promise<void> {
     const stranded: Record<string, string | null> = {};
     const routesBack: string[] = [];
     if (!wasDeployed) {
-      for (const name of [...movedOthers].reverse()) {
-        const other = startedOthers.find((o) => o.scriptName === name);
-        if (other === undefined) continue;
-        try {
-          const back = other.versionIdNow ?? null;
-          if (back === null) throw new Error("the install's record has no version of it");
-          await deployOtherWorkerVersionPhase(
-            steps,
-            { primary: false, scriptName: name },
-            back,
-            fromVersionLabel ?? back,
-            true,
-          );
-          returned.push(name);
-        } catch {
-          stranded[name] = deployedOthers.includes(name) ? other.versionId : null;
+      // In one invocation, as the rollback's own deployments were.
+      await steps.reserve("the return to the serving versions", movedOthers.length, async () => {
+        for (const name of [...movedOthers].reverse()) {
+          const other = startedOthers.find((o) => o.scriptName === name);
+          if (other === undefined) continue;
+          try {
+            const back = other.versionIdNow ?? null;
+            if (back === null) throw new Error("the install's record has no version of it");
+            await deployOtherWorkerVersionPhase(
+              steps,
+              { primary: false, scriptName: name },
+              back,
+              fromVersionLabel ?? back,
+              true,
+            );
+            returned.push(name);
+          } catch {
+            stranded[name] = deployedOthers.includes(name) ? other.versionId : null;
+          }
         }
-      }
+      });
       // A Worker taken off workers.dev for the snapshot's version gets its
       // address back, since the version it serves wants it: every one whose
       // step to turn it off started, unless it is left on the snapshot's

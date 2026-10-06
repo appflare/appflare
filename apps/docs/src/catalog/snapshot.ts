@@ -3,6 +3,7 @@ import {
   catalogStatsSchema,
   indexJsonSchema,
   ownerRepoSchema,
+  readIndexJson,
 } from "@appflare/schema";
 import { z } from "zod";
 
@@ -29,7 +30,7 @@ export const catalogSnapshotSchema = z
   .object({
     /** When the snapshot was taken; the site's "now" for every date rule. */
     takenAt: z.iso.datetime(),
-    index: indexJsonSchema,
+    index: indexJsonSchema.transform(readIndexJson),
     /** Null when the index names no stats file. */
     stats: catalogStatsSchema.nullable(),
     /** Each app's links, keyed by slug. */

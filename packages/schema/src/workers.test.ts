@@ -155,7 +155,7 @@ describe("install.workers in the catalog manifest", () => {
     );
   });
 
-  it(`needs "plan": "paid" for more than ${MAX_FREE_PLAN_ENTRY_WORKERS} Workers`, () => {
+  it(`accepts "plan": "free" for any count of Workers up to ${MAX_ENTRY_WORKERS}`, () => {
     const entry = (count: number, plan: string) =>
       catalog(
         {
@@ -170,12 +170,11 @@ describe("install.workers in the catalog manifest", () => {
         { plan },
       );
     expect(catalogManifestSchema.safeParse(entry(3, "free")).success).toBe(true);
-    const issues = catalogManifestSchema.safeParse(entry(4, "free")).error?.issues;
-    expect(issues?.map((i) => i.path)).toEqual([["plan"]]);
-    expect(issues?.[0]?.message).toBe(
-      'an entry of 4 Workers needs "plan": "paid": on Workers Free one job installs or updates at most 3 Workers, within the 50 subrequests the free plan allows it',
-    );
+    expect(catalogManifestSchema.safeParse(entry(4, "free")).success).toBe(true);
+    expect(catalogManifestSchema.safeParse(entry(MAX_ENTRY_WORKERS, "free")).success).toBe(true);
     expect(catalogManifestSchema.safeParse(entry(4, "paid")).success).toBe(true);
+    // Kept for one release, now meaning what it says: any entry's count.
+    expect(MAX_FREE_PLAN_ENTRY_WORKERS).toBe(MAX_ENTRY_WORKERS);
   });
 
   it("needs exactly one primary Worker whose config is install.wranglerConfig", () => {

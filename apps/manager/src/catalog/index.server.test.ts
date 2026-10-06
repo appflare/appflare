@@ -1,4 +1,5 @@
 import type { FetchLike } from "@appflare/cf-api";
+import { MANAGER_FEATURES } from "@appflare/schema";
 import { describe, expect, it } from "vitest";
 import { fakeKv } from "../test/fake-kv";
 import {
@@ -184,6 +185,20 @@ describe("parseCatalogIndex", () => {
     expect(parsed?.unreadable.map((u) => u.slug)).toEqual(["future"]);
     expect(parsed?.unreadable[0]?.problem).toMatch(/tier/);
     expect(parseCatalogIndex({ apps: [] })).toBeNull();
+  });
+
+  it("reads a row needing a manager feature it has, and leaves out one needing a feature it lacks", () => {
+    const row = INDEX.apps[0];
+    if (row === undefined) throw new Error("no row");
+    const many = { ...row, slug: "many", requires: ["r2", MANAGER_FEATURES.spreadJobs] };
+    const later = { ...row, slug: "later", requires: ["manager:not-yet-known"] };
+    const parsed = parseCatalogIndex({ ...INDEX, apps: [many, later] });
+    expect(parsed?.index.apps.map((a) => a.slug)).toEqual(["many"]);
+    // The feature is dropped: only account capabilities reach the catalog pages.
+    expect(parsed?.index.apps[0]?.requires).toEqual(["r2"]);
+    expect(parsed?.unreadable.map((u) => u.slug)).toEqual(["later"]);
+    // The raw rows, which the cache keeps, are as published.
+    expect(parsed?.raw.apps[0]).toMatchObject({ requires: ["r2", MANAGER_FEATURES.spreadJobs] });
   });
 
   it("caches every entry as published and counts the unreadable ones on each read", async () => {

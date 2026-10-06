@@ -1,9 +1,12 @@
+import { NonRetryableError } from "cloudflare:workflows";
 import { type CloudflareClient, createClient, type FetchLike } from "@appflare/cf-api";
 import { probeCredentials, zoneNamesVia } from "../access/probe-credentials.server";
 import { apiBaseOption } from "../cloudflare/api-base";
 import { createDb, type Database } from "../db/client";
 import { errorMessage, JobError, toStepError } from "./errors";
+import { isSubrequestLimitError } from "./install/budget";
 import type { InstallProbeHeaders } from "./install/health";
+import { countedUnits, FRESH_INVOCATION_SLEEP, InvocationBudget } from "./invocation-budget";
 import type { JobContext, StepConfig } from "./run-job";
 import { StepLog } from "./step-log";
 import { type JobUnitsAccess, jobUnits } from "./units/client";
@@ -19,7 +22,11 @@ export { errorMessage, isNotFound, JobError, toStepError } from "./errors";
  * so the job's steps share one invocation's subrequest limit. Work that makes
  * many subrequests runs in job units (`steps.units`), each its own invocation
  * when the `SELF` binding exists; what a job still spends in its own
- * invocation is tallied in units/client.ts.
+ * invocation is tallied in units/client.ts. A job that may need more than one
+ * invocation (an app of several Workers on Workers Free) calls
+ * {@link JobSteps.spreadOverInvocations}: from then on each step that might
+ * not fit what is left of the invocation's 50 starts after a sleep that
+ * resumes the job in a fresh one (./invocation-budget.ts).
  */
 
 /** 3 retries with backoff on 429/5xx. */
@@ -73,14 +80,53 @@ export interface JobSteps {
   now: () => number;
   /** A short wait inside a step (seconds; a longer wait is a `step.sleep`). */
   sleep: (ms: number) => Promise<void>;
+  /**
+   * From now on, a step that might not fit what is left of this invocation's
+   * subrequests on Workers Free waits for a fresh invocation first, and a
+   * step that still runs out of them runs once more in a fresh one.
+   */
+  spreadOverInvocations(): void;
+  /** What this invocation has spent (fetches and unit calls), and whether the job spreads. */
+  readonly invocation: Pick<InvocationBudget, "spent" | "spreading">;
+  /**
+   * Runs `block` (steps that should run back to back, such as switching every
+   * Worker of an app to a version, or a health check whose window counts
+   * seconds) in one invocation: when the job spreads and fewer than `need`
+   * requests are left in this one, it waits for a fresh invocation first, and
+   * no step of the block waits between them. `name` names that wait.
+   */
+  reserve<T>(name: string, need: number, block: () => Promise<T>): Promise<T>;
 }
+
+/**
+ * Added to the failure of a step that used up the job's own invocation (not
+ * a unit's), which a job that spreads runs once more in a fresh one.
+ */
+export const OWN_LIMIT_NOTE = "The job's own requests used up what this run of it may make.";
+
+/** The job log's line when a job waits for a fresh invocation. */
+export const FRESH_INVOCATION_NOTE =
+  "Waiting 5 minutes before the next step: on Workers Free, Cloudflare lets a job make 50 requests at a time, and this app's Workers need more. The job carries on by itself with a fresh allowance.";
 
 export function createJobSteps(ctx: JobContext, jobId: string): JobSteps {
   const { step, env, deps } = ctx;
   const db = env.DB;
   const now = deps.now ?? Date.now;
-  const baseFetch: FetchLike = deps.fetch ?? ((input, init) => fetch(input, init));
+  // Counted per run of the job: a job resumed after a long sleep runs again
+  // from the top, in a fresh invocation, and replays its steps for free.
+  const budget = new InvocationBudget();
+  const baseFetch: FetchLike = budget.countingFetch(
+    deps.fetch ?? ((input, init) => fetch(input, init)),
+  );
+  const units = jobUnits(env, {
+    // Units run in place (no `SELF`) spend this invocation's requests.
+    fetch: baseFetch,
+    ...(deps.sleep === undefined ? {} : { sleep: deps.sleep }),
+    now,
+  });
   let accountId: string | null = null;
+  /** How many times each step name was run so far, replays included, for unique pause names. */
+  const seen = new Map<string, number>();
 
   function knownAccount(): string {
     if (accountId === null) throw new JobError("the Cloudflare account is not known yet");
@@ -101,55 +147,126 @@ export function createJobSteps(ctx: JobContext, jobId: string): JobSteps {
     });
   }
 
+  /**
+   * Sleeps until the job resumes in a fresh invocation, with a line in the
+   * job log. Named after the step it comes before, so a replay finds it.
+   */
+  async function freshInvocation(before: string): Promise<void> {
+    await step.do(`wait for a fresh invocation before ${before}`, async () => {
+      const log = new StepLog(now);
+      log.info(FRESH_INVOCATION_NOTE, { spent: budget.spent });
+      await log.flush(db, jobId);
+      return {};
+    });
+    await step.sleep(`fresh invocation before ${before}`, FRESH_INVOCATION_SLEEP);
+    // A sleep of 5 minutes ends the invocation (measured, see
+    // ./invocation-budget.ts): the engine resumes the job in a new one, which
+    // runs from the top with a new count and passes this sleep as done, so
+    // this line runs only if the engine kept the invocation through it. Then
+    // the count is taken as fresh anyway; if the old allowance were really
+    // still in force, the next step would run out, fail with the subrequest
+    // limit, run once more after another such sleep, and fail the job if
+    // that one runs out too. It never loops.
+    budget.fresh();
+  }
+
+  /** A name for a wait that is unique among the job's waits, replays included. */
+  function uniqueName(name: string): string {
+    const count = (seen.get(name) ?? 0) + 1;
+    seen.set(name, count);
+    return count === 1 ? name : `${name} (${count})`;
+  }
+
   const steps: JobSteps = {
     current: "start",
     baseFetch,
     now,
     sleep: deps.sleep ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms))),
-    units: jobUnits(env, {
-      ...(deps.fetch === undefined ? {} : { fetch: deps.fetch }),
-      ...(deps.sleep === undefined ? {} : { sleep: deps.sleep }),
-      now,
-    }),
+    units: units.remote
+      ? { api: countedUnits(units.api, () => budget.add(1)), remote: true }
+      : units,
+    invocation: budget,
+    spreadOverInvocations() {
+      budget.spread();
+    },
+    async reserve(name, need, block) {
+      const unique = uniqueName(`reserve:${name}`).slice("reserve:".length);
+      if (budget.needsFreshFor(need)) await freshInvocation(unique);
+      if (!budget.canHold(need)) return block();
+      budget.hold(true);
+      try {
+        return await block();
+      } finally {
+        budget.hold(false);
+      }
+    },
     setAccountId(id) {
       accountId = id;
     },
     accountId: knownAccount,
     async run(name, body, config = API_STEP) {
+      const unique = uniqueName(name);
+      if (budget.needsFresh()) await freshInvocation(unique);
       steps.current = name;
-      return step.do(name, config, async (stepCtx) => {
-        const log = new StepLog(now);
-        try {
-          const value = await body({
-            log,
-            fetch: baseFetch,
-            cf: () => client(log),
-            cfAs: (token) => {
-              if (token.length === 0) throw new JobError("no API token was given for this call");
-              return client(log, token);
-            },
-            orm: createDb(db),
-            attempt: stepCtx?.attempt ?? 1,
-            probeHeaders: (installId, url) =>
-              probeCredentials(
-                {
-                  db,
-                  authSecret: env.BETTER_AUTH_SECRET,
-                  zoneNames: zoneNamesVia(async () => client(log)),
-                },
-                installId,
-                url,
-              ),
-          });
-          await log.flush(db, jobId);
-          return value;
-        } catch (error) {
-          log.error(`${name} failed: ${errorMessage(error)}`);
-          await log.flush(db, jobId);
-          throw toStepError(error);
-        }
-      });
+      try {
+        return await runStep(name, body, config);
+      } catch (error) {
+        // Planned steps fit, but one that still ran out of this invocation's
+        // subrequests runs once more in a fresh one. Every step is safe to
+        // run again: the engine retries any of them after a 5xx. Decided
+        // from the recorded failure, so a replay decides the same; a unit
+        // that ran out of its own allowance fails the job as before.
+        if (!budget.spreading || !errorMessage(error).includes(OWN_LIMIT_NOTE)) throw error;
+        await freshInvocation(`${unique} again`);
+        steps.current = name;
+        return await runStep(`${name} (again)`, body, config);
+      }
     },
   };
+
+  async function runStep<T extends object>(
+    name: string,
+    body: (tools: StepTools) => Promise<T>,
+    config: StepConfig,
+  ): Promise<T> {
+    return step.do(name, config, async (stepCtx) => {
+      const log = new StepLog(now);
+      try {
+        const value = await body({
+          log,
+          fetch: baseFetch,
+          cf: () => client(log),
+          cfAs: (token) => {
+            if (token.length === 0) throw new JobError("no API token was given for this call");
+            return client(log, token);
+          },
+          orm: createDb(db),
+          attempt: stepCtx?.attempt ?? 1,
+          probeHeaders: (installId, url) =>
+            probeCredentials(
+              {
+                db,
+                authSecret: env.BETTER_AUTH_SECRET,
+                zoneNames: zoneNamesVia(async () => client(log)),
+              },
+              installId,
+              url,
+            ),
+        });
+        await log.flush(db, jobId);
+        return value;
+      } catch (error) {
+        const failure = toStepError(error);
+        // The job's own invocation ran out (not a unit's): said so, for the rerun above.
+        const own =
+          isSubrequestLimitError(error) && budget.exhausted()
+            ? new NonRetryableError(`${errorMessage(failure)} ${OWN_LIMIT_NOTE}`)
+            : failure;
+        log.error(`${name} failed: ${errorMessage(own)}`);
+        await log.flush(db, jobId);
+        throw own;
+      }
+    });
+  }
   return steps;
 }

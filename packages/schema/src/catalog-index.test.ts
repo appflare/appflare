@@ -7,7 +7,11 @@ import {
   indexAppArtifact,
   indexAppSchema,
   indexJsonSchema,
+  indexRequires,
   isFeaturedItemActive,
+  MANAGER_FEATURES,
+  readIndexApp,
+  readIndexJson,
 } from "./catalog-index";
 import { MAX_SCREENSHOTS } from "./media";
 
@@ -160,6 +164,53 @@ describe("indexJsonSchema", () => {
         catalogManifest,
       }).success,
     ).toBe(false);
+  });
+});
+
+describe("manager features in an index row's requires", () => {
+  const row = (requires: string[]) => ({ ...validIndex.apps[0], requires });
+
+  it("keeps the feature through a parse and a write, so a catalog publishes it", () => {
+    const parsed = indexJsonSchema.parse({
+      ...validIndex,
+      apps: [row(["r2", MANAGER_FEATURES.spreadJobs])],
+    });
+    const written = JSON.parse(JSON.stringify(parsed));
+    expect(written.apps[0].requires).toEqual(["r2", MANAGER_FEATURES.spreadJobs]);
+    expect(indexJsonSchema.parse(written).apps[0]?.requires).toEqual([
+      "r2",
+      MANAGER_FEATURES.spreadJobs,
+    ]);
+  });
+
+  it("drops the features a reader has, keeping the account capabilities", () => {
+    const parsed = indexAppSchema.parse(row(["r2", MANAGER_FEATURES.spreadJobs]));
+    expect(readIndexApp(parsed).requires).toEqual(["r2"]);
+    const index = indexJsonSchema.parse({ ...validIndex, apps: [parsed] });
+    expect(readIndexJson(index).apps[0]?.requires).toEqual(["r2"]);
+  });
+
+  it("refuses a value it does not know, as managers from before a feature do", () => {
+    expect(indexAppSchema.safeParse(row(["manager:from-the-future"])).success).toBe(false);
+    expect(indexAppSchema.safeParse(row(["r3"])).success).toBe(false);
+  });
+
+  it("names the feature for a free entry of more than three Workers only", () => {
+    const entry = (count: number, plan: "free" | "paid") => ({
+      plan,
+      requires: ["r2" as const],
+      install: {
+        workers: Array.from({ length: count }, (_, i) => ({
+          name: `w-${i}`,
+          wranglerConfig: `w/${i}/wrangler.jsonc`,
+          primary: i === 0,
+        })),
+      },
+    });
+    expect(indexRequires(entry(3, "free"))).toEqual(["r2"]);
+    expect(indexRequires(entry(4, "free"))).toEqual(["r2", MANAGER_FEATURES.spreadJobs]);
+    expect(indexRequires(entry(18, "paid"))).toEqual(["r2"]);
+    expect(indexRequires({ plan: "free", requires: [], install: {} })).toEqual([]);
   });
 });
 

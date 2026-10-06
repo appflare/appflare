@@ -6,13 +6,11 @@ import {
   entryNameProblems,
   entryPlaceholders,
   entryWorkers,
-  MAX_FREE_PLAN_WORKERS,
   otherDoTagsDiffer,
   otherEntryWorkers,
   otherWorkersMatch,
   parseWorkerVersions,
   storedOtherWorkers,
-  workerCountProblem,
   workerLabel,
 } from "./entry-workers";
 import { buildScriptMetadata, installVars } from "./install/metadata";
@@ -219,14 +217,6 @@ describe("entry workers", () => {
     expect(parseWorkerVersions('{"links-jobs":"v1"}')).toEqual({ "links-jobs": "v1" });
     expect(parseWorkerVersions("[1]")).toEqual({});
     expect(parseWorkerVersions(null)).toEqual({});
-  });
-
-  it("caps the Workers of an app on Workers Free only", () => {
-    expect(workerCountProblem(MAX_FREE_PLAN_WORKERS, false)).toBeNull();
-    expect(workerCountProblem(MAX_FREE_PLAN_WORKERS + 1, false)).toContain(
-      `more than ${MAX_FREE_PLAN_WORKERS} Workers exceed the free plan's request budget`,
-    );
-    expect(workerCountProblem(5, true)).toBeNull();
   });
 
   it("tells whether the other Workers serve a snapshot's versions", () => {

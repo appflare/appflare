@@ -31,6 +31,7 @@ import {
   SUBDOMAIN,
   TOKEN,
 } from "../test/fake-account";
+import { type FakeEngine, fakeEngine } from "../test/fake-invocations";
 import { fakeSelf } from "../test/fake-self";
 import { fakeStep } from "../test/fake-step";
 import { recordFixtureRevision, setInstallRelease } from "../test/recorded-revision";
@@ -44,6 +45,7 @@ import {
 } from "../test/seed-install";
 import { entryJobCost, otherWorkerCost } from "./entry-budget";
 import { entryWorkers } from "./entry-workers";
+import { FRESH_INVOCATION_SLEEP } from "./invocation-budget";
 import { type RollbackJobParams, runRollback } from "./rollback";
 import type { JobEnv } from "./run-job";
 import { API_STEP } from "./steps";
@@ -95,6 +97,8 @@ async function update(
   afterSeed?: () => Promise<void>,
   /** Wraps the fake's fetch (to change the account while the job runs). */
   wrapFetch?: (fake: ReturnType<typeof fakeAccount>) => FetchLike,
+  /** Runs the job in the engine that keeps Workers Free's 50 requests per invocation. */
+  engine?: FakeEngine,
 ) {
   const fixture = await buildArtifactFixture(options);
   const fake = fakeAccount(fixture, {
@@ -130,13 +134,26 @@ async function update(
   const fetch = wrapFetch?.(fake) ?? fake.fetch;
   const self = fakeSelf(jobEnv(), { fetch });
   let error: unknown = null;
+  const jobParams = params;
   try {
-    await runUpdate({
-      params,
-      step,
-      env: units === "self" ? { ...jobEnv(), SELF: self } : jobEnv(),
-      deps: { fetch, signingKeys: fixture.keys },
-    });
+    if (engine === undefined) {
+      await runUpdate({
+        params: jobParams,
+        step,
+        env: units === "self" ? { ...jobEnv(), SELF: self } : jobEnv(),
+        deps: { fetch, signingKeys: fixture.keys },
+      });
+    } else {
+      // The units run in invocations of their own: only each call counts for the job.
+      await engine.run(() =>
+        runUpdate({
+          params: jobParams,
+          step: engine.step,
+          env: { ...jobEnv(), SELF: engine.units(self) },
+          deps: { fetch: engine.fetch(fetch), signingKeys: fixture.keys },
+        }),
+      );
+    }
   } catch (e) {
     error = e;
   }
@@ -2824,6 +2841,8 @@ describe("update job, an app of many Workers", () => {
     ...Array.from({ length: 16 }, (_, i) => `gk-${String(i + 1).padStart(2, "0")}`),
   ];
   const oldVersionOf = (i: number) => `22222222-0000-4000-8000-${String(i).padStart(12, "0")}`;
+  /** The plan the entry says: free when the update runs on Workers Free. */
+  let plan: "free" | "paid" = "paid";
   const app = (version: string): ArtifactFixtureOptions => ({
     ...NEW_APP,
     version,
@@ -2839,11 +2858,14 @@ describe("update job, an app of many Workers", () => {
       name,
       bindings: [{ type: "kv_namespace", name: "CUT_KV" }],
     })),
-    catalog: { plan: "paid" },
+    catalog: { plan },
   });
-
-  /** Runs the update with a fake account per other Worker, each serving its old version. */
-  async function updateMany(world: Partial<FakeAccount> = {}) {
+  /**
+   * Runs the update with a fake account per other Worker, each serving its
+   * old version; with `engine`, on Workers Free, in invocations of 50 requests.
+   */
+  async function updateMany(world: Partial<FakeAccount> = {}, engine?: FakeEngine) {
+    plan = engine === undefined ? "paid" : "free";
     const old = await buildArtifactFixture(app("1.0.0"));
     const accounts = new Map(
       OTHER_NAMES.map((name, i) => [
@@ -2873,7 +2895,7 @@ describe("update job, an app of many Workers", () => {
           })),
         ],
       },
-      { paidConfirmed: true },
+      { paidConfirmed: engine === undefined },
       "self",
       async () => {
         await env.DB.prepare("UPDATE installs SET worker_versions_json = ?1 WHERE id = ?2")
@@ -2886,9 +2908,78 @@ describe("update job, an app of many Workers", () => {
           /^https:\/\/[0-9a-f]{8}-(cut-[a-z0-9-]+)\./.exec(input)?.[1];
         return ((name === undefined ? undefined : accounts.get(name)) ?? fake).fetch(input, init);
       },
+      engine,
     );
     return { ...r, accounts, oldVersions };
   }
+
+  it("updates 18 Workers on Workers Free, spread over invocations of 50 requests", async () => {
+    const engine = fakeEngine();
+    const r = await updateMany({}, engine);
+    expect(r.error).toBeNull();
+    expect(r.job?.status).toBe("succeeded");
+    expect(engine.invocations.length).toBeGreaterThan(2);
+    expect(Math.max(...engine.invocations)).toBeLessThanOrEqual(50);
+    expect(engine.sleeps.filter((s) => s.duration === FRESH_INVOCATION_SLEEP)).toHaveLength(
+      engine.invocations.length - 1,
+    );
+    // Every step's body ran in exactly one invocation.
+    const ran = engine.ran.map((s) => s.name);
+    expect(new Set(ran).size).toBe(ran.length);
+    for (const [i, name] of OTHER_NAMES.entries()) {
+      const label = ` (Worker "cut-${name}")`;
+      // Promoted once, before the primary Worker (newest deployment first).
+      expect(ran.filter((n) => n === `promote version${label}`)).toHaveLength(1);
+      expect(ran.indexOf(`promote version${label}`)).toBeLessThan(ran.indexOf("promote version"));
+      const account = r.accounts.get(`cut-${name}`);
+      expect(account?.state.deployments.map((d) => d.versions[0]?.version_id)).toEqual([
+        NEW_VERSION,
+        oldVersionOf(i),
+      ]);
+    }
+    expect(r.install?.current_version_id).toBe(NEW_VERSION);
+    expect(Object.values(JSON.parse(String(r.install?.worker_versions_json)))).toEqual(
+      OTHER_NAMES.map(() => NEW_VERSION),
+    );
+    // Every promotion, the primary Worker's last, in one invocation: no
+    // wait leaves the app's Workers on different versions.
+    const promotions = engine.ran.filter((s) => s.name.startsWith("promote version"));
+    expect(promotions).toHaveLength(18);
+    expect(new Set(promotions.map((s) => s.invocation)).size).toBe(1);
+    // Each canary's probes run in one invocation too.
+    for (const name of OTHER_NAMES) {
+      const checks = engine.ran.filter((s) => s.name.startsWith(`canary (Worker "cut-${name}")`));
+      expect(checks.length).toBeGreaterThan(0);
+      expect(new Set(checks.map((s) => s.invocation)).size).toBe(1);
+    }
+  });
+
+  it("puts all 17 other Workers back on Workers Free when the primary one is not promoted", async () => {
+    const engine = fakeEngine();
+    const r = await updateMany(
+      { failOnce: new Map([["POST /workers/scripts/cut/deployments", 400]]) },
+      engine,
+    );
+    expect(r.job?.status).toBe("failed");
+    expect(r.job?.error).toMatch(/^promote version:/);
+    expect(Math.max(...engine.invocations)).toBeLessThanOrEqual(50);
+    for (const [i, name] of OTHER_NAMES.entries()) {
+      const account = r.accounts.get(`cut-${name}`);
+      expect(account?.state.deployments.map((d) => d.versions[0]?.version_id)).toEqual([
+        oldVersionOf(i),
+        NEW_VERSION,
+        oldVersionOf(i),
+      ]);
+    }
+    expect(JSON.parse(String(r.install?.worker_versions_json))).toEqual(r.oldVersions);
+    expect(r.install?.current_version_id).toBe(OLD_VERSION);
+    // Promoted in one invocation, and returned in one.
+    const promotions = engine.ran.filter((s) => s.name.startsWith("promote version"));
+    expect(new Set(promotions.map((s) => s.invocation)).size).toBe(1);
+    const returns = engine.ran.filter((s) => s.name.startsWith("deploy snapshot version"));
+    expect(returns).toHaveLength(17);
+    expect(new Set(returns.map((s) => s.invocation)).size).toBe(1);
+  });
 
   it("updates 18 Workers, each in steps of its own, within the job's planned budget", async () => {
     const r = await updateMany();

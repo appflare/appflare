@@ -839,13 +839,19 @@ as one app:
 - **Two to 24 Workers**, on the artifact tier only. Each has a `name` within the
   entry: up to 24 lowercase letters, digits, and hyphens, not starting or ending
   with a hyphen. Each wrangler config must have a `name` of its own.
-- **Workers Free takes at most three.** The manager installs and updates all of an
-  app's Workers in one job, and each Worker adds requests to it; the free plan
-  allows 50 per job. An entry of four or more Workers must set `"plan": "paid"`;
-  the schema refuses it otherwise. On Workers Paid a job may make 10,000 requests and run
-  10,000 steps, and each Worker's upload runs in a request of its own, so 24 Workers
-  fit with room to spare; the manager totals the job's steps before it starts and
-  refuses a job that would not fit.
+- **The Worker count does not decide the plan.** Set `"plan"` for what the app
+  needs, as for an app of one Worker. The manager installs and updates all of an
+  app's Workers in one job, and each Worker adds requests to it. Workers Free lets a
+  job make 50 at a time, so there a job for more Workers pauses for 5 minutes
+  whenever it needs a fresh allowance and then carries on; the install takes longer,
+  nothing else changes. On Workers Paid a job may make 10,000 requests at a time.
+  Either way a job may run a limited number of steps (1,024 on Workers Free, 10,000
+  on Workers Paid), and each Worker's upload runs in a request of its own, so 24
+  Workers fit; the manager totals the job's steps before it starts and refuses a job
+  that would not fit. Older versions of Appflare installed at most three Workers per
+  app on Workers Free: the catalog's index marks a `"free"` entry of four or more so
+  that they leave it out of their catalog and ask to be updated, instead of offering
+  an app they cannot install.
 - **Every Worker counts toward the account's limit**: 100 Workers on Workers Free,
   500 on Workers Paid. The install counts the account's Workers first and stops
   before creating anything when the app's Workers would not fit.

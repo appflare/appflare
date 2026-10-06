@@ -27,13 +27,16 @@ import {
   ZIP_URL,
 } from "../test/artifact-fixture";
 import { fakeAccessAccount } from "../test/fake-access-account";
+import { fakeEngine } from "../test/fake-invocations";
 import { fakeSelf } from "../test/fake-self";
 import { fakeStep } from "../test/fake-step";
 import { redirectingArtifactHost, STORAGE_URL } from "../test/redirecting-host";
 import { entryJobCost, otherWorkerCost } from "./entry-budget";
 import { entryWorkers } from "./entry-workers";
 import { API_STEP, type InstallJobParams, runInstall } from "./install";
+import { FRESH_INVOCATION_SLEEP } from "./invocation-budget";
 import type { JobEnv } from "./run-job";
+import { FRESH_INVOCATION_NOTE } from "./steps";
 import { runUninstall, type UninstallJobParams } from "./uninstall";
 
 /**
@@ -816,6 +819,46 @@ async function install(
       .all<{ level: string; message: string; data_json: string | null }>()
   ).results;
   return { fixture, fake, step, self, error, job, installRow, resources, logs };
+}
+
+/**
+ * `install`, run by the fake engine that holds each invocation of the job to
+ * Workers Free's 50 requests and resumes it in a new one after a sleep of 5
+ * minutes, replaying what it already did (../test/fake-invocations.ts).
+ */
+async function installOnFreePlan(
+  options: ArtifactFixtureOptions,
+  input: Partial<StartInstallInput> = {},
+) {
+  const fixture = await buildArtifactFixture(options);
+  const fake = fakeWorld(fixture);
+  const started = await start(fixture, input);
+  const engine = fakeEngine();
+  fake.state.stepOf = () => engine.ran.at(-1)?.name;
+  // The units run in invocations of their own: only each call counts for the job.
+  const self = fakeSelf(jobEnv(), { fetch: fake.fetch });
+  let error: unknown = null;
+  try {
+    await engine.run(() =>
+      runInstall({
+        params: started.params,
+        step: engine.step,
+        env: { ...jobEnv(), SELF: engine.units(self) },
+        deps: { fetch: engine.fetch(fake.fetch), signingKeys: fixture.keys },
+      }),
+    );
+  } catch (e) {
+    error = e;
+  }
+  const job = await env.DB.prepare("SELECT status, error FROM jobs WHERE id = ?1")
+    .bind(started.jobId)
+    .first<{ status: string; error: string | null }>();
+  const logs = (
+    await env.DB.prepare("SELECT message FROM job_logs WHERE job_id = ?1 ORDER BY id")
+      .bind(started.jobId)
+      .all<{ message: string }>()
+  ).results.map((l) => l.message);
+  return { fixture, fake, engine, self, error, job, logs, ...started };
 }
 
 beforeEach(async () => {
@@ -3014,18 +3057,54 @@ describe("install job, an app of several Workers", () => {
     expect(r.step.names).not.toContain('enable workers.dev route (Worker "cut-jobs")');
   });
 
-  it("refuses an entry of more than three Workers not marked paid, before creating anything", async () => {
-    const r = await install({
-      otherWorkers: [{ name: "a" }, { name: "b" }, { name: "c" }],
-      catalog: { plan: "paid" },
-      // A manifest the catalog would refuse, signed all the same.
-      tweak: (m) => {
-        m.catalog.plan = "free";
-      },
+  it("installs an entry of more than three Workers on Workers Free, spread over invocations", async () => {
+    const names = Array.from({ length: 8 }, (_, i) => `part-${i + 1}`);
+    const r = await installOnFreePlan({
+      bindings: [
+        { type: "kv_namespace", name: "CUT_KV" },
+        ...names.map((name) => ({
+          type: "service",
+          name: name.toUpperCase().replace(/-/g, "_"),
+          service: `{{workerName:${name}}}`,
+        })),
+      ],
+      otherWorkers: names.map((name) => ({
+        name,
+        bindings: [{ type: "kv_namespace", name: "CUT_KV" }],
+        assets: [{ route: `/${name}.js`, content: `console.log(${JSON.stringify(name)})` }],
+      })),
+      catalog: { plan: "free" },
     });
-    expect(r.job?.status).toBe("failed");
-    expect(r.job?.error).toContain('an entry of 4 Workers needs \\"plan\\": \\"paid\\"');
-    expect(r.fake.state.kv).toEqual([]);
+    expect(r.error).toBeNull();
+    expect(r.job).toEqual({ status: "succeeded", error: null });
+    // No invocation of the job made more than Workers Free's 50 requests;
+    // between them the job slept 5 minutes, each time with a line in its log.
+    expect(r.engine.invocations.length).toBeGreaterThan(1);
+    expect(Math.max(...r.engine.invocations)).toBeLessThanOrEqual(50);
+    expect(r.engine.sleeps.filter((s) => s.name.startsWith("fresh invocation before "))).toEqual(
+      r.engine.sleeps.filter((s) => s.duration === FRESH_INVOCATION_SLEEP),
+    );
+    expect(r.engine.sleeps.filter((s) => s.duration === FRESH_INVOCATION_SLEEP)).toHaveLength(
+      r.engine.invocations.length - 1,
+    );
+    expect(r.logs.filter((m) => m === FRESH_INVOCATION_NOTE)).toHaveLength(
+      r.engine.invocations.length - 1,
+    );
+    expect(r.logs.some((m) => m.startsWith("The app's 9 Workers: an estimated"))).toBe(true);
+    // Every Worker uploaded once, each before the primary one that binds it.
+    const uploads = r.engine.ran.filter((s) => s.name.startsWith("upload Worker script"));
+    expect(uploads).toHaveLength(9);
+    const calls = r.fake.state.calls;
+    for (const name of names) {
+      expect(calls.filter((c) => c === `PUT /workers/scripts/cut-${name}`)).toHaveLength(1);
+      expect(calls.indexOf(`PUT /workers/scripts/cut-${name}`)).toBeLessThan(
+        calls.indexOf("PUT /workers/scripts/cut"),
+      );
+    }
+    // Nothing ran twice: each step's body ran in exactly one invocation.
+    const bodies = r.engine.ran.map((s) => s.name);
+    expect(new Set(bodies).size).toBe(bodies.length);
+    expect(r.self.calls.filter((c) => c.unit === "uploadWorker")).toHaveLength(9);
   });
 
   describe("a Workflow one Worker runs and another defines", () => {
@@ -3358,6 +3437,8 @@ describe("install job, an app of many Workers", () => {
     expect(r.logs.some((l) => l.message.startsWith("The app's 18 Workers: an estimated"))).toBe(
       true,
     );
+    // On Workers Paid the job runs in one invocation: it never waits for a fresh one.
+    expect(r.step.sleeps.filter((name) => name.startsWith("fresh invocation"))).toEqual([]);
   });
 
   it("refuses when the account has no room for the app's Workers, before creating anything", async () => {
