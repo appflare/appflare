@@ -1,4 +1,4 @@
-import type { InstallTier, Plan, ServiceId } from "@appflare/schema";
+import { accountRequirements, type InstallTier, type Plan, type ServiceId } from "@appflare/schema";
 import {
   countOf,
   listWords,
@@ -366,7 +366,7 @@ export function accountNeeds(
   const needs: AccountNeed[] = [];
   if (app.plan === "paid") needs.push(planNeed(ctx));
   needs.push(...ctx.services.map((id) => primitiveNeed(id, ctx)));
-  for (const requirement of app.requires) {
+  for (const requirement of accountRequirements(app.requires)) {
     if (requirementPrimitive(requirement) !== null) continue;
     needs.push(unknownNeed(requirement, requirementLabel(requirement)));
   }

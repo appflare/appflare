@@ -11,6 +11,7 @@ import {
   indexArtifactsSchema,
   isOptionalSecret,
   isSeedOnly,
+  secretKey,
   sha256Schema,
   workerUploadProblem,
 } from "@appflare/schema";
@@ -734,6 +735,7 @@ export async function runInstall(ctx: JobContext): Promise<void> {
         workerName: params.workerName,
         resources: created,
         vars: vars.vars,
+        fill: vars.fill,
         assetsJwt,
         workflowNames,
         rateLimitIds,
@@ -890,20 +892,22 @@ export async function runInstall(ctx: JobContext): Promise<void> {
 
     // 7. Secrets. An optional secret the admin left unset gets no step, and
     // a seed-only one (used by the seed above) is never set on the Worker.
+    // Values come by the secret's key; the Worker reads it by its name.
     for (const secret of primaryManifest.catalog.secrets) {
       if (isSeedOnly(secret)) continue;
-      if (isOptionalSecret(secret) && (params.secrets[secret.name] ?? "").length === 0) continue;
+      const key = secretKey(secret);
+      if (isOptionalSecret(secret) && (params.secrets[key] ?? "").length === 0) continue;
       await run(`set secret ${secret.name}`, async ({ log, cf, orm }) => {
-        const value = params.secrets[secret.name];
+        const value = params.secrets[key];
         if (value === undefined || value.length === 0) {
-          throw new InstallError(`no value was provided for the secret ${secret.name}`);
+          throw new InstallError(`no value was provided for the secret ${key}`);
         }
         await cf().workers.putSecret(params.workerName, { name: secret.name, text: value });
         await recordResource(orm, {
           kind: "secret",
-          key: secret.name,
+          key,
           binding: secret.name,
-          name: secret.name,
+          name: key,
           cfId: null,
         });
         log.info(`Set secret ${secret.name}.`);

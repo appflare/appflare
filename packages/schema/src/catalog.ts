@@ -8,7 +8,7 @@ import {
 // Node's type stripping, which resolves relative imports literally.
 import { buildEnvSchema } from "./build-env.ts";
 import { catalogCategoriesSchema, catalogCategoryProblems } from "./categories.ts";
-import { configPatchSchema } from "./config-patch.ts";
+import { type ConfigPatch, configPatchSchema } from "./config-patch.ts";
 import { catalogD1Schema } from "./d1.ts";
 import { catalogFieldLinkSchema } from "./field-link.ts";
 import { catalogHyperdriveBindingsSchema } from "./hyperdrive.ts";
@@ -20,6 +20,12 @@ import {
   licenseSchema,
 } from "./license.ts";
 import { CATALOG_SLUG_PATTERN } from "./links.ts";
+import {
+  CONFIG_PATCH_VALUES_REQUIREMENT,
+  MANAGER_FEATURE_REQUIREMENTS,
+  SECRET_KEYS_REQUIREMENT,
+  SERVICE_PROPS_REQUIREMENT,
+} from "./manager-features.ts";
 import { openPathSchema } from "./open-path.ts";
 import {
   appTokenPermissions,
@@ -357,7 +363,13 @@ export type InstallTier = z.infer<typeof installTierSchema>;
 export const planSchema = z.enum(["free", "paid"]);
 export type Plan = z.infer<typeof planSchema>;
 
-/** Account capability an app needs beyond the free Workers baseline. */
+/**
+ * Account capability an app needs beyond the free Workers baseline, or a
+ * feature the manager must have to install it (`MANAGER_FEATURE_REQUIREMENTS`
+ * in ./manager-features.ts). A manager leaves out an entry that lists a value
+ * it does not know, which is what keeps entries away from managers too old
+ * for them.
+ */
 export const requirementSchema = z.enum([
   "r2",
   "zone",
@@ -367,6 +379,7 @@ export const requirementSchema = z.enum([
   "containers",
   "analytics-engine",
   "access",
+  ...MANAGER_FEATURE_REQUIREMENTS,
 ]);
 export type Requirement = z.infer<typeof requirementSchema>;
 
@@ -417,8 +430,8 @@ export const catalogSecretDeriveSchema = z
       .string()
       .min(1)
       .describe(
-        "The name of the secret whose value this one is computed from. It must be another secret " +
-          "of this manifest, not itself derived, not optional.",
+        "The secret whose value this one is computed from, by its `key` (its `name` when it has " +
+          "no key). It must be another secret of this manifest, not itself derived, not optional.",
       ),
     method: z
       .enum(SECRET_DERIVE_METHODS)
@@ -447,8 +460,8 @@ export const catalogVarDeriveSchema = z
       .string()
       .min(1)
       .describe(
-        "The name of the secret whose value this var is computed from. It must be a secret of " +
-          "this manifest, not itself derived, not optional.",
+        "The secret whose value this var is computed from, by its `key` (its `name` when it has " +
+          "no key). It must be a secret of this manifest, not itself derived, not optional.",
       ),
     method: z
       .enum(VAR_DERIVE_METHODS)
@@ -465,6 +478,43 @@ export const catalogVarDeriveSchema = z
       '`optional: true`, `type: "select"` or `options`, nor on self-deploying entries.',
   );
 export type CatalogVarDerive = z.infer<typeof catalogVarDeriveSchema>;
+
+/** Longest secret `key`. */
+export const MAX_SECRET_KEY_LENGTH = 64;
+
+/** A secret `key`: an env-name-like word, so it reads like the names beside it. */
+export const SECRET_KEY_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/;
+
+const secretKeySchema = z
+  .string()
+  .min(1)
+  .max(MAX_SECRET_KEY_LENGTH)
+  .regex(SECRET_KEY_PATTERN, "must be letters, digits and underscores, not starting with a digit")
+  .describe(
+    "What Appflare calls the secret, when it is not its `name`: unique among the entry's " +
+      "secrets, for an entry of several Workers where two secrets give different Workers a value " +
+      "under one name, for example `GITHUB_CLIENT_ID` for the `CLIENT_ID` of the `github` " +
+      "Worker. The forms, the install's record and `derive.from`, seed params and a Pipelines " +
+      "sink's `tokenSecret` use the key; the Worker still reads the secret by `name`. Defaults " +
+      `to \`name\`. An entry with a key other than its secret's name lists "${SECRET_KEYS_REQUIREMENT}" ` +
+      "in `requires`, so managers that do not know keys leave it out. Not for self-deploying " +
+      "entries. Changing a released secret's key makes installs ask for its value again.",
+  );
+
+/**
+ * What Appflare knows a secret by: its `key`, else its `name`. The install
+ * form's fields, the job inputs, the install's records (`resources.name` of a
+ * `secret` row; `binding` holds the name the Worker reads) and every
+ * reference from another field go by it.
+ */
+export function secretKey(secret: { name: string; key?: string | undefined }): string {
+  return secret.key ?? secret.name;
+}
+
+/** Whether a secret's key differs from its name, which needs `requires: ["secret-keys"]`. */
+export function hasOwnSecretKey(secret: { name: string; key?: string | undefined }): boolean {
+  return secret.key !== undefined && secret.key !== secret.name;
+}
 
 /**
  * A secret the installer prompts for. `generate` makes the form fill in a
@@ -496,6 +546,7 @@ export const catalogSecretSchema = z
         "The name the Worker reads the secret by, exactly as the app's code spells it, for " +
           "example `ADMIN_PASSWORD`.",
       ),
+    key: secretKeySchema.optional(),
     label: z
       .string()
       .min(1)
@@ -708,10 +759,14 @@ export function enteredSecrets<T extends Pick<CatalogSecret, "derive">>(
  */
 export function derivedSecretProblems(
   secrets: ReadonlyArray<
-    Pick<CatalogSecret, "name" | "generate" | "derive"> & { optional?: boolean | undefined }
+    Pick<CatalogSecret, "name" | "generate" | "derive"> & {
+      key?: string | undefined;
+      optional?: boolean | undefined;
+    }
   >,
 ): Array<{ path: Array<string | number>; message: string }> {
-  const byName = new Map(secrets.map((s) => [s.name, s]));
+  // `derive.from` names the source by its key (its name when it has none).
+  const byName = new Map(secrets.map((s) => [secretKey(s), s]));
   const problems: Array<{ path: Array<string | number>; message: string }> = [];
   secrets.forEach((secret, i) => {
     const derive = secret.derive;
@@ -729,7 +784,7 @@ export function derivedSecretProblems(
       });
     }
     const source = byName.get(derive.from);
-    if (derive.from === secret.name) {
+    if (derive.from === secretKey(secret)) {
       problems.push({
         path: [i, "derive", "from"],
         message: `${secret.name} cannot derive from itself`,
@@ -776,11 +831,14 @@ function sourceKindProblem(
  */
 export function derivedVarProblems(
   secrets: ReadonlyArray<
-    Pick<CatalogSecret, "name" | "generate" | "derive"> & { optional?: boolean | undefined }
+    Pick<CatalogSecret, "name" | "generate" | "derive"> & {
+      key?: string | undefined;
+      optional?: boolean | undefined;
+    }
   >,
   vars: ReadonlyArray<{ name: string; derive?: CatalogVarDerive | undefined }>,
 ): Array<{ path: Array<string | number>; message: string }> {
-  const byName = new Map(secrets.map((s) => [s.name, s]));
+  const byName = new Map(secrets.map((s) => [secretKey(s), s]));
   const problems: Array<{ path: Array<string | number>; message: string }> = [];
   vars.forEach((v, i) => {
     const derive = v.derive;
@@ -2300,6 +2358,14 @@ export const catalogManifestSchema = z
     }
   })
   .superRefine((manifest, ctx) => {
+    for (const problem of [
+      ...secretKeyProblems(manifest),
+      ...configPatchManifestProblems(manifest),
+    ]) {
+      ctx.addIssue({ code: "custom", path: problem.path, message: problem.message });
+    }
+  })
+  .superRefine((manifest, ctx) => {
     if (manifest.install.tier !== "self-deploying") return;
     if (manifest.requires.includes("access")) {
       ctx.addIssue({
@@ -2375,6 +2441,14 @@ export const catalogManifestSchema = z
           path: ["secrets", i, "seedOnly"],
           message:
             "seed-only secrets are not allowed for the self-deploying tier: the app's own installer sets up its databases",
+        });
+      }
+      if (hasOwnSecretKey(secret)) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["secrets", i, "key"],
+          message:
+            "a secret key other than its name is not allowed for the self-deploying tier: the app's own installer reads its secrets by name",
         });
       }
     });
@@ -2536,6 +2610,195 @@ export type CatalogManifest = z.infer<typeof catalogManifestSchema>;
  * token, the admin enters it (not generated, derived or seed-only), and the
  * entry lists the permissions the token needs.
  */
+/** Every string inside a JSON value, in order. */
+function jsonStringsOf(value: unknown): string[] {
+  if (typeof value === "string") return [value];
+  if (Array.isArray(value)) return value.flatMap(jsonStringsOf);
+  if (typeof value === "object" && value !== null)
+    return Object.values(value).flatMap(jsonStringsOf);
+  return [];
+}
+
+/** The Workers a secret goes to, by name within the entry; null for every Worker. */
+function secretWorkerSet(secret: { workers?: readonly string[] | undefined }): Set<string> | null {
+  return secret.workers === undefined ? null : new Set(secret.workers);
+}
+
+/**
+ * What is wrong with the keys and names of a manifest's secrets, one issue
+ * each: keys are unique (a secret without one is known by its name); two
+ * secrets may share a name only when each names the Workers it goes to and
+ * no Worker gets both; a key other than the name needs
+ * `"secret-keys"` in `requires`, which keeps the entry away from managers that
+ * would store both values under the one name.
+ */
+export function secretKeyProblems(manifest: {
+  secrets: ReadonlyArray<
+    Pick<CatalogSecret, "name"> & {
+      key?: string | undefined;
+      workers?: readonly string[] | undefined;
+      seedOnly?: boolean | undefined;
+    }
+  >;
+  requires: readonly string[];
+}): Array<{ path: Array<string | number>; message: string }> {
+  const problems: Array<{ path: Array<string | number>; message: string }> = [];
+  const byKey = new Map<string, number>();
+  manifest.secrets.forEach((secret, i) => {
+    const key = secretKey(secret);
+    const first = byKey.get(key);
+    if (first === undefined) {
+      byKey.set(key, i);
+    } else {
+      problems.push({
+        path: ["secrets", i, secret.key === undefined ? "name" : "key"],
+        message: `two secrets are known by the key ${key} (secrets[${first}] and secrets[${i}]); give each its own key, which is its name when it has no key`,
+      });
+    }
+  });
+  manifest.secrets.forEach((secret, i) => {
+    for (let j = 0; j < i; j++) {
+      const other = manifest.secrets[j];
+      if (other === undefined || other.name !== secret.name) continue;
+      // Seed-only secrets reach no Worker, so they share a name with nothing.
+      if (secret.seedOnly === true || other.seedOnly === true) continue;
+      const mine = secretWorkerSet(secret);
+      const theirs = secretWorkerSet(other);
+      const shared =
+        mine === null || theirs === null ? null : [...mine].filter((w) => theirs.has(w));
+      if (shared === null) {
+        problems.push({
+          path: ["secrets", i, "workers"],
+          message: `secrets[${j}] and secrets[${i}] are both named ${secret.name}; secrets of one name must each list the Workers that get them (workers), and no Worker may get both`,
+        });
+      } else if (shared.length > 0) {
+        problems.push({
+          path: ["secrets", i, "workers"],
+          message: `secrets[${j}] and secrets[${i}] are both named ${secret.name} and both go to ${shared.map((w) => `"${w}"`).join(", ")}; a Worker has one value per name`,
+        });
+      }
+    }
+  });
+  const keyed = manifest.secrets.findIndex(hasOwnSecretKey);
+  if (keyed >= 0 && !manifest.requires.includes(SECRET_KEYS_REQUIREMENT)) {
+    problems.push({
+      path: ["requires"],
+      message: `secrets[${keyed}] has a key other than its name, so requires must list "${SECRET_KEYS_REQUIREMENT}": a manager that does not know keys would set both values under one name`,
+    });
+  }
+  return problems;
+}
+
+/**
+ * What is wrong with what a manifest's config patches set, beyond each
+ * patch's own shape (./config-patch.ts), one issue each: a var a patch sets
+ * may hold only the placeholders a var's default takes, must not have the
+ * name of a secret its Worker gets (Cloudflare keeps one binding per name),
+ * nor of a catalog var that goes to that Worker (which would replace it
+ * unseen); var text or an `ai` binding needs `"config-patch-values"` in
+ * `requires`, since an older manager's config patch rules refuse both;
+ * `props` on a service binding needs `"service-props"`, and its strings hold
+ * the same placeholders.
+ */
+export function configPatchManifestProblems(manifest: {
+  install: {
+    configPatch?: ConfigPatch | undefined;
+    workers?:
+      | ReadonlyArray<{
+          name: string;
+          workersDev: boolean;
+          configPatch?: ConfigPatch | undefined;
+        }>
+      | undefined;
+  };
+  secrets: ReadonlyArray<{
+    name: string;
+    workers?: readonly string[] | undefined;
+    seedOnly?: boolean | undefined;
+  }>;
+  vars?: ReadonlyArray<{ name: string; workers?: readonly string[] | undefined }>;
+  requires: readonly string[];
+}): Array<{ path: Array<string | number>; message: string }> {
+  const problems: Array<{ path: Array<string | number>; message: string }> = [];
+  const declared = manifest.install.workers;
+  // Whether something scoped to `workers` goes to the Worker `worker` (null:
+  // the only Worker of an entry of one, which gets everything).
+  const reaches = (workers: readonly string[] | undefined, worker: string | null) =>
+    worker === null ? workers === undefined : workers === undefined || workers.includes(worker);
+  const entry = { workers: declared };
+  const patches: Array<{
+    path: Array<string | number>;
+    worker: string | null;
+    patch: ConfigPatch;
+  }> = [];
+  if (manifest.install.configPatch !== undefined) {
+    patches.push({
+      path: ["install", "configPatch"],
+      worker: null,
+      patch: manifest.install.configPatch,
+    });
+  }
+  (declared ?? []).forEach((w, i) => {
+    if (w.configPatch !== undefined) {
+      patches.push({
+        path: ["install", "workers", i, "configPatch"],
+        worker: w.name,
+        patch: w.configPatch,
+      });
+    }
+  });
+  let propsAt: Array<string | number> | null = null;
+  let valuesAt: Array<string | number> | null = null;
+  for (const { path, worker, patch } of patches) {
+    if (patch.ai !== undefined) valuesAt ??= [...path, "ai"];
+    for (const [name, value] of Object.entries(patch.vars ?? {})) {
+      if (value === null) continue;
+      valuesAt ??= [...path, "vars", name];
+      for (const message of placeholderProblems(value, "varDefault", entry)) {
+        problems.push({ path: [...path, "vars", name], message });
+      }
+      const secret = manifest.secrets.find(
+        (s) => s.name === name && s.seedOnly !== true && reaches(s.workers, worker),
+      );
+      if (secret !== undefined) {
+        problems.push({
+          path: [...path, "vars", name],
+          message: `the patch sets the var ${name}, which is also a secret this Worker gets; a Worker cannot have a secret and a var of one name`,
+        });
+      }
+      if ((manifest.vars ?? []).some((v) => v.name === name && reaches(v.workers, worker))) {
+        problems.push({
+          path: [...path, "vars", name],
+          message: `the patch sets the var ${name}, which a catalog var of that name going to this Worker would replace; set it in one place, or give the catalog var workers that leave this Worker out`,
+        });
+      }
+    }
+    (patch.services ?? []).forEach((service, i) => {
+      if (service.props === undefined) return;
+      propsAt ??= [...path, "services", i, "props"];
+      const texts = new Set(jsonStringsOf(service.props));
+      for (const text of texts) {
+        for (const message of placeholderProblems(text, "varDefault", entry)) {
+          problems.push({ path: [...path, "services", i, "props"], message });
+        }
+      }
+    });
+  }
+  if (valuesAt !== null && !manifest.requires.includes(CONFIG_PATCH_VALUES_REQUIREMENT)) {
+    problems.push({
+      path: ["requires"],
+      message: `a config patch sets var text or a Workers AI binding (${formatPath(valuesAt)}), so requires must list "${CONFIG_PATCH_VALUES_REQUIREMENT}": a manager that predates them refuses the patch`,
+    });
+  }
+  if (propsAt !== null && !manifest.requires.includes(SERVICE_PROPS_REQUIREMENT)) {
+    problems.push({
+      path: ["requires"],
+      message: `a config patch gives a service binding props, so requires must list "${SERVICE_PROPS_REQUIREMENT}": a manager that does not know props refuses the binding`,
+    });
+  }
+  return problems;
+}
+
 export function cloudflareTokenProblems(manifest: {
   secrets: ReadonlyArray<
     Pick<CatalogSecret, "name" | "generate" | "derive"> & {

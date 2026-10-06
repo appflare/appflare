@@ -5,6 +5,7 @@ import {
   type InstallTier,
   licenseFile,
   type Plan,
+  secretKey,
 } from "@appflare/schema";
 import {
   type AppLicense,
@@ -311,6 +312,8 @@ export function moduleBytes(workers: ReadonlyArray<{ modules: ReadonlyArray<{ si
 
 /** One thing the install form will ask for, by its label; `name` is shown on hover only. */
 export interface SettingItem {
+  /** Unique in the list: a secret's key (two secrets may share a name), a var's name. */
+  key: string;
   label: string;
   name: string;
   hint: "Required" | "Optional" | "Filled in for you" | "Suggested value filled in";
@@ -325,7 +328,7 @@ export interface SettingItem {
  */
 export function settingsToChoose(
   secrets: ReadonlyArray<
-    Pick<CatalogSecret, "name" | "label" | "help" | "generate" | "optional" | "derive">
+    Pick<CatalogSecret, "name" | "key" | "label" | "help" | "generate" | "optional" | "derive">
   >,
   vars: ReadonlyArray<
     Pick<InstallVarField, "name" | "label" | "help" | "required" | "shownDefault" | "derivedFrom">
@@ -335,6 +338,7 @@ export function settingsToChoose(
   for (const secret of secrets) {
     if (secret.derive !== undefined) continue;
     items.push({
+      key: `secret:${secretKey(secret)}`,
       label: secret.label,
       name: secret.name,
       hint:
@@ -349,6 +353,7 @@ export function settingsToChoose(
   for (const field of vars) {
     if (field.derivedFrom !== undefined) continue;
     items.push({
+      key: `var:${field.name}`,
       label: field.label,
       name: field.name,
       hint:

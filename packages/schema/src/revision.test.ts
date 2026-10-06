@@ -134,6 +134,31 @@ describe("catalog manifest revision", () => {
     expect(catalogRevisionProblem(linked, { ...withoutPath, revision: 3 })).toBeNull();
   });
 
+  it("lets a revision give a key to a secret it adds, never to one already released", () => {
+    const keys = { ...released, requires: ["secret-keys" as const] };
+    const added = {
+      ...keys,
+      revision: 2,
+      secrets: [
+        ...released.secrets,
+        { ...released.secrets[0], name: "CLIENT_ID", key: "GITHUB_CLIENT_ID", label: "GitHub" },
+      ],
+    } as CatalogManifest;
+    expect(catalogRevisionProblem(released, added)).toBeNull();
+    const rekeyed = {
+      ...keys,
+      revision: 2,
+      secrets: [{ ...released.secrets[0], key: "OWNER_PASSWORD" }],
+    } as CatalogManifest;
+    expect(catalogRevisionProblem(released, rekeyed)).toBe(
+      "it changes the key of the secret ADMIN_PASSWORD; a revision may give a key only to a secret it adds, and changing a released secret's key needs a new build",
+    );
+    // Taking a released key away is a change of key too.
+    expect(
+      catalogRevisionProblem({ ...rekeyed, revision: 1 }, { ...released, revision: 2 }),
+    ).toMatch(/^it changes the key of the secret ADMIN_PASSWORD/);
+  });
+
   it('accepts a revision that adds "access" to requires, and no other requirement change', () => {
     const required = catalogManifestSchema.parse({
       ...released,
@@ -164,7 +189,7 @@ describe("catalog manifest revision", () => {
     expect(
       catalogRevisionProblem(released, { ...released, revision: 2, requires: ["access", "r2"] }),
     ).toBe(
-      'it adds "r2" to requires; a revision may add only "access", and anything else needs a new build',
+      'it adds "r2" to requires; a revision may add only "access" or "secret-keys", and anything else needs a new build',
     );
     expect(catalogRevisionProblem(r2, { ...r2, revision: 2, requires: [] })).toBe(
       'it removes "r2" from requires, which only a new build can change',

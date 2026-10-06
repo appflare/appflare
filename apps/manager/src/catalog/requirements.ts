@@ -1,7 +1,9 @@
 import {
   accessNeededOnlyIfProtected,
+  accountRequirements,
   type CatalogAccess,
   type InstallTier,
+  type ManagerFeatureRequirement,
   type Requirement,
 } from "@appflare/schema";
 import type { DocsTopic } from "../docs-topics";
@@ -13,7 +15,10 @@ import type { DocsTopic } from "../docs-topics";
  * tier app; {@link requirementSentence} swaps in the other tiers' wording
  * where the requirement means something else for them.
  */
-export const REQUIREMENTS: Record<Requirement, { label: string; sentence: string }> = {
+export const REQUIREMENTS: Record<
+  Exclude<Requirement, ManagerFeatureRequirement>,
+  { label: string; sentence: string }
+> = {
   r2: {
     label: "R2",
     sentence:
@@ -143,15 +148,16 @@ export function requirementDocs(value: string): DocsTopic | null {
 /**
  * The `requires` values an admin confirms the account meets before an
  * install: every one but an `"access"` that holds only while the app is
- * protected (`accessNeededOnlyIfProtected`). Whether to protect it is the
- * admin's choice in the install form, and turning protection on is checked
- * against the account there and again when the install starts.
+ * protected (`accessNeededOnlyIfProtected`), and but the features this
+ * manager has (`"secret-keys"`, `"service-props"`), which ask nothing of the
+ * account. Whether to protect it is the admin's choice in the install form,
+ * and turning protection on is checked against the account there and again
+ * when the install starts.
  */
 export function requirementsToConfirm(catalog: {
   requires: readonly string[];
   access?: CatalogAccess | undefined;
 }): string[] {
-  return accessNeededOnlyIfProtected(catalog)
-    ? catalog.requires.filter((r) => r !== "access")
-    : [...catalog.requires];
+  const account = accountRequirements(catalog.requires);
+  return accessNeededOnlyIfProtected(catalog) ? account.filter((r) => r !== "access") : account;
 }

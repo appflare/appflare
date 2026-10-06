@@ -555,6 +555,41 @@ describe("update job", () => {
     expect(metadata?.cache_options).toEqual({ enabled: true, cross_version_cache: true });
   });
 
+  it("keeps a secret's value under the new key a version gives it, without asking for it", async () => {
+    const r = await update(
+      {
+        ...NEW_APP,
+        catalog: {
+          requires: ["secret-keys"],
+          secrets: [{ name: "API_KEY", key: "SERVICE_API_KEY", label: "API key" }],
+        },
+      },
+      {},
+      { resources: [...RESOURCES, { kind: "secret", binding: "API_KEY", name: "API_KEY" }] },
+    );
+    expect(r.error).toBeNull();
+    expect(r.job?.status).toBe("succeeded");
+    const bindings = r.fake.state.versions[0]?.metadata.bindings as Array<Record<string, unknown>>;
+    expect(bindings.some((b) => b.type === "secret_text")).toBe(false);
+    const secrets = r.resources.filter((row) => row.kind === "secret" && row.binding === "API_KEY");
+    expect(secrets).toEqual([
+      {
+        kind: "secret",
+        binding: "API_KEY",
+        name: "API_KEY",
+        cf_id: null,
+        deleted_at: expect.any(Number),
+      },
+      {
+        kind: "secret",
+        binding: "API_KEY",
+        name: "SERVICE_API_KEY",
+        cf_id: null,
+        deleted_at: null,
+      },
+    ]);
+  });
+
   it("sets the secrets a new version introduces with the uploaded version", async () => {
     const SECRET = "new-secret-value-DO-NOT-LEAK";
     const r = await update(

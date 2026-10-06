@@ -1,4 +1,4 @@
-import type { Plan } from "@appflare/schema";
+import { accountRequirements, type Plan } from "@appflare/schema";
 import type { CapabilitiesView } from "../capabilities/capabilities";
 import {
   ANALYTICS_ENGINE_FIX,
@@ -43,7 +43,8 @@ export function requirementChecks(
   if (app.plan === "paid") {
     checks.push({ key: "plan", label: "Workers Paid", ...workersPaidStatus(view) });
   }
-  for (const requirement of app.requires) {
+  // The manager features it lists (`"secret-keys"`) are this manager's own, not the account's.
+  for (const requirement of accountRequirements(app.requires)) {
     if (requirement === "access" && app.accessIfProtected === true) continue;
     const primitive = requirementPrimitive(requirement);
     const status =

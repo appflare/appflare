@@ -1,5 +1,10 @@
 import { NonRetryableError } from "cloudflare:workflows";
-import { type CatalogManifest, type HealthMode, selfDeployingStage } from "@appflare/schema";
+import {
+  accountRequirements,
+  type CatalogManifest,
+  type HealthMode,
+  selfDeployingStage,
+} from "@appflare/schema";
 import { and, eq, inArray, isNull, ne } from "drizzle-orm";
 import { z } from "zod";
 import { readCachedListing } from "../../catalog/merged.server";
@@ -148,9 +153,10 @@ export async function runSelfDeployingInstall(
           "this app needs Workers Paid; confirm the account is on Workers Paid to install it",
         );
       }
-      if (catalog.requires.length > 0 && params.requirementsConfirmed === false) {
+      const needs = accountRequirements(catalog.requires);
+      if (needs.length > 0 && params.requirementsConfirmed === false) {
         throw new JobError(
-          `this app needs ${catalog.requires.map(requirementLabel).join(", ")}; confirm the account meets these requirements to install it`,
+          `this app needs ${needs.map(requirementLabel).join(", ")}; confirm the account meets these requirements to install it`,
         );
       }
       if (input.appToken === undefined) {

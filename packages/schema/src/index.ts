@@ -16,6 +16,7 @@ export * from "./jsonc";
 export * from "./keys";
 export * from "./license";
 export * from "./limits";
+export * from "./manager-features";
 export * from "./media";
 export * from "./open-path";
 export * from "./pipelines";

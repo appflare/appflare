@@ -16,6 +16,7 @@ import {
   type ModuleType,
   type PlaceholderValues,
   renderEntryWorkerPlaceholders,
+  renderJsonPlaceholders,
   type WorkerBinding,
 } from "@appflare/schema";
 import { type ResolvedVars, resolveVars, type VarBinding } from "../../installs/install-vars";
@@ -52,6 +53,14 @@ export interface CreatedResource {
  * The job logs the warnings: a stored value the app can no longer read
  * falls back to the default instead of failing the job.
  */
+export interface InstallVars extends ResolvedVars {
+  /**
+   * Fills the same placeholders into a JSON value, every string of it, as
+   * the vars got: for the `props` of the Worker's service bindings.
+   */
+  fill: (value: JsonValue) => JsonValue;
+}
+
 export function installVars(
   manifest: Pick<ArtifactManifest, "catalog" | "worker">,
   userVars: Readonly<Record<string, string>>,
@@ -79,7 +88,7 @@ export function installVars(
      */
     entryWorkers?: EntryWorkerPlaceholders;
   },
-): ResolvedVars {
+): InstallVars {
   const workerUrl = workersDevUrl(worker.workerName, worker.subdomain);
   const placeholders: PlaceholderValues = {
     workerName: worker.workerName,
@@ -91,32 +100,38 @@ export function installVars(
   };
   const resolved = resolveVars(manifest, userVars, placeholders);
   const entry = worker.entryWorkers;
-  if (entry === undefined) return resolved;
-  return { ...resolved, vars: resolved.vars.map((v) => renderEntryVar(v, entry)) };
+  const fill = (value: JsonValue): JsonValue => {
+    const filled = renderJsonPlaceholders(value, placeholders);
+    return entry === undefined ? filled : renderEntryJson(filled, entry);
+  };
+  if (entry === undefined) return { ...resolved, fill };
+  return { ...resolved, vars: resolved.vars.map((v) => renderEntryVar(v, entry)), fill };
+}
+
+/** A JSON value with the per-Worker placeholders (`{{appUrl:<name>}}`) filled in, every string. */
+function renderEntryJson(value: JsonValue, entry: EntryWorkerPlaceholders): JsonValue {
+  if (typeof value === "string") return renderEntryWorkerPlaceholders(value, entry);
+  if (Array.isArray(value)) return value.map((item) => renderEntryJson(item, entry));
+  if (value !== null && typeof value === "object") {
+    const out: { [key: string]: JsonValue } = {};
+    for (const [key, item] of Object.entries(value)) {
+      // Plain assignment of `__proto__` would set the prototype instead.
+      Object.defineProperty(out, key, {
+        value: renderEntryJson(item, entry),
+        enumerable: true,
+        writable: true,
+        configurable: true,
+      });
+    }
+    return out;
+  }
+  return value;
 }
 
 /** A var with the per-Worker placeholders (`{{appUrl:<name>}}`) filled in. */
 function renderEntryVar(v: VarBinding, entry: EntryWorkerPlaceholders): VarBinding {
-  const render = (value: JsonValue): JsonValue => {
-    if (typeof value === "string") return renderEntryWorkerPlaceholders(value, entry);
-    if (Array.isArray(value)) return value.map(render);
-    if (value !== null && typeof value === "object") {
-      const out: { [key: string]: JsonValue } = {};
-      for (const [key, item] of Object.entries(value)) {
-        // Plain assignment of `__proto__` would set the prototype instead.
-        Object.defineProperty(out, key, {
-          value: render(item),
-          enumerable: true,
-          writable: true,
-          configurable: true,
-        });
-      }
-      return out;
-    }
-    return value;
-  };
   return v.type === "json"
-    ? { ...v, json: render(v.json) }
+    ? { ...v, json: renderEntryJson(v.json, entry) }
     : { ...v, text: renderEntryWorkerPlaceholders(v.text, entry) };
 }
 
@@ -168,6 +183,7 @@ export function selfServiceUploadBinding(
   binding: WorkerBinding,
   workerName: string,
   entryWorkers: Readonly<Record<string, string>> = {},
+  fill?: (value: JsonValue) => JsonValue,
 ): UploadBinding {
   let service: string;
   if (isSelfServiceBinding(binding)) {
@@ -181,6 +197,13 @@ export function selfServiceUploadBinding(
   }
   const out: UploadBinding = { type: "service", name: binding.name, service };
   if (binding.entrypoint !== undefined) out.entrypoint = binding.entrypoint;
+  if (binding.props !== undefined) {
+    // Sent as wrangler sends them (`props` on the service binding), placeholders filled in.
+    if (fill === undefined) {
+      throw new Error(`service binding ${binding.name} has props, but no placeholder values`);
+    }
+    out.props = fill(binding.props);
+  }
   return out;
 }
 
@@ -211,6 +234,13 @@ export interface ScriptMetadataInput {
   workflowNames?: Readonly<Record<string, string>>;
   /** Every var the Worker gets (`resolveVars` in installs/install-vars.ts). */
   vars: readonly VarBinding[];
+  /**
+   * Fills the placeholders into the `props` of the Worker's service bindings,
+   * as into its vars (`installVars(...).fill`). Needed only when a binding
+   * has props; an upload of one without it fails rather than send them
+   * unfilled.
+   */
+  fill?: (value: JsonValue) => JsonValue;
   /** The assets completion JWT, or null when the artifact has no assets. */
   assetsJwt: string | null;
   /** Rate limit binding name -> the install's own namespace id (install/rate-limits.ts). */
@@ -241,6 +271,7 @@ export function buildScriptMetadata(input: ScriptMetadataInput): ScriptMetadata 
     workflowNames = {},
     rateLimitIds = {},
     entryWorkers = {},
+    fill,
   } = input;
   if (isAssetsOnlyWorker(manifest.worker)) {
     if (assetsJwt === null) {
@@ -290,7 +321,7 @@ export function buildScriptMetadata(input: ScriptMetadataInput): ScriptMetadata 
       }
       bindings.push({ ...binding, namespace_id: namespaceId });
     } else if (binding.type === "service") {
-      bindings.push(selfServiceUploadBinding(binding, workerName, entryWorkers));
+      bindings.push(selfServiceUploadBinding(binding, workerName, entryWorkers, fill));
     } else if (
       binding.type === "durable_object_namespace" &&
       entryWorkerRefName(binding.script_name) !== null

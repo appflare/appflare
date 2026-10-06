@@ -52,6 +52,8 @@ import {
   type InstallVarField,
   installVarFields,
   missingRequiredVar,
+  type PatchedVar,
+  patchedVars,
   settingsVarFields,
   type VarsRefreshReason,
   varsNeedRefresh,
@@ -95,6 +97,11 @@ export interface InstallSettings {
   unavailable: string | null;
   /** One per setting the installed version declares, in the catalog's order. */
   fields: SettingField[];
+  /**
+   * The vars the catalog entry's config patches set on its Workers: signed
+   * config, shown read-only with the technical names. Absent means none.
+   */
+  fixedVars?: PatchedVar[];
   /** What the placeholders (`{{appUrl}}`, `{{workerName}}`, …) stand for in this install. */
   placeholders: {
     workerName: string;
@@ -201,7 +208,8 @@ async function settingsContext(
     // The form of the newest revision recorded for the release, if any.
     signed === null ? null : effectiveManifest(createDb(db), signed, install.artifact_digest),
   ]);
-  const secretNames = rows.filter((r) => r.kind === "secret").map((r) => r.name);
+  // Secret rows: `name` is the secret's key, `binding` the name the Worker reads.
+  const secretRows = rows.filter((r) => r.kind === "secret");
   if (install.build_kind === "self-deploying") {
     const catalog = recordedCatalog(install.manifest_json);
     if (catalog === null || install.pin_sha === null) return null;
@@ -209,7 +217,7 @@ async function settingsContext(
     return {
       catalog,
       fields: settingsVarFields(installVarFields(catalogOnlyManifest(catalog))),
-      slots: secretSlots(catalog.secrets, secretNames),
+      slots: secretSlots(catalog.secrets, secretRows),
       // A self-deploying entry declares no databases (the schema refuses them).
       databases: [],
       email: null,
@@ -251,7 +259,7 @@ async function settingsContext(
     catalog: manifest.catalog,
     // A seed-only var was used once by the install and is kept nowhere.
     fields: settingsVarFields(installVarFields(manifest)),
-    slots: secretSlots(manifest.catalog.secrets, secretNames, manifest.catalog.vars),
+    slots: secretSlots(manifest.catalog.secrets, secretRows, manifest.catalog.vars),
     databases: databaseSlots(
       hyperdriveDeclarations(manifest.catalog.resources?.hyperdrive),
       rows.filter((r) => r.kind === HYPERDRIVE_KIND),
@@ -337,6 +345,7 @@ export async function readInstallSettingsCore(
     kind: install.build_kind,
     unavailable: ctx.problem ?? statusRefusal(install.status),
     fields: ctx.fields.map((f) => ({ ...f, stored: stored[f.name] ?? null })),
+    fixedVars: patchedVars(ctx.catalog),
     placeholders,
     // Derived secrets are never entered; their source's row says they follow it.
     secrets: ctx.slots.filter((slot) => slot.derivedFrom === undefined),

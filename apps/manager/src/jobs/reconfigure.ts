@@ -7,6 +7,7 @@ import {
   artifactManifestSchema,
   connectionStringProblems,
   hyperdriveDeclarations,
+  secretKey,
   withRevisedCatalog,
   workerUploadProblem,
 } from "@appflare/schema";
@@ -52,7 +53,6 @@ import {
   type OtherWorkerUpdate,
   promoteOtherWorkerPhase,
   reconfigureOtherWorkerPhase,
-  secretChangesFor,
 } from "./install/entry-worker-phases";
 import { healthColumns, healthLabel } from "./install/health";
 import { buildScriptMetadata, installVars } from "./install/metadata";
@@ -89,6 +89,7 @@ import {
 } from "./reconfigure/plan";
 import { applySecretChangesPhase, undoSecretChangesPhase } from "./reconfigure/secrets";
 import type { JobContext } from "./run-job";
+import { secretNamesByKey, undeclaredSecretNames, workerSecretChanges } from "./secret-keys";
 import { runSelfDeployingReconfigure } from "./self-deploying/reconfigure";
 import { StepLog } from "./step-log";
 import { createJobSteps, errorMessage, JobError } from "./steps";
@@ -228,7 +229,10 @@ async function recordSettings(
     installId: string;
     versionId: string;
     vars: Readonly<Record<string, string>>;
+    /** By key. */
     secrets: SecretChanges;
+    /** The name the Worker reads each secret by, by key; a key it lacks is its own name. */
+    secretNames: ReadonlyMap<string, string>;
     at: Date;
     /**
      * An app of several Workers: the versions its other Workers now serve, by
@@ -249,15 +253,16 @@ async function recordSettings(
       updated_at: at,
     })
     .where(eq(installs.id, installId));
-  for (const name of Object.keys(target.secrets.set)) {
+  // A secret's row is named by its key, with the name the Worker reads as its binding.
+  for (const key of Object.keys(target.secrets.set)) {
     await orm
       .insert(resources)
       .values({
-        id: resourceId(installId, "secret", name),
+        id: resourceId(installId, "secret", key),
         install_id: installId,
         kind: "secret",
-        binding: name,
-        name,
+        binding: target.secretNames.get(key) ?? key,
+        name: key,
         cf_id: null,
         created_at: at,
       })
@@ -342,6 +347,8 @@ export async function runReconfigure(ctx: JobContext): Promise<void> {
   /** What undoing unpromoted secret changes needs, once the plan is known. */
   let undoContext: { slots: SecretSlot[]; workerName: string; changes: SecretChanges } | null =
     null;
+  /** The name the Worker reads each secret by, by key, once the plan is known. */
+  let secretNames: ReadonlyMap<string, string> = new Map();
   /** The removal of the old zone's email routes began (a failure leaves a move to finish). */
   let emailMoveStarted = false;
   /** How far a change of Cloudflare Access protection got, for the failure report. */
@@ -355,7 +362,10 @@ export async function runReconfigure(ctx: JobContext): Promise<void> {
     label: string;
     uploadedVersionId: string;
     servingVersionId: string;
+    /** By the names the Worker reads. */
     changes: SecretChanges;
+    /** The secrets it had before, by those names: what putting them back restores. */
+    slots: SecretSlot[];
   }> = [];
   const promotedOthers: string[] = [];
   /** The other Workers whose promotion started, and the version each serves once promoted. */
@@ -517,10 +527,9 @@ export async function runReconfigure(ctx: JobContext): Promise<void> {
     );
     // The installed version itself: its exports are the serving ones.
     const path = updatePath(primaryManifest, started.appliedDoTag, primaryManifest.worker.exports);
-    const slots = secretSlots(
-      manifest.catalog.secrets,
-      started.resources.filter((r) => r.kind === "secret").map((r) => r.name),
-    );
+    // Secret rows go by key (`name`) and say the name the Worker has each under (`binding`).
+    const secretRows = started.resources.filter((r) => r.kind === "secret");
+    const slots = secretSlots(manifest.catalog.secrets, secretRows);
     const emailConfig = manifest.catalog.install.emailRouting;
     const zones = emailZones(started.emailRoutes);
     const currentZone = zones.current;
@@ -549,18 +558,30 @@ export async function runReconfigure(ctx: JobContext): Promise<void> {
     const refreshed = params.refreshVars ?? [];
     const refresh = refreshed.length > 0;
     const redeploy = changedVars.length > 0 || secretsChange || replacing.length > 0 || refresh;
-    // Each Worker gets the secret changes of the secrets that go to it; a
-    // secret the catalog no longer declares is the primary Worker's.
-    const declaredSecrets = new Set(manifest.catalog.secrets.map((s) => s.name));
-    const secretsOf = (w: (typeof workers)[number]) => {
-      const own = new Set(w.manifest.catalog.secrets.map((s) => s.name));
-      return secretChangesFor(
+    // Each Worker gets the secret changes of the secrets that go to it, by
+    // the names it reads them by; a secret the catalog no longer declares is
+    // the primary Worker's.
+    const undeclared = undeclaredSecretNames(manifest.catalog.secrets, secretRows);
+    secretNames = new Map([...undeclared, ...secretNamesByKey(manifest.catalog.secrets)]);
+    const recordedKeys = new Set(secretRows.map((r) => r.name));
+    const workerNames = (w: (typeof workers)[number]) => [
+      ...secretNamesByKey(w.manifest.catalog.secrets),
+      ...(w.primary ? undeclared : []),
+    ];
+    const secretsOf = (w: (typeof workers)[number]) =>
+      workerSecretChanges(
         params.secrets,
-        [...Object.keys(params.secrets.set), ...params.secrets.unset].filter(
-          (name) => own.has(name) || (w.primary && !declaredSecrets.has(name)),
-        ),
+        w.manifest.catalog.secrets,
+        w.primary ? undeclared : undefined,
       );
-    };
+    /** The secrets a Worker has now, by the names it reads: what undoing its changes restores. */
+    const presentOf = (w: (typeof workers)[number]) =>
+      secretSlots(
+        [],
+        workerNames(w)
+          .filter(([key]) => recordedKeys.has(key))
+          .map(([, name]) => name),
+      );
     const primaryChanges = secretsOf(primary);
     const primarySecretsChange = changesSecrets(primaryChanges);
     const changedSecrets = [...Object.keys(params.secrets.set), ...params.secrets.unset];
@@ -569,7 +590,7 @@ export async function runReconfigure(ctx: JobContext): Promise<void> {
         !w.primary &&
         (varsNeedRefresh(w.manifest, params.vars, refreshed) ||
           changedVars.some((n) => w.manifest.catalog.vars.some((v) => v.name === n)) ||
-          changedSecrets.some((n) => w.manifest.catalog.secrets.some((s) => s.name === n))),
+          changedSecrets.some((n) => w.manifest.catalog.secrets.some((s) => secretKey(s) === n))),
     );
     /** The recorded configuration each replaced connection's binding uses now. */
     const currentConfigs = new Map(
@@ -580,7 +601,7 @@ export async function runReconfigure(ctx: JobContext): Promise<void> {
     /** Configurations an earlier change superseded: deleted once this change serves. */
     const supersededAtStart = supersededConfigs(started.resources);
     undoContext = {
-      slots,
+      slots: presentOf(primary),
       workerName,
       changes: primaryChanges,
     };
@@ -838,6 +859,7 @@ export async function runReconfigure(ctx: JobContext): Promise<void> {
             uploadedVersionId: made.uploadedVersionId,
             servingVersionId: serving,
             changes,
+            slots: presentOf(w),
           });
         }
         otherVersions.push(made);
@@ -850,6 +872,7 @@ export async function runReconfigure(ctx: JobContext): Promise<void> {
           workerName,
           resources: bound,
           vars: vars.vars,
+          fill: vars.fill,
           assetsJwt,
           workflowNames: diff.workflowNames,
           rateLimitIds,
@@ -966,6 +989,7 @@ export async function runReconfigure(ctx: JobContext): Promise<void> {
           versionId: final.versionId,
           vars: params.vars,
           secrets: params.secrets,
+          secretNames,
           at: new Date(now()),
           otherVersions: promotedVersions,
         });
@@ -1111,7 +1135,7 @@ export async function runReconfigure(ctx: JobContext): Promise<void> {
           uploadedVersionId: other.uploadedVersionId,
           servingVersionId: other.servingVersionId,
           changes: other.changes,
-          slots: undoContext.slots,
+          slots: other.slots,
           label: other.label,
         });
       } catch {
@@ -1177,6 +1201,7 @@ export async function runReconfigure(ctx: JobContext): Promise<void> {
           versionId: serving,
           vars: params.vars,
           secrets: params.secrets,
+          secretNames,
           at,
           otherVersions: othersRecorded,
         });

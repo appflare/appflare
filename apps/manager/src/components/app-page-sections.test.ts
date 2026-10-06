@@ -85,6 +85,7 @@ describe("NeedRow", () => {
 
 describe("SettingsList", () => {
   const item = (description: string | null): SettingItem => ({
+    key: "secret:ADMIN_PASSWORD",
     label: "Admin password",
     name: "ADMIN_PASSWORD",
     hint: "Required",

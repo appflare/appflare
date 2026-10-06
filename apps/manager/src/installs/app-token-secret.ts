@@ -5,6 +5,7 @@ import {
   cloudflareTokenSecret,
   enteredSecrets,
   isSeedOnly,
+  secretKey,
   type TokenPermission,
 } from "@appflare/schema";
 
@@ -15,7 +16,8 @@ import {
  * entry declares with `cloudflareToken: true`, else the one a Pipelines sink
  * names (`sink.tokenSecret`), whose token permissions Appflare adds. Null
  * when the app needs no token of its own, or no secret takes it (the app's
- * own setup steps then say where the token goes).
+ * own setup steps then say where the token goes). By the secret's key, as
+ * the forms know it.
  */
 export function appTokenSecret(catalog: {
   secrets: readonly CatalogSecret[];
@@ -25,8 +27,8 @@ export function appTokenSecret(catalog: {
   if (appTokenPermissions(catalog).length === 0) return null;
   const candidates = enteredSecrets(catalog.secrets).filter((s) => !isSeedOnly(s));
   const declared = cloudflareTokenSecret(candidates);
-  if (declared !== null) return declared.name;
-  const names = new Set(candidates.map((s) => s.name));
+  if (declared !== null) return secretKey(declared);
+  const names = new Set(candidates.map(secretKey));
   for (const pipeline of Object.values(catalog.resources?.pipelines ?? {})) {
     if (names.has(pipeline.sink.tokenSecret)) return pipeline.sink.tokenSecret;
   }

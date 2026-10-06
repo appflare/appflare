@@ -12,6 +12,7 @@ import {
   type InstallVarField,
   installVarFields,
   missingRequiredVar,
+  patchedVars,
   resolveVars,
   settingsVarFields,
   varsNeedRefresh,
@@ -288,6 +289,41 @@ describe("varsUseWorkerUrl", () => {
     const app = manifest([], [v("BASE", { default: "{{appUrl}}" })]);
     expect(varsUseWorkerUrl(app, {})).toBe(false);
   });
+
+  it("finds it in another Worker's own vars, as a config patch sets them", () => {
+    const primary = manifest([], []);
+    const other = (text: string) => ({
+      ...primary,
+      workers: [{ worker: { bindings: [{ type: "plain_text", name: "BASE_URL", text }] } }],
+    });
+    expect(varsUseWorkerUrl(other("{{workerUrl}}/gatekeeper/github"), {})).toBe(true);
+    expect(varsUseWorkerUrl(other("{{appUrl}}/gatekeeper/github"), {})).toBe(false);
+  });
+
+  it("finds the placeholders in a service binding's props, the primary's or another Worker's", () => {
+    const withProps = (text: string) =>
+      manifest(
+        [{ type: "service", name: "CTX", service: "self", props: { sharingDomain: text } }],
+        [],
+      );
+    expect(varsUseAppUrl(withProps("{{appUrl}}"), {})).toBe(true);
+    expect(varsNeedRefresh(withProps("{{appHostname}}"), {}, ["appUrl"])).toBe(true);
+    expect(varsUseAppUrl(withProps("https://fixed.example"), {})).toBe(false);
+    expect(varsUseWorkerUrl(withProps("{{workerUrl}}"), {})).toBe(true);
+    const other = {
+      ...manifest([], []),
+      workers: [
+        {
+          worker: {
+            bindings: [
+              { type: "service", name: "CTX", service: "self", props: { at: "{{workerUrl}}" } },
+            ],
+          },
+        },
+      ],
+    };
+    expect(varsUseWorkerUrl(other, {})).toBe(true);
+  });
 });
 
 describe("the app's address", () => {
@@ -468,5 +504,23 @@ describe("resolveVars for an app of several Workers", () => {
     if (web === undefined || jobs === undefined) throw new Error("two Workers expected");
     expect(resolveVars(workerManifest(app, web), {}, placeholders).vars).toEqual([]);
     expect(resolveVars(workerManifest(app, jobs), {}, placeholders).vars).toEqual([secretVar]);
+  });
+});
+
+describe("patchedVars", () => {
+  it("lists the vars each Worker's config patch sets, not the ones it removes", () => {
+    expect(
+      patchedVars({
+        install: {
+          workers: [
+            { name: "router" },
+            { name: "github", configPatch: { vars: { BASE_URL: "{{appUrl}}/gk", OLD: null } } },
+          ],
+        },
+      }),
+    ).toEqual([{ worker: "github", name: "BASE_URL", value: "{{appUrl}}/gk" }]);
+    expect(patchedVars({ install: { configPatch: { vars: { A: "1" } } } })).toEqual([
+      { worker: null, name: "A", value: "1" },
+    ]);
   });
 });

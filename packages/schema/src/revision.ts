@@ -1,6 +1,7 @@
 import { ACCESS_REQUIREMENT } from "./access";
 import { type ArtifactManifest, catalogVarProblems } from "./artifact";
-import type { CatalogManifest } from "./catalog";
+import { type CatalogManifest, secretKey } from "./catalog";
+import { SECRET_KEYS_REQUIREMENT } from "./manager-features";
 
 /**
  * Catalog manifest revisions: an edit of an entry's form or copy for a build
@@ -34,7 +35,8 @@ import type { CatalogManifest } from "./catalog";
  * stays public. That is why the revised file is signed like the release, and
  * a manager accepts it only when the signature verifies with the release's
  * key id, everything outside {@link REVISABLE_CATALOG_FIELDS} equals the
- * signed copy (`requires` may only gain `"access"`), and its revision is
+ * signed copy (`requires` may only gain `"access"`, and `"secret-keys"` for
+ * keys on the secrets it adds), and its revision is
  * above the signed one ({@link revisedArtifactProblem}). An index can never
  * change what gets built or provisioned for the Worker, nor what the account
  * must offer it; the one thing it may ask more of is Cloudflare Access
@@ -53,7 +55,8 @@ import type { CatalogManifest } from "./catalog";
  * `repo`, `source`, `install`, `plan`, `requires`, `tokenPermissions`,
  * `resources`) describes the build or what an install provisions, and
  * changes only with a new build, with one exception: a revision may add
- * `"access"` to `requires` ({@link requirementsRevisionProblem}).
+ * `"access"` or `"secret-keys"` to `requires`
+ * ({@link requirementsRevisionProblem}).
  */
 export const REVISABLE_CATALOG_FIELDS: readonly string[] = [
   "$schema",
@@ -76,11 +79,13 @@ export const REVISABLE_CATALOG_FIELDS: readonly string[] = [
 ];
 
 /**
- * What a revision may do to `requires`, or why it may not: add `"access"`
- * and nothing else. Adding it only narrows which managers list the entry
- * (one that does not know the requirement leaves the entry out), and a
- * manager that knows it asks for nothing more unless the app is protected,
- * which the revision's `access` block and the admin decide. Any other value
+ * What a revision may do to `requires`, or why it may not: add `"access"` or
+ * `"secret-keys"` and nothing else. Adding one only narrows which managers
+ * list the entry (one that does not know the requirement leaves the entry
+ * out). A manager that knows `"access"` asks for nothing more unless the app
+ * is protected, which the revision's `access` block and the admin decide;
+ * `"secret-keys"` comes with keys on secrets the revision adds
+ * ({@link secretKeysRevisionProblem}), which ask nothing of the account. Any other value
  * describes what the account must offer the build, and removing one (`"access"`
  * included: the signed Worker may read the Access placeholders) could let a
  * manager install the build where it does not work.
@@ -95,9 +100,10 @@ export function requirementsRevisionProblem(
   if (removed.length > 0) {
     return `it removes ${removed.map((r) => `"${r}"`).join(", ")} from requires, which only a new build can change`;
   }
-  const added = [...after].filter((r) => !before.has(r) && r !== ACCESS_REQUIREMENT);
+  const revisable: readonly string[] = [ACCESS_REQUIREMENT, SECRET_KEYS_REQUIREMENT];
+  const added = [...after].filter((r) => !before.has(r) && !revisable.includes(r));
   if (added.length > 0) {
-    return `it adds ${added.map((r) => `"${r}"`).join(", ")} to requires; a revision may add only "${ACCESS_REQUIREMENT}", and anything else needs a new build`;
+    return `it adds ${added.map((r) => `"${r}"`).join(", ")} to requires; a revision may add only ${revisable.map((r) => `"${r}"`).join(" or ")}, and anything else needs a new build`;
   }
   return null;
 }
@@ -138,6 +144,30 @@ export function catalogFieldChanges(a: CatalogManifest, b: CatalogManifest): str
  * or `access.mode: "required"` needs `"access"` in `requires`) already hold
  * for `revised`.
  */
+/**
+ * Why a revision's secrets cannot replace the released ones, or null: a
+ * revision may give a key only to a secret it adds, never change the key of
+ * a released secret (giving it one, taking it away, or another), since
+ * installs record a secret by its key and would lose track of the value they
+ * have. A secret counts as re-keyed when the revision drops a released
+ * secret's key and adds one of the same name under a key the release does
+ * not have.
+ */
+export function secretKeysRevisionProblem(
+  released: CatalogManifest["secrets"],
+  revised: CatalogManifest["secrets"],
+): string | null {
+  const before = new Set(released.map(secretKey));
+  const after = new Set(revised.map(secretKey));
+  const rekeyed = revised.filter(
+    (r) =>
+      !before.has(secretKey(r)) &&
+      released.some((s) => s.name === r.name && !after.has(secretKey(s))),
+  );
+  if (rekeyed.length === 0) return null;
+  return `it changes the key of the secret ${rekeyed.map((r) => r.name).join(", ")}; a revision may give a key only to a secret it adds, and changing a released secret's key needs a new build`;
+}
+
 export function catalogRevisionProblem(
   released: CatalogManifest,
   revised: CatalogManifest,
@@ -153,6 +183,10 @@ export function catalogRevisionProblem(
   );
   if (fixed.length > 0) {
     return `it changes ${fixed.join(", ")}, which only a new build can change`;
+  }
+  if (changed.includes("secrets")) {
+    const keys = secretKeysRevisionProblem(released.secrets, revised.secrets);
+    if (keys !== null) return keys;
   }
   return changed.includes("requires")
     ? requirementsRevisionProblem(released.requires, revised.requires)

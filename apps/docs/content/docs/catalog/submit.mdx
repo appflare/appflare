@@ -302,19 +302,52 @@ Points that need care:
   generated config are the build's, so a patch that sets them fails the pack. Only these keys may be patched: `main` and `assets`, with paths
   relative to the config and without `..`; `build`, only
   to `null` when `install.buildCommand` builds instead; `services`, only to leave
-  bindings out or to add one that points at a Worker of the same entry;
+  bindings out or to add one that points at a Worker of the same entry, optionally
+  with `props` (see below);
   `kv_namespaces`, `r2_buckets` and `d1_databases`, only to add bindings or to leave
   out an `id`, `bucket_name` or `database_id` that is an empty string or a
   placeholder the upstream deploy script fills (`$NAME`, `${NAME}`, `{{NAME}}`,
-  `<NAME>`), so the install provisions it; `vars`, only removals; and `migrations`, only to rename
+  `<NAME>`), so the install provisions it; `vars`, to set a var to text or remove it
+  with `null` (see below); `migrations`, only to rename
   `new_classes` to `new_sqlite_classes`, which the Free plan requires; `ratelimits`,
-  only to add a rate limit an upstream deploy script adds, keeping the config's own. A section
+  only to add a rate limit an upstream deploy script adds, keeping the config's own;
+  `ai`, only `{ "binding": "<NAME>" }`, to add the Workers AI binding an upstream
+  deploy script adds to a config that has none. A section
   Appflare cannot install may be set to `null` to drop it, when the app works without
   it (`"vpc_services": null`, `"unsafe": null`), and so may a key the config sets that
   the packer's wrangler does not know (`"email": null`). Anything else fails with a message. An app of several Workers sets `configPatch` on each Worker
   in `install.workers`. The patch is part of the signed manifest.
   `appflare-pack inspect <checkout> --config <config> --manifest appflare.jsonc`
   applies it and shows what changed.
+
+  A var a patch sets is part of that Worker's config, signed with the release: the
+  admin does not see it in the app's settings. Use it for a value one Worker of an
+  [app of several Workers](#apps-of-several-workers) needs for itself, such as the
+  address it is reached at. Its text may hold the placeholders a var's `default`
+  takes, filled in at every install, update and settings change, and again when the
+  app's address changes:
+
+  ```jsonc
+  {
+    "name": "github",
+    "wranglerConfig": "packages/gatekeeper-github/wrangler.jsonc",
+    "configPatch": { "vars": { "BASE_URL": "{{appUrl}}/gatekeeper/github" } }
+  }
+  ```
+
+  A patched var may not have the name of a secret its Worker gets, nor of a catalog
+  var that goes to that Worker. A value the admin chooses belongs in `vars` instead.
+  An entry whose patch sets var text or adds an `ai` binding lists
+  `"config-patch-values"` in `requires`. The admin sees these vars read-only in the
+  app's settings with **Show technical names** on.
+
+  A service binding in a patch may carry `props`, the JSON object the Worker it points
+  at reads as `ctx.props` on every call through it, as `wrangler deploy` sends it. Its
+  strings take the same placeholders:
+  `{ "binding": "CONTEXT", "service": "context", "entrypoint": "Vendor", "props": { "sharingDomain": "{{appUrl}}" } }`.
+  Props a wrangler config sets on a binding to its own Worker, or to another Worker of
+  the entry, are kept the same way. An entry with props lists `"service-props"` in
+  `requires`.
 - **`install.wranglerConfigInline`.** When the repository commits no wrangler config
   at all (its deploy script writes one, or it relies on wrangler's automatic setup),
   open a pull request upstream that adds one. Until it is merged, the entry may carry
@@ -631,6 +664,16 @@ Points that need care:
   or `workers-ai`. `access` means the app goes with Cloudflare Access: the account
   needs a Zero Trust organization only while the app is protected, which with
   `"mode": "required"` is always; see `access` below.
+
+  Three values name something Appflare must know how to do rather than something the
+  account must have, and the catalog checks refuse an entry that needs one without
+  it: `secret-keys` for a secret with a `key` other than its name,
+  `service-props` for `props` on a service binding, and `config-patch-values` for a
+  config patch that sets var text or adds a Workers AI binding. An Appflare that predates the
+  feature does not know the value and leaves the entry out of its catalog, instead
+  of installing the app wrong; a newer one asks the admin nothing about it. A
+  [revision](#after-merge) may add `secret-keys`, together with keys on the secrets it
+  adds; it may not change the key of a released secret.
 - **`tokenPermissions`.** Only for apps that call the Cloudflare API with a token of
   their own, never Appflare's. Each entry names one permission group as the
   Cloudflare dashboard's token form shows it, where it applies, the access the app
@@ -891,6 +934,29 @@ as one app:
 - **Secrets and vars.** A secret's or var's `workers` lists the Workers that get it.
   Without it, a secret goes to every Worker, and a var goes to the Workers whose
   wrangler config declares it, or to every Worker when none does.
+- **One secret name, a value per Worker.** When several Workers read a secret of the
+  same name that must differ between them (each its own OAuth client, say), declare
+  one secret per Worker with that `name`, a `key` of its own, and `workers`, and list
+  `"secret-keys"` in `requires`:
+
+  ```jsonc
+  "requires": ["secret-keys"],
+  "secrets": [
+    { "name": "CLIENT_ID", "key": "GITHUB_CLIENT_ID", "label": "GitHub client ID", "workers": ["github"] },
+    { "name": "CLIENT_ID", "key": "GOOGLE_CLIENT_ID", "label": "Google client ID", "workers": ["google"] }
+  ]
+  ```
+
+  The key is what Appflare knows the secret by: one field each in the install form
+  and the app's settings, one record each, and the name `derive.from`, seed params
+  and a sink's `tokenSecret` use. Each Worker still reads `CLIENT_ID`. Keys are
+  letters, digits and underscores, unique among the entry's secrets; a secret
+  without one is known by its name. Secrets of one name must each list `workers`,
+  and no Worker may get two of them. A new version may give a released secret a key
+  (or a new one): when every Worker that gets it already has a value under that
+  name, updates keep the value under the new key; otherwise they ask for it.
+- **A var a Worker needs for itself.** Set it in that Worker's `configPatch` (see
+  `install.configPatch` above), with placeholders such as `{{appUrl}}`.
 - **Placeholders.** `{{appUrl:<name>}}`, `{{appHostname:<name>}}`,
   `{{workerUrl:<name>}}`, `{{workerHostname:<name>}}` and `{{workerName:<name>}}`
   give one Worker's address, its workers.dev address and its installed Worker name

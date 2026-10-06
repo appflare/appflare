@@ -1,4 +1,9 @@
-import { type InstallTier, installTierSchema, requirementSchema } from "@appflare/schema";
+import {
+  accountRequirements,
+  type InstallTier,
+  installTierSchema,
+  requirementSchema,
+} from "@appflare/schema";
 import { describe, expect, it } from "vitest";
 import {
   REQUIREMENTS,
@@ -31,13 +36,20 @@ describe("an entry that needs Cloudflare Access only while protected", () => {
     ]);
     expect(requirementsToConfirm({ requires: ["zone"] })).toEqual(["zone"]);
   });
+
+  it("leaves out the manager features an entry lists, which ask nothing of the account", () => {
+    expect(requirementsToConfirm({ requires: ["r2", "secret-keys", "service-props"] })).toEqual([
+      "r2",
+    ]);
+    expect(requirementsToConfirm({ requires: ["secret-keys"] })).toEqual([]);
+  });
 });
 
 describe("requirementSentence", () => {
   it("keeps every artifact tier sentence as the requirement's own", () => {
-    for (const requirement of requirementSchema.options) {
+    for (const requirement of accountRequirements(requirementSchema.options)) {
       expect(requirementSentence(requirement, { tier: "artifact" })).toBe(
-        REQUIREMENTS[requirement].sentence,
+        REQUIREMENTS[requirement as keyof typeof REQUIREMENTS].sentence,
       );
     }
     expect(requirementSentence("containers", { tier: "artifact" })).toBe(

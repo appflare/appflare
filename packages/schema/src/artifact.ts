@@ -11,6 +11,7 @@ import {
   vectorizeIndexConfigSchema,
   vectorizeMetadataIndexesSchema,
 } from "./catalog";
+import { SERVICE_PROPS_REQUIREMENT } from "./manager-features";
 import { PIPELINES_BINDING_TYPE } from "./pipelines";
 import { r2LifecycleRuleSchema } from "./r2-lifecycle";
 import { strictSchema } from "./strict";
@@ -160,16 +161,27 @@ export const SELF_SERVICE = "self";
  * parsed binding; {@link isSelfServiceBinding} is what holds a self binding to
  * exactly these fields.
  */
+/**
+ * A service binding's `props`, as wrangler sends them: a JSON object the
+ * called Worker reads as `ctx.props`. Its strings may hold the placeholders a
+ * var takes, which the manager fills in at every upload. An artifact with
+ * props lists `"service-props"` in its catalog manifest's `requires`, since a
+ * manager from before them refuses the binding.
+ */
+export const serviceBindingPropsSchema = z.record(z.string(), z.json());
+export type ServiceBindingProps = z.infer<typeof serviceBindingPropsSchema>;
+
 const selfServiceBindingShape = {
   type: z.literal("service"),
   name: z.string().min(1),
   service: z.literal(SELF_SERVICE),
   entrypoint: z.string().min(1).optional(),
+  props: serviceBindingPropsSchema.optional(),
 };
 export const selfServiceBindingSchema = z.looseObject(selfServiceBindingShape);
 export type SelfServiceBinding = z.infer<typeof selfServiceBindingSchema>;
 
-/** A self binding with nothing but its name and optional entrypoint. */
+/** A self binding with nothing but its name, optional entrypoint and optional props. */
 const exactSelfServiceBindingSchema = z.strictObject(selfServiceBindingShape);
 
 const STRICT_BINDING_TYPES: Readonly<Record<string, string>> = {
@@ -212,8 +224,9 @@ export type WorkerBinding = z.infer<typeof workerBindingSchema>;
 
 /**
  * Whether a binding is a service binding to the app's own Worker: service
- * `"self"`, with nothing but its name and an optional entrypoint. A service
- * binding that carries anything more (an `environment`, `props`) is not one.
+ * `"self"`, with nothing but its name, an optional entrypoint and optional
+ * `props`. A service binding that carries anything more (an `environment`)
+ * is not one.
  */
 export function isSelfServiceBinding(binding: WorkerBinding): binding is SelfServiceBinding {
   return binding.type === "service" && exactSelfServiceBindingSchema.safeParse(binding).success;
@@ -224,13 +237,15 @@ export function isSelfServiceBinding(binding: WorkerBinding): binding is SelfSer
  * of several Workers, `install.workers`): the packer records that Worker as
  * `{{workerName:<name>}}` in place of its name in the wrangler config, and
  * the manager points the binding at the Worker it installed for that name.
- * Nothing but the name and an optional entrypoint, like a self binding.
+ * Nothing but the name, an optional entrypoint and optional `props`, like a
+ * self binding.
  */
 const entryServiceBindingShape = {
   type: z.literal("service"),
   name: z.string().min(1),
   service: z.string().regex(ENTRY_WORKER_REF_PATTERN),
   entrypoint: z.string().min(1).optional(),
+  props: serviceBindingPropsSchema.optional(),
 };
 export const entryServiceBindingSchema = z.looseObject(entryServiceBindingShape);
 export type EntryServiceBinding = z.infer<typeof entryServiceBindingSchema>;
@@ -238,8 +253,9 @@ const exactEntryServiceBindingSchema = z.strictObject(entryServiceBindingShape);
 
 /**
  * Whether a binding is a service binding to another Worker of the app's
- * entry (`{{workerName:<name>}}`), with nothing but its name and an optional
- * entrypoint. Whether the entry has that Worker is the manifest's check.
+ * entry (`{{workerName:<name>}}`), with nothing but its name, an optional
+ * entrypoint and optional `props`. Whether the entry has that Worker is the
+ * manifest's check.
  */
 export function isEntryServiceBinding(binding: WorkerBinding): binding is EntryServiceBinding {
   return binding.type === "service" && exactEntryServiceBindingSchema.safeParse(binding).success;
@@ -260,7 +276,7 @@ export function serviceBindingProblem(binding: WorkerBinding): string | null {
     typeof binding.service === "string" ? `the Worker "${binding.service}"` : "no Worker";
   return (
     `Service binding ${binding.name} points at ${target}; an app may bind only to its own Worker ` +
-    `(recorded as service "${SELF_SERVICE}", with nothing but an optional entrypoint) or to another ` +
+    `(recorded as service "${SELF_SERVICE}", with nothing but an optional entrypoint and props) or to another ` +
     "Worker of its own catalog entry, so it can never call another Worker in the account."
   );
 }
@@ -868,6 +884,20 @@ export const artifactManifestSchema = z
               code: "custom",
               path: ["catalog", "requires"],
               message: `the wrangler config's var ${binding.name} uses an Access placeholder, so the catalog manifest's requires must list "access"`,
+            });
+          }
+        }
+      }
+    }
+    // Props on a service binding need a manager that sends them (./manager-features.ts).
+    if (!manifest.catalog.requires.includes(SERVICE_PROPS_REQUIREMENT)) {
+      for (const worker of [manifest.worker, ...(manifest.workers ?? []).map((w) => w.worker)]) {
+        for (const binding of worker.bindings) {
+          if (binding.type === "service" && binding.props !== undefined) {
+            ctx.addIssue({
+              code: "custom",
+              path: ["catalog", "requires"],
+              message: `the service binding ${binding.name} carries props, so the catalog manifest's requires must list "${SERVICE_PROPS_REQUIREMENT}"`,
             });
           }
         }

@@ -6,9 +6,10 @@ import {
   accessBypassPaths,
   connectionStringProblems,
   hyperdriveDeclarations,
+  secretKey,
   workerUploadProblem,
 } from "@appflare/schema";
-import { and, eq, isNull } from "drizzle-orm";
+import { and, eq, inArray, isNull } from "drizzle-orm";
 import { z } from "zod";
 import { writeAcceptedBypass } from "../access/accepted-paths.server";
 import { readAccessPlaceholderValues } from "../access/placeholder-values.server";
@@ -35,6 +36,7 @@ import {
   entryPlaceholders,
   entryScriptNamesOf,
   entryWorkers,
+  parseStoredManifest,
   storedOtherWorkers,
   workerLabel,
 } from "./entry-workers";
@@ -110,6 +112,12 @@ import {
 import { secretSlots, storedVarsJson } from "./reconfigure/plan";
 import { undoSecretChangesPhase } from "./reconfigure/secrets";
 import type { JobContext } from "./run-job";
+import {
+  adoptedSecretKeys,
+  secretNamesByKey,
+  secretPlacements,
+  workerSecretValues,
+} from "./secret-keys";
 import { runSelfDeployingUpdate } from "./self-deploying/jobs";
 import { StepLog } from "./step-log";
 import { createJobSteps, errorMessage, isNotFound, JobError, type StepTools } from "./steps";
@@ -485,6 +493,12 @@ export async function runUpdate(ctx: JobContext): Promise<void> {
         // Routes on record, which a version without email removes even when
         // the installed one's manifest does not say it receives any.
         hasEmailRoutes: rows.some((r) => r.kind === EMAIL_ROUTE_KIND) as boolean | undefined,
+        // Where the installed version put its secrets, to keep a value a new
+        // key takes over (`adoptedSecretKeys`); null when it cannot be read.
+        previousSecrets: (() => {
+          const installed = parseStoredManifest(install.manifest_json);
+          return installed === null ? null : secretPlacements(installed.catalog);
+        })(),
         userVars: { ...parseVars(install.config_json), ...(params.vars ?? {}) },
         workersDev: install.workers_dev_enabled,
         servedDomain: install.served_domain,
@@ -642,7 +656,17 @@ export async function runUpdate(ctx: JobContext): Promise<void> {
     // version was uploaded without them.
     const path = updatePath(primaryManifest, started.appliedDoTag, started.servingExports);
     const fullDeploy = path.fullDeploy;
-    const recordedSecrets = started.resources.filter((r) => r.kind === "secret").map((r) => r.name);
+    // By key: a secret row's name is the secret's key (./secret-keys.ts).
+    const secretRows = started.resources.filter((r) => r.kind === "secret");
+    // Secrets this version declares under a new key, whose value the Workers
+    // already have under the same name: recorded under the new key, not asked for.
+    // (A step output recorded before placements were read has none.)
+    const adopted = adoptedSecretKeys(
+      manifest.catalog,
+      started.previousSecrets ?? null,
+      secretRows,
+    );
+    const recordedSecrets = [...secretRows.map((r) => r.name), ...adopted.keys()];
     // Hyperdrive configurations first, as at install: Cloudflare connects to
     // the database when one is made, so an unreachable one stops the update
     // before anything else is created. Pipelines streams last: a sink writes
@@ -684,17 +708,15 @@ export async function runUpdate(ctx: JobContext): Promise<void> {
         ...newSinks.map((s) => s.pipeline.declared.sink.tokenSecret),
       ],
     );
+    /** The new secrets' values, by key. */
     const secretValues: Record<string, string> = {};
     for (const secret of newSecrets) {
-      const value = params.secrets[secret.name];
-      if (value !== undefined && value.length > 0) secretValues[secret.name] = value;
+      const value = params.secrets[secretKey(secret)];
+      if (value !== undefined && value.length > 0) secretValues[secretKey(secret)] = value;
     }
-    // The new secrets the primary Worker gets; the others' ride on their own uploads.
-    const primarySecretValues = Object.fromEntries(
-      Object.entries(secretValues).filter(([name]) =>
-        primaryManifest.catalog.secrets.some((s) => s.name === name),
-      ),
-    );
+    // The new secrets the primary Worker gets, by the names it reads; the
+    // others' ride on their own uploads.
+    const primarySecretValues = workerSecretValues(primaryManifest.catalog.secrets, secretValues);
     const healthPath = manifest.catalog.install.health.path;
     const healthMode = manifest.catalog.install.health.mode;
 
@@ -719,9 +741,9 @@ export async function runUpdate(ctx: JobContext): Promise<void> {
         );
       }
       for (const secret of newSecrets) {
-        if (secretValues[secret.name] === undefined) {
+        if (secretValues[secretKey(secret)] === undefined) {
           problems.push(
-            `No value was provided for ${secret.label} (${secret.name}), which this version introduces.`,
+            `No value was provided for ${secret.label} (${secretKey(secret)}), which this version introduces.`,
           );
         }
       }
@@ -1004,6 +1026,7 @@ export async function runUpdate(ctx: JobContext): Promise<void> {
         workerName,
         resources: bound,
         vars: vars.vars,
+        fill: vars.fill,
         assetsJwt,
         workflowNames: diff.workflowNames,
         rateLimitIds,
@@ -1051,15 +1074,39 @@ export async function runUpdate(ctx: JobContext): Promise<void> {
           name: d.className,
           cfId: null,
         })),
-        ...Object.keys(secretValues).map((name) => ({
-          kind: "secret" as const,
-          key: name,
-          binding: name,
-          name,
-          cfId: null,
-        })),
+        ...newSecrets
+          .filter((s) => secretValues[secretKey(s)] !== undefined)
+          .map((s) => ({
+            kind: "secret" as const,
+            key: secretKey(s),
+            binding: s.name,
+            name: secretKey(s),
+            cfId: null,
+          })),
+        // A value the Workers keep, now known under the version's new key.
+        ...[...adopted.keys()].flatMap((key) => {
+          const name = manifest.catalog.secrets.find((s) => secretKey(s) === key)?.name;
+          return name === undefined
+            ? []
+            : [{ kind: "secret" as const, key, binding: name, name: key, cfId: null }];
+        }),
       ];
       for (const row of rows) await recordResource(orm, params.installId, row, at);
+      // The records the new keys took over go; the Workers keep the values.
+      const takenOver = [...new Set(adopted.values())];
+      if (takenOver.length > 0) {
+        await orm
+          .update(resources)
+          .set({ deleted_at: at })
+          .where(
+            and(
+              eq(resources.install_id, params.installId),
+              eq(resources.kind, "secret"),
+              inArray(resources.name, takenOver),
+              isNull(resources.deleted_at),
+            ),
+          );
+      }
     }
 
     /** The install's record once `versionId` serves all traffic. */
@@ -1210,7 +1257,10 @@ export async function runUpdate(ctx: JobContext): Promise<void> {
           workerName,
           servingVersionId: snapshot.versionId,
           names: introduced,
-          kept: introduced.filter((name) => recordedSecrets.includes(name)),
+          // The names among them the serving version has (a derived secret's source asked again).
+          kept: [...secretNamesByKey(primaryManifest.catalog.secrets)]
+            .filter(([key, name]) => recordedSecrets.includes(key) && introduced.includes(name))
+            .map(([, name]) => name),
           uploadMessage: updateVersionMessage(started.slug, params.version, params.jobId),
         };
       }

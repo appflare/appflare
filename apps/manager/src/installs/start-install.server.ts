@@ -12,6 +12,7 @@ import {
   isOptionalSecret,
   isSeedOnly,
   needsWildcardHostname,
+  secretKey,
   secretValueProblem,
 } from "@appflare/schema";
 import { and, eq, inArray, isNull, ne, or, sql } from "drizzle-orm";
@@ -221,11 +222,12 @@ export function resolveInstallInput(
       `${catalog.name} needs: ${toConfirm.map(requirementLabel).join(", ")}. Confirm that this account meets these requirements.`,
     );
   }
+  // The form sends secrets by key (`secretKey`: the name unless the catalog gives a key).
   const formSecrets = enteredSecrets(catalog.secrets);
-  const declaredSecrets = new Set(formSecrets.map((s) => s.name));
+  const declaredSecrets = new Set(formSecrets.map(secretKey));
   const declaredVars = new Set(catalog.vars.map((v) => v.name));
   const unknown = [
-    ...Object.keys(input.secrets).filter((name) => !declaredSecrets.has(name)),
+    ...Object.keys(input.secrets).filter((key) => !declaredSecrets.has(key)),
     ...Object.keys(input.vars).filter((name) => !declaredVars.has(name)),
   ];
   if (unknown.length > 0) {
@@ -235,20 +237,19 @@ export function resolveInstallInput(
   const seed: SeedOnlyValues = { secrets: {}, vars: {} };
   const bcryptSources = new Set(bcryptSeedSources(catalog.resources ?? {}));
   for (const secret of formSecrets) {
-    const value = input.secrets[secret.name] ?? "";
+    const key = secretKey(secret);
+    const value = input.secrets[key] ?? "";
     if (value.length === 0) {
       // An optional secret left out is not set at all.
       if (isOptionalSecret(secret)) continue;
-      throw new StartInstallError(`${secret.label} (${secret.name}) is required.`);
+      throw new StartInstallError(`${secret.label} (${key}) is required.`);
     }
     const problem =
       secretValueProblem(secret, value) ??
-      (bcryptSources.has(secret.name)
-        ? bcryptInputProblem(`${secret.label} (${secret.name})`, value)
-        : null);
+      (bcryptSources.has(key) ? bcryptInputProblem(`${secret.label} (${key})`, value) : null);
     if (problem !== null) throw new StartInstallError(problem);
-    if (isSeedOnly(secret)) seed.secrets[secret.name] = value;
-    else secrets[secret.name] = value;
+    if (isSeedOnly(secret)) seed.secrets[key] = value;
+    else secrets[key] = value;
   }
   // One connection string per database the app reaches through Hyperdrive.
   // Problems name the binding and the part at fault, never the string.

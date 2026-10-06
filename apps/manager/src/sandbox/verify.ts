@@ -192,7 +192,9 @@ export function catalogTerms(catalog: CatalogManifest): string {
   return canonical({
     slug: catalog.slug,
     repo: catalog.repo,
-    secrets: catalog.secrets.map((s) => [s.name, s.generate]),
+    secrets: catalog.secrets.map((s) =>
+      s.key === undefined ? [s.name, s.generate] : [s.name, s.generate, s.key],
+    ),
     workerName: catalogWorkerName(catalog),
     fixedWorkerName: catalog.install.fixedWorkerName,
     emailRouting: catalog.install.emailRouting ?? null,

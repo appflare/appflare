@@ -11,6 +11,7 @@ import {
   type QueueRef,
   SELF_SERVICE,
   type SelfServiceBinding,
+  serviceBindingPropsSchema,
   UNSUPPORTED_WRANGLER_SECTION_LABELS,
   UNSUPPORTED_WRANGLER_SECTIONS,
   type UnsupportedWranglerSection,
@@ -591,6 +592,25 @@ export function varPlaceholderProblems(
   });
 }
 
+/**
+ * What is wrong with the placeholders in the props of the config's service
+ * bindings, one sentence each, held to the list a var takes
+ * ({@link varPlaceholderProblems}): the manager fills them in the same way.
+ */
+export function servicePropsPlaceholderProblems(
+  bindings: readonly WorkerBinding[],
+  entry: PlaceholderWorkers,
+): string[] {
+  return bindings.flatMap((b) => {
+    if (b.type !== "service" || b.props === undefined) return [];
+    return [
+      ...new Set(
+        jsonStrings(b.props).flatMap((text) => placeholderProblems(text, "varDefault", entry)),
+      ),
+    ].map((problem) => `The props of the service binding ${b.name}: ${problem}.`);
+  });
+}
+
 type WranglerService = NonNullable<ResolvedWranglerConfig["services"]>[number];
 
 /**
@@ -623,13 +643,13 @@ function selfServiceBinding(
         `in the account, so ${allowed}`,
     );
   }
-  const extras = (["environment", "props", "cross_account_grant"] as const).filter(
+  const extras = (["environment", "cross_account_grant"] as const).filter(
     (field) => svc[field] !== undefined,
   );
   if (extras.length > 0) {
     throw new ServiceBindingError(
       `the wrangler config's service binding ${svc.binding} to the app's own Worker sets ${extras.join(", ")}; ` +
-        "Appflare records a binding to the app's own Worker with nothing but an optional entrypoint",
+        "Appflare records a binding to the app's own Worker with nothing but an optional entrypoint and props",
     );
   }
   const binding: SelfServiceBinding | EntryServiceBinding =
@@ -637,6 +657,16 @@ function selfServiceBinding(
       ? { type: "service", name: svc.binding, service: SELF_SERVICE }
       : { type: "service", name: svc.binding, service: entryWorkerRef(entryWorker) };
   if (svc.entrypoint !== undefined) binding.entrypoint = svc.entrypoint;
+  if (svc.props !== undefined) {
+    // Wrangler sends `props` as given; the manager fills in placeholders in their strings.
+    const props = serviceBindingPropsSchema.safeParse(svc.props);
+    if (!props.success) {
+      throw new ServiceBindingError(
+        `the wrangler config's service binding ${svc.binding} sets props that are not a JSON object`,
+      );
+    }
+    binding.props = props.data;
+  }
   return binding;
 }
 

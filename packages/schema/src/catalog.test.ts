@@ -19,6 +19,7 @@ import {
   derivedVarProblems,
   EMAIL_ROUTING_MAX_RULES,
   enteredSecrets,
+  hasOwnSecretKey,
   installTierSchema,
   installToolchains,
   isDerivedSecret,
@@ -33,6 +34,7 @@ import {
   SANDBOX_RUN_TIERS,
   SECRET_GENERATE_KINDS,
   sandboxBuildSettings,
+  secretKey,
   secretValueProblem,
   semverSchema,
   strictCatalogManifestSchema,
@@ -1325,6 +1327,115 @@ describe("a name that is both a secret and a var", () => {
           "ADMIN_PASSWORD is declared both as a secret and as a var; a Worker cannot have a secret and a var of one name, so keep one of them",
       }),
     ]);
+  });
+});
+
+describe("secrets[].key", () => {
+  const gatekeepers = {
+    ...validManifest,
+    plan: "paid",
+    install: {
+      ...validManifest.install,
+      workers: [
+        { name: "router", wranglerConfig: "wrangler.jsonc", primary: true },
+        { name: "github", wranglerConfig: "github/wrangler.jsonc" },
+        { name: "google", wranglerConfig: "google/wrangler.jsonc" },
+      ],
+    },
+  };
+  const clientId = (key: string, workers?: string[]) => ({
+    name: "CLIENT_ID",
+    key,
+    label: `${key} client ID`,
+    ...(workers === undefined ? {} : { workers }),
+  });
+  const messages = (input: unknown) =>
+    catalogManifestSchema.safeParse(input).error?.issues.map((i) => i.message) ?? [];
+
+  it("defaults to the name", () => {
+    expect(secretKey({ name: "CLIENT_ID" })).toBe("CLIENT_ID");
+    expect(secretKey({ name: "CLIENT_ID", key: "GITHUB_CLIENT_ID" })).toBe("GITHUB_CLIENT_ID");
+    expect(hasOwnSecretKey({ name: "A", key: "A" })).toBe(false);
+  });
+
+  it("lets two secrets of one name go to different Workers, with secret-keys required", () => {
+    const secrets = [
+      clientId("GITHUB_CLIENT_ID", ["github"]),
+      clientId("GOOGLE_CLIENT_ID", ["google"]),
+    ];
+    expect(messages({ ...gatekeepers, secrets, requires: ["secret-keys"] })).toEqual([]);
+    expect(messages({ ...gatekeepers, secrets })).toEqual([
+      'secrets[0] has a key other than its name, so requires must list "secret-keys": a manager that does not know keys would set both values under one name',
+    ]);
+  });
+
+  it("refuses a key used twice, and a name shared by Workers that would get both", () => {
+    expect(
+      messages({
+        ...gatekeepers,
+        requires: ["secret-keys"],
+        secrets: [
+          clientId("GITHUB_CLIENT_ID", ["github"]),
+          clientId("GITHUB_CLIENT_ID", ["google"]),
+        ],
+      }),
+    ).toEqual([
+      "two secrets are known by the key GITHUB_CLIENT_ID (secrets[0] and secrets[1]); give each its own key, which is its name when it has no key",
+    ]);
+    expect(
+      messages({
+        ...gatekeepers,
+        requires: ["secret-keys"],
+        secrets: [
+          clientId("GITHUB_CLIENT_ID", ["github", "google"]),
+          clientId("GOOGLE_CLIENT_ID", ["google"]),
+        ],
+      }),
+    ).toEqual([
+      'secrets[0] and secrets[1] are both named CLIENT_ID and both go to "google"; a Worker has one value per name',
+    ]);
+    expect(
+      messages({
+        ...gatekeepers,
+        requires: ["secret-keys"],
+        secrets: [clientId("GITHUB_CLIENT_ID"), clientId("GOOGLE_CLIENT_ID", ["google"])],
+      }),
+    ).toEqual([
+      "secrets[0] and secrets[1] are both named CLIENT_ID; secrets of one name must each list the Workers that get them (workers), and no Worker may get both",
+    ]);
+  });
+
+  it("is what derive.from names", () => {
+    const secrets = [
+      { name: "PASSWORD", key: "ADMIN_PASSWORD", label: "Password", generate: "password" },
+      { name: "HASH", label: "Hash", derive: { from: "ADMIN_PASSWORD", method: "bcrypt" } },
+    ];
+    expect(messages({ ...validManifest, requires: ["secret-keys"], secrets })).toEqual([]);
+    expect(
+      messages({
+        ...validManifest,
+        requires: ["secret-keys"],
+        secrets: [secrets[0], { ...secrets[1], derive: { from: "PASSWORD", method: "bcrypt" } }],
+      }),
+    ).toEqual(["HASH derives from PASSWORD, which is not a secret of this manifest"]);
+  });
+
+  it("must look like a name, and is refused on a self-deploying entry", () => {
+    expect(
+      messages({
+        ...validManifest,
+        requires: ["secret-keys"],
+        secrets: [{ name: "A", key: "has-dash", label: "A" }],
+      }),
+    ).toEqual(["must be letters, digits and underscores, not starting with a digit"]);
+    const selfDeploying = catalogManifestSchema.safeParse({
+      ...validManifest,
+      install: { ...validManifest.install, ...selfDeployingInstall },
+      plan: "paid",
+      requires: ["secret-keys"],
+      secrets: [{ name: "A", key: "B", label: "A" }],
+    });
+    expect(selfDeploying.error?.issues.map((i) => i.path.join("."))).toContain("secrets.0.key");
   });
 });
 

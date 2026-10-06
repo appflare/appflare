@@ -80,6 +80,23 @@ describe("withDerivedSecrets", () => {
   });
 });
 
+describe("a derived secret whose source has a key of its own", () => {
+  const keyed = secretsOf([
+    { name: "PASSWORD", key: "ADMIN_PASSWORD", label: "Password", generate: "password" },
+    { name: "PASSWORD_HASH", label: "Hash", derive: { from: "ADMIN_PASSWORD", method: "bcrypt" } },
+  ]);
+
+  it("is computed from the source's value by key, and asks for the source by key", async () => {
+    const out = await withDerivedSecrets(keyed, { ADMIN_PASSWORD: "hunter2" });
+    expect(Object.keys(out).sort()).toEqual(["ADMIN_PASSWORD", "PASSWORD_HASH"]);
+    expect(bcrypt.compareSync("hunter2", out.PASSWORD_HASH ?? "")).toBe(true);
+    const [source, hashed] = keyed;
+    if (source === undefined || hashed === undefined) throw new Error("no secrets");
+    expect(secretsToAskFor(keyed, [hashed])).toEqual([source]);
+    expect(secretsToSet(keyed, [hashed])).toEqual([source, hashed]);
+  });
+});
+
 describe("secretsToAskFor and secretsToSet", () => {
   it("ask for the source of a missing derived secret, and set both", () => {
     expect(secretsToAskFor(secrets, [hash])).toEqual([password]);
