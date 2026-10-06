@@ -249,6 +249,11 @@ removal itself fails, the new install creates nothing and fails too: open the ea
 install's app page, finish uninstalling it from its danger zone, then use **Install
 again** on the new install's page.
 
+An app installed from a repository, or built from source, is installed again from the
+review of the build it was installed from, so nothing is built again; if that build is
+gone, the review offers to build the same branch again. See
+[If the install fails](/guides/install-from-a-repository/#if-the-install-fails).
+
 ## Apps of several Workers
 
 Some apps install as several Workers, for example a web front end and an API. One of

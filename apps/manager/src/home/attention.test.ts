@@ -157,7 +157,7 @@ describe("attentionItems", () => {
     expect(attentionItems(input({ failedJobs: [failed] }))).toEqual([]);
   });
 
-  it("offers admins Install again for a catalog app's install that did not finish", () => {
+  it("offers admins Install again for an install that did not finish", () => {
     const failed = job({ id: "j9", installId: "a", kind: "install", version: null });
     const failedApp = app({ id: "a", status: "failed", slug: "team:links", origin: "catalog" });
     const again = (over: Partial<AttentionInput>) => {
@@ -165,9 +165,14 @@ describe("attentionItems", () => {
       return item?.kind === "failed-job" ? item.againHref : undefined;
     };
     expect(again({})).toBe("/catalog/team:links?again=a#install");
-    // Members cannot install; an app built from a repository is built again instead.
+    // Members cannot install.
     expect(again({ isAdmin: false })).toBeNull();
-    expect(again({ apps: [{ ...failedApp, origin: "repository" }] })).toBeNull();
+    // An app built from a repository: the review of the build its install job recorded.
+    const fromRepository = { ...failedApp, origin: "repository" };
+    expect(again({ apps: [fromRepository], failedJobs: [{ ...failed, buildId: "b1" }] })).toBe(
+      "/catalog/source/b1?again=a",
+    );
+    expect(again({ apps: [fromRepository] })).toBeNull();
     // Only for the install job: a failed update of an installed app keeps its log only.
     expect(
       again({

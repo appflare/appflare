@@ -349,7 +349,17 @@ export function fakeSandbox(
     },
     async cleanup(input) {
       cleanups.push(structuredClone(input));
-      return { deleted: objects.size };
+      // As the sandbox Worker does: every object of the install's builds but the kept versions.
+      const { installId, keepVersions } = input as { installId: string; keepVersions: string[] };
+      const prefix = `builds/${installId}/`;
+      let deleted = 0;
+      for (const key of [...objects.keys()]) {
+        if (!key.startsWith(prefix)) continue;
+        if (keepVersions.includes(key.slice(prefix.length).split("/")[0] ?? "")) continue;
+        objects.delete(key);
+        deleted++;
+      }
+      return { deleted };
     },
     async fetch(input, init) {
       const range = new Headers(init?.headers).get("range");

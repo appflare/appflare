@@ -17,6 +17,7 @@ export function InstallAgainBanner({
   appName,
   changes,
   reenter,
+  formBelow = true,
 }: {
   again: InstallAgainRecord;
   appName: string;
@@ -24,6 +25,8 @@ export function InstallAgainBanner({
   changes: readonly string[];
   /** What must be entered again (`reenterNote`); null when nothing. */
   reenter: string | null;
+  /** An install form follows, which installs the app anew when it cannot be installed again. */
+  formBelow?: boolean;
 }) {
   if (again.refusal !== null) {
     return (
@@ -31,7 +34,9 @@ export function InstallAgainBanner({
         variant="secondary"
         icon={<InfoIcon weight="fill" />}
         title={`${again.label} cannot be installed again from here`}
-        description={`${again.refusal} The form below installs ${appName} anew.`}
+        description={
+          formBelow ? `${again.refusal} The form below installs ${appName} anew.` : again.refusal
+        }
       />
     );
   }

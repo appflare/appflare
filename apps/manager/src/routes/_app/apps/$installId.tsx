@@ -64,7 +64,7 @@ import { UninstallDialog } from "../../../components/uninstall-dialog";
 import { UpdateBanner } from "../../../components/update-banner";
 import { VersionsSection } from "../../../components/versions-section";
 import { WorkersDevSwitch } from "../../../components/workers-dev-switch";
-import { installAgainHref, offersInstallAgain } from "../../../installs/install-again";
+import { installAgainLink } from "../../../installs/install-again";
 import {
   getInstallPage,
   type InstallDetail,
@@ -582,13 +582,17 @@ function ResourceTable({ rows, showBindings }: { rows: ResourceView[]; showBindi
 
 /**
  * An install that did not finish: its log, and for admins "Install again"
- * (the app's catalog page with the form filled in from this install; see
+ * (the app's catalog page, or for an install from a repository the review of
+ * its build, with the form filled in from this install; see
  * installs/install-again.ts). Nothing while a job of it runs.
  */
 function FailedInstallState({ install, isAdmin }: { install: InstallDetail; isAdmin: boolean }) {
   if (install.status !== "failed" || install.activeJobId !== null) return null;
   const failedJob = install.jobs.find((j) => j.kind === "install");
-  const again = isAdmin && offersInstallAgain(install);
+  const againHref = isAdmin
+    ? installAgainLink({ ...install, appKey: install.slug, buildId: install.installBuildId })
+    : null;
+  const again = againHref !== null;
   return (
     <Banner
       variant="error"
@@ -596,7 +600,7 @@ function FailedInstallState({ install, isAdmin }: { install: InstallDetail; isAd
       title="The install did not finish"
       description={
         again
-          ? "The log shows the step that failed and why. Once that is fixed, Install again removes what this install left in your account and installs the app with the same choices; you enter its secrets again."
+          ? `The log shows the step that failed and why. Once that is fixed, Install again removes what this install left in your account and installs ${install.origin === "catalog" ? "the app" : "the same build, or a new build of the same repository if that one is gone,"} with the same choices; you enter its secrets again.`
           : "The log shows the step that failed and why. An admin can uninstall it from the danger zone to remove what it left in your account."
       }
       action={
@@ -610,12 +614,8 @@ function FailedInstallState({ install, isAdmin }: { install: InstallDetail; isAd
               View log
             </LinkButton>
           )}
-          {again && (
-            <LinkButton
-              href={installAgainHref(install.id, install.slug)}
-              variant="primary"
-              icon={<ArrowCounterClockwiseIcon />}
-            >
+          {againHref !== null && (
+            <LinkButton href={againHref} variant="primary" icon={<ArrowCounterClockwiseIcon />}>
               Install again
             </LinkButton>
           )}

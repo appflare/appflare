@@ -7,6 +7,7 @@ import {
 } from "../auto-update/cron.server";
 import type { AppLookup } from "../catalog/merged.server";
 import { isUpdateAvailable } from "../catalog/versions";
+import { buildIdOfInput } from "../installs/install-again";
 import type { InstallRecord } from "../installs/install-rows.server";
 import { isDeleteRetainedJob } from "../installs/removed-apps.server";
 import { isAccessChangeJob, isRestoreJob } from "../jobs/reconcile.server";
@@ -62,6 +63,7 @@ export async function readFailedJobs(db: D1Database): Promise<FailedJob[]> {
     accessChange: isAccessChangeJob(row),
     deleteRetained: isDeleteRetainedJob(row),
     version: versionOf(row.input_json),
+    buildId: buildIdOfInput(row.input_json),
     finishedAt: row.finished_at === null ? null : new Date(row.finished_at).toISOString(),
   }));
 }

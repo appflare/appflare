@@ -1,7 +1,12 @@
 import { reset } from "cloudflare:test";
 import { env } from "cloudflare:workers";
 import { createClient } from "@appflare/cf-api";
-import { type CatalogManifest, catalogManifestSchema, type SandboxInfo } from "@appflare/schema";
+import {
+  type CatalogManifest,
+  catalogManifestSchema,
+  type SandboxInfo,
+  sandboxObjectUrl,
+} from "@appflare/schema";
 import { beforeEach, describe, expect, it } from "vitest";
 import { INSTALL_ACCESS_MESSAGES } from "../access/messages";
 import { planAppUpdates } from "../auto-update/auto-update";
@@ -14,8 +19,14 @@ import { migrations } from "../db/migrations/index";
 import { SETTING, writeSettings } from "../db/settings";
 import type { RemoteRefs } from "../installs/git-refs";
 import {
+  installAgainBuildRequest,
+  readInstallAgain,
+  sandboxBuildFiles,
+} from "../installs/install-again.server";
+import {
   checkSourceChangesCore,
   discardSourceBuildCore,
+  type InstallSourceDeps,
   installSourceBuildCore,
   type ReadRefs,
   type SourceBuildDeps,
@@ -28,6 +39,7 @@ import { PINNED_SANDBOX_VERSION, sandboxReleaseProblem } from "../sandbox/releas
 import { jobProperties } from "../telemetry/events";
 import {
   type ArtifactFixture,
+  type ArtifactFixtureOptions,
   baseCatalog,
   buildArtifactFixture,
   type CatalogInput,
@@ -40,6 +52,8 @@ import { fakeStep } from "../test/fake-step";
 import { type InstallJobParams, runInstall } from "./install";
 import type { JobEnv } from "./run-job";
 import { runSourceBuild, type SourceBuildJobParams } from "./source-build";
+import { runUninstall, type UninstallJobParams } from "./uninstall";
+import type { BuildCleanupTarget } from "./uninstall-builds";
 import { runUpdate, type UpdateJobParams } from "./update";
 
 /**
@@ -58,9 +72,14 @@ const VERSION = "0.0.0-20260920.0123456";
 const NEWER_VERSION = "0.0.0-20260921.fedcba9";
 
 /** What the sandbox Worker builds from the repository at `commit`: unsigned, worked out, not the catalog's. */
-function repositoryBuild(commit: string, version: string): Promise<ArtifactFixture> {
+function repositoryBuild(
+  commit: string,
+  version: string,
+  over: Pick<ArtifactFixtureOptions, "bindings" | "d1"> = {},
+): Promise<ArtifactFixture> {
   const catalog = baseCatalog();
   return buildArtifactFixture({
+    ...over,
     keyId: "unsigned",
     version,
     catalog: {
@@ -560,7 +579,7 @@ async function installFromRepository() {
     {
       db: env.DB,
       createJob: async (id, p) => {
-        params = p;
+        if (p.kind === "install") params = p;
         return { id };
       },
       newId: () => "install-job",
@@ -745,6 +764,421 @@ describe("installing a reviewed build", () => {
       expect(JSON.stringify(props)).not.toMatch(/github|MendyLanda|cut/i);
     }
     expect(r.install?.origin).toBe("repository");
+  });
+});
+
+/**
+ * "Install again" of an install from a repository: the failed install's
+ * leftovers are removed by an uninstall job, then the new install reads the
+ * same build where it is stored (or a new build of the same repository),
+ * against the account and sandbox Worker the failed install used.
+ */
+describe("installing a build from a repository again", () => {
+  const withData: Pick<ArtifactFixtureOptions, "bindings" | "d1"> = {
+    bindings: [
+      { type: "kv_namespace", name: "CUT_KV" },
+      { type: "d1", name: "DB" },
+    ],
+    d1: { DB: [{ name: "0001_init.sql", content: "CREATE TABLE links (id TEXT);" }] },
+  };
+  const form = {
+    workerName: "cut",
+    secrets: { ADMIN_PASSWORD: "pw" },
+    vars: {},
+    paidConfirmed: true,
+    requirementsConfirmed: true,
+  };
+
+  function jobEnvOf(sandbox: FakeSandbox, fetch: ReturnType<typeof accountFetch>) {
+    const baseEnv: JobEnv = { DB: env.DB, KV: env.KV, CF_API_TOKEN: TOKEN, SANDBOX: sandbox };
+    return { ...baseEnv, SELF: fakeSelf(baseEnv, { fetch, now: () => NOW }) };
+  }
+
+  async function status(table: "installs" | "jobs", id: string) {
+    return env.DB.prepare(`SELECT * FROM ${table} WHERE id = ?1`)
+      .bind(id)
+      .first<Record<string, unknown>>();
+  }
+
+  /**
+   * Builds the repository and installs it; the install fails at its
+   * migration, after its KV namespace, D1 database and Worker exist. So do
+   * the next `failures - 1` installs into the same account.
+   */
+  async function failedInstall(failures = 1) {
+    const fixture = await repositoryBuild(COMMIT, VERSION, withData);
+    const built = await build({ fixture });
+    const account = fakeAccount(fixture, {
+      failMigration: { file: "0001_init.sql", status: 400, times: failures },
+    });
+    const fetch = accountFetch(account);
+    let params: InstallJobParams | null = null;
+    const started = await installSourceBuildCore(
+      {
+        db: env.DB,
+        createJob: async (id, p) => {
+          if (p.kind === "install") params = p;
+          return { id };
+        },
+        newId: () => "install-job",
+      },
+      { buildId: built.jobId, ...form },
+    );
+    if (params === null) throw new Error("no Workflow params");
+    await runInstall({
+      params,
+      step: fakeStep(),
+      env: jobEnvOf(built.sandbox, fetch),
+      deps: { fetch, now: () => NOW },
+    }).catch(() => undefined);
+    return { fixture, built, account, fetch, installId: started.installId };
+  }
+
+  type Failed = Awaited<ReturnType<typeof failedInstall>>;
+
+  /** Starts installing `failed` again from `buildId`, as the review's form sends it. */
+  async function startAgain(
+    failed: Failed,
+    buildId: string,
+    deps: Partial<InstallSourceDeps> = {},
+  ) {
+    const created: Array<InstallJobParams | UninstallJobParams> = [];
+    let n = 0;
+    const ids = await installSourceBuildCore(
+      {
+        db: env.DB,
+        createJob: async (id, p) => {
+          created.push(p);
+          return { id };
+        },
+        // The failed install's own Worker is in the account until its removal.
+        listAccountWorkers: async () => ["cut"],
+        buildFiles: sandboxBuildFiles({ SANDBOX: failed.built.sandbox }),
+        newId: () => `again${++n}`,
+        ...deps,
+      },
+      { buildId, ...form, replaces: failed.installId },
+    );
+    const cleanup = created.find((p): p is UninstallJobParams => p.kind === "uninstall");
+    const job = created.find((p): p is InstallJobParams => p.kind === "install");
+    if (job === undefined) throw new Error("no install job");
+    return { ...ids, cleanup, job, created };
+  }
+
+  /** Runs the removal, then the new install, with the sandbox Worker holding the build. */
+  async function runJobs(
+    failed: Failed,
+    started: Awaited<ReturnType<typeof startAgain>>,
+    sandbox: FakeSandbox = failed.built.sandbox,
+  ) {
+    const jobEnv = jobEnvOf(sandbox, failed.fetch);
+    const deps = { fetch: failed.fetch, now: () => NOW };
+    if (started.cleanup !== undefined) {
+      await runUninstall({ params: started.cleanup, step: fakeStep(), env: jobEnv, deps });
+    }
+    let error: unknown = null;
+    try {
+      await runInstall({ params: started.job, step: fakeStep(), env: jobEnv, deps });
+    } catch (e) {
+      error = e;
+    }
+    return {
+      error,
+      jobEnv,
+      deps,
+      oldInstall: await status("installs", failed.installId),
+      newInstall: await status("installs", started.installId),
+    };
+  }
+
+  it("installs the same build again: the removal keeps its files, the new install reads them where they are", async () => {
+    const failed = await failedInstall();
+    expect(await status("installs", failed.installId)).toMatchObject({ status: "failed" });
+    expect(failed.account.state.kv.map((n) => n.title)).toEqual(["cut-cut-kv"]);
+    const zip = `builds/${failed.installId}/${VERSION}/cut-${VERSION}.zip`;
+
+    const started = await startAgain(failed, failed.built.jobId);
+    // The removal first, then the install, which waits for it; under an id of its own.
+    expect(started.created.map((p) => p.kind)).toEqual(["uninstall", "install"]);
+    expect(started.installId).not.toBe(failed.installId);
+    expect(started.job.cleanupJob).toBe(started.cleanup?.jobId);
+    expect(started.job.prebuilt).toMatchObject({
+      buildId: failed.built.jobId,
+      artifactKey: zip,
+      storedUnder: failed.installId,
+    });
+    expect(await status("installs", failed.installId)).toMatchObject({ status: "uninstalling" });
+
+    const r = await runJobs(failed, started);
+    expect(r.error).toBeNull();
+    expect(r.oldInstall).toMatchObject({ status: "uninstalled" });
+    expect(r.newInstall).toMatchObject({
+      status: "installed",
+      origin: "repository",
+      pin_sha: COMMIT,
+      artifact_url: `https://sandbox/${zip}`,
+    });
+    // Nothing was built again, and the removal kept the build installed again.
+    expect(failed.built.sandbox.requests).toHaveLength(1);
+    expect(failed.built.sandbox.cleanups).toEqual([
+      { installId: failed.installId, keepVersions: [VERSION] },
+    ]);
+    // One of each in the account.
+    expect(failed.account.state.kv.map((n) => n.title)).toEqual(["cut-cut-kv"]);
+    expect(failed.account.state.d1.map((d) => d.name)).toEqual(["cut-db"]);
+    expect(await status("source_builds" as "jobs", failed.built.jobId)).toMatchObject({
+      status: "used",
+    });
+
+    // Uninstalling the new install deletes its builds and the one it was installed from.
+    await runUninstall({
+      params: {
+        kind: "uninstall",
+        jobId: "job-u",
+        installId: started.installId,
+        deleteResources: [],
+      },
+      step: fakeStep(),
+      env: r.jobEnv,
+      deps: r.deps,
+    });
+    expect(failed.built.sandbox.cleanups.slice(1)).toEqual([
+      { installId: started.installId, keepVersions: [] },
+      { installId: failed.installId, keepVersions: [] },
+    ]);
+    const left = await failed.built.sandbox.fetch(sandboxObjectUrl(zip), { method: "HEAD" });
+    expect(left.status).toBe(404);
+  });
+
+  it("refuses to start when the build's files are gone, and builds the same repository again", async () => {
+    const failed = await failedInstall();
+    // Sandbox builds were turned off and on again: the bucket is new.
+    await failed.built.sandbox.cleanup({ installId: failed.installId, keepVersions: [] });
+    await expect(startAgain(failed, failed.built.jobId)).rejects.toThrow(
+      "The build's files are no longer in the sandbox Worker's bucket. Reload the page to build it again.",
+    );
+    expect(await status("installs", failed.installId)).toMatchObject({ status: "failed" });
+    const files = sandboxBuildFiles({ SANDBOX: failed.built.sandbox });
+    const record = await readInstallAgain(env.DB, failed.installId, { buildFiles: files });
+    expect(record?.source).toMatchObject({
+      origin: "repository",
+      repo: "MendyLanda/cut",
+      ref: "main",
+      buildId: failed.built.jobId,
+      build: { state: "gone", cause: "missing" },
+    });
+
+    // The same repository, branch and build command, built again.
+    const request = await installAgainBuildRequest(env.DB, failed.installId);
+    expect(request).toEqual({
+      ok: true,
+      request: {
+        kind: "repository",
+        repository: "MendyLanda/cut",
+        ref: "main",
+        buildCommand: { mode: "detect" },
+        costConfirmed: false,
+      },
+    });
+    if (!request.ok) throw new Error(request.refusal);
+    let n = 0;
+    const rebuilt = await build({
+      fixture: failed.fixture,
+      request: { ...request.request, costConfirmed: true },
+      ids: () => `rebuild${++n}`,
+    });
+    expect(rebuilt.row).toMatchObject({ status: "built", commit_sha: COMMIT });
+
+    const started = await startAgain(failed, rebuilt.jobId, {
+      buildFiles: sandboxBuildFiles({ SANDBOX: rebuilt.sandbox }),
+    });
+    // A new build is installed as any other: under the install id it was built for.
+    expect(started.installId).toBe(rebuilt.params.installId);
+    expect(started.job.prebuilt?.storedUnder).toBeUndefined();
+    const r = await runJobs(failed, started, rebuilt.sandbox);
+    expect(r.error).toBeNull();
+    expect(r.newInstall).toMatchObject({ status: "installed" });
+    expect(r.oldInstall).toMatchObject({ status: "uninstalled" });
+    // Nothing reads the failed install's builds any more: all of them go.
+    expect(rebuilt.sandbox.cleanups).toEqual([{ installId: failed.installId, keepVersions: [] }]);
+    expect(failed.account.state.kv.map((k) => k.title)).toEqual(["cut-cut-kv"]);
+  });
+
+  it("retires a failed install that left nothing at once, deleting its builds but the one installed again", async () => {
+    const failed = await failedInstall();
+    await env.DB.prepare("UPDATE resources SET deleted_at = 1 WHERE install_id = ?1")
+      .bind(failed.installId)
+      .run();
+    const cleanups: BuildCleanupTarget[] = [];
+    const started = await startAgain(failed, failed.built.jobId, {
+      listAccountWorkers: async () => [],
+      cleanupBuilds: async (target) => {
+        cleanups.push(target);
+      },
+    });
+    expect(started.created.map((p) => p.kind)).toEqual(["install"]);
+    expect(started.job.cleanupJob).toBeUndefined();
+    expect(await status("installs", failed.installId)).toMatchObject({ status: "uninstalled" });
+    expect(cleanups).toEqual([{ installId: failed.installId, keepVersions: [VERSION] }]);
+  });
+
+  it("installs again an install that was itself installed again: both read the first build where it is stored", async () => {
+    // The install that replaces the failed one fails the same way.
+    const failed = await failedInstall(2);
+    const zip = `builds/${failed.installId}/${VERSION}/cut-${VERSION}.zip`;
+    const second = await startAgain(failed, failed.built.jobId);
+    const r2 = await runJobs(failed, second);
+    expect(r2.error).not.toBeNull();
+    expect(r2.newInstall).toMatchObject({
+      status: "failed",
+      artifact_url: `https://sandbox/${zip}`,
+    });
+
+    let n = 0;
+    const secondFailed = { ...failed, installId: second.installId };
+    const third = await startAgain(secondFailed, failed.built.jobId, {
+      newId: () => `third${++n}`,
+    });
+    expect(third.created.map((p) => p.kind)).toEqual(["uninstall", "install"]);
+    expect(third.job.prebuilt).toMatchObject({
+      buildId: failed.built.jobId,
+      artifactKey: zip,
+      storedUnder: failed.installId,
+    });
+    const r3 = await runJobs(secondFailed, third);
+    expect(r3.error).toBeNull();
+    expect(r3.oldInstall).toMatchObject({ status: "uninstalled" });
+    expect(r3.newInstall).toMatchObject({
+      status: "installed",
+      artifact_url: `https://sandbox/${zip}`,
+    });
+    // Built once; each removal kept the build for the install after it.
+    expect(failed.built.sandbox.requests).toHaveLength(1);
+    expect(failed.built.sandbox.cleanups).toEqual([
+      { installId: failed.installId, keepVersions: [VERSION] },
+      { installId: second.installId, keepVersions: [] },
+      { installId: failed.installId, keepVersions: [VERSION] },
+    ]);
+    expect(failed.account.state.kv.map((k) => k.title)).toEqual(["cut-cut-kv"]);
+
+    // The last install's uninstall deletes the build at last.
+    await runUninstall({
+      params: {
+        kind: "uninstall",
+        jobId: "job-u",
+        installId: third.installId,
+        deleteResources: [],
+      },
+      step: fakeStep(),
+      env: r3.jobEnv,
+      deps: r3.deps,
+    });
+    expect(failed.built.sandbox.cleanups.slice(3)).toEqual([
+      { installId: third.installId, keepVersions: [] },
+      { installId: failed.installId, keepVersions: [] },
+    ]);
+    const left = await failed.built.sandbox.fetch(sandboxObjectUrl(zip), { method: "HEAD" });
+    expect(left.status).toBe(404);
+  });
+
+  it("uninstalling a failed install made from another's build deletes that build, once the other is gone", async () => {
+    const failed = await failedInstall(2);
+    const zip = `builds/${failed.installId}/${VERSION}/cut-${VERSION}.zip`;
+    const second = await startAgain(failed, failed.built.jobId);
+    const r = await runJobs(failed, second);
+    expect(r.oldInstall).toMatchObject({ status: "uninstalled" });
+    expect(r.newInstall).toMatchObject({ status: "failed" });
+    const data = await env.DB.prepare(
+      "SELECT id FROM resources WHERE install_id = ?1 AND kind IN ('kv', 'd1') AND deleted_at IS NULL",
+    )
+      .bind(second.installId)
+      .all<{ id: string }>();
+    await runUninstall({
+      params: {
+        kind: "uninstall",
+        jobId: "job-u",
+        installId: second.installId,
+        deleteResources: data.results.map((row) => row.id),
+      },
+      step: fakeStep(),
+      env: r.jobEnv,
+      deps: r.deps,
+    });
+    expect(await status("installs", second.installId)).toMatchObject({ status: "uninstalled" });
+    expect(failed.built.sandbox.cleanups).toEqual([
+      { installId: failed.installId, keepVersions: [VERSION] },
+      { installId: second.installId, keepVersions: [] },
+      { installId: failed.installId, keepVersions: [] },
+    ]);
+    const left = await failed.built.sandbox.fetch(sandboxObjectUrl(zip), { method: "HEAD" });
+    expect(left.status).toBe(404);
+    expect(failed.account.state.kv).toEqual([]);
+  });
+
+  it("deletes the build a failed install read when a new install takes its Worker name and retires it", async () => {
+    const failed = await failedInstall();
+    const zip = `builds/${failed.installId}/${VERSION}/cut-${VERSION}.zip`;
+    const second = await startAgain(failed, failed.built.jobId);
+    // The removal runs; then the new install fails before it creates anything.
+    failed.account.state.failOnce.set("POST /storage/kv/namespaces", 400);
+    const r = await runJobs(failed, second);
+    expect(r.newInstall).toMatchObject({ status: "failed" });
+    const held = await env.DB.prepare(
+      "SELECT count(*) AS n FROM resources WHERE install_id = ?1 AND deleted_at IS NULL",
+    )
+      .bind(second.installId)
+      .first<{ n: number }>();
+    expect(held?.n).toBe(0);
+
+    // A fresh build installed under the same Worker name, not "Install again".
+    let n = 0;
+    const fresh = await build({ fixture: failed.fixture, ids: () => `fresh${++n}` });
+    await installSourceBuildCore(
+      {
+        db: env.DB,
+        createJob: async (id) => ({ id }),
+        cleanupBuilds: async (target) => {
+          await failed.built.sandbox.cleanup(target);
+        },
+      },
+      { buildId: fresh.jobId, ...form },
+    );
+    expect(await status("installs", second.installId)).toMatchObject({ status: "uninstalled" });
+    expect(failed.built.sandbox.cleanups).toEqual([
+      { installId: failed.installId, keepVersions: [VERSION] },
+      { installId: second.installId, keepVersions: [] },
+      { installId: failed.installId, keepVersions: [] },
+    ]);
+    const left = await failed.built.sandbox.fetch(sandboxObjectUrl(zip), { method: "HEAD" });
+    expect(left.status).toBe(404);
+  });
+
+  it("installs again only a failed install of the same app, and not twice", async () => {
+    const failed = await failedInstall();
+    await env.DB.prepare("UPDATE installs SET app_slug = 'repository:other/app' WHERE id = ?1")
+      .bind(failed.installId)
+      .run();
+    await expect(startAgain(failed, failed.built.jobId)).rejects.toThrow(
+      "Install again installs the same app again; this form is for another one.",
+    );
+    await env.DB.prepare(
+      "UPDATE installs SET app_slug = 'cut', origin = 'catalog', catalog_id = NULL WHERE id = ?1",
+    )
+      .bind(failed.installId)
+      .run();
+    await expect(startAgain(failed, failed.built.jobId)).rejects.toThrow(
+      "This install came from the catalog, so it is installed again from the app's catalog page.",
+    );
+    await env.DB.prepare(
+      "UPDATE installs SET app_slug = 'repository:MendyLanda/cut', origin = 'repository' WHERE id = ?1",
+    )
+      .bind(failed.installId)
+      .run();
+    await startAgain(failed, failed.built.jobId);
+    // Replaced already: it is being removed, not failed.
+    await expect(startAgain(failed, failed.built.jobId)).rejects.toThrow(
+      /Only an install that did not finish can be installed again/,
+    );
   });
 });
 

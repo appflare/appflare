@@ -5,13 +5,15 @@ import { createMigrator } from "../db/migrate";
 import { migrations } from "../db/migrations/index";
 import { baseCatalog } from "../test/artifact-fixture";
 import {
+  buildIdOfInput,
   type InstallAgainRecord,
+  installAgainFitsBuild,
   installAgainHref,
+  installAgainLink,
   installAgainPrefill,
-  offersInstallAgain,
   reenterNote,
 } from "./install-again";
-import { readInstallAgain } from "./install-again.server";
+import { BUILD_GONE, readInstallAgain } from "./install-again.server";
 import type { InstallVarField } from "./install-vars";
 
 const field = (over: Partial<InstallVarField> & { name: string }): InstallVarField => ({
@@ -38,6 +40,8 @@ const record = (over: Partial<InstallAgainRecord> = {}): InstallAgainRecord => (
   leftovers: [],
   failedJobId: "job1",
   refusal: null,
+  origin: "catalog",
+  source: null,
   ...over,
 });
 
@@ -114,6 +118,16 @@ describe("installAgainPrefill", () => {
     ]);
   });
 
+  it("names a new build's version as the build's, not the catalog's", () => {
+    const { changes } = installAgainPrefill(
+      record({ version: "0.0.0-20260920.0123456" }),
+      target({ version: "0.0.0-20260921.fedcba9", fromBuild: true }),
+    );
+    expect(changes).toEqual([
+      "This build is version 0.0.0-20260921.fedcba9; the install that did not finish tried 0.0.0-20260920.0123456. This installs 0.0.0-20260921.fedcba9.",
+    ]);
+  });
+
   it("takes the fixed Worker name of an app that only works under one", () => {
     const { prefill, changes } = installAgainPrefill(
       record({ workerName: "links" }),
@@ -137,12 +151,87 @@ describe("reenterNote", () => {
   });
 });
 
-describe("installAgainHref and offersInstallAgain", () => {
-  it("opens the app's catalog page with the form, for catalog apps that did not finish only", () => {
+describe("installAgainLink", () => {
+  const install = {
+    id: "01J",
+    status: "failed",
+    origin: "catalog",
+    appKey: "team:cut",
+    buildId: null,
+  };
+
+  it("opens the app's catalog page with the form, for catalog apps that did not finish", () => {
     expect(installAgainHref("01J", "team:cut")).toBe("/catalog/team:cut?again=01J#install");
-    expect(offersInstallAgain({ status: "failed", origin: "catalog" })).toBe(true);
-    expect(offersInstallAgain({ status: "failed", origin: "repository" })).toBe(false);
-    expect(offersInstallAgain({ status: "installed", origin: "catalog" })).toBe(false);
+    expect(installAgainLink(install)).toBe("/catalog/team:cut?again=01J#install");
+    expect(installAgainLink({ ...install, status: "installed" })).toBeNull();
+  });
+
+  it("opens the review of the build an install from a repository was installed from", () => {
+    const fromRepository = { ...install, origin: "repository", appKey: "repository:me/cut" };
+    expect(installAgainLink({ ...fromRepository, buildId: "b1" })).toBe(
+      "/catalog/source/b1?again=01J",
+    );
+    expect(installAgainLink({ ...install, origin: "source", buildId: "b1" })).toBe(
+      "/catalog/source/b1?again=01J",
+    );
+    // No build recorded: nothing to open.
+    expect(installAgainLink(fromRepository)).toBeNull();
+    expect(
+      installAgainLink({ ...fromRepository, buildId: "b1", status: "uninstalled" }),
+    ).toBeNull();
+  });
+
+  it("reads the build an install job recorded", () => {
+    expect(buildIdOfInput(JSON.stringify({ slug: "cut", buildId: "b1" }))).toBe("b1");
+    expect(buildIdOfInput(JSON.stringify({ slug: "cut" }))).toBeNull();
+    expect(buildIdOfInput("not json")).toBeNull();
+    expect(buildIdOfInput(null)).toBeNull();
+  });
+});
+
+describe("installAgainFitsBuild", () => {
+  const source = (over: Partial<NonNullable<InstallAgainRecord["source"]>> = {}) =>
+    record({
+      appKey: "repository:me/cut",
+      origin: "repository",
+      source: {
+        origin: "repository",
+        repo: "me/cut",
+        ref: "main",
+        commit: null,
+        buildId: "b1",
+        build: { state: "ready" },
+        ...over,
+      },
+    });
+  const build = { id: "b1", purpose: "install", origin: "repository", repo: "me/cut", app: null };
+
+  it("takes the build it was installed from and new builds of the same repository", () => {
+    expect(installAgainFitsBuild(source(), build)).toBe(true);
+    expect(installAgainFitsBuild(source(), { ...build, id: "b2" })).toBe(true);
+    expect(installAgainFitsBuild(source(), { ...build, id: "b2", repo: "me/other" })).toBe(false);
+    // A rebuild for an update, or a catalog app's install: never.
+    expect(installAgainFitsBuild(source(), { ...build, id: "b2", purpose: "update" })).toBe(false);
+    expect(installAgainFitsBuild(record(), build)).toBe(false);
+  });
+
+  it("matches a catalog app built from source by its app key", () => {
+    const fromSource = record({
+      appKey: "team:cut",
+      origin: "source",
+      source: {
+        origin: "source",
+        repo: "me/cut",
+        ref: "v2",
+        commit: null,
+        buildId: "b1",
+        build: { state: "ready" },
+      },
+    });
+    const sourceBuild = { ...build, id: "b2", origin: "source", app: { slug: "team:cut" } };
+    expect(installAgainFitsBuild(fromSource, sourceBuild)).toBe(true);
+    expect(installAgainFitsBuild(fromSource, { ...sourceBuild, app: { slug: "cut" } })).toBe(false);
+    expect(installAgainFitsBuild(fromSource, { ...sourceBuild, origin: "repository" })).toBe(false);
   });
 });
 
@@ -215,6 +304,8 @@ describe("readInstallAgain", () => {
       ],
       failedJobId: "job1",
       refusal: null,
+      origin: "catalog",
+      source: null,
     });
     expect(await readInstallAgain(env.DB, "missing")).toBeNull();
   });
@@ -240,5 +331,103 @@ describe("readInstallAgain", () => {
       "Only an install that did not finish can be installed again. This one finished, or it was removed or installed again already.",
     );
     expect(read?.leftovers).toEqual([]);
+  });
+
+  describe("of an install from a repository", () => {
+    const ZIP = "builds/old/0.0.0-1.abc/cut-0.0.0-1.abc.zip";
+    const MANIFEST = "builds/old/0.0.0-1.abc/manifest.json";
+
+    async function seedFromRepository(build: "used" | "discarded" | "none" = "used") {
+      await env.DB.prepare(
+        `INSERT INTO installs (id, app_slug, worker_name, catalog_version, artifact_url, status,
+           installed_at, updated_at, build_kind, origin, source_url, source_ref, pin_sha)
+         VALUES ('old', 'repository:me/cut', 'cut', '0.0.0-1.abc', ?1, 'failed', 1, 1, 'sandbox',
+           'repository', 'https://github.com/me/cut', 'main', 'abc')`,
+      )
+        .bind(`https://sandbox/${ZIP}`)
+        .run();
+      await env.DB.prepare(
+        "INSERT INTO jobs (id, install_id, kind, status, input_json) VALUES ('job1', 'old', 'install', 'failed', ?1)",
+      )
+        .bind(
+          JSON.stringify({
+            slug: "repository:me/cut",
+            version: "0.0.0-1.abc",
+            workerName: "cut",
+            vars: {},
+            origin: "repository",
+            ...(build === "none" ? {} : { buildId: "b1" }),
+          }),
+        )
+        .run();
+      if (build === "none") return;
+      await env.DB.prepare(
+        `INSERT INTO source_builds (id, install_id, purpose, origin, repo, status, commit_sha, ref,
+           version, digest, manifest_key, artifact_key, image, built_at, created_at, updated_at)
+         VALUES ('b1', 'old', 'install', 'repository', 'me/cut', ?1, 'abc', 'main', '0.0.0-1.abc',
+           'd', ?2, ?3, 'img', 1, 1, 1)`,
+      )
+        .bind(build, MANIFEST, ZIP)
+        .run();
+    }
+
+    const base = {
+      origin: "repository",
+      repo: "me/cut",
+      ref: "main",
+      commit: "abc",
+      buildId: "b1",
+    };
+
+    it("offers the build it was installed from while its files are there", async () => {
+      await seedFromRepository();
+      const asked: string[][] = [];
+      const read = await readInstallAgain(env.DB, "old", {
+        buildFiles: async (keys) => {
+          asked.push(keys);
+          return "present";
+        },
+      });
+      expect(read?.refusal).toBeNull();
+      expect(read?.origin).toBe("repository");
+      expect(read?.source).toEqual({ ...base, build: { state: "ready" } });
+      expect(asked).toEqual([[MANIFEST, ZIP]]);
+    });
+
+    it("says the build is gone when its files are, or sandbox builds are off", async () => {
+      await seedFromRepository();
+      const gone = async (files: "missing" | "no-sandbox") =>
+        (await readInstallAgain(env.DB, "old", { buildFiles: async () => files }))?.source?.build;
+      expect(await gone("missing")).toEqual({
+        state: "gone",
+        cause: "missing",
+        reason: BUILD_GONE.missing,
+      });
+      expect(await gone("no-sandbox")).toEqual({
+        state: "gone",
+        cause: "no-sandbox",
+        reason: BUILD_GONE.noSandbox,
+      });
+      const unknown = await readInstallAgain(env.DB, "old", {
+        buildFiles: async () => {
+          throw new Error("HTTP 500");
+        },
+      });
+      expect(unknown?.source?.build).toEqual({ state: "unknown", reason: BUILD_GONE.unknown });
+    });
+
+    it("says the build is gone when Appflare has no usable record of it", async () => {
+      for (const build of ["discarded", "none"] as const) {
+        await reset();
+        await createMigrator(migrations).ensure(env.DB);
+        await seedFromRepository(build);
+        const read = await readInstallAgain(env.DB, "old", { buildFiles: async () => "present" });
+        expect(read?.source).toEqual({
+          ...base,
+          buildId: build === "none" ? null : "b1",
+          build: { state: "gone", cause: "unrecorded", reason: BUILD_GONE.unrecorded },
+        });
+      }
+    });
   });
 });

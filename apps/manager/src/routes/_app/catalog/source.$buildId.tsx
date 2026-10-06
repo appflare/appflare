@@ -11,6 +11,7 @@ import {
 } from "@phosphor-icons/react";
 import { createFileRoute, useRouter } from "@tanstack/react-router";
 import { type FormEvent, useEffect, useState } from "react";
+import { z } from "zod";
 import { requirementBadge } from "../../../capabilities/capabilities";
 import { CapabilityBadge } from "../../../capabilities/capability-badge";
 import { ANALYTICS_ENGINE_CAPABILITY_LINK } from "../../../capabilities/capability-rows";
@@ -24,6 +25,8 @@ import { DescriptionItem, DescriptionList } from "../../../components/descriptio
 import { DocsLink, RequirementDocsLink } from "../../../components/docs-link";
 import { TechnicalNamesSwitch, useShowTechnicalNames } from "../../../components/field-label";
 import { resourceKindLabel } from "../../../components/format";
+import { InstallAgainBanner } from "../../../components/install-again-banner";
+import { InstallAgainBuildGone } from "../../../components/install-again-build-gone";
 import { InstallForm } from "../../../components/install-form";
 import { useJobStarted } from "../../../components/job-started";
 import { ErrorMessageBanner, MessageText } from "../../../components/message-text";
@@ -37,6 +40,14 @@ import {
 } from "../../../components/secret-fields";
 import { Section, SectionBody, SectionRows, SectionTable } from "../../../components/section";
 import { Timestamp } from "../../../components/timestamp";
+import {
+  type InstallAgainRecord,
+  type InstallFormPrefill,
+  installAgainFitsBuild,
+  installAgainPrefill,
+  reenterNote,
+} from "../../../installs/install-again";
+import { getInstallAgain } from "../../../installs/install-again.functions";
 import {
   discardSourceBuild,
   getSourceBuild,
@@ -54,11 +65,28 @@ import { UNUSED_BUILD_DAYS, UNUSED_BUILD_NOTE } from "../../../installs/source-b
  * refuse it (in the install job's own words), the resources it creates, the
  * services it uses and what the account must offer, and then the install
  * form (or, for an install being rebuilt, the update). "Not from the catalog,
- * not checked" throughout. An admin can throw the build away.
+ * not checked" throughout. An admin can throw the build away. Opened with
+ * `?again=<install id>` ("Install again" for a failed install from a
+ * repository), the form starts from that install's choices and installing
+ * replaces it: on the build it was installed from, while that build is still
+ * there (else the page offers to build it again), or on a new build of the
+ * same repository (installs/install-again.ts).
  */
 export const Route = createFileRoute("/_app/catalog/source/$buildId")({
   staticData: { title: "Review a build" },
-  loader: ({ params }) => getSourceBuild({ data: { buildId: params.buildId } }),
+  // `?again=<install id>`: "Install again" for a failed install from a repository.
+  validateSearch: z.object({ again: z.string().min(1).max(64).optional() }),
+  loaderDeps: ({ search }) => ({ again: search.again }),
+  loader: async ({ params, deps }) => {
+    const [build, again] = await Promise.all([
+      getSourceBuild({ data: { buildId: params.buildId } }),
+      // Admins only; anyone else gets the review as it is.
+      deps.again === undefined
+        ? null
+        : getInstallAgain({ data: { installId: deps.again } }).catch(() => null),
+    ]);
+    return { build, again };
+  },
   component: ReviewPage,
 });
 
@@ -76,8 +104,43 @@ function titleOf(build: SourceBuildView): string {
   return `Review ${name}`;
 }
 
+/** "Install again" on this review: the failed install, and the form's start when it installs now. */
+interface AgainHere {
+  record: InstallAgainRecord;
+  /** The failed install's own build. */
+  own: boolean;
+  /** Null when this build cannot install it again now (still building, gone, refused). */
+  start: { prefill: InstallFormPrefill; changes: string[] } | null;
+}
+
+function againHere(record: InstallAgainRecord | null, build: SourceBuildView): AgainHere | null {
+  if (record === null || !installAgainFitsBuild(record, build)) return null;
+  const own = record.source?.buildId === build.id;
+  const installable =
+    record.refusal === null &&
+    (own
+      ? build.status === "used" && record.source?.build.state === "ready"
+      : build.status === "built");
+  const review = build.review;
+  return {
+    record,
+    own,
+    start:
+      installable && review !== null
+        ? installAgainPrefill(record, {
+            catalog: review.catalog,
+            version: build.version ?? record.version,
+            varFields: review.varFields,
+            defaultWorkerName: review.suggestedWorkerName,
+            fixedWorkerName: review.catalog.install.fixedWorkerName,
+            fromBuild: true,
+          })
+        : null,
+  };
+}
+
 function ReviewPage() {
-  const build = Route.useLoaderData();
+  const { build, again: record } = Route.useLoaderData();
   const { viewer } = Route.useRouteContext();
   const router = useRouter();
   const isAdmin = viewer.role === "admin";
@@ -104,6 +167,7 @@ function ReviewPage() {
     build.purpose === "update" && build.install !== null
       ? [{ label: build.install.label, href: `/apps/${build.install.id}` }]
       : [CATALOG_CRUMB];
+  const again = isAdmin ? againHere(record, build) : null;
   return (
     <>
       <PageHeader
@@ -124,9 +188,45 @@ function ReviewPage() {
           </LinkButton>
         }
       />
-      <BuildState build={build} isAdmin={isAdmin} />
-      {build.review !== null && <Review build={build} review={build.review} isAdmin={isAdmin} />}
+      {again !== null && <InstallAgainState build={build} again={again} />}
+      <BuildState build={build} isAdmin={isAdmin} again={again} />
+      {build.review !== null && (
+        <Review build={build} review={build.review} isAdmin={isAdmin} again={again} />
+      )}
     </>
+  );
+}
+
+/**
+ * Above the review on "Install again": what installing does and what it
+ * takes over, why it cannot install it again from here, or, when the build
+ * it was installed from is gone, a new build of the same repository.
+ */
+function InstallAgainState({ build, again }: { build: SourceBuildView; again: AgainHere }) {
+  const { record } = again;
+  const appName = build.review?.catalog.name ?? build.app?.name ?? build.repo;
+  if (record.refusal !== null) {
+    return (
+      <InstallAgainBanner
+        again={record}
+        appName={appName}
+        changes={[]}
+        reenter={null}
+        formBelow={build.status === "built"}
+      />
+    );
+  }
+  if (again.own && record.source !== null && record.source.build.state !== "ready") {
+    return <InstallAgainBuildGone again={record} source={record.source} appName={appName} />;
+  }
+  if (again.start === null || build.review === null) return null;
+  return (
+    <InstallAgainBanner
+      again={record}
+      appName={appName}
+      changes={again.start.changes}
+      reenter={reenterNote(build.review.catalog)}
+    />
   );
 }
 
@@ -165,7 +265,15 @@ function DiscardButton({ buildId }: { buildId: string }) {
 }
 
 /** Where the build stands when it is not waiting for review. */
-function BuildState({ build, isAdmin }: { build: SourceBuildView; isAdmin: boolean }) {
+function BuildState({
+  build,
+  isAdmin,
+  again,
+}: {
+  build: SourceBuildView;
+  isAdmin: boolean;
+  again: AgainHere | null;
+}) {
   switch (build.status) {
     case "building":
       return (
@@ -173,7 +281,7 @@ function BuildState({ build, isAdmin }: { build: SourceBuildView; isAdmin: boole
           variant="secondary"
           icon={<AppflareLoader size="sm" />}
           title="Building in your sandbox Worker"
-          description="This page shows the review once the build is done. Its log shows each step as it runs."
+          description={`This page shows the review once the build is done${again === null ? "" : `, with the install form filled in from ${again.record.label}`}. Its log shows each step as it runs.`}
           action={
             <LinkButton href={`/jobs/${build.id}`} variant="secondary" icon={<ArrowRightIcon />}>
               View log
@@ -216,6 +324,8 @@ function BuildState({ build, isAdmin }: { build: SourceBuildView; isAdmin: boole
         />
       );
     case "used":
+      // Installed again from here, it is the failed install's: the state above says what happens.
+      if (again?.own === true) return null;
       return (
         <Banner
           variant="default"
@@ -247,14 +357,20 @@ function Review({
   build,
   review,
   isAdmin,
+  again,
 }: {
   build: SourceBuildView;
   review: SourceBuildReview;
   isAdmin: boolean;
+  again: AgainHere | null;
 }) {
+  // Never carried over from an install that did not finish: confirmed again every time.
   const [requirementsConfirmed, setRequirementsConfirmed] = useState(false);
   const confirmed = requirementsConfirmed || review.checks.pending.length === 0;
   const waiting = build.status === "built";
+  const start = again?.start ?? null;
+  // A new install from it: waiting for review, or installed again with the failed install's choices.
+  const installs = build.purpose === "install" && (waiting || start !== null);
   const refused = review.problems.length > 0;
   const analyticsEngineOff = analyticsEngineRefusal(
     review.catalog.name,
@@ -305,13 +421,13 @@ function Review({
         build={build}
         review={review}
         confirmation={
-          waiting && build.purpose === "install"
-            ? { checked: requirementsConfirmed, onChange: setRequirementsConfirmed }
-            : null
+          installs ? { checked: requirementsConfirmed, onChange: setRequirementsConfirmed } : null
         }
       />
-      {waiting && build.purpose === "install" && (
+      {installs && (
         <InstallForm
+          // Installing again starts the form over from the failed install's choices.
+          key={start?.prefill.replaces ?? "new"}
           catalog={review.catalog}
           // A catalog app built from source: its app key names its catalog.
           {...(build.app === null ? {} : { appKey: build.app.slug })}
@@ -334,6 +450,7 @@ function Review({
           planDetected={review.planDetected}
           reviewedBuildId={build.id}
           capabilities={review.capabilities}
+          prefill={start?.prefill ?? null}
         />
       )}
       {waiting && build.purpose === "update" && (

@@ -11,6 +11,7 @@ import { migrations } from "../db/migrations/index";
 import { SETTING, writeSettings } from "../db/settings";
 import type { InstallJobParams } from "../jobs/install";
 import type { UninstallJobParams } from "../jobs/uninstall";
+import type { BuildCleanupTarget } from "../jobs/uninstall-builds";
 import { type ArtifactFixture, buildArtifactFixture } from "../test/artifact-fixture";
 import type { StartInstallInput } from "./install-input";
 import { resolveInstallInput, StartInstallError, startInstallCore } from "./start-install.server";
@@ -21,10 +22,13 @@ function harness(fixture: ArtifactFixture, createJob?: (id: string) => Promise<{
   const created: Array<{ id: string; params: InstallJobParams }> = [];
   /** Every Workflow instance created, the removal of a replaced install's leftovers included. */
   const all: Array<{ id: string; params: InstallJobParams | UninstallJobParams }> = [];
+  /** The sandbox builds deleted for failed installs retired without an uninstall job. */
+  const cleanups: BuildCleanupTarget[] = [];
   let n = 0;
   return {
     created,
     all,
+    cleanups,
     deps: {
       db: env.DB,
       loadApp: async (slug: string) => {
@@ -35,6 +39,9 @@ function harness(fixture: ArtifactFixture, createJob?: (id: string) => Promise<{
         all.push({ id, params });
         if (params.kind === "install") created.push({ id, params });
         return createJob ? createJob(id) : { id };
+      },
+      cleanupBuilds: async (target: BuildCleanupTarget) => {
+        cleanups.push(target);
       },
       now: () => NOW,
       newId: () => `id${++n}`,
@@ -401,28 +408,31 @@ describe("startInstallCore", () => {
          VALUES ('r1', 'old', 'kv', 'CUT_KV', 'cut-cut-kv', 'kv1', 1)`,
       ),
     ]);
-    await expect(
-      startInstallCore(harness(f).deps, input({ workerName: "cut-2" })),
-    ).resolves.toMatchObject({
+    const h = harness(f);
+    await expect(startInstallCore(h.deps, input({ workerName: "cut-2" }))).resolves.toMatchObject({
       installId: "id1",
     });
     const old = await env.DB.prepare("SELECT status FROM installs WHERE id = 'old'").first();
     expect(old).toEqual({ status: "failed" });
+    expect(h.cleanups).toEqual([]);
   });
 
-  it("retires a failed install that holds no resources, so the app can be retried", async () => {
+  it("retires a failed install that holds no resources, so the app can be retried, and deletes its builds", async () => {
     const f = await buildArtifactFixture();
     await env.DB.prepare(
       `INSERT INTO installs (id, app_slug, worker_name, catalog_version, artifact_url, status, installed_at, updated_at)
        VALUES ('old', 'cut', 'cut', '1', 'u', 'failed', 1, 1)`,
     ).run();
-    await expect(startInstallCore(harness(f).deps, input())).resolves.toMatchObject({
+    const h = harness(f);
+    await expect(startInstallCore(h.deps, input())).resolves.toMatchObject({
       installId: "id1",
     });
     const old = await env.DB.prepare(
       "SELECT status, uninstalled_at FROM installs WHERE id = 'old'",
     ).first();
     expect(old).toEqual({ status: "uninstalled", uninstalled_at: NOW.getTime() });
+    // No uninstall job runs for it, so its sandbox builds are deleted here.
+    expect(h.cleanups).toEqual([{ installId: "old", keepVersions: [] }]);
   });
 
   it("keeps blocking on a failed install that still owns resources", async () => {
@@ -442,6 +452,7 @@ describe("startInstallCore", () => {
       /failed install of the Worker "cut" still owns resources in this account\. Uninstall it first\./,
     );
     expect(h.created).toHaveLength(0);
+    expect(h.cleanups).toEqual([]);
     const rows = await env.DB.prepare("SELECT COUNT(*) AS n FROM installs").first<{ n: number }>();
     expect(rows?.n).toBe(1);
   });
@@ -1038,6 +1049,8 @@ describe("startInstallCore, installing a failed install again", () => {
       params: { kind: "uninstall", jobId: "id3", installId: "old", deleteResources: ["r-kv"] },
     });
     expect(h.created[0]?.params.cleanupJob).toBe("id3");
+    // Its removal job deletes its sandbox builds.
+    expect(h.cleanups).toEqual([]);
     expect(await status("old")).toBe("uninstalling");
     expect(await status("id1")).toBe("installing");
     const removal = await env.DB.prepare(
@@ -1071,7 +1084,7 @@ describe("startInstallCore, installing a failed install again", () => {
     });
   });
 
-  it("retires a failed install that left nothing at once, under another Worker name too", async () => {
+  it("retires a failed install that left nothing at once, under another Worker name too, and deletes its builds", async () => {
     await seedFailed({ leftovers: false });
     const f = await buildArtifactFixture();
     const h = harness(f);
@@ -1080,6 +1093,8 @@ describe("startInstallCore, installing a failed install again", () => {
     expect(h.created[0]?.params.cleanupJob).toBeUndefined();
     expect(await status("old")).toBe("uninstalled");
     expect(await status("id1")).toBe("installing");
+    // No removal job runs for it, so its sandbox builds are deleted here.
+    expect(h.cleanups).toEqual([{ installId: "old", keepVersions: [] }]);
   });
 
   it("needs no removal when only secret records are left, its Worker being gone", async () => {
@@ -1103,7 +1118,7 @@ describe("startInstallCore, installing a failed install again", () => {
     const f = await buildArtifactFixture();
     for (const [seed, message] of [
       [{ status: "installed" }, "Only an install that did not finish can be installed again."],
-      [{ origin: "repository" }, "Install again works for apps from a catalog."],
+      [{ origin: "repository" }, "so it is installed again from the review of its build."],
       [{ slug: "other" }, "Install again installs the same app again"],
     ] as const) {
       await reset();

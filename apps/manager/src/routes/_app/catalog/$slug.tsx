@@ -128,8 +128,13 @@ function CatalogEntryPage() {
       key={detail.key ?? slug}
       detail={detail}
       app={detail.app}
-      // Only for this app: a link from another app's install starts a new install.
-      again={again !== null && again.appKey === (detail.key ?? slug) ? again : null}
+      // Only for this app's catalog install: a link from another app's install
+      // starts a new install, and one built from a repository is installed again from its build.
+      again={
+        again !== null && again.origin === "catalog" && again.appKey === (detail.key ?? slug)
+          ? again
+          : null
+      }
     />
   );
 }

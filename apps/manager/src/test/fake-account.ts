@@ -320,6 +320,11 @@ export function fakeAccount(fixture: ArtifactFixture | null, over: Partial<FakeA
         });
         return ok({ id: state.worker, deployment_id: id.replace(/-/g, "") });
       }
+      case `DELETE ${script}`:
+        // The Worker and its deployments go; uploading it again starts over.
+        state.deployments = [];
+        state.versions = [];
+        return ok(null);
       case `POST ${script}/subdomain`:
         state.subdomainCalls.push(await request.json());
         return ok({ enabled: true, previews_enabled: true });
@@ -550,6 +555,14 @@ export function fakeAccount(fixture: ArtifactFixture | null, over: Partial<FakeA
       if (failNow) return fail(failing.status, "internal error");
       // A statement with bound values (a seed's INSERT) adds its row.
       return ok([{ results: [], success: true, meta: params === undefined ? {} : { changes: 1 } }]);
+    }
+    const deleted = /^DELETE \/(storage\/kv\/namespaces|d1\/database)\/([^/]+)$/.exec(key);
+    if (deleted !== null) {
+      const id = deleted[2];
+      const before = state.kv.length + state.d1.length;
+      state.kv = state.kv.filter((n) => n.id !== id);
+      state.d1 = state.d1.filter((d) => d.uuid !== id);
+      return state.kv.length + state.d1.length < before ? ok(null) : fail(404, "not found");
     }
     return fail(404, `no route ${key}`);
   }

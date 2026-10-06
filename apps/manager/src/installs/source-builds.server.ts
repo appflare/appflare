@@ -18,7 +18,7 @@ import {
   sandboxObjectUrl,
   secretValueProblem,
 } from "@appflare/schema";
-import { and, desc, eq, inArray, isNull, lt, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, isNull, lt, ne, sql } from "drizzle-orm";
 import { ulid } from "ulidx";
 import { type AccessPreflightProblem, accessInstallRefusal } from "../access/preflight.server";
 import type { AccountPlan } from "../account/plan";
@@ -37,6 +37,12 @@ import type { WorkflowLookup } from "../jobs/reconcile.server";
 import { parseStoredVars } from "../jobs/reconfigure/plan";
 import { NO_ACTIVE_SELF_UPDATE_SQL, refuseDuringSelfUpdate } from "../jobs/self-update/guard";
 import { type SourceBuildJobParams, sourceBuildRunId } from "../jobs/source-build";
+import type { UninstallJobParams } from "../jobs/uninstall";
+import {
+  type BuildCleanupTarget,
+  cleanupRetiredBuilds,
+  retiredInstallIds,
+} from "../jobs/uninstall-builds";
 import type { UpdateJobParams } from "../jobs/update";
 import { readEmailChangeNote } from "../jobs/update/email-routing";
 import {
@@ -66,6 +72,16 @@ import {
 } from "./derived-secrets";
 import { emailRoutingOfManifest } from "./email-routing";
 import { GitRefError, type RemoteRefs, resolveRef } from "./git-refs";
+import {
+  type BuildFilesCheck,
+  INSTALL_AGAIN_REFUSALS,
+  launchRemoval,
+  type ReplacedInstall,
+  readReplacedBySource,
+  readReplacedInstall,
+  removalOf,
+  replaceStatements,
+} from "./install-again.server";
 import type { InstallDomainInput, StartInstallInput } from "./install-input";
 import { UNUSED_BUILD_MS } from "./source-builds-retention";
 import { repositoryAppSlug, reviewBuild } from "./source-review";
@@ -566,8 +582,15 @@ export function effectiveStatus(record: SourceBuildRecord): SourceBuildRecord["r
   return row.status;
 }
 
-/** A built build, ready to install or update from; throws `SourceBuildError` otherwise. */
-function builtOf(record: SourceBuildRecord | null): {
+/**
+ * A built build, ready to install or update from; throws `SourceBuildError`
+ * otherwise. `reused`: "Install again" installs the build a failed install
+ * took once more, so it may be `used`.
+ */
+function builtOf(
+  record: SourceBuildRecord | null,
+  reused = false,
+): {
   row: SourceBuildRecord["row"];
   manifest: ArtifactManifest;
   detected: RepositoryDetection | null;
@@ -575,7 +598,7 @@ function builtOf(record: SourceBuildRecord | null): {
 } {
   if (record === null) throw new SourceBuildError("There is no such build.");
   const status = effectiveStatus(record);
-  if (status !== "built") {
+  if (status !== "built" && !(reused && status === "used")) {
     throw new SourceBuildError(
       status === "building"
         ? "The build is still running."
@@ -629,8 +652,20 @@ export type SourceInstallInput = Omit<StartInstallInput, "slug" | "buildConfirme
 export interface InstallSourceDeps {
   db: D1Database;
   workflows?: WorkflowLookup;
-  createJob(id: string, params: InstallJobParams): Promise<{ id: string }>;
+  /**
+   * Creates the Workflow instance: the install's, and for "Install again"
+   * first the removal of the failed install it replaces.
+   */
+  createJob(id: string, params: InstallJobParams | UninstallJobParams): Promise<{ id: string }>;
   listAccountWorkers?(): Promise<string[]>;
+  /** "Install again" of a failed install's own build: whether its files are still there. */
+  buildFiles?: BuildFilesCheck;
+  /**
+   * Deletes an install's builds from the sandbox Worker's bucket but the
+   * versions kept, for a failed install retired with no uninstall job (it
+   * left nothing else); absent without the `SANDBOX` binding.
+   */
+  cleanupBuilds?: (target: BuildCleanupTarget) => Promise<void>;
   /**
    * For an install protected with Cloudflare Access: why the account or the
    * token cannot protect it, or that Cloudflare could not be asked
@@ -659,7 +694,10 @@ export function installSlugOf(
  * Installs a reviewed build: the form is checked against the build's own
  * catalog manifest (as the catalog's install form is against the signed
  * one), the install is recorded as not from the catalog, and the install job
- * installs the build as it is. The build is used once.
+ * installs the build as it is. The build is used once, except by "Install
+ * again" (`replaces`, ./install-again.ts): the new install replaces a failed
+ * install of the same app, whose leftovers are removed first, and may install
+ * that install's own build once more, read where it is stored.
  */
 export async function installSourceBuildCore(
   deps: InstallSourceDeps,
@@ -667,10 +705,34 @@ export async function installSourceBuildCore(
 ): Promise<{ jobId: string; installId: string }> {
   const fail = (message: string) => new SourceBuildError(message);
   await refuseDuringSelfUpdate(deps.db, deps.workflows, fail);
-  const built = builtOf(await readSourceBuild(deps.db, input.buildId));
-  const { row, manifest, prebuilt } = built;
+  const record = await readSourceBuild(deps.db, input.buildId);
+  // "Install again": the failed install this one replaces, and whether the
+  // form installs the build that install was made from.
+  let replaced: ReplacedInstall | null = null;
+  let reused = false;
+  if (input.replaces !== undefined && record !== null) {
+    const read = await readReplacedBySource(deps.db, input.replaces, {
+      id: record.row.id,
+      app: installSlugOf(record.row),
+      keys: [record.row.manifest_key, record.row.artifact_key],
+      ...(deps.buildFiles === undefined ? {} : { buildFiles: deps.buildFiles }),
+    });
+    if (!read.ok) throw fail(read.refusal);
+    replaced = read.install;
+    reused = read.reused;
+  }
+  const built = builtOf(record, reused);
+  const { row, manifest } = built;
   if (row.purpose !== "install")
     throw fail("This build is for updating an install, not a new one.");
+  const newId = deps.newId ?? (() => ulid());
+  // A build is stored under the install it was made for; installed again, it
+  // stays under the failed install's prefix and the new install gets an id of its own.
+  const installId = reused ? newId() : row.install_id;
+  const prebuilt: PrebuiltBuildParams =
+    row.install_id === installId
+      ? built.prebuilt
+      : { ...built.prebuilt, storedUnder: row.install_id };
   const orm = createDb(deps.db);
   // Cloudflare refuses the deploy while Analytics Engine is off; say so before anything is created.
   const settings = await readSettings(orm, [SETTING.accountCapabilities]);
@@ -708,7 +770,14 @@ export async function installSourceBuildCore(
     const [held] = await orm
       .select({ id: resources.id })
       .from(resources)
-      .where(and(eq(resources.name, resolved.domain.hostname), isNull(resources.deleted_at)))
+      .where(
+        and(
+          eq(resources.name, resolved.domain.hostname),
+          isNull(resources.deleted_at),
+          // The failed install being replaced lets go of it first.
+          ...(replaced === null ? [] : [ne(resources.install_id, replaced.id)]),
+        ),
+      )
       .limit(1);
     if (held !== undefined) {
       throw fail(
@@ -723,7 +792,8 @@ export async function installSourceBuildCore(
     } catch {
       // The install job checks the account again before creating anything.
     }
-    if (existing.includes(workerName)) {
+    // The Workers of the failed install being replaced are deleted first.
+    if (existing.includes(workerName) && !(replaced?.workerNames ?? []).includes(workerName)) {
       throw fail(
         `A Worker named "${workerName}" already exists in this account. Appflare does not adopt existing Workers; choose another name.`,
       );
@@ -731,8 +801,9 @@ export async function installSourceBuildCore(
   }
   const { slug, catalogId } = installSlugOf(row);
   const now = (deps.now ?? (() => new Date()))();
-  const jobId = (deps.newId ?? (() => ulid()))();
-  const installId = row.install_id;
+  const jobId = newId();
+  const cleanup = replaced === null ? null : removalOf(replaced, installId, newId);
+  const cleanupJobId = cleanup?.params.jobId ?? null;
   const inputJson = JSON.stringify({
     slug,
     // The app's name, for what names the install before it records its manifest.
@@ -752,9 +823,11 @@ export async function installSourceBuildCore(
     ...(resolved.emailRouting === undefined ? {} : { emailRouting: resolved.emailRouting }),
     ...(resolved.domain === undefined ? {} : { domain: resolved.domain }),
     ...(resolved.access === true ? { access: true } : {}),
+    ...(replaced === null ? {} : { replaces: replaced.id }),
+    ...(cleanupJobId === null ? {} : { cleanupJob: cleanupJobId }),
   });
   const displayName = input.displayName ?? null;
-  const [, claimedInstall, claimedJob] = await deps.db.batch([
+  const [retiredByName, claimedInstall, claimedJob] = await deps.db.batch([
     // A failed install of the same Worker name that holds nothing is retired, as for catalog apps.
     deps.db
       .prepare(
@@ -762,24 +835,39 @@ export async function installSourceBuildCore(
          WHERE status = 'failed' AND worker_name = ?1
            AND NOT EXISTS (
              SELECT 1 FROM resources r WHERE r.install_id = installs.id AND r.deleted_at IS NULL
-           )`,
+           )
+         RETURNING id`,
       )
       .bind(workerName, now.getTime()),
+    // Installing again, the failed install being replaced does not count
+    // against the name, and must still be failed (or retired just above when
+    // it left nothing) with no job running; its own build must still be the
+    // one it was installing.
     deps.db
       .prepare(
         `INSERT INTO installs (id, app_slug, worker_name, instance_name, display_name,
            catalog_version, artifact_url, artifact_digest, pin_sha, status, config_json,
            installed_at, updated_at, build_kind, sandbox_image, built_at, origin, source_url,
-           source_ref, catalog_id)
+           source_ref, catalog_id, auto_update)
          SELECT ?1, ?2, ?3, coalesce(?4, ?3), ?4, ?5, ?6, ?7, ?8, 'installing', ?9, ?10, ?10,
-           'sandbox', ?11, ?12, ?13, ?14, ?15, ?18
+           'sandbox', ?11, ?12, ?13, ?14, ?15, ?18,
+           coalesce((SELECT auto_update FROM installs WHERE id = ?20), 'inherit')
          WHERE NOT EXISTS (SELECT 1 FROM installs WHERE id = ?1)
            AND NOT EXISTS (
              SELECT 1 FROM installs
              WHERE status != 'uninstalled'
+               AND (?20 IS NULL OR id != ?20)
                AND (worker_name = ?3 OR (?16 = 1 AND app_slug = ?2 AND catalog_id IS ?18))
            )
-           AND EXISTS (SELECT 1 FROM source_builds WHERE id = ?17 AND status = 'built')
+           AND EXISTS (SELECT 1 FROM source_builds WHERE id = ?17 AND status = ?19)
+           AND (?20 IS NULL OR EXISTS (
+             SELECT 1 FROM installs WHERE id = ?20
+               AND (status = 'failed' OR (status = 'uninstalled' AND ?21 = 0))
+               AND (?19 = 'built' OR artifact_url = ?6)
+               AND NOT EXISTS (
+                 SELECT 1 FROM jobs WHERE install_id = ?20 AND status IN ('queued', 'running')
+               )
+           ))
            AND ${NO_ACTIVE_SELF_UPDATE_SQL}`,
       )
       .bind(
@@ -801,6 +889,9 @@ export async function installSourceBuildCore(
         fixed ? 1 : 0,
         prebuilt.buildId,
         catalogId,
+        reused ? "used" : "built",
+        replaced?.id ?? null,
+        cleanupJobId === null ? 0 : 1,
       ),
     deps.db
       .prepare(
@@ -816,8 +907,21 @@ export async function installSourceBuildCore(
          WHERE id = ?1 AND status = 'built' AND EXISTS (SELECT 1 FROM jobs WHERE id = ?3)`,
       )
       .bind(prebuilt.buildId, now.getTime(), jobId),
+    ...(replaced === null ? [] : replaceStatements(deps.db, replaced, installId, cleanup, now)),
   ]);
-  if (claimedInstall?.meta.changes !== 1 || claimedJob?.meta.changes !== 1) {
+  const claimed = claimedInstall?.meta.changes === 1 && claimedJob?.meta.changes === 1;
+  // Retired above with no uninstall job to delete their builds: deleted here,
+  // but the versions a live install reads (the build installed again).
+  const retired = retiredInstallIds(retiredByName);
+  if (claimed && replaced !== null && cleanup === null) retired.push(replaced.id);
+  if (deps.cleanupBuilds !== undefined) {
+    await cleanupRetiredBuilds(deps.db, retired, deps.cleanupBuilds);
+  }
+  if (!claimed) {
+    if (replaced !== null) {
+      const again = await readReplacedInstall(deps.db, replaced.id);
+      if (!again.ok && again.refusal !== INSTALL_AGAIN_REFUSALS.missing) throw fail(again.refusal);
+    }
     throw fail(
       `The Worker name "${workerName}" is taken by another install, the build was installed or thrown away meanwhile, or Appflare is updating itself. Reload the page.`,
     );
@@ -842,7 +946,14 @@ export async function installSourceBuildCore(
     ...(resolved.emailRouting === undefined ? {} : { emailRouting: resolved.emailRouting }),
     ...(resolved.domain === undefined ? {} : { domain: resolved.domain as InstallDomainInput }),
     ...(resolved.access === true ? { access: true } : {}),
+    ...(cleanupJobId === null ? {} : { cleanupJob: cleanupJobId }),
   };
+  if (cleanup !== null) {
+    // The removal first: the install job waits for it.
+    await launchRemoval(deps, cleanup, { jobId, installId }, now).catch((error: unknown) => {
+      throw fail(error instanceof Error ? error.message : String(error));
+    });
+  }
   try {
     const instance = await deps.createJob(jobId, params);
     await orm.update(jobs).set({ workflow_instance_id: instance.id }).where(eq(jobs.id, jobId));
