@@ -94,6 +94,7 @@ function CatalogPage() {
             <MessageText
               message={catalog.sandbox.missing ?? "Building from a repository is not available."}
               newTab
+              dashboardLinks="short"
             />
           }
         />
@@ -105,7 +106,7 @@ function CatalogPage() {
             variant="secondary"
             icon={<WarningCircleIcon weight="fill" />}
             title={`${source.label} could not be loaded`}
-            description={`Its apps are not shown. ${error}`}
+            description={<MessageText message={`Its apps are not shown. ${error}`} />}
           />
         ))}
       {catalog.unsigned.map(({ source, count }) => (

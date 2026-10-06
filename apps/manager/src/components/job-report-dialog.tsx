@@ -1,11 +1,12 @@
-import { Banner, Button, LayerDialog } from "@cloudflare/kumo";
-import { PaperPlaneTiltIcon, WarningCircleIcon } from "@phosphor-icons/react";
+import { Button, LayerDialog } from "@cloudflare/kumo";
+import { PaperPlaneTiltIcon } from "@phosphor-icons/react";
 import { useState } from "react";
 import { FAILURE_REPORT_COPY, type FailureReportPreview } from "../telemetry/failure-report";
 import { previewJobReport, sendJobReport } from "../telemetry/telemetry.functions";
 import { AppflareLoader } from "./appflare-loader";
 import { BusyMark, busyActionProps } from "./busy-button";
 import { FailureReportBody, ReportSent } from "./job-report-parts";
+import { ErrorMessageBanner } from "./message-text";
 
 /**
  * "Send a report" on a failed job (admins): a button that opens a dialog
@@ -89,9 +90,7 @@ export function SendReportButton({
             ) : (
               <FailureReportBody preview={preview} note={note} onNoteChange={setNote} />
             )}
-            {failure !== null && (
-              <Banner variant="error" icon={<WarningCircleIcon weight="fill" />} title={failure} />
-            )}
+            {failure !== null && <ErrorMessageBanner message={failure} newTab />}
           </div>
         </LayerDialog.Body>
         <LayerDialog.Actions dismissLabel="Cancel">

@@ -1,5 +1,5 @@
-import { Badge, Banner, Button, LayerDialog, Select, Table, Text } from "@cloudflare/kumo";
-import { ArrowsClockwiseIcon, PlusIcon, TrashIcon, WarningCircleIcon } from "@phosphor-icons/react";
+import { Badge, Button, LayerDialog, Select, Table, Text } from "@cloudflare/kumo";
+import { ArrowsClockwiseIcon, PlusIcon, TrashIcon } from "@phosphor-icons/react";
 import { useRouter } from "@tanstack/react-router";
 import { type FormEvent, useCallback, useEffect, useId, useState } from "react";
 import { checkSubdomainInZone, DOMAIN_SETTING_UP } from "../installs/custom-domain-input";
@@ -27,6 +27,7 @@ import { DomainName } from "./domain-name";
 import { formatTime } from "./format";
 import { FLUSH_RING_CLASS } from "./hash-target";
 import { HealthBadge } from "./install-health";
+import { ErrorMessageBanner } from "./message-text";
 import { Section, SectionTable } from "./section";
 import { NEW_ADDRESS_SETTINGS, useSettingsRefresh } from "./settings-refresh";
 import { useAccountId } from "./use-account-id";
@@ -366,13 +367,7 @@ function AddDomainDialog({ install }: { install: InstallDetail }) {
                 <Text variant="secondary">Reading the account's domains…</Text>
               </div>
             )}
-            {loadError !== null && (
-              <Banner
-                variant="error"
-                icon={<WarningCircleIcon weight="fill" />}
-                title={loadError}
-              />
-            )}
+            {loadError !== null && <ErrorMessageBanner message={loadError} newTab />}
             {options !== null && options.missing.length > 0 && (
               <AccountTokenPermissionsBanner options={options} />
             )}
@@ -416,13 +411,7 @@ function AddDomainDialog({ install }: { install: InstallDetail }) {
                     checkboxLabel="Replace the existing DNS records with the one for this app"
                   />
                 )}
-                {error !== null && (
-                  <Banner
-                    variant="error"
-                    icon={<WarningCircleIcon weight="fill" />}
-                    title={error}
-                  />
-                )}
+                {error !== null && <ErrorMessageBanner message={error} newTab />}
               </form>
             )}
           </div>
@@ -600,13 +589,7 @@ function AddWildcardDomainDialog({ install, reason }: { install: InstallDetail; 
                 <Text variant="secondary">Reading the account's domains…</Text>
               </div>
             )}
-            {loadError !== null && (
-              <Banner
-                variant="error"
-                icon={<WarningCircleIcon weight="fill" />}
-                title={loadError}
-              />
-            )}
+            {loadError !== null && <ErrorMessageBanner message={loadError} newTab />}
             {options !== null && options.missing.length > 0 && (
               <AccountTokenPermissionsBanner options={options} />
             )}
@@ -652,13 +635,7 @@ function AddWildcardDomainDialog({ install, reason }: { install: InstallDetail; 
                     disabled={pending}
                   />
                 )}
-                {error !== null && (
-                  <Banner
-                    variant="error"
-                    icon={<WarningCircleIcon weight="fill" />}
-                    title={error}
-                  />
-                )}
+                {error !== null && <ErrorMessageBanner message={error} newTab />}
               </form>
             )}
           </div>

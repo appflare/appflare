@@ -15,7 +15,6 @@ import {
   InfoIcon,
   PlusIcon,
   TrashIcon,
-  WarningCircleIcon,
   WarningIcon,
 } from "@phosphor-icons/react";
 import { useRouter } from "@tanstack/react-router";
@@ -48,7 +47,7 @@ import { DocsLink } from "./docs-link";
 import { formatTime } from "./format";
 import { FLUSH_RING_CLASS } from "./hash-target";
 import { HealthBadge } from "./install-health";
-import { ErrorMessageBanner } from "./message-text";
+import { ErrorMessageBanner, MessageText } from "./message-text";
 import { ResponsiveTable } from "./responsive-table";
 import { Section, SectionBody, SectionRow, SectionRows } from "./section";
 import { settingsLink } from "./settings-links";
@@ -239,9 +238,7 @@ function ExternalDomainRow({
         </>
       }
     >
-      {error !== null && (
-        <Banner variant="error" icon={<WarningCircleIcon weight="fill" />} title={error} />
-      )}
+      {error !== null && <ErrorMessageBanner message={error} />}
       {status !== null && <DomainState status={status} />}
     </SectionRow>
   );
@@ -281,7 +278,7 @@ function DomainState({ status }: { status: ExternalDomainStatus }) {
           variant="secondary"
           icon={<InfoIcon weight="fill" />}
           title="Cloudflare says"
-          description={status.errors.join(" ")}
+          description={<MessageText message={status.errors.join(" ")} />}
         />
       )}
     </div>
@@ -440,13 +437,7 @@ function AddExternalDomainDialog({ install }: { install: InstallDetail }) {
                 <Text variant="secondary">Reading the gateway…</Text>
               </div>
             )}
-            {loadError !== null && (
-              <Banner
-                variant="error"
-                icon={<WarningCircleIcon weight="fill" />}
-                title={loadError}
-              />
-            )}
+            {loadError !== null && <ErrorMessageBanner message={loadError} newTab />}
             {options !== null && gateway === null && (
               <Banner
                 variant="alert"

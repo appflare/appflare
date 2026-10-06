@@ -1,9 +1,9 @@
-import { Banner, Link, Radio, Text } from "@cloudflare/kumo";
-import { WarningCircleIcon } from "@phosphor-icons/react";
+import { Link, Radio, Text } from "@cloudflare/kumo";
 import { useRouter } from "@tanstack/react-router";
 import { useState } from "react";
 import { DocsLink } from "../components/docs-link";
 import { FLUSH_RING_CLASS } from "../components/hash-target";
+import { ErrorMessageBanner } from "../components/message-text";
 import { Section, SectionBody } from "../components/section";
 import { settingsLink } from "../components/settings-links";
 import type { InstallDetail } from "../installs/installs.functions";
@@ -116,9 +116,7 @@ export function InstallAutoUpdateCard({
             Only admins can change it.
           </Text>
         )}
-        {error !== null && (
-          <Banner variant="error" icon={<WarningCircleIcon weight="fill" />} title={error} />
-        )}
+        {error !== null && <ErrorMessageBanner message={error} />}
       </SectionBody>
     </Section>
   );

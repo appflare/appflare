@@ -52,6 +52,7 @@ import { BusyButton, BusyMark, busyActionProps } from "./busy-button";
 import { ChannelKindLogo } from "./channel-logos";
 import { ConfirmDialog } from "./confirm-dialog";
 import { DocsLink } from "./docs-link";
+import { ErrorMessageBanner, MessageText } from "./message-text";
 import { Section, SectionBody, SectionEmpty, SectionRow, SectionRows } from "./section";
 import { settingsSection } from "./settings-links";
 import { Timestamp } from "./timestamp";
@@ -201,7 +202,7 @@ function ChannelRow({ channel }: { channel: ChannelView }) {
             variant={test.ok ? "default" : "error"}
             icon={test.ok ? <CheckCircleIcon weight="fill" /> : <WarningCircleIcon weight="fill" />}
             title={test.ok ? "Test message delivered" : "Test message not delivered"}
-            description={test.ok ? undefined : test.detail}
+            description={test.ok ? undefined : <MessageText message={test.detail} />}
           />
         )}
         <div className="flex flex-wrap gap-2">
@@ -504,13 +505,7 @@ function ChannelDialog({ mode }: { mode: Mode }) {
                   <Checkbox.Item key={e} value={e} label={EVENT_LABELS[e]} />
                 ))}
               </Checkbox.Group>
-              {failure !== null && (
-                <Banner
-                  variant="error"
-                  icon={<WarningCircleIcon weight="fill" />}
-                  title={failure}
-                />
-              )}
+              {failure !== null && <ErrorMessageBanner message={failure} newTab />}
             </form>
           )}
         </LayerDialog.Body>
@@ -588,9 +583,7 @@ function SigningSecretDialog({ channel }: { channel: ChannelView }) {
         <LayerDialog.Body>
           <div className="grid gap-4">
             {secret !== null && <ClipboardText text={secret} />}
-            {error !== null && (
-              <Banner variant="error" icon={<WarningCircleIcon weight="fill" />} title={error} />
-            )}
+            {error !== null && <ErrorMessageBanner message={error} newTab />}
           </div>
         </LayerDialog.Body>
         <LayerDialog.Actions dismissLabel={secret === null ? "Cancel" : "Close"}>

@@ -34,6 +34,7 @@ import { DescriptionItem, DescriptionList } from "./description-list";
 import { DocsLink } from "./docs-link";
 import { FLUSH_RING_CLASS } from "./hash-target";
 import { useJobStarted } from "./job-started";
+import { MessageText } from "./message-text";
 import { Section, SectionBody } from "./section";
 import { useAccountId } from "./use-account-id";
 
@@ -285,7 +286,9 @@ function TurnOnDialog({
           title="This account cannot protect apps yet"
           description={
             <span className="grid gap-1">
-              <span>{problem.message}</span>
+              <span>
+                <MessageText message={problem.message} />
+              </span>
               <Link href={fix.href}>{fix.label}</Link>
             </span>
           }

@@ -36,6 +36,7 @@ import {
 import { appEntryMemo } from "./app-entry-memo";
 import { BusyMark, busyActionProps } from "./busy-button";
 import { ConfirmDialog } from "./confirm-dialog";
+import { ErrorMessageBanner } from "./message-text";
 import { ResetPasswordDialog } from "./reset-password-dialog";
 import { Section, SectionBody, SectionTable } from "./section";
 import { settingsSection } from "./settings-links";
@@ -467,9 +468,7 @@ export function AddUserDialog() {
         <LayerDialog.Body>
           {created === null ? (
             <form id={formId} className="grid gap-4" onSubmit={onSubmit}>
-              {error !== null && (
-                <Banner variant="error" icon={<WarningCircleIcon weight="fill" />} title={error} />
-              )}
+              {error !== null && <ErrorMessageBanner message={error} newTab />}
               <Input label="Email" name="email" type="email" autoComplete="off" required />
               <Input label="Name" name="name" autoComplete="off" required maxLength={100} />
               <Radio.Group

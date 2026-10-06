@@ -1,6 +1,7 @@
 import { Banner, Link, Text } from "@cloudflare/kumo";
 import { PowerIcon, WarningCircleIcon } from "@phosphor-icons/react";
 import { SANDBOX_CAPABILITY_HREF, SANDBOX_FIRST_NOTE } from "../sandbox/readiness";
+import { MessageText } from "./message-text";
 
 /**
  * Sandbox builds turned on at first need, as the install and build
@@ -24,7 +25,11 @@ export function SandboxFirstNote() {
   );
 }
 
-/** Why the sandbox cannot be turned on, with the link to its row on Your account. */
+/**
+ * Why the sandbox cannot be turned on, with the link to its row on Your
+ * account. It shows inside a build form being filled in, so the reason's
+ * links (the account's dashboard pages) open in a new tab.
+ */
 export function SandboxMissingBanner({ title, missing }: { title: string; missing: string }) {
   return (
     <Banner
@@ -33,7 +38,9 @@ export function SandboxMissingBanner({ title, missing }: { title: string; missin
       title={title}
       description={
         <div className="grid gap-2">
-          <span>{missing}</span>
+          <span>
+            <MessageText message={missing} newTab dashboardLinks="short" />
+          </span>
           <Link href={SANDBOX_CAPABILITY_HREF}>{SANDBOX_CAPABILITY_LINK_LABEL}</Link>
         </div>
       }

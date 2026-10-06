@@ -12,6 +12,7 @@ import { type PasskeyRow, removePasskey } from "../server/passkeys.functions";
 import { passkeyNameInput } from "../server/schemas";
 import { BusyMark, busyActionProps } from "./busy-button";
 import { ConfirmDialog } from "./confirm-dialog";
+import { ErrorMessageBanner } from "./message-text";
 import { Section, SectionBody, SectionEmpty, SectionTable } from "./section";
 import { settingsSection } from "./settings-links";
 import { Timestamp } from "./timestamp";
@@ -168,9 +169,7 @@ function AddPasskeyDialog() {
         </LayerDialog.Description>
         <LayerDialog.Body>
           <form id={formId} className="grid gap-4" onSubmit={onSubmit}>
-            {error !== null && (
-              <Banner variant="error" icon={<WarningCircleIcon weight="fill" />} title={error} />
-            )}
+            {error !== null && <ErrorMessageBanner message={error} newTab />}
             <Input
               label="Name"
               name="name"

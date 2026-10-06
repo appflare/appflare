@@ -3,8 +3,14 @@ import { Banner } from "@cloudflare/kumo";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
+import { dashboardUrl } from "../cloudflare/dashboard-links";
 import { type InstallVarField, installVarFields } from "../installs/install-vars";
+import { needsWorkersPaidReason } from "../sandbox/preflight";
 import { baseCatalog } from "../test/artifact-fixture";
+
+function escapeRegExp(text: string): string {
+  return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
 
 // The form only needs the router once a job has started, and the server
 // functions once it submits or loads a zone list (effects, which do not run here).
@@ -81,6 +87,32 @@ describe("the install form's notices", () => {
     expect(html).not.toContain("Only admins can install apps.");
     expect(bannerCount(render(baseCatalog()))).toBe(0);
     expect(bannerCount(render(baseCatalog(), { canInstall: false }))).toBe(1);
+  });
+
+  it("links the dashboard page a blocked reason names instead of printing its address", () => {
+    const plans = dashboardUrl("0123456789abcdef0123456789abcdef", "workers/plans");
+    const html = render(baseCatalog(), {
+      blockedReason: `Sandbox builds are off, and Appflare cannot turn them on: ${needsWorkersPaidReason("0123456789abcdef0123456789abcdef")}`,
+      blockedLink: { href: "/settings/account#capability-sandbox", label: "Fix it" },
+    });
+    expect(bannerCount(html)).toBe(1);
+    expect(html).toMatch(new RegExp(`<a[^>]*href="${escapeRegExp(plans)}"[^>]*>Workers plans`));
+    expect(html.replace(/href="[^"]*"/g, "")).not.toContain("https://");
+    expect(html).toContain('href="/settings/account#capability-sandbox"');
+  });
+
+  it("shows an address an app's name carries in full, never under a short label", () => {
+    const crafted =
+      "https://dash.cloudflare.com/profile/api-tokens?permissionGroupKeys=%5B%5D&n=/workers/plans";
+    const html = render(baseCatalog(), {
+      blockedReason: `X ${crafted} is built in your account's sandbox Worker. Sandbox builds are off, and Appflare cannot turn them on: ${needsWorkersPaidReason("0123456789abcdef0123456789abcdef")}`,
+    });
+    const escaped = crafted.replaceAll("&", "&amp;");
+    expect(html).toMatch(
+      new RegExp(`<a[^>]*href="${escapeRegExp(escaped)}"[^>]*>${escapeRegExp(escaped)}<`),
+    );
+    // Only the account's own plans page gets the short label.
+    expect(html.split(">Workers plans").length - 1).toBe(1);
   });
 
   it("prefers the reason the app cannot be installed over the members' note", () => {

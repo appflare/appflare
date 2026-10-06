@@ -1,10 +1,10 @@
-import { Banner, Switch, Text } from "@cloudflare/kumo";
-import { WarningCircleIcon } from "@phosphor-icons/react";
+import { Switch, Text } from "@cloudflare/kumo";
 import { useRouter } from "@tanstack/react-router";
 import { useState } from "react";
 import type { InstallDetail } from "../installs/installs.functions";
 import { WORKERS_DEV_COPY } from "../installs/workers-dev";
 import { setWorkersDev } from "../installs/workers-dev.functions";
+import { ErrorMessageBanner } from "./message-text";
 import { SectionBody } from "./section";
 import { NEW_ADDRESS_SETTINGS, useSettingsRefresh } from "./settings-refresh";
 
@@ -68,9 +68,7 @@ export function WorkersDevSwitch({ install }: { install: InstallDetail }) {
               ? WORKERS_DEV_COPY.noDomain
               : WORKERS_DEV_COPY.onHelp(install.workersDevUrl ?? "its workers.dev URL")}
       </Text>
-      {error !== null && (
-        <Banner variant="error" icon={<WarningCircleIcon weight="fill" />} title={error} />
-      )}
+      {error !== null && <ErrorMessageBanner message={error} />}
     </SectionBody>
   );
 }

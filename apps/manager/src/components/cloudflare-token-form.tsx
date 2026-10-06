@@ -222,7 +222,7 @@ export function CloudflareTokenForm({
           variant="error"
           icon={<WarningCircleIcon weight="fill" />}
           title="Verification failed"
-          description={result.error}
+          description={<MessageText message={result.error} newTab />}
         />
       )}
       {result?.ok === true && <VerifiedSummary result={result} />}
@@ -476,7 +476,7 @@ export function SetupTokenForm({
                 <Banner
                   variant="error"
                   icon={<WarningCircleIcon weight="fill" />}
-                  description={error}
+                  description={<MessageText message={error} newTab />}
                 />
               </div>
             )}
