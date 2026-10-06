@@ -245,7 +245,7 @@ function DiscardButton({ buildId, failed = false }: { buildId: string; failed?: 
       title="Throw away this build"
       description={
         failed
-          ? "Its log is deleted. Build again to try once more."
+          ? "Its log and any files it left in your sandbox Worker's bucket are deleted. Build again to try once more."
           : "Its files are deleted from your sandbox Worker's bucket. Getting it back means building it again."
       }
       actionLabel="Throw away"

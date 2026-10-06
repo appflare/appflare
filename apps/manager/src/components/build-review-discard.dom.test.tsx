@@ -108,7 +108,9 @@ describe("throwing a build away", () => {
     await click(button("Throw away", container));
     const open = dialog();
     expect(open?.textContent).toContain("Throw away this build");
-    expect(open?.textContent).toContain("Its log is deleted. Build again to try once more.");
+    expect(open?.textContent).toContain(
+      "Its log and any files it left in your sandbox Worker's bucket are deleted. Build again to try once more.",
+    );
     expect(calls.discardSourceBuild).not.toHaveBeenCalled();
 
     await click(button("Cancel", open ?? document.body));
