@@ -35,9 +35,13 @@ export type StartSourceBuildInput = z.infer<typeof startSourceBuildInput>;
 
 export const sourceBuildIdInput = z.object({ buildId: z.string().min(1).max(64) });
 
-/** The install form of a reviewed build: the catalog form's fields, minus what the build decides. */
+/**
+ * The install form of a reviewed build: the catalog form's fields, minus
+ * what the build decides. `replaces` is "Install again" of a failed install
+ * from a repository (or from source).
+ */
 export const installSourceBuildInput = startInstallInput
-  .omit({ slug: true, buildConfirmed: true, appToken: true, replaces: true })
+  .omit({ slug: true, buildConfirmed: true, appToken: true })
   .extend({ buildId: z.string().min(1).max(64) });
 export type InstallSourceBuildInput = z.infer<typeof installSourceBuildInput>;
 

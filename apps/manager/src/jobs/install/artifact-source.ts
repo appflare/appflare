@@ -106,6 +106,12 @@ export const prebuiltBuildParams = z.object({
   artifactKey: z.string().min(1),
   image: z.string().min(1),
   builtAt: z.iso.datetime(),
+  /**
+   * The install whose `builds/<id>/` prefix holds the build's files, when it
+   * is not the one installing: "Install again" of an install from a
+   * repository reuses the build of the failed install it replaces.
+   */
+  storedUnder: z.string().min(1).max(64).optional(),
 });
 export type PrebuiltBuildParams = z.infer<typeof prebuiltBuildParams>;
 
@@ -359,7 +365,8 @@ async function revisedCatalogPhase(
  * A reviewed build from a repository (or from source): nothing is built
  * again. Its `manifest.json` is read through the `SANDBOX` binding and must
  * still be exactly what the build job verified (same sha256), under this
- * install's object prefix; the units then read the zip the same way.
+ * install's object prefix (or, installing again, the failed install's); the
+ * units then read the zip the same way.
  */
 async function prebuiltArtifactPhase(
   steps: JobSteps,
@@ -378,7 +385,7 @@ async function prebuiltArtifactPhase(
     if (build.version !== target.version) {
       throw new JobError(`the build is version ${build.version}, not ${target.version}`);
     }
-    const expected = buildKeys(target.installId, build.version, build.app);
+    const expected = buildKeys(build.storedUnder ?? target.installId, build.version, build.app);
     if (build.manifestKey !== expected.manifest || build.artifactKey !== expected.artifact) {
       throw new JobError("the build is stored under another install's keys");
     }

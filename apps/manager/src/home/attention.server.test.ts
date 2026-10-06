@@ -43,9 +43,15 @@ describe("readFailedJobs", () => {
         deleteRetained: false,
         accessChange: false,
         version: "1.1.0",
+        buildId: null,
         finishedAt: new Date(2_000).toISOString(),
       },
     ]);
+  });
+
+  it("names the build an install from a repository used, for Install again", async () => {
+    await addJob("a", "install", "failed", 1_000, '{"version":"0.0.0-1.abc","buildId":"b1"}');
+    expect((await readFailedJobs(env.DB))[0]).toMatchObject({ kind: "install", buildId: "b1" });
   });
 
   it("forgets a failure once a later job of the app succeeds", async () => {

@@ -38,7 +38,6 @@ import {
 } from "../installs/resource-kinds";
 import { detachWildcardParts, wildcardDetachMessage } from "../installs/wildcard-domains.server";
 import { sandboxBuildOfInput } from "../sandbox/progress";
-import { cleanupSandboxBuildsPhase } from "./install/artifact-source";
 import { type EmailRouteRecord, removeEmailRoutesPhase } from "./install/email-routing";
 import { deleteOtherWorkersPhase } from "./install/entry-worker-phases";
 import {
@@ -54,6 +53,7 @@ import type { JobContext } from "./run-job";
 import { runSelfDeployingUninstall } from "./self-deploying/jobs";
 import { StepLog } from "./step-log";
 import { createJobSteps, errorMessage, isNotFound, JobError, type JobSteps } from "./steps";
+import { removeInstallBuildsPhase } from "./uninstall-builds";
 import { settleUnit } from "./units/result";
 import { R2_PAGE_MAX_OBJECTS } from "./units/units";
 
@@ -679,9 +679,10 @@ export async function runUninstall(ctx: JobContext): Promise<void> {
 
     await deleteDataResourcesPhase(steps, started.targets, "uninstall");
 
-    // The install's builds in the sandbox Worker's bucket (every version).
+    // The install's builds in the sandbox Worker's bucket (every version
+    // no other install uses; ./uninstall-builds.ts).
     if (started.sandboxBuilt === true) {
-      await cleanupSandboxBuildsPhase(steps, env, params.installId, []);
+      await removeInstallBuildsPhase(steps, env, params.installId);
     }
 
     await run("finish", async ({ log, orm }) => {

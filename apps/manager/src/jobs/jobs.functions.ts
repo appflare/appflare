@@ -12,7 +12,7 @@ import { moveInputOf } from "../domains/move-address-lines";
 import { appAddress } from "../installs/app-address";
 import { readAddressDomains } from "../installs/app-address.server";
 import { installLabel } from "../installs/display-name";
-import { installAgainHref, offersInstallAgain } from "../installs/install-again";
+import { buildIdOfInput, installAgainLink } from "../installs/install-again";
 import {
   installJobAppName,
   namedInstall,
@@ -93,8 +93,8 @@ export interface JobView {
     address: string | null;
   } | null;
   /**
-   * "Install again" for the failed install job of a catalog app's install
-   * that did not finish (see installs/install-again.ts); null otherwise.
+   * "Install again" for the failed install job of an install that did not
+   * finish (see installs/install-again.ts); null otherwise.
    */
   againHref?: string | null;
   /** The job's log lines, oldest first: all of them, or those after `logsAfter`. */
@@ -222,11 +222,15 @@ export const getJob = createServerFn({ method: "GET" })
     if (installRow !== undefined) {
       const { workersDevEnabled, servedDomain, manifestJson, appName, origin, catalogId, ...rest } =
         installRow;
-      if (job.kind === "install" && job.status === "failed" && offersInstallAgain(installRow)) {
-        againHref = installAgainHref(
-          installRow.id,
-          installAppKey({ app_slug: installRow.slug, catalog_id: catalogId }),
-        );
+      if (job.kind === "install" && job.status === "failed") {
+        againHref = installAgainLink({
+          id: installRow.id,
+          status: installRow.status,
+          origin,
+          appKey: installAppKey({ app_slug: installRow.slug, catalog_id: catalogId }),
+          // Not from the catalog: the build this job installed.
+          buildId: buildIdOfInput(job.input_json),
+        });
       }
       const named = namedInstall({
         id: installRow.id,

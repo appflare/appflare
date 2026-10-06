@@ -15,6 +15,7 @@ import { WORKER_NAME_CHECK_DELAY_MS } from "../installs/worker-name-check";
  */
 const server = vi.hoisted(() => ({
   startInstall: vi.fn(async (_: unknown) => ({ jobId: "job-1", installId: "install-1" })),
+  installSourceBuild: vi.fn(async (_: unknown) => ({ jobId: "job-2", installId: "install-2" })),
   // As the server answers: the replaced install's names are left out for it.
   listTakenWorkerNames: vi.fn(async (args?: { data: { replaces?: string } }) =>
     args?.data.replaces === "old-install"
@@ -29,7 +30,9 @@ const server = vi.hoisted(() => ({
 vi.mock("./job-started", () => ({ useJobStarted: () => server.jobStarted }));
 vi.mock("./use-account-id", () => ({ useAccountId: () => "0123456789abcdef0123456789abcdef" }));
 vi.mock("../installs/installs.functions", () => ({ startInstall: server.startInstall }));
-vi.mock("../installs/source-builds.functions", () => ({ installSourceBuild: vi.fn() }));
+vi.mock("../installs/source-builds.functions", () => ({
+  installSourceBuild: server.installSourceBuild,
+}));
 vi.mock("../installs/access-change.functions", () => ({
   checkAppAccess: vi.fn(
     async (): Promise<AppAccessCheck> => ({
@@ -100,6 +103,7 @@ beforeEach(() => {
   document.body.appendChild(container);
   root = createRoot(container);
   server.startInstall.mockClear();
+  server.installSourceBuild.mockClear();
 });
 
 afterEach(() => {
@@ -170,6 +174,45 @@ describe("InstallForm, installing again", () => {
     expect(String((sent.secrets as Record<string, string>).ADMIN_PASSWORD).length).toBeGreaterThan(
       0,
     );
+  });
+
+  it("installs a build from a repository again through its review, sending what it replaces", async () => {
+    await act(async () =>
+      root.render(
+        <InstallForm
+          catalog={catalog}
+          varFields={[]}
+          subdomain="example"
+          canInstall
+          defaultWorkerName="links-2"
+          fixedWorkerName={false}
+          blockedReason={null}
+          requirementsConfirmed
+          reviewedBuildId="build-1"
+          prefill={{ ...PREFILL, access: false, vars: {} }}
+        />,
+      ),
+    );
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, WORKER_NAME_CHECK_DELAY_MS + 50));
+    });
+    const button = [...container.querySelectorAll("button")].find(
+      (b) => b.textContent === "Install again",
+    );
+    expect(button?.disabled).toBe(false);
+    await act(async () => button?.click());
+    expect(server.startInstall).not.toHaveBeenCalled();
+    const call = server.installSourceBuild.mock.calls.at(-1)?.[0] as
+      | { data: Record<string, unknown> }
+      | undefined;
+    expect(call?.data).toMatchObject({
+      buildId: "build-1",
+      workerName: "links",
+      displayName: "Team links",
+      replaces: "old-install",
+    });
+    expect(call?.data).not.toHaveProperty("slug");
+    expect(server.jobStarted).toHaveBeenLastCalledWith("job-2", "Installing again");
   });
 
   describe("with a custom domain from last time", () => {

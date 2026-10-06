@@ -381,7 +381,13 @@ export function InstallForm({
       };
       const { jobId } =
         reviewedBuildId !== null
-          ? await installSourceBuild({ data: { ...fields, buildId: reviewedBuildId } })
+          ? await installSourceBuild({
+              data: {
+                ...fields,
+                buildId: reviewedBuildId,
+                ...(prefill === null ? {} : { replaces: prefill.replaces }),
+              },
+            })
           : await startInstall({
               data: {
                 ...fields,

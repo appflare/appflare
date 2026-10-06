@@ -6,9 +6,10 @@ import {
   catalogWorkerName,
   type RepositoryDetection,
   repositoryUrl,
+  sandboxObjectUrl,
 } from "@appflare/schema";
 import { createServerFn } from "@tanstack/react-start";
-import { and, eq, inArray, ne } from "drizzle-orm";
+import { and, desc, eq, inArray, ne, or, sql } from "drizzle-orm";
 import { z } from "zod";
 import { accessCapabilityProblem } from "../access/preflight.server";
 import type { AccountPlan } from "../account/plan";
@@ -31,6 +32,7 @@ import { sandboxAutoEnableDeps } from "../sandbox/auto-enable-env.server";
 import { sandboxBinding, sandboxInfo } from "../sandbox/binding";
 import { requireRole, requireSession } from "../server/auth.server";
 import { installLabel } from "./display-name";
+import { installAgainBuildRequest, sandboxBuildFiles } from "./install-again.server";
 import { namedInstall, readInstallLabels } from "./install-names.server";
 import { type InstallVarField, installVarFields } from "./install-vars";
 import { suggestWorkerName } from "./instance-names";
@@ -212,10 +214,23 @@ export const getSourceBuild = createServerFn({ method: "GET" })
     if (record === null) return null;
     const { row, manifest, detected } = record;
     const status = effectiveStatus(record);
+    // The install it is for, or, once "Install again" installed it once more,
+    // the install that replaced that one and reads its artifact now.
     const [install] = await orm
       .select()
       .from(installs)
-      .where(eq(installs.id, row.install_id))
+      .where(
+        row.artifact_key === null
+          ? eq(installs.id, row.install_id)
+          : or(
+              eq(installs.id, row.install_id),
+              and(
+                eq(installs.artifact_url, sandboxObjectUrl(row.artifact_key)),
+                ne(installs.status, "uninstalled"),
+              ),
+            ),
+      )
+      .orderBy(sql`${installs.status} = 'uninstalled'`, desc(installs.id))
       .limit(1);
     let app: SourceBuildView["app"] = null;
     let release: Awaited<ReturnType<typeof getAppManifest>> | null = null;
@@ -320,12 +335,16 @@ export const getSourceBuild = createServerFn({ method: "GET" })
     };
   });
 
-/** Admin only: installs a reviewed build. Returns the install job's id. */
+/**
+ * Admin only: installs a reviewed build, or with `replaces` installs a failed
+ * install from a repository again ("Install again"). Returns the install job's id.
+ */
 export const installSourceBuild = createServerFn({ method: "POST" })
   .validator(installSourceBuildInput)
   .handler(async ({ data }): Promise<{ jobId: string; installId: string }> => {
     await requireRole("admin");
     try {
+      const binding = sandboxBinding(env);
       return await installSourceBuildCore(
         {
           db: env.DB,
@@ -335,6 +354,14 @@ export const installSourceBuild = createServerFn({ method: "POST" })
             return (await (await getCfClient(env)).workers.listScripts()).map((s) => s.id);
           },
           accessPreflight: async () => accessCapabilityProblem(await getCfClient(env)),
+          buildFiles: sandboxBuildFiles(env),
+          ...(binding === undefined
+            ? {}
+            : {
+                cleanupBuilds: async (target) => {
+                  await binding.cleanup(target);
+                },
+              }),
         },
         data,
       );
@@ -370,6 +397,36 @@ export const discardSourceBuild = createServerFn({ method: "POST" })
     try {
       await discardSourceBuildCore({ db: env.DB, ...sandboxBuildCleanup(env) }, data.buildId);
       return { ok: true };
+    } catch (error) {
+      asUserError(error);
+    }
+  });
+
+/**
+ * Admin only: "Install again" of a failed install from a repository whose
+ * build is gone: builds the same repository and branch (or tag, or commit)
+ * again for review, with the build command it used. Returns the build's id;
+ * its review, opened with `?again=<install id>`, has the form filled in.
+ */
+export const buildForInstallAgain = createServerFn({ method: "POST" })
+  .validator(z.object({ installId: z.string().min(1).max(64), costConfirmed: z.boolean() }))
+  .handler(async ({ data }): Promise<{ jobId: string }> => {
+    await requireRole("admin");
+    const read = await installAgainBuildRequest(env.DB, data.installId);
+    if (!read.ok) throw new Error(read.refusal);
+    try {
+      return await startSourceBuildCore(
+        {
+          db: env.DB,
+          workflows: env.JOBS,
+          createJob: jobCreator(env.JOBS),
+          sandbox: sandboxState,
+          autoEnable: sandboxAutoEnableDeps(env),
+          listRefs,
+          loadCatalogApp,
+        },
+        { ...read.request, costConfirmed: data.costConfirmed },
+      );
     } catch (error) {
       asUserError(error);
     }

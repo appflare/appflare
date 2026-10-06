@@ -29,6 +29,7 @@ import { type AddressDomain, appAddress } from "./app-address";
 import { addressDomainOf } from "./app-address.server";
 import { installLabel } from "./display-name";
 import { type EmailRouteView, emailRouteViews, SEND_EMAIL_NOTE, sendsEmail } from "./email-routing";
+import { buildIdOfInput } from "./install-again";
 import { readInstallLabels, readInstallNames } from "./install-names.server";
 import {
   addressInput,
@@ -176,6 +177,11 @@ export interface InstallDetail extends InstallRow {
   forgotten: boolean;
   /** The job currently queued or running for this install, if any. */
   activeJobId: string | null;
+  /**
+   * Not from the catalog: the build its latest install job installed, which
+   * "Install again" opens when the install did not finish; null otherwise.
+   */
+  installBuildId: string | null;
   /** The Worker answers on its workers.dev URL (else only on its custom domains). */
   workersDevEnabled: boolean;
   /**
@@ -439,6 +445,10 @@ export async function readInstallDetail(installId: string): Promise<InstallDetai
     uninstall,
     forgotten: row.forgotten_at !== null,
     activeJobId: activeJob?.id ?? null,
+    installBuildId:
+      row.origin === "catalog"
+        ? null
+        : buildIdOfInput(jobRows.find((j) => j.kind === "install")?.input_json ?? null),
     jobs: jobRows.map((j) => ({
       id: j.id,
       kind: j.kind,

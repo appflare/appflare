@@ -96,6 +96,20 @@ from or throws away is thrown away by Appflare 7 days after it was built (a fail
 7 days after it failed), so the sandbox Worker's bucket does not keep it forever. A
 build an app or one of its snapshots uses is never thrown away.
 
+## If the install fails
+
+**Install again** on the app's page (also on Home and on the failed job's log) opens the
+review of the build it was installed from, with the install form filled in from last
+time. Installing removes what the failed install left in your account, then installs the
+same build again: nothing is built twice, and the build's files stay in the bucket for
+the new install. See [Installing apps](/guides/install-apps/#what-the-install-job-does)
+for what is filled in and what you enter again.
+
+If that build is gone (turning sandbox builds off deletes every build), the review says
+so and offers **Build again**: the same repository at the same branch, tag or commit,
+with the same build command. If a branch has moved on, that is its newest commit. Once
+it is built, its review opens with the form filled in from the failed install.
+
 ## Build a catalog app from source
 
 A catalog app's page has **Advanced: build from source at a commit** below its

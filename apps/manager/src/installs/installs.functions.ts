@@ -36,6 +36,7 @@ export const startInstall = createServerFn({ method: "POST" })
   .handler(async ({ data }) => {
     await requireRole("admin");
     try {
+      const binding = sandboxBinding(env);
       return await startInstallCore(
         {
           db: env.DB,
@@ -57,8 +58,15 @@ export const startInstall = createServerFn({ method: "POST" })
             };
           },
           createJob: jobCreator(env.JOBS),
-          sandboxConnected: sandboxBinding(env) !== undefined,
+          sandboxConnected: binding !== undefined,
           sandboxAutoEnable: sandboxAutoEnableDeps(env),
+          ...(binding === undefined
+            ? {}
+            : {
+                cleanupBuilds: async (target) => {
+                  await binding.cleanup(target);
+                },
+              }),
           async listAccountWorkers() {
             const api = await getCfClient(env);
             return (await api.workers.listScripts()).map((s) => s.id);

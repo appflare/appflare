@@ -2,7 +2,7 @@ import { NEEDS_ADMIN_COPY } from "../auto-update/auto-update";
 import type { CapabilityId } from "../capabilities/capability-rows";
 import type { HealthStatus } from "../db/schema";
 import type { DeployCopyCleanup } from "../deploy-button/deploy-copy";
-import { installAgainHref, offersInstallAgain } from "../installs/install-again";
+import { installAgainLink } from "../installs/install-again";
 
 /**
  * What needs someone's attention, in one list: Home's "Needs attention"
@@ -98,6 +98,8 @@ export interface FailedJob {
   accessChange?: boolean;
   /** The version an update or install was moving to, when the job recorded one. */
   version: string | null;
+  /** The build an install or update from a repository used, when the job recorded one. */
+  buildId?: string | null;
   /** ISO 8601 */
   finishedAt: string | null;
 }
@@ -217,9 +219,14 @@ export function attentionItems(input: AttentionInput): AttentionItem[] {
             input.isAdmin &&
             job.kind === "install" &&
             app.slug !== undefined &&
-            app.origin !== undefined &&
-            offersInstallAgain({ status: app.status, origin: app.origin })
-              ? installAgainHref(app.id, app.slug)
+            app.origin !== undefined
+              ? installAgainLink({
+                  id: app.id,
+                  status: app.status,
+                  origin: app.origin,
+                  appKey: app.slug,
+                  buildId: job.buildId ?? null,
+                })
               : null,
         },
       ];
