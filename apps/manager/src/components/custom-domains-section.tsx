@@ -1,5 +1,5 @@
-import { Badge, Button, LayerDialog, Select, Table, Text } from "@cloudflare/kumo";
-import { ArrowsClockwiseIcon, PlusIcon, TrashIcon } from "@phosphor-icons/react";
+import { Badge, Button, LayerDialog, Link, Text } from "@cloudflare/kumo";
+import { ArrowsClockwiseIcon, GlobeIcon, PlusIcon, TrashIcon } from "@phosphor-icons/react";
 import { useRouter } from "@tanstack/react-router";
 import { type FormEvent, useCallback, useEffect, useId, useState } from "react";
 import { checkSubdomainInZone, DOMAIN_SETTING_UP } from "../installs/custom-domain-input";
@@ -23,20 +23,20 @@ import { BusyButton, BusyMark, busyActionProps } from "./busy-button";
 import { ConfirmDialog } from "./confirm-dialog";
 import { DocsLink } from "./docs-link";
 import { type DnsConflict, DnsConflictNotice, TokenPermissionsBanner } from "./domain-dialog-parts";
-import { DomainName } from "./domain-name";
 import { formatTime } from "./format";
 import { FLUSH_RING_CLASS } from "./hash-target";
 import { HealthBadge } from "./install-health";
-import { ErrorMessageBanner } from "./message-text";
-import { Section, SectionTable } from "./section";
+import { ErrorMessageBanner, MessageText } from "./message-text";
+import { Section, SectionEmpty, SectionRow, SectionRows } from "./section";
 import { NEW_ADDRESS_SETTINGS, useSettingsRefresh } from "./settings-refresh";
 import { useAccountId } from "./use-account-id";
 import { WildcardNotes } from "./wildcard-notes";
+import { ZoneCombobox } from "./zone-combobox";
 import { ZoneHostnameField } from "./zone-hostname-field";
 
 /**
  * `/apps/$installId` → Custom domains (admins only): the hostnames that serve
- * the app besides its workers.dev URL, with "Add a domain", a one-off check of
+ * the app besides its workers.dev URL, with "Add domain", a one-off check of
  * each, and remove. Adding needs zone permissions the rest of Appflare does
  * not, so the add dialog says which ones the token lacks and how to add them.
  *
@@ -65,48 +65,30 @@ export function CustomDomainsSection({ install }: { install: InstallDetail }) {
       }
       empty={
         install.domains.length === 0 ? (
-          <Text variant="secondary">
-            {wildcard === null
-              ? "The app is served on its workers.dev URL only. Add a hostname in one of your domains on Cloudflare to serve it there too."
-              : `The app is served on its workers.dev URL only, and needs a hostname with every name under it. ${wildcard.reason}`}
-          </Text>
+          <SectionEmpty
+            size="sm"
+            icon={<GlobeIcon size={32} className="text-kumo-inactive" />}
+            title={wildcard === null ? "No custom domains" : "No wildcard domain"}
+            description={
+              wildcard === null
+                ? "The app is served on its workers.dev URL only. Add a hostname in one of your domains on Cloudflare to serve it there too."
+                : `The app is served on its workers.dev URL only, and needs a hostname with every name under it. ${wildcard.reason}`.trim()
+            }
+          />
         ) : null
       }
     >
-      {install.domains.length > 0 && (
-        <SectionTable label="Domains" minWidth="sm" stickyFirstColumn>
-          <Table.Header>
-            <Table.Row>
-              <Table.Head>Hostname</Table.Head>
-              <Table.Head>Check</Table.Head>
-              <Table.Head>
-                <span className="sr-only">Actions</span>
-              </Table.Head>
-            </Table.Row>
-          </Table.Header>
-          <Table.Body>
-            {install.domains.map((domain) => (
-              <Table.Row key={domain.id}>
-                <Table.Cell>
-                  <DomainName domain={domain} />
-                </Table.Cell>
-                <Table.Cell>
-                  <DomainCheck
-                    installId={install.id}
-                    domain={domain}
-                    enabled={install.status === "installed"}
-                  />
-                </Table.Cell>
-                <Table.Cell>
-                  <div className="flex justify-end">
-                    {canRemove && <RemoveDomainDialog installId={install.id} domain={domain} />}
-                  </div>
-                </Table.Cell>
-              </Table.Row>
-            ))}
-          </Table.Body>
-        </SectionTable>
-      )}
+      <SectionRows>
+        {install.domains.map((domain) => (
+          <CustomDomainRow
+            key={domain.id}
+            installId={install.id}
+            domain={domain}
+            enabled={install.status === "installed"}
+            canRemove={canRemove}
+          />
+        ))}
+      </SectionRows>
     </Section>
   );
 }
@@ -123,36 +105,42 @@ const AUTO_CHECKS = 18;
 const SETTING_UP_CHECK_MS = 30_000;
 
 /**
- * One probe of the app on this hostname, shown here. The install's health
- * stays the check of its main address. A domain that has not reached the
- * app yet (just added, its certificate on the way) is checked on its own
- * every {@link AUTO_CHECK_MS} while the page is open, and every
- * {@link SETTING_UP_CHECK_MS} after that while Cloudflare is still attaching
- * it (shown as being set up, not as unhealthy); once the app answers, or
- * Cloudflare Access answers on the domain, the server records the domain
- * as live and may turn workers.dev off, and the page reloads to show it.
+ * One custom or wildcard domain: its hostname (a wildcard domain as its
+ * pattern), the result of its last probe here, "Check now" and Remove. The
+ * install's health stays the check of its main address. A domain that has
+ * not reached the app yet (just added, its certificate on the way) is
+ * checked on its own every {@link AUTO_CHECK_MS} while the page is open, and
+ * every {@link SETTING_UP_CHECK_MS} after that while Cloudflare is still
+ * attaching it (shown as being set up, not as unhealthy); once the app
+ * answers, or Cloudflare Access answers on the domain, the server records
+ * the domain as live and may turn workers.dev off, and the page reloads to
+ * show it. A failed check's message stays until the next answer, so checks
+ * that keep failing do not announce it again each time.
  */
-function DomainCheck({
+function CustomDomainRow({
   installId,
   domain,
   enabled,
+  canRemove,
 }: {
   installId: string;
   domain: CustomDomainView;
   enabled: boolean;
+  canRemove: boolean;
 }) {
   const router = useRouter();
   const settingsRefresh = useSettingsRefresh();
   const [pending, setPending] = useState(false);
   const [result, setResult] = useState<CustomDomainCheck | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const label = domainLabel(domain);
 
   const check = useCallback(async (): Promise<CustomDomainCheck | null> => {
     setPending(true);
-    setError(null);
     try {
       const next = await checkCustomDomain({ data: { installId, resourceId: domain.id } });
       setResult(next);
+      setError(null);
       return next;
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not check the domain.");
@@ -205,46 +193,66 @@ function DomainCheck({
     await reached(await check());
   }
 
+  const showActions = enabled || canRemove;
   return (
-    <span className="flex flex-wrap items-center gap-2">
-      {result?.settingUp === true ? (
-        <>
-          <Badge variant="neutral" appearance="dot">
-            {DOMAIN_SETTING_UP.label}
-          </Badge>
-          <Text as="span" variant="secondary" size="sm">
-            {DOMAIN_SETTING_UP.note(result.detail)} Checked at {formatTime(result.checkedAt)}.
-          </Text>
-        </>
-      ) : (
-        result !== null && (
+    <SectionRow
+      title={
+        <span className="flex flex-wrap items-center gap-2">
+          <Link href={domain.url} target="_blank" rel="noopener noreferrer">
+            {label}
+            <Link.ExternalIcon />
+          </Link>
+          {result?.settingUp === true ? (
+            <Badge variant="neutral" appearance="dot">
+              {DOMAIN_SETTING_UP.label}
+            </Badge>
+          ) : (
+            result !== null && (
+              <HealthBadge status={result.status} access={result.access === true} />
+            )
+          )}
+        </span>
+      }
+      description={
+        domain.wildcard
+          ? `Every name under ${domain.hostname}, and ${domain.hostname} itself`
+          : undefined
+      }
+      action={
+        showActions ? (
           <>
-            <HealthBadge status={result.status} access={result.access === true} />
-            <Text as="span" variant="secondary" size="sm">
-              {result.access === true
-                ? `${ACCESS_DOMAIN_NOTE} Checked at ${formatTime(result.checkedAt)}.`
-                : `${result.detail} at ${formatTime(result.checkedAt)}`}
-            </Text>
+            {enabled && (
+              <BusyButton
+                pending={pending}
+                size="sm"
+                variant="secondary"
+                icon={<ArrowsClockwiseIcon />}
+                onClick={onCheck}
+                aria-label={`Check ${label} now`}
+              >
+                Check now
+              </BusyButton>
+            )}
+            {canRemove && <RemoveDomainDialog installId={installId} domain={domain} />}
           </>
-        )
-      )}
-      {error !== null && (
-        <Text as="span" variant="error" size="sm">
-          {error}
+        ) : undefined
+      }
+    >
+      {result !== null && (
+        <Text variant="secondary" size="sm">
+          {result.settingUp === true
+            ? `${DOMAIN_SETTING_UP.note(result.detail)} Checked at ${formatTime(result.checkedAt)}.`
+            : result.access === true
+              ? `${ACCESS_DOMAIN_NOTE} Checked at ${formatTime(result.checkedAt)}.`
+              : `${result.detail} at ${formatTime(result.checkedAt)}`}
         </Text>
       )}
-      {enabled && (
-        <BusyButton
-          pending={pending}
-          size="sm"
-          variant="secondary"
-          icon={<ArrowsClockwiseIcon />}
-          onClick={onCheck}
-        >
-          Check now
-        </BusyButton>
+      {error !== null && (
+        <Text variant="error" size="sm" role="alert">
+          <MessageText message={error} />
+        </Text>
       )}
-    </span>
+    </SectionRow>
   );
 }
 
@@ -345,8 +353,8 @@ function AddDomainDialog({ install }: { install: InstallDetail }) {
     >
       <LayerDialog.Trigger
         render={(p) => (
-          <Button {...p} variant="secondary" icon={<PlusIcon />}>
-            Add a domain
+          <Button {...p} variant="primary" icon={<PlusIcon />}>
+            Add domain
           </Button>
         )}
       />
@@ -379,15 +387,13 @@ function AddDomainDialog({ install }: { install: InstallDetail }) {
             )}
             {options !== null && options.zones.length > 0 && (
               <form id={formId} className="grid gap-4" onSubmit={onSubmit}>
-                <Select
-                  label="Domain"
-                  placeholder="Choose a domain"
+                <ZoneCombobox
+                  zones={options.zones}
                   value={zoneId}
-                  onValueChange={(v) => {
-                    setZoneId(typeof v === "string" ? v : null);
+                  onChange={(id) => {
+                    setZoneId(id);
                     resetConflict();
                   }}
-                  items={Object.fromEntries(options.zones.map((z) => [z.id, z.name]))}
                   disabled={pending}
                 />
                 <ZoneHostnameField
@@ -567,8 +573,8 @@ function AddWildcardDomainDialog({ install, reason }: { install: InstallDetail; 
     >
       <LayerDialog.Trigger
         render={(p) => (
-          <Button {...p} variant="secondary" icon={<PlusIcon />}>
-            Add a wildcard domain
+          <Button {...p} variant="primary" icon={<PlusIcon />}>
+            Add wildcard domain
           </Button>
         )}
       />
@@ -601,15 +607,13 @@ function AddWildcardDomainDialog({ install, reason }: { install: InstallDetail; 
             )}
             {options !== null && options.zones.length > 0 && (
               <form id={formId} className="grid gap-4" onSubmit={onSubmit}>
-                <Select
-                  label="Domain"
-                  placeholder="Choose a domain"
+                <ZoneCombobox
+                  zones={options.zones}
                   value={zoneId}
-                  onValueChange={(v) => {
-                    setZoneId(typeof v === "string" ? v : null);
+                  onChange={(id) => {
+                    setZoneId(id);
                     setWholeDomain(false);
                   }}
-                  items={Object.fromEntries(options.zones.map((z) => [z.id, z.name]))}
                   disabled={pending}
                 />
                 <ZoneHostnameField

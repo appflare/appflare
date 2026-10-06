@@ -85,4 +85,21 @@ describe("InstallHealth", () => {
     expect(invalidate).toHaveBeenCalledTimes(1);
     expect(show("unverified", true)).toContain("Behind Cloudflare Access");
   });
+
+  it("announces a failed Check now as an alert, with the links in its message", async () => {
+    const message =
+      "Cloudflare refused the check. See https://dash.cloudflare.com/?to=/:account/workers for the Worker.";
+    check.mockRejectedValueOnce(new Error(message));
+    show("verified", false);
+    const button = [...container.querySelectorAll("button")].find((b) =>
+      b.textContent?.includes("Check now"),
+    );
+    await act(async () => button?.click());
+    const alert = container.querySelector('[role="alert"]');
+    expect(alert?.textContent).toBe(message);
+    expect(alert?.querySelector("a")?.getAttribute("href")).toBe(
+      "https://dash.cloudflare.com/?to=/:account/workers",
+    );
+    expect(invalidate).not.toHaveBeenCalled();
+  });
 });

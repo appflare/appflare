@@ -712,7 +712,7 @@ async function heldElsewhere(orm: Database, installId: string, hostname: string)
 }
 
 /**
- * "Add a wildcard domain" on the app page: sets up the base `hostname` in
+ * "Add wildcard domain" on the app page: sets up the base `hostname` in
  * zone `zoneId` for the install's Worker and records it. An install has at
  * most one wildcard domain, since the app knows its sessions' names by one
  * base. Settings that use `{{wildcardHostname}}` are then deployed again
