@@ -6,10 +6,10 @@ import { messageSegments } from "./message-links";
 /**
  * A Cloudflare dashboard address: the scheme and host exactly (lower case,
  * no port, no user), then everything up to a space, a quote, an angle
- * bracket, a backtick or a closing parenthesis. Greedy, with nothing after
- * it to backtrack into, so a long line costs one pass.
+ * bracket, a backtick, or a closing parenthesis, bracket or brace. Greedy,
+ * with nothing after it to backtrack into, so a long line costs one pass.
  */
-const DASHBOARD_ADDRESS = /https:\/\/(?:one\.)?dash\.cloudflare\.com\/[^\s"'<>`)]*/g;
+const DASHBOARD_ADDRESS = /https:\/\/(?:one\.)?dash\.cloudflare\.com\/[^\s"'<>`)\]}]*/g;
 
 /** Punctuation that ends the sentence around an address rather than the address. */
 const TRAILING_PUNCTUATION = new Set([".", ",", ";", ":", "!", "?"]);
