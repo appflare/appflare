@@ -1,6 +1,7 @@
 import defaultMdxComponents from "@fumadocs/base-ui/mdx";
 import type { MDXComponents } from "mdx/types";
 import { AgentPrompt } from "./agent-prompt.tsx";
+import { InstallButton } from "./install-appflare.tsx";
 
 /**
  * The components a page's MDX can use. The defaults include `Callout`, `Cards`
@@ -11,6 +12,7 @@ export function getMDXComponents(components?: MDXComponents) {
   return {
     ...defaultMdxComponents,
     AgentPrompt,
+    InstallButton,
     ...components,
   } satisfies MDXComponents;
 }

@@ -135,5 +135,5 @@ an account-owned token).
 
 [Remove Appflare](/guides/danger-zone/#remove-appflare-from-this-account) withdraws a
 Cloudflare sign-in by itself, as its last step. If you removed an unfinished
-installation from [appflare.dev/deploy](/deploy/) after it had received its connection,
+installation from [appflare.dev/deploy](https://link.appflare.dev/deploy?utm_source=appflare-docs&utm_medium=website&utm_campaign=appflare&utm_content=guides-cloudflare-connection-install-1) after it had received its connection,
 revoke Appflare in your profile as well.

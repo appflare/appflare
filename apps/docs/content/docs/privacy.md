@@ -12,9 +12,12 @@ Links from an Appflare to this site say so in their address (`utm_source=appflar
 with the name of the link and the Appflare version), so the analytics count how many visits
 come from Appflare and from which help links. They never say which Appflare sent you.
 
+Links that install Appflare go through `link.appflare.dev`, which counts clicks and
+their UTM source and placement before redirecting to the deploy page.
+
 ## Installing Appflare from this site
 
-The page that installs Appflare from your browser, [appflare.dev/deploy](/deploy/), and the
+The page that installs Appflare from your browser, [appflare.dev/deploy](https://link.appflare.dev/deploy?utm_source=appflare-docs&utm_medium=website&utm_campaign=appflare&utm_content=privacy-install-1), and the
 page Cloudflare sends you back to after you connect run no analytics at all. No page views,
 clicks, recordings or heatmaps are taken there.
 

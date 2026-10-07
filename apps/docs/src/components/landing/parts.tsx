@@ -2,19 +2,17 @@ import Link from "fumadocs-core/link";
 import type { ReactNode } from "react";
 import logoLight from "../../../../../docs/assets/logo_full.svg?url";
 import logoDark from "../../../../../docs/assets/logo_full_white.svg?url";
-import { DEPLOY_PATH } from "../../deploy/paths.ts";
+import { installLink } from "../../lib/install-links.ts";
+
 import { siteName } from "../../lib/shared.ts";
-import { DEPLOY_BUTTON_URL } from "../install/flow-panel.tsx";
+
+export { InstallButton } from "../install-appflare.tsx";
 
 /**
  * The small pieces of the front page: the logo, the buttons, the line for
  * Cloudflare's Deploy button and
  * the frame around a manager screenshot.
  */
-
-/** The brand's orange, from the cloud in the logo. Used sparingly. */
-const FLARE_BUTTON =
-  "bg-[#fb6b00] text-white hover:bg-[#e46100] dark:bg-[#fb6b00] dark:hover:bg-[#ff7d1a]";
 
 const FOCUS_RING =
   "focus-visible:outline-2 focus-visible:outline-fd-ring focus-visible:outline-offset-2";
@@ -28,36 +26,14 @@ export function Wordmark({ className = "h-6" }: { className?: string }) {
   );
 }
 
-/**
- * Install Appflare: the deploy page, `/deploy/`, as a solid button in the
- * brand's orange. A plain link, so the deploy page loads as a page of its
- * own (with its own headers and no analytics).
- */
-export function InstallButton({
-  size = "md",
-  className = "",
-}: {
-  size?: "md" | "lg";
-  className?: string;
-}) {
-  const sizing = size === "lg" ? "h-12 px-6 text-base" : "h-10 px-4 text-sm";
-  return (
-    <a
-      href={DEPLOY_PATH}
-      className={`inline-flex shrink-0 items-center justify-center gap-2 rounded-lg font-semibold shadow-sm transition-colors ${FLARE_BUTTON} ${FOCUS_RING} ${sizing} ${className}`}
-    >
-      Install Appflare
-    </a>
-  );
-}
-
 /** Cloudflare's Deploy button, the other way to install, as one quiet line. */
-export function DeployButtonLine() {
+export function DeployButtonLine({ placement }: { placement: string }) {
   return (
     <p className="m-0 text-fd-muted-foreground text-sm">
       Or use{" "}
       <a
-        href={DEPLOY_BUTTON_URL}
+        href={installLink(placement, true)}
+        data-link-id={placement}
         className="font-medium text-fd-foreground underline underline-offset-4"
       >
         Cloudflare's Deploy button

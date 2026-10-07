@@ -60,12 +60,12 @@ export function LandingContent({ data }: { data: LandingData }) {
             signed Appflare there. It takes a few minutes and no API token.
           </p>
           <div className={BUTTON_ROW}>
-            <InstallButton size="lg" />
+            <InstallButton size="lg" placement="home-closing-install" />
             <GhostButton href={DOCS_HOME} size="lg">
               Read the docs
             </GhostButton>
           </div>
-          <DeployButtonLine />
+          <DeployButtonLine placement="home-closing-cloudflare" />
         </div>
       </section>
 
@@ -98,7 +98,7 @@ function Hero({ data }: { data: LandingData }) {
         </p>
         <div className={BUTTON_ROW}>
           <span className="relative flex">
-            <InstallButton size="lg" className="grow" />
+            <InstallButton size="lg" className="grow" placement="home-hero-install" />
             {/* The arrow's tip sits just before the button's left edge, level with its middle, and the words rise above it. A phone has no room beside the button. */}
             <ClickHere className="pointer-events-none absolute top-1/2 right-full mr-1 hidden w-60 -translate-y-[18%] text-[#c75400] lg:block dark:text-[#ff8a3d]" />
           </span>
@@ -107,7 +107,7 @@ function Hero({ data }: { data: LandingData }) {
           </GhostButton>
         </div>
         <div className="grid justify-items-center gap-2">
-          <DeployButtonLine />
+          <DeployButtonLine placement="home-hero-cloudflare" />
           <p className="m-0 text-fd-muted-foreground text-sm">
             Runs on the Workers free plan.{" "}
             <Link

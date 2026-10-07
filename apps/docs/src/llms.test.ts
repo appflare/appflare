@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { agentInstructionsUrl } from "./lib/agent-prompts.ts";
+import { installLink } from "./lib/install-links.ts";
 import { llmsIndex } from "./lib/llms.ts";
 import { docsLlms, source } from "./lib/source.ts";
 
@@ -31,7 +32,7 @@ describe("Markdown for agents", () => {
   it("writes Cards as a list of links", async () => {
     const text = await docsLlms.page(page("start", "overview"));
     expect(text).toContain(
-      "- [Install from your browser](/start/browser-install/): The recommended way.",
+      `- [Install from your browser](${installLink("overview-install-card")}): The recommended way.`,
     );
   });
 
