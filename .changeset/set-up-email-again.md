@@ -1,5 +1,0 @@
----
-"@appflare/manager": minor
----
-
-An email app whose update or rollback had to leave part of its Email Routing out (an address that already had a rule Appflare did not set up, a catch-all that already sent mail somewhere, a call Cloudflare refused) now says so on its page, under Email on the Domains tab and in the app's settings, with "Set up email again" for admins. Its confirmation lists each routing rule it sets up or removes. The job checks the app's email domain first, and stops before changing anything if a rule or catch-all Appflare did not set up is still in the way, naming what to delete or change in the Cloudflare dashboard. It sets up only what the installed version asks for, removes only routes Appflare set up that still send mail to the app's Worker, deploys nothing, and changes nothing when run again. The update's log notes about a part left out now point to it. Installs, updates and rollbacks also take an existing routing rule for an address as the app's only when it is on, matches that address alone and sends mail to the app's Worker; a rule that is off or also matches the sender is now in the way like any other.

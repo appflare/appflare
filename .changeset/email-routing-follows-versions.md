@@ -1,5 +1,0 @@
----
-"@appflare/manager": minor
----
-
-Updates and rollbacks now change an email app's Email Routing to match the version they move to: the routing rules and catch-all a version adds are set up on the app's email domain, and the ones it drops are removed, so a rollback puts back what an update changed. Rules and catch-alls Appflare did not set up are never touched; a part that would need one, or that Cloudflare refuses, is left out with a note in the job log, and the next update or rollback finishes it. The update dialog shows how a version changes the app's email before it starts, and automatic updates and "Update all" leave such an update for an admin. The rollback dialog says when a rollback sets Email Routing up again. A rollback also deploys the app's settings again when they name the app's address (`{{appUrl}}`, `{{appHostname}}`, `{{wildcardHostname}}`) and the version it returns to was uploaded with another one, and an update does the same when the address changed while it ran. Moving an app's email back to a domain it used before brings that domain's records back.

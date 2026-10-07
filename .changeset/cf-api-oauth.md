@@ -1,7 +1,0 @@
----
-"@appflare/cf-api": minor
----
-
-Helpers for Cloudflare's OAuth protocol, for a public client. A new `@appflare/cf-api/oauth` entry (also exported from the package root) uses only `fetch` and WebCrypto, so it runs in a browser, a Worker and Node 22. It has the authorize, token and revoke endpoints and Appflare's callback address, PKCE (S256), the authorization URL, and requests that exchange a code, refresh a grant and revoke a token. A refresh returns the rotated refresh token, or the one it sent when Cloudflare returns none. A failed request throws `CloudflareOAuthError`, which says whether the grant is gone and has to be authorized again (`invalid_grant`), or whether the failure was temporary and can be retried (no complete response, HTTP 5xx or 429). Codes, verifiers and tokens never appear in its message or its `code`, in any encoding. The `state` helpers encode and check which kind of authorization a callback belongs to. A reconnect may pass its code only to an `https:` origin, or over `http:` to `localhost` or `127.0.0.1`.
-
-The entry also lists the OAuth scopes Appflare's manager asks for: one per permission group of its API token, plus `offline_access` so that Cloudflare issues a refresh token. Billing is the one group with no OAuth scope, so an OAuth grant cannot list the account's subscriptions to read its Workers plan. `missingManagerScopes` lists the scopes a grant lacks.
