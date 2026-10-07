@@ -8,29 +8,34 @@
 <p align="center"><strong>An app store for your own Cloudflare account.</strong></p>
 
 <p align="center">
-  <a href="https://appflare.dev"><img alt="Documentation" src="https://img.shields.io/badge/docs-appflare-f38020"></a>
+  <a href="https://appflare.dev?utm_source=github&utm_medium=readme&utm_campaign=appflare&utm_content=appflare-readme-home-1"><img alt="Documentation" src="https://img.shields.io/badge/docs-appflare-f38020"></a>
   <a href="https://github.com/appflare/appflare/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/appflare/appflare/actions/workflows/ci.yml/badge.svg"></a>
   <a href="LICENSE"><img alt="License: Apache-2.0" src="https://img.shields.io/badge/license-Apache--2.0-blue"></a>
 </p>
 
-Install and manage 100+ open-source apps, including [OpenSEO](https://appflare.dev/apps/open-seo/),
-[Sink](https://appflare.dev/apps/sink/) and [Counterscale](https://appflare.dev/apps/counterscale/).
+Install and manage 100+ open-source apps, including [OpenSEO](https://appflare.dev/apps/open-seo/?utm_source=github&utm_medium=readme&utm_campaign=appflare&utm_content=appflare-readme-apps-open-seo-1),
+[Sink](https://appflare.dev/apps/sink/?utm_source=github&utm_medium=readme&utm_campaign=appflare&utm_content=appflare-readme-apps-sink-1) and [Counterscale](https://appflare.dev/apps/counterscale/?utm_source=github&utm_medium=readme&utm_campaign=appflare&utm_content=appflare-readme-apps-counterscale-1).
 Appflare sets up each app and gives you one dashboard for updates, custom domains
 and access control. Your apps run in your own Cloudflare account.
 
-[![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://link.appflare.dev/deploy)
+[![Install Appflare](docs/assets/install-appflare.svg)](https://link.appflare.dev/deploy?utm_source=github&utm_medium=readme&utm_campaign=appflare&utm_content=appflare-readme-install-1)
 
-[Browse the apps](https://appflare.dev/apps/) · [Installation guide](https://appflare.dev/start/install/) · [Documentation](https://appflare.dev) · [App catalog repository](https://github.com/appflare/catalog)
+Or use [Cloudflare's Deploy button](https://link.appflare.dev/deploy-1c?utm_source=github&utm_medium=readme&utm_campaign=appflare&utm_content=appflare-readme-cloudflare-deploy-1).
 
-[![Appflare with a gallery of apps you can install in your own Cloudflare account](docs/assets/readme-hero.png)](https://appflare.dev/apps/)
+[Browse the apps](https://appflare.dev/apps/?utm_source=github&utm_medium=readme&utm_campaign=appflare&utm_content=appflare-readme-apps-1) · [Installation guide](https://appflare.dev/start/install/?utm_source=github&utm_medium=readme&utm_campaign=appflare&utm_content=appflare-readme-start-install-1) · [Documentation](https://appflare.dev?utm_source=github&utm_medium=readme&utm_campaign=appflare&utm_content=appflare-readme-home-2) · [App catalog repository](https://github.com/appflare/catalog)
+
+[![Appflare with a gallery of apps you can install in your own Cloudflare account](docs/assets/readme-hero.png)](https://appflare.dev/apps/?utm_source=github&utm_medium=readme&utm_campaign=appflare&utm_content=appflare-readme-apps-2)
 
 ## Install Appflare
 
-Use the **Deploy to Cloudflare** button above to install from your browser. You
-need a Cloudflare account and a GitHub or GitLab account. The button copies Appflare
-into your Git account and deploys it, then the setup wizard connects Cloudflare and
-creates your owner account. You can delete the copy after setup.
-[The browser setup guide](https://appflare.dev/start/deploy-button/) walks through each step.
+Select **Install Appflare** above, sign in to Cloudflare, and choose the account
+and address. Appflare's hosted deploy page installs it for you. You need only a
+Cloudflare account, with no API token to create or Git repository to clean up.
+[The browser setup guide](https://appflare.dev/start/browser-install/?utm_source=github&utm_medium=readme&utm_campaign=appflare&utm_content=appflare-readme-start-browser-install-1) covers each step.
+
+You can also use [Cloudflare's Deploy button](https://link.appflare.dev/deploy-1c?utm_source=github&utm_medium=readme&utm_campaign=appflare&utm_content=appflare-readme-cloudflare-deploy-2),
+which copies a repository into your GitHub or GitLab account.
+[Its setup guide](https://appflare.dev/start/deploy-button/?utm_source=github&utm_medium=readme&utm_campaign=appflare&utm_content=appflare-readme-start-deploy-button-1) explains the token and cleanup.
 
 Or run the installer with **Node.js 22 or newer**:
 
@@ -38,8 +43,8 @@ Or run the installer with **Node.js 22 or newer**:
 npx create-appflare
 ```
 
-You can also [give the installation prompt to a coding agent](https://appflare.dev/start/install/).
-All three methods install the same Appflare release into your account.
+You can also [give the installation prompt to a coding agent](https://appflare.dev/start/install/?utm_source=github&utm_medium=readme&utm_campaign=appflare&utm_content=appflare-readme-start-install-2).
+All these methods install the same Appflare release into your account.
 
 Appflare is free and open source. It runs on the free Workers plan, and most
 catalog apps do too. Each app's page shows whether it needs Workers Paid. Apps count
@@ -63,7 +68,7 @@ you remove it.
 [Report a bug or suggest a feature](https://github.com/appflare/appflare/issues),
 or open a pull request to improve the manager, installer or documentation.
 To add an app, use the [catalog repository](https://github.com/appflare/catalog)
-and [submission guide](https://appflare.dev/catalog/submit/).
+and [submission guide](https://appflare.dev/catalog/submit/?utm_source=github&utm_medium=readme&utm_campaign=appflare&utm_content=appflare-readme-catalog-submit-1).
 
 For development, use Node.js 22 or newer and pnpm 10. The repository's
 [`package.json`](package.json) pins the pnpm version.
@@ -80,16 +85,16 @@ and [documentation site](apps/docs) live in this repository.
 
 ## Documentation
 
-Find setup instructions and guides at [appflare.dev](https://appflare.dev):
+Find setup instructions and guides at [appflare.dev](https://appflare.dev?utm_source=github&utm_medium=readme&utm_campaign=appflare&utm_content=appflare-readme-home-3):
 
-- [What Appflare is](https://appflare.dev/start/overview/)
-- [Install Appflare](https://appflare.dev/start/install/)
-- [Install an app](https://appflare.dev/guides/install-apps/)
-- [Update and roll back](https://appflare.dev/guides/updates/)
-- [Custom domains](https://appflare.dev/guides/custom-domains/)
-- [Submit an app to the catalog](https://appflare.dev/catalog/submit/)
-- [Security model](https://appflare.dev/security/)
-- [FAQ](https://appflare.dev/faq/)
+- [What Appflare is](https://appflare.dev/start/overview/?utm_source=github&utm_medium=readme&utm_campaign=appflare&utm_content=appflare-readme-start-overview-1)
+- [Install Appflare](https://link.appflare.dev/deploy?utm_source=github&utm_medium=readme&utm_campaign=appflare&utm_content=appflare-readme-install-2)
+- [Install an app](https://appflare.dev/guides/install-apps/?utm_source=github&utm_medium=readme&utm_campaign=appflare&utm_content=appflare-readme-guides-install-apps-1)
+- [Update and roll back](https://appflare.dev/guides/updates/?utm_source=github&utm_medium=readme&utm_campaign=appflare&utm_content=appflare-readme-guides-updates-1)
+- [Custom domains](https://appflare.dev/guides/custom-domains/?utm_source=github&utm_medium=readme&utm_campaign=appflare&utm_content=appflare-readme-guides-custom-domains-1)
+- [Submit an app to the catalog](https://appflare.dev/catalog/submit/?utm_source=github&utm_medium=readme&utm_campaign=appflare&utm_content=appflare-readme-catalog-submit-2)
+- [Security model](https://appflare.dev/security/?utm_source=github&utm_medium=readme&utm_campaign=appflare&utm_content=appflare-readme-security-1)
+- [FAQ](https://appflare.dev/faq/?utm_source=github&utm_medium=readme&utm_campaign=appflare&utm_content=appflare-readme-faq-1)
 
 ## License
 

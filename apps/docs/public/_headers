@@ -13,3 +13,8 @@
 /badge.svg
   Cache-Control: public, max-age=86400
   Cross-Origin-Resource-Policy: cross-origin
+
+# Appflare's own install button, for README links to the hosted installer.
+/deploy-badge.svg
+  Cache-Control: public, max-age=86400
+  Cross-Origin-Resource-Policy: cross-origin

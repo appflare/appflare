@@ -17,6 +17,7 @@ import {
   type VerifiedArtifact,
   verifyArtifact,
 } from "create-appflare";
+import { attributedLink, installLink } from "../apps/docs/src/lib/install-links.ts";
 import { pageUrl, SITE_URL } from "../apps/docs/src/lib/shared.ts";
 import { findSecrets, repoSecrets, type Secret } from "./deploy-repo-guard.ts";
 
@@ -342,9 +343,21 @@ export const DEPLOY_BUTTON_URL = deployButtonUrl();
  * `appflare/deploy` unless a trial copy of the repository lives elsewhere.
  */
 export function deployRepoReadme(version: string, options: { repository?: string } = {}): string {
+  const attribution = { source: "github", medium: "readme" };
+  const docs = (placement: string, ...slugs: string[]) =>
+    attributedLink(docsPage(...slugs), placement, attribution);
+  const cloudflare = options.repository
+    ? deployButtonUrl(options.repository)
+    : attributedLink(DEPLOY_SHORT_LINK, "deploy-readme-cloudflare", attribution);
   return `# Deploy Appflare
 
-[![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](${deployButtonUrl(options.repository)})
+[![Install Appflare](${SITE_URL}/deploy-badge.svg)](${installLink("deploy-readme-install", false, attribution)})
+
+The recommended way: sign in to Cloudflare and choose an address. The hosted deploy
+page installs Appflare without an API token or a Git repository to clean up.
+
+Or use [Cloudflare's Deploy button](${cloudflare}). The steps
+below cover that repository-based option.
 
 [Appflare](https://github.com/appflare/appflare) is a self-hosted app manager for
 Cloudflare: one Worker in your own account that installs, updates, and removes
@@ -377,8 +390,8 @@ ${version} for the Deploy to Cloudflare button. Nothing in it is built on deploy
 - **A \`workers.dev\` subdomain.** Register one in the dashboard (Workers & Pages) first
   if the account has none.
 
-The full guide: [Deploy with the button](${docsPage("start", "deploy-button")}). Other ways
-to install are listed in [Install Appflare](${docsPage("start", "install")}).
+The full guide: [Deploy with the button](${docs("deploy-readme-cloudflare-guide", "start", "deploy-button")}). Other ways
+to install are listed in [Install Appflare](${docs("deploy-readme-install-guide", "start", "install")}).
 
 ## About this repository
 

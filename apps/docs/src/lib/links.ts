@@ -18,6 +18,7 @@ const staticFiles = [
   searchIndexPath,
   "/favicon.svg",
   "/badge.svg",
+  "/deploy-badge.svg",
 ];
 
 /**

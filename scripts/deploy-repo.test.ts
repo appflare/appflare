@@ -153,8 +153,10 @@ describe("the deploy repository's npm project", () => {
 
   it("has a README with the button and the three steps", () => {
     const readme = deployRepoReadme("1.2.3");
-    expect(readme).toContain(`(${DEPLOY_BUTTON_URL})`);
-    expect(readme).toContain("https://deploy.workers.cloudflare.com/button");
+    expect(readme).toContain(`(${DEPLOY_BUTTON_URL}?utm_source=github`);
+    expect(readme).toContain("/deploy-badge.svg");
+    expect(readme).not.toContain("https://deploy.workers.cloudflare.com/button");
+    expect(readme).toContain("utm_content=deploy-readme-install");
     expect(readme).toMatch(
       /1\. \*\*Deploy\.\*\*[\s\S]*2\. \*\*Set up\.\*\*[\s\S]*3\. \*\*Clean up\.\*\*/,
     );
@@ -164,8 +166,8 @@ describe("the deploy repository's npm project", () => {
   it("links the documentation on the docs site's own address", () => {
     const readme = deployRepoReadme("1.2.3");
     expect(docsPage("start", "deploy-button")).toBe(`${SITE_URL}/start/deploy-button/`);
-    expect(readme).toContain(`(${SITE_URL}/start/deploy-button/)`);
-    expect(readme).toContain(`(${SITE_URL}/start/install/)`);
+    expect(readme).toContain(`(${SITE_URL}/start/deploy-button/?utm_source=github`);
+    expect(readme).toContain(`(${SITE_URL}/start/install/?utm_source=github`);
     const docsLinks = readme.match(/\]\((https:\/\/[^)]+)\)/g) ?? [];
     const external = /github\.com|cloudflare\.com|link\.appflare\.dev/;
     for (const link of docsLinks.filter((l) => !external.test(l))) {

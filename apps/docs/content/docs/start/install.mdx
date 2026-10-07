@@ -5,7 +5,9 @@ description: Install from your browser at appflare.dev/deploy, or with Cloudflar
 
 ## Install from your browser
 
-The recommended way. Open [appflare.dev/deploy](/deploy/), sign in to Cloudflare,
+<InstallButton placement="install-primary" />
+
+The recommended way. Open [appflare.dev/deploy](https://link.appflare.dev/deploy?utm_source=appflare-docs&utm_medium=website&utm_campaign=appflare&utm_content=start-install-install-1), sign in to Cloudflare,
 choose the account and Appflare's address, and the page deploys Appflare there. You
 need a Cloudflare login and nothing else: no API token, no Git account, nothing on your
 computer. [Install from your browser](/start/browser-install/) goes through it step by
@@ -15,14 +17,14 @@ Or use Cloudflare's Deploy button. It goes through a copy of Appflare in your Gi
 GitLab account, which you remove afterwards.
 [Deploy with the button](/start/deploy-button/) walks through it.
 
-[![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://link.appflare.dev/deploy-1c)
+[Cloudflare's Deploy button](https://link.appflare.dev/deploy-1c?utm_source=appflare-docs&utm_medium=website&utm_campaign=appflare&utm_content=start-install-cloudflare-1)
 
 Every way deploys the same signed release into your own account and ends in the same
 [setup wizard](#the-setup-wizard).
 
 | | From your browser | Cloudflare's Deploy button | The command line |
 | --- | --- | --- | --- |
-| How | Open [appflare.dev/deploy](/deploy/) | Select the button: [Deploy with the button](/start/deploy-button/) | Run `npx create-appflare`; see [Advanced](#advanced-install-from-the-command-line) below |
+| How | Open [appflare.dev/deploy](https://link.appflare.dev/deploy?utm_source=appflare-docs&utm_medium=website&utm_campaign=appflare&utm_content=start-install-install-2) | Select the button: [Deploy with the button](/start/deploy-button/) | Run `npx create-appflare`; see [Advanced](#advanced-install-from-the-command-line) below |
 | You need | A Cloudflare login | A GitHub or GitLab account | Node.js 22 |
 | Appflare connects with | Cloudflare sign-in, set up by the page | An API token you create during setup | An API token you create during setup |
 | Who touches your account | Appflare's hosted installer, with a short-lived token, during the install | Cloudflare's Workers Builds | Wrangler, with your login |

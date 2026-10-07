@@ -1,8 +1,8 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import { siteCatalog } from "../../catalog/data.ts";
+import { installLink } from "../../lib/install-links.ts";
 import { landingData } from "../../lib/landing.ts";
-import { DEPLOY_BUTTON_URL } from "../install/flow-panel.tsx";
 import { LandingContent } from "./landing-page.tsx";
 
 const data = landingData(siteCatalog);
@@ -10,22 +10,22 @@ const html = renderToStaticMarkup(<LandingContent data={data} />);
 
 describe("the front page", () => {
   it("leads with Install Appflare, the deploy page, twice", () => {
-    const install = /<a href="\/deploy\/"[^>]*>Install Appflare<\/a>/g;
-    expect(html.match(install)).toHaveLength(2);
-    // The hero's button comes before the screenshot.
-    expect(html.indexOf('href="/deploy/"')).toBeLessThan(
+    const installs = [
+      ...html.matchAll(/<a[^>]*href="(https:\/\/link\.appflare\.dev\/deploy\?[^"]*)"[^>]*>/g),
+    ];
+    expect(installs).toHaveLength(2);
+    expect(html.indexOf(installLink("home-hero-install").replaceAll("&", "&amp;"))).toBeLessThan(
       html.indexOf('<img src="/screenshots/landing-home.png"'),
     );
+    expect(installs[0]?.[1]).not.toBe(installs[1]?.[1]);
   });
 
   it("keeps Cloudflare's Deploy button as a quiet second way, after each Install button", () => {
-    const deploy = `href="${DEPLOY_BUTTON_URL.replaceAll("&", "&amp;")}"`;
-    expect(html.split(deploy).length - 1).toBe(2);
-    expect(html.indexOf(deploy)).toBeGreaterThan(html.indexOf('href="/deploy/"'));
+    const deploy = installLink("home-hero-cloudflare", true).replaceAll("&", "&amp;");
+    expect(html).toContain(deploy);
+    expect(html.indexOf(deploy)).toBeGreaterThan(html.indexOf("home-hero-install"));
     expect(html).toContain("Cloudflare&#x27;s Deploy button");
-    expect(html).not.toMatch(
-      /<a[^>]*href="https:\/\/link\.appflare\.dev\/deploy-1c"[^>]*bg-\[#fb6b00\]/,
-    );
+    expect(html).not.toContain("deploy.workers.cloudflare.com/button");
   });
 
   it("links to the documentation where it starts", () => {
