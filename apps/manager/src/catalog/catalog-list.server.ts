@@ -104,7 +104,7 @@ async function listItems(
       installs: active.bySlug.get(key) ?? [],
       // Images, avatars and popularity come from the official catalog alone.
       images: appMediaView(official ? app.media : undefined, indexUrl),
-      popularity: official ? appPopularity(stats, app.slug) : null,
+      popularity: official ? appPopularity(stats, app.slug, app.repo) : null,
       pitch: app.tagline,
       ...appFacts(app),
     };

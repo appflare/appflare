@@ -59,6 +59,17 @@ describe("indexJsonSchema", () => {
     expect(parsed.apps[0]?.lastVerified).toBeNull();
   });
 
+  it("keeps the public repository when published and accepts older rows without one", () => {
+    const row = validIndex.apps[0];
+    expect(indexAppSchema.parse(row).repo).toBeUndefined();
+    const published = indexAppSchema.parse({ ...row, repo: "emdash-cms/emdash" });
+    expect(published.repo).toBe("emdash-cms/emdash");
+    expect(readIndexApp(published).repo).toBe("emdash-cms/emdash");
+    for (const repo of ["missing-owner", "a/b/c", null]) {
+      expect(indexAppSchema.safeParse({ ...row, repo }).success).toBe(false);
+    }
+  });
+
   it("rejects an index with a non-URL artifact and unknown tier", () => {
     const invalid = {
       ...validIndex,

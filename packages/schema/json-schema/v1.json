@@ -44,7 +44,13 @@
     },
     "repo": {
       "type": "string",
-      "pattern": "^[^/\\s]+\\/[^/\\s]+$"
+      "pattern": "^[^/\\s]+\\/[^/\\s]+$",
+      "description": "The public GitHub repository the app is built from, as `owner/repo`. The source pin, builds and version bumps always use this repository. Also shown as the app's source code link unless `upstreamRepo` names its main project."
+    },
+    "upstreamRepo": {
+      "type": "string",
+      "pattern": "^[^/\\s]+\\/[^/\\s]+$",
+      "description": "The app's main public GitHub repository, as `owner/repo`, when `repo` is a deployment template or a fork. Used for source code links, GitHub stars, and the default homepage and authors. Builds, source pins and version bumps still use `repo`."
     },
     "license": {
       "type": "string",
@@ -134,7 +140,7 @@
         "additionalProperties": false,
         "description": "A person or organization that wrote the app, with optional links."
       },
-      "description": "Who wrote the app upstream: one or more people or organizations, shown on the catalog card and the app's page. Not the people who package it for the catalog (those are `maintainers`). When omitted, the catalog lists the owner of `repo`."
+      "description": "Who wrote the app upstream: one or more people or organizations, shown on the catalog card and the app's page. Not the people who package it for the catalog (those are `maintainers`). When omitted, the catalog lists the owner of `upstreamRepo`, or `repo` when no upstream repository is set."
     },
     "maintainers": {
       "default": [],
@@ -4075,7 +4081,7 @@
       "type": "integer",
       "minimum": 1,
       "maximum": 1000000,
-      "description": "Which edit of this entry's form and copy the catalog publishes for the build its `source` already released, starting at 1 (the default when omitted). Raise it by one to publish a change to `name`, `summary`, `homepage`, `license`, `categories`, `maintainers`, `secrets`, `vars`, `postInstall`, `bump`, `access` or `openPath`, or to add `\"access\"` to `requires`, without moving `source`: the released artifact stays as it is, and managers show the new form without an update. `tagline`, `licenseNote` and `authors` need no revision: the catalog shows them from the current manifest. Anything else needs a new build, so move `source` instead."
+      "description": "Which edit of this entry's form and copy the catalog publishes for the build its `source` already released, starting at 1 (the default when omitted). Raise it by one to publish a change to `name`, `summary`, `homepage`, `upstreamRepo`, `license`, `categories`, `maintainers`, `secrets`, `vars`, `postInstall`, `bump`, `access` or `openPath`, or to add `\"access\"` to `requires`, without moving `source`: the released artifact stays as it is, and managers show the new form without an update. `tagline`, `licenseNote` and `authors` need no revision: the catalog shows them from the current manifest. Anything else needs a new build, so move `source` instead."
     },
     "access": {
       "type": "object",

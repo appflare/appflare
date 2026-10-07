@@ -30,6 +30,8 @@ export interface InstallApp {
   icon: string | null;
   /** Its GitHub repository, `owner/repo`. */
   repo: string;
+  /** Its build repository when it differs from the public repository. */
+  sourceRepo?: string;
 }
 
 /** The request for a catalog app, or null when `slug` cannot be one. */
@@ -89,13 +91,16 @@ export function installPagePath(request: InstallRequest): string {
   return request.kind === "app" ? installPath(request.slug) : `/install/?repo=${request.repo}`;
 }
 
-/** The catalog app built from `repo`, if there is one. GitHub names ignore case. */
-export function catalogAppForRepo<App extends Pick<InstallApp, "repo">>(
+/** The catalog app for a repository, preferring public matches. GitHub names ignore case. */
+export function catalogAppForRepo<App extends Pick<InstallApp, "repo" | "sourceRepo">>(
   apps: readonly App[],
   repo: string,
 ): App | undefined {
   const wanted = repo.toLowerCase();
-  return apps.find((app) => app.repo.toLowerCase() === wanted);
+  return (
+    apps.find((app) => app.repo.toLowerCase() === wanted) ??
+    apps.find((app) => app.sourceRepo?.toLowerCase() === wanted)
+  );
 }
 
 /** How a request reads in a sentence: the app's name, or the repository. */

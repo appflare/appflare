@@ -353,6 +353,28 @@ describe("links", () => {
     });
   });
 
+  it("links the main project and keeps license files in the repository the pin belongs to", () => {
+    expect(
+      appLinks(
+        { repo: "emdash-cms/templates", upstreamRepo: "emdash-cms/emdash", source: catalog.source },
+        { expression: "SEE LICENSE IN LICENSE.md", note: null },
+      ),
+    ).toEqual([
+      {
+        kind: "repository",
+        label: "Source code",
+        href: "https://github.com/emdash-cms/emdash",
+        detail: "github.com/emdash-cms/emdash",
+      },
+      {
+        kind: "license",
+        label: "License",
+        href: "https://github.com/emdash-cms/templates/blob/abc123/LICENSE.md",
+        detail: "LICENSE.md",
+      },
+    ]);
+  });
+
   it("has no license link without a license, or for an expression of several", () => {
     expect(appLinks(catalog, null).map((l) => l.kind)).toEqual(["repository", "website"]);
     expect(appLinks(catalog, { expression: "NONE", note: null }).map((l) => l.kind)).toEqual([

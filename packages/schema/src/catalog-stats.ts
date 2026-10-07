@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { ownerRepoSchema } from "./catalog.ts";
 
 /**
  * Schema for the catalog's popularity file, `stats.json`, published next to
@@ -28,6 +29,8 @@ export const catalogAppStatsSchema = z.object({
     .object({
       count: z.number().int().nonnegative(),
       fetchedAt: z.iso.datetime(),
+      /** Repository whose stars were counted; absent in older stats files. */
+      repo: ownerRepoSchema.optional(),
     })
     .nullable(),
   /** Install counts from the managers' anonymous events; null when never read. */

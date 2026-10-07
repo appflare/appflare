@@ -10,6 +10,7 @@ import {
   catalogAuthors,
   catalogHomepage,
   catalogManifestSchema,
+  catalogRepository,
   catalogVarOptions,
   catalogWorkerName,
   cloudflareTokenProblems,
@@ -135,6 +136,32 @@ describe("catalogManifestSchema", () => {
     expect(catalogHomepage(set)).toBe("https://cut.dev");
     for (const homepage of ["http://example.com", "javascript:alert(1)", "ftp://example.com"]) {
       expect(catalogManifestSchema.safeParse({ ...validManifest, homepage }).success).toBe(false);
+    }
+  });
+
+  it("uses the main repository for public links while keeping the build source", () => {
+    const manifest = strictCatalogManifestSchema.parse({
+      ...validManifest,
+      repo: "emdash-cms/templates",
+      upstreamRepo: "emdash-cms/emdash",
+    });
+    expect(manifest.repo).toBe("emdash-cms/templates");
+    expect(manifest.source).toEqual({ ref: "v0.1.0", sha: "0".repeat(40) });
+    expect(catalogRepository(manifest)).toBe("emdash-cms/emdash");
+    expect(catalogHomepage(manifest)).toBe("https://github.com/emdash-cms/emdash");
+    expect(catalogHomepage({ ...manifest, homepage: "https://emdash.example" })).toBe(
+      "https://emdash.example",
+    );
+    expect(catalogRepository(catalogManifestSchema.parse(validManifest))).toBe("MendyLanda/cut");
+    for (const upstreamRepo of [
+      "https://github.com/emdash-cms/emdash",
+      "missing-owner",
+      "a/b/c",
+      null,
+    ]) {
+      expect(catalogManifestSchema.safeParse({ ...validManifest, upstreamRepo }).success).toBe(
+        false,
+      );
     }
   });
 
@@ -923,6 +950,12 @@ describe("authors", () => {
       { name: "willswire", github: "willswire" },
     ]);
     expect(catalogAuthors({ repo: "willswire/unifi-ddns", authors })).toEqual(authors);
+  });
+
+  it("default to the main project's owner when built from another owner's fork", () => {
+    const manifest = { repo: "packager/template", upstreamRepo: "emdash-cms/emdash" };
+    expect(catalogAuthors(manifest)).toEqual([{ name: "emdash-cms", github: "emdash-cms" }]);
+    expect(catalogAuthors({ ...manifest, authors })).toEqual(authors);
   });
 
   it("derive no GitHub link from an owner GitHub would not accept", () => {

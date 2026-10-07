@@ -36,12 +36,26 @@ export function freshStats(stats: CatalogStats | null, now: Date): CatalogStats 
   return age <= STATS_MAX_AGE_MS ? stats : null;
 }
 
-/** One app's numbers from (fresh) stats; null when the stats do not list it. */
-export function appPopularity(stats: CatalogStats | null, slug: string): AppPopularity | null {
+/**
+ * One app's numbers from fresh stats. Stars need matching repository provenance
+ * when the caller knows the public repository. Proven stars are hidden when the
+ * caller cannot identify the repository; older callers may still show legacy
+ * counts without provenance. Install counts do not depend on the repository.
+ */
+export function appPopularity(
+  stats: CatalogStats | null,
+  slug: string,
+  expectedRepo?: string,
+): AppPopularity | null {
   const entry = stats?.apps[slug];
   if (entry === undefined) return null;
+  const stars = entry.stars;
+  const sameRepo =
+    expectedRepo === undefined
+      ? stars?.repo === undefined
+      : stars?.repo?.toLowerCase() === expectedRepo.toLowerCase();
   return {
-    stars: entry.stars?.count ?? null,
+    stars: sameRepo ? (stars?.count ?? null) : null,
     installs30d: entry.installs?.last30d ?? null,
     activeInstalls: entry.installs?.active ?? null,
     installsKnown: entry.installs !== null,

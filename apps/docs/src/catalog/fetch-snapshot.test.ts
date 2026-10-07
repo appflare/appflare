@@ -140,6 +140,28 @@ describe("fetchCatalogSnapshot", () => {
     expect(calls.filter((url) => url === `${BASE}seo.json`)).toHaveLength(3);
   });
 
+  it("reads the public repository from a revised manifest instead of its original release", async () => {
+    const files = catalog();
+    const revised = JSON.stringify({ repo: "acme/cut", upstreamRepo: "upstream/cut" });
+    const index = JSON.parse(String(files.get(`${BASE}index.json`)));
+    index.apps[0].catalogManifest = {
+      url: `${BASE}cut/revised.json`,
+      sha256: sha(revised),
+      keyId: "test-key",
+      signature: "test-signature",
+    };
+    files.set(`${BASE}index.json`, JSON.stringify(index));
+    files.set(`${BASE}cut/revised.json`, revised);
+    const { fetch, calls } = fakeFetch(files);
+    const { snapshot } = await fetchCatalogSnapshot({ ...options, fetch });
+    expect(snapshot.links.cut).toEqual({
+      repo: "upstream/cut",
+      sourceRepo: "acme/cut",
+      homepage: "https://github.com/upstream/cut",
+    });
+    expect(calls).not.toContain(`${BASE}cut/manifest.json`);
+  });
+
   it("fails when a file cannot be fetched, so the build fails", async () => {
     const { fetch } = fakeFetch(catalog(), new Map([[`${BASE}seo.json`, 3]]));
     await expect(fetchCatalogSnapshot({ ...options, fetch })).rejects.toThrow(
@@ -204,6 +226,10 @@ describe("the helpers", () => {
     });
     expect(() => linksOf({ repo: "not a repo" })).toThrow(/owner\/repo/);
     expect(() => linksOf(undefined)).toThrow();
+    for (const upstreamRepo of ["not a repo", "https://github.com/acme/cut", null]) {
+      expect(() => linksOf({ repo: "acme/cut", upstreamRepo })).toThrow(/upstreamRepo/);
+    }
+    expect(() => linksOf({ repo: "bad", upstreamRepo: "acme/cut" })).toThrow(/repo/);
   });
 
   it("drop sponsored items for apps left out", () => {

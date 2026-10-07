@@ -2088,9 +2088,18 @@ export function catalogWorkerName(manifest: {
   return manifest.install.workerName ?? manifest.slug;
 }
 
-/** The app's homepage: `homepage`, else its repository on GitHub. */
-export function catalogHomepage(manifest: Pick<CatalogManifest, "homepage" | "repo">): string {
-  return manifest.homepage ?? `https://github.com/${manifest.repo}`;
+/** The app's public repository: `upstreamRepo`, else its build repository. */
+export function catalogRepository(
+  manifest: Pick<CatalogManifest, "repo" | "upstreamRepo">,
+): string {
+  return manifest.upstreamRepo ?? manifest.repo;
+}
+
+/** The app's homepage: `homepage`, else its public repository on GitHub. */
+export function catalogHomepage(
+  manifest: Pick<CatalogManifest, "homepage" | "repo" | "upstreamRepo">,
+): string {
+  return manifest.homepage ?? `https://github.com/${catalogRepository(manifest)}`;
 }
 
 /**
@@ -2184,9 +2193,9 @@ export function authorsFromRepo(repo: string): CatalogAuthor[] {
 
 /** The app's authors: `authors` when the manifest lists them, else {@link authorsFromRepo}. */
 export function catalogAuthors(
-  manifest: Pick<CatalogManifest, "authors" | "repo">,
+  manifest: Pick<CatalogManifest, "authors" | "repo" | "upstreamRepo">,
 ): CatalogAuthor[] {
-  return manifest.authors ?? authorsFromRepo(manifest.repo);
+  return manifest.authors ?? authorsFromRepo(catalogRepository(manifest));
 }
 
 /** A catalog manifest's first `revision`, and what an omitted one means. */
@@ -2204,7 +2213,7 @@ export const catalogRevisionSchema = z
   .describe(
     "Which edit of this entry's form and copy the catalog publishes for the build its `source` " +
       "already released, starting at 1 (the default when omitted). Raise it by one to publish a " +
-      "change to `name`, `summary`, `homepage`, `license`, `categories`, `maintainers`, " +
+      "change to `name`, `summary`, `homepage`, `upstreamRepo`, `license`, `categories`, `maintainers`, " +
       '`secrets`, `vars`, `postInstall`, `bump`, `access` or `openPath`, or to add `"access"` to ' +
       "`requires`, without moving `source`: the released artifact stays as it is, and managers " +
       "show the new form without an update. `tagline`, " +
@@ -2257,14 +2266,25 @@ export const catalogManifestSchema = z
       .regex(/^https:\/\//, "must be an https:// URL")
       .describe("The app's website, as an https:// URL. Defaults to its repository on GitHub.")
       .optional(),
-    repo: ownerRepoSchema,
+    repo: ownerRepoSchema.describe(
+      "The public GitHub repository the app is built from, as `owner/repo`. The source pin, " +
+        "builds and version bumps always use this repository. Also shown as the app's source " +
+        "code link unless `upstreamRepo` names its main project.",
+    ),
+    upstreamRepo: ownerRepoSchema
+      .describe(
+        "The app's main public GitHub repository, as `owner/repo`, when `repo` is a deployment " +
+          "template or a fork. Used for source code links, GitHub stars, and the default " +
+          "homepage and authors. Builds, source pins and version bumps still use `repo`.",
+      )
+      .optional(),
     license: licenseSchema,
     /** A short line shown next to the license. */
     licenseNote: licenseNoteSchema.optional(),
     categories: catalogCategoriesSchema,
     /**
      * Who wrote the app upstream, as the catalog shows them. The catalog
-     * index lists the owner of `repo` when it is omitted ({@link catalogAuthors}).
+     * index lists the owner of its public repository when omitted ({@link catalogAuthors}).
      */
     authors: z
       .array(catalogAuthorSchema)
@@ -2272,7 +2292,8 @@ export const catalogManifestSchema = z
       .describe(
         "Who wrote the app upstream: one or more people or organizations, shown on the catalog " +
           "card and the app's page. Not the people who package it for the catalog (those are " +
-          "`maintainers`). When omitted, the catalog lists the owner of `repo`.",
+          "`maintainers`). When omitted, the catalog lists the owner of `upstreamRepo`, or " +
+          "`repo` when no upstream repository is set.",
       )
       .optional(),
     /** GitHub users who package the app for the catalog; shown as "Packaged by". */

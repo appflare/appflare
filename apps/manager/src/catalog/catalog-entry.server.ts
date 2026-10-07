@@ -3,6 +3,7 @@ import {
   appWorkers,
   type CatalogAuthor,
   type CatalogManifest,
+  catalogRepository,
   catalogWorkerName,
   hyperdriveDeclarations,
   type IndexApp,
@@ -324,7 +325,7 @@ export async function readCatalogEntry(
     key,
     source,
     images: appMediaView(source.official ? app.media : undefined, catalogIndexUrl(env)),
-    popularity: source.official ? appPopularity(stats, app.slug) : null,
+    popularity: source.official ? appPopularity(stats, app.slug, app.repo) : null,
     ...appFacts(app),
   };
   // An added catalog's sandbox or self-deploying entry is trusted by its
@@ -378,6 +379,9 @@ export async function readCatalogEntry(
     ...appFacts(app),
     app,
     catalog: manifest.catalog,
+    popularity: source.official
+      ? appPopularity(stats, app.slug, catalogRepository(manifest.catalog))
+      : null,
     sourceBuilds: app.tier !== "self-deploying" && sourceBuildsOffered(session.user.role, sandbox),
     authors: app.authors,
     createsKnown: plan !== null,

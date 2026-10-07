@@ -9,6 +9,7 @@ import {
   expectedBuildMinutesSchema,
   gitShaSchema,
   installTierSchema,
+  ownerRepoSchema,
   planSchema,
   type Requirement,
   requirementSchema,
@@ -171,6 +172,8 @@ export function indexRequires(manifest: {
 export const indexAppSchema = z
   .object({
     slug: catalogSlugSchema,
+    /** The manifest's public repository; absent in older catalog indexes. */
+    repo: ownerRepoSchema.optional(),
     name: z.string().min(1),
     summary: z.string().min(1),
     /** The catalog manifest's `tagline`, the pitch on catalog tiles. */
@@ -194,7 +197,7 @@ export const indexAppSchema = z
     lastVerified: z.iso.datetime().nullable(),
     /**
      * Who wrote the app: the catalog manifest's `authors`, or the owner of its
-     * `repo` when it lists none.
+     * public repository when it lists none.
      */
     authors: z.array(catalogAuthorSchema).min(1),
     /** Who packages the app for the catalog. */

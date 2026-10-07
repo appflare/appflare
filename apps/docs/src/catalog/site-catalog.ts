@@ -52,6 +52,8 @@ export interface SiteApp {
   cover: string | null;
   screenshots: Array<{ url: string; alt: string }>;
   repo: string;
+  /** The build repository when it differs from the public repository. */
+  sourceRepo?: string;
   homepage: string;
   /** Null when the stats were stale or do not list the app. */
   popularity: AppPopularity | null;
@@ -98,6 +100,15 @@ export function siteCatalog(snapshot: CatalogSnapshot): SiteCatalog {
     const links = snapshot.links[app.slug];
     // The snapshot's own check guarantees every app has its links.
     if (links === undefined) throw new Error(`No links for "${app.slug}"`);
+    // Old snapshots without an upstream override retain their legacy counts.
+    // New indexes, overridden repositories and proven counts must match the
+    // repository read from the manifest, even if stats and index updates race.
+    const expectedRepo =
+      app.repo !== undefined ||
+      links.sourceRepo !== undefined ||
+      stats?.apps[app.slug]?.stars?.repo !== undefined
+        ? links.repo
+        : undefined;
     return {
       slug: app.slug,
       name: app.name,
@@ -122,8 +133,9 @@ export function siteCatalog(snapshot: CatalogSnapshot): SiteCatalog {
         return checked === null ? [] : [{ url: checked, alt }];
       }),
       repo: links.repo,
+      ...(links.sourceRepo === undefined ? {} : { sourceRepo: links.sourceRepo }),
       homepage: links.homepage,
-      popularity: appPopularity(stats, app.slug),
+      popularity: appPopularity(stats, app.slug, expectedRepo),
     };
   });
   const slugs = new Set(apps.map((app) => app.slug));

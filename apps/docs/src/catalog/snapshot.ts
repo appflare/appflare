@@ -22,6 +22,8 @@ const httpsUrlSchema = z
 /** Where an app's code and home live, from its catalog manifest. */
 export const appLinksSchema = z.object({
   repo: ownerRepoSchema,
+  /** The build repository when the public repository above differs. */
+  sourceRepo: ownerRepoSchema.optional(),
   homepage: httpsUrlSchema,
 });
 export type AppLinks = z.infer<typeof appLinksSchema>;

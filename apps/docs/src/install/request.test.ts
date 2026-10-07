@@ -120,6 +120,13 @@ describe("requests", () => {
     expect(catalogAppForRepo(apps, "o/r")).toBeUndefined();
   });
 
+  it("prefers a public repository over another app's build repository in either order", () => {
+    const publicApp = { repo: "Acme/app" };
+    const buildApp = { repo: "Acme/product", sourceRepo: "ACME/App" };
+    expect(catalogAppForRepo([buildApp, publicApp], "acme/APP")).toBe(publicApp);
+    expect(catalogAppForRepo([publicApp, buildApp], "acme/APP")).toBe(publicApp);
+  });
+
   it("links to this site's install pages and names what they install", () => {
     expect(installPagePath({ kind: "app", slug: "2fa" })).toBe("/install/2fa/");
     expect(installPagePath({ kind: "repo", repo: "o/r" })).toBe("/install/?repo=o/r");

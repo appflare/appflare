@@ -1,10 +1,11 @@
 import { readFileSync } from "node:fs";
 import { SERVICE_NAMES } from "@appflare/schema/catalog-display";
 import { describe, expect, it } from "vitest";
+import { catalogAppForRepo } from "../install/request.ts";
 import { llmsIndex } from "../lib/llms.ts";
 import { SITE_URL } from "../lib/shared.ts";
 import { accountNeeds, appLinks, appPageTitle, appStats, shortDate } from "./app-page.ts";
-import { findApp, findCategory, siteCatalog } from "./data.ts";
+import { findApp, findCategory, installApp, siteCatalog } from "./data.ts";
 import { catalogPageEntries } from "./pages.ts";
 import { fixtureUrl } from "./plugin.ts";
 import { siteCatalog as deriveSiteCatalog, type SiteApp } from "./site-catalog.ts";
@@ -84,6 +85,35 @@ describe("the catalog pages", () => {
 });
 
 describe("siteCatalog", () => {
+  it("shows the main project's links and matches install links for either repository", () => {
+    const first = snapshot.index.apps[0];
+    if (first === undefined) throw new Error("empty fixture");
+    const derived = deriveSiteCatalog({
+      ...snapshot,
+      index: { ...snapshot.index, apps: [first] },
+      links: {
+        [first.slug]: {
+          repo: "upstream/app",
+          sourceRepo: "packager/template",
+          homepage: "https://github.com/upstream/app",
+        },
+      },
+    });
+    const only = derived.apps[0];
+    if (only === undefined) throw new Error("empty catalog");
+    expect(appLinks(only)).toEqual([
+      {
+        kind: "repository",
+        label: "Source code",
+        href: "https://github.com/upstream/app",
+        detail: "github.com/upstream/app",
+      },
+    ]);
+    const install = installApp(only);
+    expect(catalogAppForRepo([install], "UPSTREAM/App")).toBe(install);
+    expect(catalogAppForRepo([install], "PACKAGER/Template")).toBe(install);
+  });
+
   it("shows stars only while the stats were fresh when the snapshot was taken", () => {
     const fresh = deriveSiteCatalog(snapshot);
     expect(fresh.apps.some((a) => a.popularity?.stars != null)).toBe(true);
@@ -92,6 +122,45 @@ describe("siteCatalog", () => {
       takenAt: new Date(Date.parse(snapshot.takenAt) + 73 * 3_600_000).toISOString(),
     });
     expect(stale.apps.every((a) => a.popularity === null)).toBe(true);
+  });
+
+  it("rejects stale and unproven stars after a repository override while keeping installs", () => {
+    const first = snapshot.index.apps[0];
+    if (first === undefined) throw new Error("empty fixture");
+    const popularity = (repo?: string, sourceRepo?: string, indexRepo?: string) => {
+      const derived = deriveSiteCatalog({
+        ...snapshot,
+        index: { ...snapshot.index, apps: [{ ...first, repo: indexRepo }] },
+        links: {
+          [first.slug]: {
+            repo: "upstream/app",
+            sourceRepo,
+            homepage: "https://github.com/upstream/app",
+          },
+        },
+        stats: {
+          generatedAt: snapshot.takenAt,
+          sources: {
+            github: { ok: true, at: snapshot.takenAt },
+            telemetry: { ok: true, at: snapshot.takenAt },
+          },
+          apps: {
+            [first.slug]: {
+              stars: { count: 9000, fetchedAt: snapshot.takenAt, repo },
+              installs: { last30d: 12, active: 30, fetchedAt: snapshot.takenAt },
+            },
+          },
+        },
+      });
+      return derived.apps[0]?.popularity;
+    };
+    const hidden = { stars: null, installs30d: 12, activeInstalls: 30, installsKnown: true };
+    expect(popularity(undefined, "packager/template")).toEqual(hidden);
+    expect(popularity("packager/template", "packager/template")).toEqual(hidden);
+    expect(popularity("packager/template")).toEqual(hidden);
+    expect(popularity(undefined, undefined, "upstream/app")).toEqual(hidden);
+    expect(popularity("UPSTREAM/App", "packager/template")).toEqual({ ...hidden, stars: 9000 });
+    expect(popularity()).toEqual({ ...hidden, stars: 9000 });
   });
 
   it("keeps no release addresses, and the authors the index lists", () => {

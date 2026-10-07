@@ -49,6 +49,35 @@ describe("popularity", () => {
     expect(appPopularity(null, "cut")).toBeNull();
   });
 
+  it("drops template and unproven stars when the public repository is known, keeping installs", () => {
+    const mailflare = STATS.apps.mailflare;
+    if (mailflare === undefined) throw new Error("missing fixture stats");
+    const withRepo = (repo?: string): CatalogStats => ({
+      ...STATS,
+      apps: { mailflare: { ...mailflare, stars: { count: 40, fetchedAt: at, repo } } },
+    });
+    const expected = { stars: null, installs30d: 12, activeInstalls: 30, installsKnown: true };
+    expect(appPopularity(withRepo("packager/template"), "mailflare", "upstream/app")).toEqual(
+      expected,
+    );
+    expect(appPopularity(withRepo(), "mailflare", "upstream/app")).toEqual(expected);
+    expect(appPopularity(withRepo("UPSTREAM/App"), "mailflare", "upstream/app")).toEqual({
+      ...expected,
+      stars: 40,
+    });
+  });
+
+  it("hides proven stars beside an older index whose repository is unknown", () => {
+    const proven: CatalogStats = {
+      ...STATS,
+      apps: {
+        cut: { stars: { count: 9000, fetchedAt: at, repo: "upstream/app" }, installs: null },
+      },
+    };
+    expect(appPopularity(proven, "cut")?.stars).toBeNull();
+    expect(appPopularity(STATS, "cut")?.stars).toBe(40);
+  });
+
   it("orders by active installs, then 30-day installs, then stars, apps without numbers last", () => {
     const apps = ["unknown", "cut", "r2-explorer", "flaremo", "mailflare"].map((slug) => ({
       slug,
