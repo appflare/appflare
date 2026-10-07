@@ -1,3 +1,4 @@
+import { MANAGER_OAUTH_SCOPES } from "@appflare/cf-api/oauth";
 import {
   type CatalogManifest,
   catalogManifestSchema,
@@ -7,7 +8,10 @@ import {
   readIndexJson,
 } from "@appflare/schema";
 import type { AppAccessCheck, InstallAccessView } from "../../src/access/app-access";
+import type { CapabilityRowsInput, RowsConnection } from "../../src/capabilities/capability-rows";
 import type { CatalogDetail } from "../../src/catalog/catalog.functions";
+import type { ConnectionView } from "../../src/cloudflare/connection-view";
+import { accountAttentionRows } from "../../src/home/account-attention";
 import { installVarFields } from "../../src/installs/install-vars";
 import type { InstallSettings } from "../../src/installs/reconfigure.server";
 import type { StartUpdateResult } from "../../src/installs/versions.server";
@@ -424,7 +428,78 @@ const managerAddress =
         attachedByHand: [],
         movingJobId: null,
         movingTo: null,
+        // Installed for a domain that does not serve yet (`?fixture=address-pending`),
+        // or whose automatic move failed (`?fixture=address-move-failed`).
+        pending:
+          variant === "address-pending" || variant === "address-move-failed"
+            ? {
+                hostname: "appflare.example.com",
+                failedAt: variant === "address-move-failed" ? now : null,
+                failure:
+                  variant === "address-move-failed"
+                    ? "Moving Cloudflare Access: Cloudflare refused to update the Access application. Appflare stays at its current address."
+                    : null,
+              }
+            : null,
       };
+
+/**
+ * Appflare's Cloudflare connection: an API token, or (`?fixture=connection-oauth`)
+ * Cloudflare sign-in, which (`?fixture=connection-needs-reconnect`) Cloudflare
+ * no longer accepts, or which (`?fixture=connection-missing-permission`) was
+ * not allowed R2 storage.
+ */
+const signInMissing = variant === "connection-missing-permission" ? ["workers-r2.write"] : [];
+const connection: ConnectionView =
+  variant === "connection-oauth" ||
+  variant === "connection-needs-reconnect" ||
+  variant === "connection-missing-permission"
+    ? {
+        kind: "oauth",
+        state: variant === "connection-needs-reconnect" ? "needs_reconnect" : "connected",
+        problem:
+          variant === "connection-needs-reconnect"
+            ? "Cloudflare no longer accepts this connection: it was withdrawn in Cloudflare, it expired, or it was used somewhere else."
+            : null,
+        problemAt: variant === "connection-needs-reconnect" ? now : null,
+        connectedSince: "2026-09-20T10:00:00.000Z",
+        ready: variant !== "connection-needs-reconnect",
+        oauth: {
+          clientId: "b99863433175d812f9595af56dd1b71d",
+          scopes: MANAGER_OAUTH_SCOPES.filter((s) => !signInMissing.includes(s)),
+          missingScopes: signInMissing,
+          renewedAt: now,
+        },
+      }
+    : {
+        kind: "api_token",
+        state: "connected",
+        problem: null,
+        problemAt: null,
+        connectedSince: now,
+        ready: true,
+        oauth: null,
+      };
+
+/** The connection as "What this account can run" reads it. */
+const rowsConnection: RowsConnection = {
+  kind: connection.kind,
+  missingScopes: connection.oauth?.missingScopes ?? [],
+};
+
+/**
+ * Home's account rows: none, but for a sign-in missing a permission, whose
+ * row (Reconnect Cloudflare) is the one pictured.
+ */
+function accountRowsFixture() {
+  return variant === "connection-missing-permission"
+    ? accountAttentionRows(
+        // The fixture's capabilities are plain literals; the server functions return them as is.
+        { ...capabilityRows, connection: rowsConnection } as unknown as CapabilityRowsInput,
+        [],
+      ).filter((row) => row.id === "token-permissions")
+    : [];
+}
 
 const installSettings: InstallSettings = {
   slug: "cut",
@@ -491,6 +566,86 @@ const accessCheck: AppAccessCheck = {
   oneTimePin: true,
 };
 
+/**
+ * An install that stopped at its first Cloudflare call (`?fixture=job-failed`):
+ * the error as the job recorded it, and log lines with long requests.
+ */
+const failedJob = {
+  ...job,
+  id: "01K5Q3MGN7F6YP8T2RC9VJ4BXB",
+  status: "failed",
+  error:
+    "verify API token: Cloudflare API request failed: GET /user/tokens/verify -> 401: [1000] Invalid API Token",
+  finishedAt: "2026-09-25T10:14:04.000Z",
+  againHref: "/catalog/cut?again=install-cut#install",
+  logs: [
+    {
+      id: 1,
+      ts: "2026-09-25T10:14:01.000Z",
+      level: "info",
+      message: 'Installing Short links 1.4.0 as Worker "links" (key appflare-2026-09).',
+      requests: [],
+      detail: null,
+    },
+    {
+      id: 2,
+      ts: "2026-09-25T10:14:02.000Z",
+      level: "info",
+      message: "Preflight passed: plan free, 1 resource to create.",
+      requests: [],
+      detail: null,
+    },
+    {
+      id: 3,
+      ts: "2026-09-25T10:14:04.000Z",
+      level: "error",
+      message:
+        "verify API token failed: Cloudflare API request failed: GET /user/tokens/verify -> 401: [1000] Invalid API Token",
+      requests: [
+        `GET /accounts/${view.accountId}/tokens/verify -> 401`,
+        "GET /user/tokens/verify -> 401",
+      ],
+      detail: null,
+    },
+    {
+      id: 4,
+      ts: "2026-09-25T10:14:04.000Z",
+      level: "error",
+      message: 'Install failed at "verify API token". Resources created so far stay recorded.',
+      requests: [],
+      detail: null,
+    },
+  ],
+};
+
+/**
+ * Where setup starts: the owner step, or on a manager installed from the
+ * browser, the step that sends a visitor back to the page that installed it
+ * (`?fixture=setup-handoff`, `setup-handoff-received`), or that page's code
+ * refused (`setup-claim-refused`) or not answered yet (`setup-claim-retry`;
+ * both open `/setup#claim=<code>`).
+ */
+function setupEntry() {
+  switch (variant) {
+    case "setup-handoff":
+      return { step: "handoff", handoff: "waiting", installPage: "https://appflare.dev/deploy" };
+    case "setup-handoff-received":
+    case "setup-claim-refused":
+    case "setup-claim-retry":
+      return { step: "handoff", handoff: "received", installPage: "https://appflare.dev/deploy" };
+    // Handed over at workers.dev while the chosen domain does not serve yet.
+    case "address-pending":
+      return {
+        step: "create-owner",
+        handoff: "received",
+        installPage: "https://appflare.dev/deploy",
+        pendingAddress: "appflare.example.com",
+      };
+    default:
+      return { step: "create-owner" };
+  }
+}
+
 function argument(args: unknown[], key: string): string {
   const first = args[0] as { data?: Record<string, string> } | undefined;
   return first?.data?.[key] ?? "";
@@ -499,7 +654,12 @@ function argument(args: unknown[], key: string): string {
 export function fixture(name: string, args: unknown[]): unknown {
   const result: Record<string, () => unknown> = {
     // Setup at the owner step: the token is saved, and nobody exists yet.
-    enterSetup: () => ({ step: "create-owner" }),
+    enterSetup: () => setupEntry(),
+    // The sign-in page, at the address Appflare just moved to (`?fixture=address-moved-here`).
+    getSetupStatus: () => ({ needsSetup: false, movedHere: variant === "address-moved-here" }),
+    redeemOwnerClaim: () => ({
+      outcome: variant === "setup-claim-refused" ? "refused" : "rate-limited",
+    }),
     loadAppflareVersion: () => "0.1.0",
     createOwner: () => ({ ok: true }),
     enterApp: () => ({
@@ -519,9 +679,10 @@ export function fixture(name: string, args: unknown[]): unknown {
       removedApps: 0,
       apps,
       failedJobs: [],
-      accountRows: [],
+      accountRows: accountRowsFixture(),
       deployCopy: null,
       downgrade: null,
+      reconnectNeeded: connection.state === "needs_reconnect",
     }),
     listCatalog: () => ({
       apps: catalogApps,
@@ -566,7 +727,7 @@ export function fixture(name: string, args: unknown[]): unknown {
       build: null,
       cronTriggers: null,
     }),
-    getJob: () => job,
+    getJob: () => (variant === "job-failed" ? failedJob : job),
     listJobs: () => [
       job,
       {
@@ -585,7 +746,7 @@ export function fixture(name: string, args: unknown[]): unknown {
         finishedAt: null,
       },
     ],
-    getCapabilityRowsData: () => capabilityRows,
+    getCapabilityRowsData: () => ({ ...capabilityRows, connection: rowsConnection }),
     getAutoUpdateSettings: () => ({ apps: false, manager: false, devBuild: false }),
     getManagerUpdate: () => ({
       current: "0.1.0",
@@ -628,7 +789,9 @@ export function fixture(name: string, args: unknown[]): unknown {
       workerName: "appflare",
       verifiedAt: now,
       hasSecret: true,
+      connection,
     }),
+    startCloudflareReconnect: () => ({ url: "#", origin: "https://appflare.example.com" }),
     getDangerZoneState: () => ({ canRemove: false, reason: null }),
     getSandboxStatus: () => ({
       connected: true,
@@ -674,6 +837,10 @@ export function fixture(name: string, args: unknown[]): unknown {
         createdAt: "2026-09-03T10:00:00.000Z",
       },
     ],
+    // A page open at workers.dev asks whether Appflare moved (never at localhost).
+    getAddressStatus: () => ({ hostname: null, pending: variant === "address-pending" }),
+    // At workers.dev while the chosen domain is pending, passkeys wait for the move.
+    getPasskeyMoveNotice: () => (variant === "address-pending" ? "appflare.example.com" : null),
     listPasskeys: () => [
       {
         id: "passkey-1",

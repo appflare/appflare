@@ -4,6 +4,7 @@ import { getAppManifest, getCatalogManifest } from "../catalog/app-manifest.serv
 import { isManagerUpdateAvailable, readManagerLatest } from "../catalog/manager-releases.server";
 import { type AppLookup, catalogLookup, type ListedApp } from "../catalog/merged.server";
 import { installAppKey } from "../catalog/sources";
+import { connectionProblem } from "../cloudflare/connection.server";
 import { removalInProgress } from "../danger/removal-flag";
 import { createDb } from "../db/client";
 import { installs, type JobStarter } from "../db/schema";
@@ -67,6 +68,7 @@ export interface ScheduledUpdatesEnv {
   };
   APPFLARE_VERSION: string;
   CF_API_TOKEN?: string;
+  CF_GRANT_KEY?: string;
   SANDBOX?: unknown;
 }
 
@@ -94,7 +96,7 @@ export interface ScheduledUpdatesOutcome {
   /** Installs whose automatic update is on, except those already current. */
   apps: AppUpdateOutcome[];
   /** Why nothing was tried at all, if so. */
-  idle: "off" | "no-token" | "removing" | null;
+  idle: "off" | "no-token" | "disconnected" | "removing" | null;
 }
 
 /** What an update needs from an admin, as one clause for the log. */
@@ -296,7 +298,15 @@ export async function runScheduledUpdates(
   const anyApp = defaults.apps || rows.some((r) => r.choice === "on");
   const outcome: ScheduledUpdatesOutcome = { selfUpdate: null, apps: [], idle: null };
   if (!defaults.manager && !anyApp) return { ...outcome, idle: "off" };
-  if (!env.CF_API_TOKEN) return { ...outcome, idle: "no-token" };
+  // A job started now would fail at once: no connection, or one only an
+  // administrator can bring back (a redeploy in progress waits for the next run too).
+  const problem = await connectionProblem(env);
+  if (problem !== null) {
+    return {
+      ...outcome,
+      idle: problem.problem === "not_configured" ? "no-token" : "disconnected",
+    };
+  }
   // 1. Appflare itself.
   if (defaults.manager) {
     const [latest, failed] = await Promise.all([readManagerLatest(env.KV), failedTargets(env.DB)]);
@@ -416,6 +426,9 @@ export function scheduledUpdatesLog(outcome: ScheduledUpdatesOutcome): string[] 
   const lines: string[] = [];
   if (outcome.idle === "no-token") {
     lines.push("automatic updates: skipped, the Cloudflare token is not configured");
+  }
+  if (outcome.idle === "disconnected") {
+    lines.push("automatic updates: skipped, the Cloudflare connection cannot be used right now");
   }
   if (outcome.idle === "removing") {
     lines.push("automatic updates: skipped, Appflare is being removed from this account");

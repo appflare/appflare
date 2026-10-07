@@ -84,6 +84,17 @@ describe("setupGate (/setup)", () => {
     expect(setupGate(fresh({ setupClaimed: true }))).toEqual({ step: "connect" });
   });
 
+  it("sends a browser without the claim back to the installer on a manager installed from the browser", () => {
+    for (const handoff of ["waiting", "received"] as const) {
+      expect(setupGate(fresh({ handoff }))).toEqual({ step: "handoff" });
+      expect(setupGate(fresh({ handoff, tokenConfigured: true }))).toEqual({ step: "handoff" });
+    }
+    // The browser that came from the installer with its code goes on.
+    expect(
+      setupGate(fresh({ handoff: "received", tokenConfigured: true, setupClaimed: true })),
+    ).toEqual({ step: "create-owner" });
+  });
+
   it("waits for the version with the new auth secret before creating the owner", () => {
     // A manager deployed without secrets: connecting Cloudflare wrote one, and
     // the request still runs on the version without it.

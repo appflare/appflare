@@ -1,3 +1,4 @@
+import { AppflareLoader } from "@appflare/brand/loader";
 import {
   Badge,
   Banner,
@@ -18,7 +19,6 @@ import {
   sendTestPasswordEmail,
   setPasswordResetEmails,
 } from "../server/recovery.functions";
-import { AppflareLoader } from "./appflare-loader";
 import { BusyButton } from "./busy-button";
 import { ConfirmDialog } from "./confirm-dialog";
 import { DocsLink } from "./docs-link";

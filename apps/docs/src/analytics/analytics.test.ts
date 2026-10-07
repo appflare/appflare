@@ -6,6 +6,7 @@ import {
   isReportingHost,
   linkEvents,
   type NavigationSource,
+  outsideDeployPages,
   POSTHOG_HOST,
   POSTHOG_KEY,
   posthogOptions,
@@ -120,6 +121,56 @@ describe("startAnalytics", () => {
   });
 });
 
+describe("the deploy page and its callback", () => {
+  it.each([
+    "https://appflare.dev/deploy/",
+    "https://appflare.dev/deploy",
+    "https://appflare.dev/deploy/callback",
+  ])("load nothing and send nothing at %s", async (url) => {
+    browserAt(url);
+    const { router, listeners } = fakeRouter();
+    track("category_viewed", { category: "tools" });
+    expect(startAnalytics(router)).toBe(false);
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(listeners).toHaveLength(0);
+    expect(posthog.init).not.toHaveBeenCalled();
+    expect(posthog.capture).not.toHaveBeenCalled();
+  });
+
+  it("get no page view when the router moves there from another page", async () => {
+    browserAt("https://appflare.dev/start/install/");
+    const { router, navigate } = fakeRouter();
+    startAnalytics(router);
+    navigate("/deploy/");
+    navigate("/deploy/callback", "?code=secret-code&state=s");
+    await vi.waitFor(() => expect(posthog.capture).toHaveBeenCalledTimes(1));
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(captured()).toEqual([["$pageview", "https://appflare.dev/start/install/"]]);
+    expect(JSON.stringify(posthog.capture.mock.calls)).not.toContain("secret-code");
+  });
+
+  it("have every event from them dropped before it is sent", () => {
+    const event = (url: string): CaptureResult => ({
+      uuid: "0",
+      event: "$autocapture",
+      properties: { $current_url: url },
+    });
+    const elsewhere = "https://appflare.dev/apps/";
+    expect(outsideDeployPages(event(elsewhere), elsewhere)).not.toBeNull();
+    expect(outsideDeployPages(event("https://appflare.dev/deploy/?x=1"), elsewhere)).toBeNull();
+    expect(outsideDeployPages(event(elsewhere), "https://appflare.dev/deploy/callback")).toBeNull();
+    expect(
+      outsideDeployPages(
+        { uuid: "0", event: "$snapshot", properties: { $pathname: "/deploy/" } },
+        elsewhere,
+      ),
+    ).toBeNull();
+    expect(outsideDeployPages(null, elsewhere)).toBeNull();
+    // A page whose name merely starts the same way is measured as usual.
+    expect(outsideDeployPages(event("https://appflare.dev/deployment/"), elsewhere)).not.toBeNull();
+  });
+});
+
 describe("page views", () => {
   it("sends one for the first page and one for each page the router moves to", async () => {
     browserAt("https://appflare.dev/start/install/");
@@ -184,13 +235,35 @@ describe("linkEvents", () => {
   });
 
   it("counts Appflare's short link to the button the same way", () => {
-    expect(linkEvents("https://link.appflare.dev/deploy", here)).toEqual([
+    expect(linkEvents("https://link.appflare.dev/deploy-1c", here)).toEqual([
       ["outbound_click", { host: "link.appflare.dev" }],
       ["deploy_button_clicked", { path: "/start/install/" }],
     ]);
     expect(linkEvents("https://link.appflare.dev/other", here)).toEqual([
       ["outbound_click", { host: "link.appflare.dev" }],
     ]);
+  });
+
+  it("counts Install Appflare apart from the button: the short link and the deploy page", () => {
+    expect(linkEvents("https://link.appflare.dev/deploy", here)).toEqual([
+      ["outbound_click", { host: "link.appflare.dev" }],
+      ["install_button_clicked", { path: "/start/install/" }],
+    ]);
+    expect(linkEvents("https://link.appflare.dev/deploy/", here)).toEqual([
+      ["outbound_click", { host: "link.appflare.dev" }],
+      ["install_button_clicked", { path: "/start/install/" }],
+    ]);
+    // On the site itself the Install button goes straight to the deploy page.
+    expect(linkEvents("/deploy/", here)).toEqual([
+      ["install_button_clicked", { path: "/start/install/" }],
+    ]);
+    expect(linkEvents("https://appflare.dev/deploy/", here)).toEqual([
+      ["install_button_clicked", { path: "/start/install/" }],
+    ]);
+    // A link within the deploy pages is not a new install.
+    expect(linkEvents("/deploy/", { host: "appflare.dev", pathname: "/deploy/callback" })).toEqual(
+      [],
+    );
   });
 
   it("ignores links within the site and links that are not web pages", () => {

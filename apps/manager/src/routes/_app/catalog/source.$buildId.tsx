@@ -1,3 +1,4 @@
+import { AppflareLoader } from "@appflare/brand/loader";
 import {
   Badge,
   Banner,
@@ -19,7 +20,6 @@ import { ANALYTICS_ENGINE_CAPABILITY_LINK } from "../../../capabilities/capabili
 import { cronTriggerCount } from "../../../catalog/cron-triggers";
 import { analyticsEngineRefusal } from "../../../catalog/requirement-checks";
 import { requirementSentence } from "../../../catalog/requirements";
-import { AppflareLoader } from "../../../components/appflare-loader";
 import { PrimitiveBadges } from "../../../components/catalog-badges";
 import { ConfirmDialog } from "../../../components/confirm-dialog";
 import { DescriptionItem, DescriptionList } from "../../../components/description-list";

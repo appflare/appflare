@@ -1,6 +1,8 @@
 import type { ContainersCapability, R2Capability } from "@appflare/cf-api/capabilities";
 import type { AccountPlan } from "../account/plan";
 import type { CapabilitiesView } from "../capabilities/capabilities";
+import type { ConnectionKind } from "../cloudflare/connection-view";
+import { inConnectionWords } from "../cloudflare/sign-in-words";
 import { settingsLink } from "../components/settings-links";
 import {
   NO_CONTAINERS_PERMISSION_REASON,
@@ -105,6 +107,8 @@ export interface SandboxReadinessInput {
   plan: AccountPlan;
   /** The account the dashboard links in `missing` open; null before a token is saved. */
   accountId: string | null;
+  /** How Appflare connects: a refused permission is fixed differently. An API token when left out. */
+  connection?: ConnectionKind;
 }
 
 export function sandboxReadiness(input: SandboxReadinessInput): SandboxReadiness {
@@ -113,7 +117,7 @@ export function sandboxReadiness(input: SandboxReadinessInput): SandboxReadiness
   if (connected) return { state: "on", missing: null, confirmed: true };
   const needs = (state: SandboxRowState, missing: string): SandboxReadiness => ({
     state,
-    missing,
+    missing: inConnectionWords(input.connection ?? "api_token", missing),
     confirmed: true,
   });
   // Containers answering "requires Workers Paid" settles the plan; Containers
@@ -156,5 +160,6 @@ export function sandboxReadinessOf(view: CapabilitiesView, connected: boolean): 
     containers: view.containers,
     plan: view.plan.plan,
     accountId: view.accountId,
+    connection: view.connection,
   });
 }

@@ -85,15 +85,17 @@ const EVERYTHING = input({
   accountRows: [R2_ROW],
   deployCopy: CLEANUP,
   downgrade: { version: "0.5.0", deployButton: false },
+  reconnectNeeded: true,
 });
 
 const kinds = (items: readonly AttentionItem[]) => items.map((i) => i.kind);
 
 describe("attentionItems", () => {
-  it("orders rows by severity: failures, not responding, updates, account, then notices", () => {
+  it("orders rows by severity: the connection, failures, not responding, updates, account, then notices", () => {
     const items = attentionItems(EVERYTHING);
     expect(kinds(items)).toEqual([...SEVERITY_ORDER]);
     expect(SEVERITY_ORDER).toEqual([
+      "connection",
       "failed-job",
       "not-responding",
       "access-required",
@@ -316,7 +318,7 @@ describe("attentionItems", () => {
 describe("the sidebar's count and dots", () => {
   it("counts every row on Home", () => {
     const items = attentionItems(EVERYTHING);
-    expect(attentionBadge(items)).toEqual({ count: 7, label: "7 things need your attention" });
+    expect(attentionBadge(items)).toEqual({ count: 8, label: "8 things need your attention" });
     expect(attentionBadge(items.slice(0, 1))).toEqual({
       count: 1,
       label: "1 thing needs your attention",

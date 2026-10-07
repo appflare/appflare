@@ -7,6 +7,8 @@ import { type ReactNode, type RefObject, useEffect, useRef, useState } from "rea
  * the page's content area on a desktop, so desktop layout is unchanged.
  */
 const MIN_WIDTH_CLASSES = {
+  /** A table whose cells wrap their text on a phone (a log), so it never needs to scroll. */
+  none: "",
   sm: "min-w-[30rem]",
   md: "min-w-[40rem]",
   lg: "min-w-[48rem]",

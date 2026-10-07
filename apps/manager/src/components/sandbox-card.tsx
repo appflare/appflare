@@ -1,3 +1,4 @@
+import { AppflareLoader } from "@appflare/brand/loader";
 import { SANDBOX_BUCKET_NAME } from "@appflare/schema";
 import { Badge, Banner, Button, Collapsible, Link, Text } from "@cloudflare/kumo";
 import { ArrowCircleUpIcon, CubeIcon, PlugsConnectedIcon, PowerIcon } from "@phosphor-icons/react";
@@ -11,7 +12,6 @@ import {
   type SandboxCardState,
   startSandboxJob,
 } from "../server/sandbox.functions";
-import { AppflareLoader } from "./appflare-loader";
 import { BusyButton } from "./busy-button";
 import { ConfirmDialog } from "./confirm-dialog";
 import { DescriptionItem, DescriptionList } from "./description-list";

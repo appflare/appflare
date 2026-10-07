@@ -29,6 +29,7 @@ import {
   requirementSentence,
   requirementsToConfirm,
 } from "../catalog/requirements";
+import { connectionKindOf, requireConnection } from "../cloudflare/connection.server";
 import { createDb, type Database } from "../db/client";
 import { installs, jobs, resources } from "../db/schema";
 import { readSettings, SETTING } from "../db/settings";
@@ -112,6 +113,7 @@ import {
 import { attachQueueConsumersPhase } from "./install/queue-consumers";
 import { explainR2Refusal } from "./install/r2-enablement";
 import { assignRateLimitsPhase } from "./install/rate-limits";
+import { checkSignInPhase } from "./install/sign-in-access";
 import { putWorkflowsPhase, workflowsOf, workflowTargets } from "./install/workflows";
 import type { JobContext } from "./run-job";
 import { awaitSandboxEnabledPhase, sandboxEnableJobField } from "./sandbox-enable-wait";
@@ -460,9 +462,10 @@ export async function runInstall(ctx: JobContext): Promise<void> {
         SETTING.accountCapabilities,
       ]);
       if (!settings.account_id) throw new InstallError("the Cloudflare account is not known yet");
-      if (!env.CF_API_TOKEN) {
-        throw new InstallError("the Cloudflare API token is not configured; finish setup first");
-      }
+      // An API token, or a stored grant that does not need reconnecting.
+      await requireConnection(env);
+      // Which one, so the next step confirms it the way that credential allows.
+      const connection = await connectionKindOf(env.DB);
       // The detected plan first, then the one an admin set.
       const resolved = resolveAccountPlan(
         settings.account_plan,
@@ -486,7 +489,7 @@ export async function runInstall(ctx: JobContext): Promise<void> {
       log.info(
         `Preflight passed: plan ${manifest.catalog.plan}, ${toCreate.length + streams.length} resource(s) to create.`,
       );
-      return { accountId: settings.account_id, accountPaid, accountFree };
+      return { accountId: settings.account_id, accountPaid, accountFree, connection };
     });
     steps.setAccountId(preflight.accountId);
     // An app of several Workers may need more requests than one invocation
@@ -495,26 +498,42 @@ export async function runInstall(ctx: JobContext): Promise<void> {
       steps.spreadOverInvocations();
     }
 
-    await run("verify API token", async ({ log, cf }) => {
-      const api = cf();
-      let status: string;
-      try {
-        status = (await api.tokens.verify()).status;
-      } catch (error) {
-        if (!(error instanceof CloudflareApiError) || error.status >= 500 || error.status === 429) {
-          throw error;
+    // Read as the check runs: an admin may have changed how Appflare connects
+    // since the preflight. Should the read fail, the preflight's answer, and an
+    // API token for a preflight recorded before it named the connection.
+    const connection = await connectionKindOf(env.DB).catch(
+      () => preflight.connection ?? "api_token",
+    );
+    /** The account's Worker names, when the sign-in check listed them already. */
+    let listed: string[] | null = null;
+    if (connection === "oauth") {
+      listed = (await checkSignInPhase(steps)).scripts;
+    } else {
+      await run("verify API token", async ({ log, cf }) => {
+        const api = cf();
+        let status: string;
+        try {
+          status = (await api.tokens.verify()).status;
+        } catch (error) {
+          if (
+            !(error instanceof CloudflareApiError) ||
+            error.status >= 500 ||
+            error.status === 429
+          ) {
+            throw error;
+          }
+          status = (await api.tokens.verifyUserToken()).status;
         }
-        status = (await api.tokens.verifyUserToken()).status;
-      }
-      if (status !== "active") throw new InstallError(`the API token is ${status}`);
-      log.info("The Cloudflare API token is active.");
-      return {};
-    });
+        if (status !== "active") throw new InstallError(`the API token is ${status}`);
+        log.info("The Cloudflare API token is active.");
+        return {};
+      });
+    }
 
     await run("check Worker name", async ({ log, cf }) => {
-      const scripts = await cf().workers.listScripts();
+      const scripts = listed ?? (await cf().workers.listScripts()).map((s) => s.id);
       for (const w of workers) {
-        if (scripts.some((s) => s.id === w.scriptName)) {
+        if (scripts.includes(w.scriptName)) {
           throw new InstallError(
             `a Worker named ${w.scriptName} already exists in this account; Appflare does not adopt existing Workers`,
           );

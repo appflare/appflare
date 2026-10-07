@@ -32,7 +32,8 @@ follow the dashboard's naming for every listed key. Once, after opening the link
 check that **Email Routing Rules** (Edit) and **Email Routing Addresses** (Read) are
 selected. If they are not, add them by hand. If the token lacks one, the install form
 says which. Edit the Appflare token under **API Tokens** in the Cloudflare dashboard,
-add the permissions, and save; an edited token keeps its value.
+add the permissions, and save; an edited token keeps its value. Appflare connected
+with [Cloudflare sign-in](/guides/cloudflare-connection/) has all of them already.
 
 ## Installing
 

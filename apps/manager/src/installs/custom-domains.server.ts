@@ -13,6 +13,9 @@ import {
   accessAddressSync,
   publicPathsRefusal,
 } from "../access/address-sync.server";
+import { connectionKindOf } from "../cloudflare/connection.server";
+import type { ConnectionKind } from "../cloudflare/connection-view";
+import { TOKEN_REFUSALS } from "../cloudflare/token-refusals";
 import {
   CUSTOM_DOMAINS_FEATURE,
   permissionName,
@@ -133,6 +136,12 @@ export interface DomainOptions {
   missing: string[];
   /** The token sees no zone, active or not. */
   noZones: boolean;
+  /**
+   * How Appflare connects, so the page says how to add what is missing:
+   * edit the API token, or reconnect a Cloudflare sign-in. An API token
+   * when left out.
+   */
+  connection?: ConnectionKind;
 }
 
 /**
@@ -161,9 +170,12 @@ export async function listAccountZones(
  * this is a hint, and adding still reports a refusal precisely).
  */
 export async function getDomainOptionsCore(deps: CustomDomainDeps): Promise<DomainOptions> {
-  const listed = await listAccountZones(deps.api);
+  const [listed, connection] = await Promise.all([
+    listAccountZones(deps.api),
+    connectionKindOf(deps.db).catch((): ConnectionKind => "api_token"),
+  ]);
   if (listed === null) {
-    return { zones: [], inactiveZones: [], missing: [PERMISSION.zone], noZones: true };
+    return { zones: [], inactiveZones: [], missing: [PERMISSION.zone], noZones: true, connection };
   }
   const { active } = listed;
   const inactiveZones = listed.inactive.map((z) => z.name);
@@ -173,6 +185,7 @@ export async function getDomainOptionsCore(deps: CustomDomainDeps): Promise<Doma
       inactiveZones: [],
       missing: [PERMISSION.zone, PERMISSION.dns, PERMISSION.routes],
       noZones: true,
+      connection,
     };
   }
   const missing: string[] = [];
@@ -190,6 +203,7 @@ export async function getDomainOptionsCore(deps: CustomDomainDeps): Promise<Doma
     inactiveZones,
     missing,
     noZones: false,
+    connection,
   };
 }
 
@@ -377,7 +391,7 @@ export async function attachCheckedDomain(
     }
     if (isPermissionError(error)) {
       throw new CustomDomainError(
-        `Cloudflare refused to attach ${hostname}: the token needs ${PERMISSION.routes} on ${zone.name} (and ${PERMISSION.dns} to replace records). Add them to the token and try again.`,
+        TOKEN_REFUSALS.attachDomain(hostname, zone.name, PERMISSION.routes, PERMISSION.dns),
       );
     }
     throw error;
@@ -505,9 +519,7 @@ export async function readZone(api: CloudflareClient, zoneId: string): Promise<Z
     zone = await api.zones.getZone(zoneId);
   } catch (error) {
     if (isPermissionError(error) || (error instanceof CloudflareApiError && error.status === 404)) {
-      throw new CustomDomainError(
-        `The Cloudflare token cannot see that zone. It needs ${ALL_PERMISSIONS} on it.`,
-      );
+      throw new CustomDomainError(TOKEN_REFUSALS.zoneHidden(ALL_PERMISSIONS));
     }
     throw error;
   }

@@ -2,6 +2,7 @@ import { buttonVariants } from "@fumadocs/base-ui/components/ui/button";
 import { type FormEvent, type ReactNode, useId } from "react";
 import { PRIVATE_CLASS } from "../../analytics/analytics.ts";
 import { appsPath, installPath } from "../../catalog/urls.ts";
+import { DEPLOY_PATH } from "../../deploy/paths.ts";
 import { EXAMPLE_ADDRESS } from "../../install/address.ts";
 import type { FlowAction, FlowState } from "../../install/flow.ts";
 import { type InstallApp, installPagePath, requestLabel } from "../../install/request.ts";
@@ -12,8 +13,8 @@ import { type InstallApp, installPagePath, requestLabel } from "../../install/re
  * to the state module as an action.
  */
 
-/** The Deploy to Cloudflare button's link, which deploys Appflare from the browser. */
-export const DEPLOY_URL = "https://link.appflare.dev/deploy";
+/** Cloudflare's Deploy to Cloudflare button, through Appflare's short link that counts its clicks. */
+export const DEPLOY_BUTTON_URL = "https://link.appflare.dev/deploy-1c";
 /** Cloudflare's own image for that button. */
 export const DEPLOY_BUTTON_IMAGE = "https://deploy.workers.cloudflare.com/button";
 
@@ -218,8 +219,17 @@ export function FlowPanel({ state, dispatch, apps, forwarding = true }: FlowPane
           </Text>
           <ol className="m-0 grid list-none gap-4 p-0">
             <li className="grid gap-2">
+              <a href={DEPLOY_PATH} className={`${primary} justify-self-start`}>
+                Install Appflare
+              </a>
+              <span className="text-fd-muted-foreground text-sm">
+                Sign in to Cloudflare and choose where it goes. Nothing to install on your computer.
+              </span>
+            </li>
+            <li className="grid gap-2">
+              <span className="text-sm">Or use Cloudflare's Deploy button:</span>
               <a
-                href={DEPLOY_URL}
+                href={DEPLOY_BUTTON_URL}
                 target="_blank"
                 rel="noopener noreferrer"
                 className="justify-self-start"
@@ -233,22 +243,16 @@ export function FlowPanel({ state, dispatch, apps, forwarding = true }: FlowPane
                 />
               </a>
               <span className="text-fd-muted-foreground text-sm">
-                Everything happens in your browser.{" "}
+                It goes through a copy in your GitHub or GitLab account.{" "}
                 <a href="/start/deploy-button/" className={textLink}>
                   How the button works
                 </a>
               </span>
             </li>
-            <li className="grid gap-2">
-              <span className="text-sm">Or, from a terminal:</span>
-              <code className="justify-self-start rounded-md border border-fd-border bg-fd-secondary px-3 py-1.5 font-mono text-sm">
-                npx create-appflare
-              </code>
-              <span className="text-fd-muted-foreground text-sm">
-                <a href="/start/install/" className={textLink}>
-                  Other ways to install
-                </a>
-              </span>
+            <li className="text-fd-muted-foreground text-sm">
+              <a href="/start/install/" className={textLink}>
+                Other ways to install
+              </a>
             </li>
           </ol>
           <p className="leading-relaxed">

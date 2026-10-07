@@ -1,3 +1,4 @@
+import { AppflareLoader } from "@appflare/brand/loader";
 import { Banner, Checkbox, LayerDialog, LinkButton, Text } from "@cloudflare/kumo";
 import { ArrowCircleUpIcon, ArrowRightIcon, EnvelopeSimpleIcon } from "@phosphor-icons/react";
 import { type FormEvent, type ReactNode, useId, useState } from "react";
@@ -6,7 +7,6 @@ import { reinstallSentence } from "../installs/tier-change";
 import { startUpdate } from "../installs/versions.functions";
 import type { UpdateNeeds } from "../installs/versions.server";
 import { appLink } from "./app-links";
-import { AppflareLoader } from "./appflare-loader";
 import { BusyButton, BusyMark, busyActionProps } from "./busy-button";
 import { CronTriggersField } from "./cron-triggers-field";
 import { connectionsComplete, DatabaseFields, optionalConnectionsValid } from "./database-fields";

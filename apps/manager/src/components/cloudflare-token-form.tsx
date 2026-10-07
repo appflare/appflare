@@ -64,6 +64,8 @@ const FEATURE_PLACES: Readonly<Record<string, string>> = {
 export interface SavedToken {
   accountId: string;
   workerName: string;
+  /** The token took the place of a Cloudflare authorization, which was withdrawn. */
+  replacedAuthorization: boolean;
 }
 
 /**
@@ -119,7 +121,11 @@ export function CloudflareTokenForm({
       formRef.current?.reset();
       setToken("");
       setResult(null);
-      onSaved({ accountId: saved.accountId, workerName: saved.workerName });
+      onSaved({
+        accountId: saved.accountId,
+        workerName: saved.workerName,
+        replacedAuthorization: saved.replacedAuthorization,
+      });
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not save the token.");
     } finally {

@@ -270,6 +270,7 @@ describe("capabilitiesView", () => {
       plan: { plan: "paid", source: "detected" },
       manualPlan: "free",
       accountId: "acc1",
+      connection: "api_token",
     });
     expect(capabilitiesView(undefined, null)).toMatchObject({
       checkedAt: null,
@@ -277,7 +278,9 @@ describe("capabilitiesView", () => {
       plan: { plan: "free", source: "default" },
       manualPlan: null,
       accountId: null,
+      connection: "api_token",
     });
+    expect(capabilitiesView(undefined, null, "acc1", "oauth").connection).toBe("oauth");
   });
 });
 
@@ -311,6 +314,15 @@ describe("the manual Workers plan choice", () => {
       show: true,
       billingHint: true,
     });
+  });
+
+  it("shows without the Billing: Read hint on a manager connected with Cloudflare sign-in", () => {
+    for (const probes of [stored(), null]) {
+      expect(manualPlanControl(capabilitiesView(null, probes), "oauth")).toEqual({
+        show: true,
+        billingHint: false,
+      });
+    }
   });
 
   it("shows with the hint before the first check", () => {

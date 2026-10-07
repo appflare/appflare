@@ -1,12 +1,15 @@
 import { NonRetryableError } from "cloudflare:workflows";
 import { CloudflareApiError } from "@appflare/cf-api";
+import { CloudflareConnectionError } from "../cloudflare/connection-errors";
 import { ArtifactError, ArtifactFetchError } from "./install/artifact";
 import { isSubrequestLimitError, subrequestLimitMessage } from "./install/budget";
 
 /**
  * How job failures are classified: 429/5xx and network errors are retried by
  * the Workflow engine; 4xx, integrity failures, and the subrequest limit end
- * the job at once (`NonRetryableError`).
+ * the job at once (`NonRetryableError`). A Cloudflare connection that needs
+ * an administrator (reconnecting, setup) ends it with the connection's own
+ * words; one that is renewing or redeploying is retried.
  */
 
 /** A failure the job reports as is; never retried. */
@@ -24,6 +27,11 @@ export function toStepError(error: unknown): Error {
     return error.status === 429 || error.status >= 500
       ? new Error(message)
       : new NonRetryableError(message);
+  }
+  // Renewing access may pass on its own (a redeploy, Cloudflare busy);
+  // reconnecting or finishing setup takes an administrator.
+  if (error instanceof CloudflareConnectionError) {
+    return error.retryable ? new Error(message) : new NonRetryableError(message);
   }
   if (error instanceof ArtifactFetchError) {
     return error.retryable ? new Error(message) : new NonRetryableError(message);

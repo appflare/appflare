@@ -31,8 +31,13 @@ export interface StartSelfUpdateDeps {
   latest: ManagerRelease | null;
   /** The running Appflare version (`runningVersion`). */
   currentVersion: string;
-  /** `CF_API_TOKEN` is bound to the running version. */
+  /** The Cloudflare connection is configured (an API token bound, or a grant stored). */
   hasToken: boolean;
+  /**
+   * Why the Cloudflare connection cannot be used now (it needs reconnecting,
+   * say), in the words to show; null or absent when it can.
+   */
+  connectionProblem?: string | null;
   /** For settling jobs whose Workflow instance died, so they do not block the update. */
   workflows: WorkflowLookup;
   createJob(id: string, params: SelfUpdateJobParams): Promise<{ id: string }>;
@@ -68,6 +73,7 @@ export async function startSelfUpdateCore(
   }
   const orm = createDb(deps.db);
   const settings = await readSettings(orm, [SETTING.accountId, SETTING.workerName]);
+  if (deps.hasToken && deps.connectionProblem) throw new SelfUpdateError(deps.connectionProblem);
   if (!settings.account_id || !settings.worker_name || !deps.hasToken) {
     throw new SelfUpdateError(
       "Appflare does not know its Cloudflare account and Worker yet. Finish setup first.",

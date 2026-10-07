@@ -7,7 +7,11 @@ import {
   type FetchLike,
 } from "@appflare/cf-api";
 import { apiBaseOption } from "../../cloudflare/api-base";
-import { errorMessage, JobError, toStepError } from "../errors";
+import {
+  type CloudflareConnection,
+  cloudflareConnection,
+} from "../../cloudflare/connection.server";
+import { errorMessage, toStepError } from "../errors";
 import { fetchCost } from "../install/budget";
 import { type LogLine, StepLog } from "../step-log";
 
@@ -51,9 +55,14 @@ export type UnitResult<T> =
   | { ok: true; value: T; log: UnitLog; subrequests: number }
   | { ok: false; failure: UnitFailure; log: UnitLog; subrequests: number };
 
-/** Secrets and settings a unit reads from the Worker it runs in, never from its input. */
+/**
+ * Secrets and settings a unit reads from the Worker it runs in, never from
+ * its input: the Cloudflare connection (`CF_API_TOKEN`, or the grant in D1
+ * sealed with `CF_GRANT_KEY`) among them.
+ */
 export interface UnitEnv {
   CF_API_TOKEN?: string;
+  CF_GRANT_KEY?: string;
   CF_API_BASE_URL?: string;
   GITHUB_TOKEN?: string;
   /** The sandbox Worker, whose `fetch` serves sandbox builds (artifact host kind `sandbox`). */
@@ -80,7 +89,7 @@ export interface UnitTools {
   fetch: FetchLike;
   /** Counts another way out of the Worker (a service binding's calls) the same way. */
   count(fetch: FetchLike): FetchLike;
-  /** A cf-api client with the Worker's own API token. */
+  /** A cf-api client with the manager's own Cloudflare connection. */
   cf(): CloudflareClient;
 }
 
@@ -163,15 +172,18 @@ export async function runUnit<T>(
       }
     };
   const counted = count(base);
+  // One provider per unit call: a refresh it needs is counted with the unit's requests.
+  let connection: CloudflareConnection | null = null;
   const cf = (): CloudflareClient => {
-    const token = env.CF_API_TOKEN;
-    if (token === undefined || token.length === 0) {
-      throw new JobError("the Cloudflare API token is not configured; finish setup first");
-    }
+    connection ??= cloudflareConnection(env, {
+      fetch: counted,
+      ...(deps.now === undefined ? {} : { now: deps.now }),
+      ...(deps.sleep === undefined ? {} : { sleep: deps.sleep }),
+    });
     return createClient({
       accountId,
-      token,
-      fetch: counted,
+      token: connection.token,
+      fetch: connection.retrying(counted),
       onRequest: log.onRequest,
       ...apiBaseOption(env),
     });

@@ -19,6 +19,8 @@ const calls = vi.hoisted(() => ({
   moveManagerAddress: vi.fn(),
   changeManagerAddress: vi.fn(),
   revertManagerAddress: vi.fn(),
+  retryPendingMove: vi.fn(),
+  stayAtWorkersDev: vi.fn(),
   getJob: vi.fn(),
   invalidate: vi.fn(async () => {}),
 }));
@@ -28,6 +30,8 @@ vi.mock("../domains/manager-address.functions", () => ({
   moveManagerAddress: calls.moveManagerAddress,
   changeManagerAddress: calls.changeManagerAddress,
   revertManagerAddress: calls.revertManagerAddress,
+  retryPendingMove: calls.retryPendingMove,
+  stayAtWorkersDev: calls.stayAtWorkersDev,
 }));
 vi.mock("../jobs/jobs.functions", () => ({ getJob: calls.getJob }));
 vi.mock("@tanstack/react-router", () => ({
@@ -202,6 +206,38 @@ function movedNotice(): Element | undefined {
     d.textContent?.includes(`Appflare now lives at ${HOST}`),
   );
 }
+
+describe("the domain the install chose, while Appflare waits to move there", () => {
+  it("says so in one line, with Stay at workers.dev", async () => {
+    show({ ...AT_WORKERS_DEV, pending: { hostname: HOST, failedAt: null, failure: null } });
+    expect(page()).toContain("Appflare moves here once it is ready.");
+    expect(hasButton("Try again")).toBe(false);
+    calls.stayAtWorkersDev.mockResolvedValue(undefined);
+    await click(button("Stay at workers.dev"));
+    expect(calls.stayAtWorkersDev).toHaveBeenCalledOnce();
+    expect(calls.invalidate).toHaveBeenCalled();
+  });
+
+  it("after a failed move: one line, why under Details, Try again once and Stay", async () => {
+    show({
+      ...AT_WORKERS_DEV,
+      pending: {
+        hostname: HOST,
+        failedAt: "2026-09-28T12:20:00.000Z",
+        failure: "Moving Cloudflare Access: refused.",
+      },
+    });
+    expect(page()).toContain(`Couldn't move to ${HOST}.`);
+    expect(page()).not.toContain("Moving Cloudflare Access: refused.");
+    await click(button("Details"));
+    expect(page()).toContain("Moving Cloudflare Access: refused.");
+    expect(hasButton("Stay at workers.dev")).toBe(true);
+    calls.retryPendingMove.mockResolvedValue(STARTED);
+    await click(button("Try again"));
+    expect(calls.retryPendingMove).toHaveBeenCalledOnce();
+    expect(calls.invalidate).toHaveBeenCalled();
+  });
+});
 
 describe("Appflare's address at workers.dev", () => {
   it("shows the workers.dev address with Open and Use a domain", () => {

@@ -7,6 +7,7 @@ import m0003 from "./0003_install_access_app.sql?raw";
 import m0004 from "./0004_access_sync.sql?raw";
 import m0005 from "./0005_access_users_policy.sql?raw";
 import m0006 from "./0006_access_accepted_bypass.sql?raw";
+import m0007 from "./0007_cloudflare_grant.sql?raw";
 
 /** Every migration in apply order. `schema_version` counts how many have been applied. */
 export const migrations: readonly { tag: string; sql: string }[] = [
@@ -17,4 +18,5 @@ export const migrations: readonly { tag: string; sql: string }[] = [
   { tag: "0004_access_sync", sql: m0004 },
   { tag: "0005_access_users_policy", sql: m0005 },
   { tag: "0006_access_accepted_bypass", sql: m0006 },
+  { tag: "0007_cloudflare_grant", sql: m0007 },
 ];

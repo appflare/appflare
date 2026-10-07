@@ -8,6 +8,7 @@ import type { CapabilityRowsData } from "../capabilities/capability-rows.server"
 
 import type { CatalogView } from "../catalog/catalogs.functions";
 import type { ManagerUpdateState } from "../catalog/manager-releases.functions";
+import { RECONNECT_COPY } from "../cloudflare/connection-view";
 import type { GatewayView } from "../gateway/gateway.server";
 import type { RemovedAppRow } from "../installs/removed-apps.functions";
 import type { ManagerVersionsState } from "../jobs/self-update/rollback.functions";
@@ -99,6 +100,15 @@ const tokenStatus: TokenStatus = {
   workerName: "appflare",
   verifiedAt: ISO,
   hasSecret: true,
+  connection: {
+    kind: "api_token",
+    state: "connected",
+    problem: null,
+    problemAt: null,
+    connectedSince: ISO,
+    ready: true,
+    oauth: null,
+  },
 };
 
 const capabilities = capabilitiesView(undefined, {
@@ -150,7 +160,7 @@ describe("AccountSettingsView", () => {
     expectPattern(
       html,
       ["connection", "capabilities", "danger-zone"],
-      ["Rotate token", "Check again", "Rotate auth secret", "Remove Appflare"],
+      ["Change how Appflare connects", "Check again", "Rotate auth secret", "Remove Appflare"],
     );
     expect(html).toMatch(/<h1[^>]*>Your account<\/h1>/);
     expect(text(html)).toContain("Acme");
@@ -161,7 +171,7 @@ describe("AccountSettingsView", () => {
     expect(html).not.toContain('id="checklist-r2"');
   });
 
-  it("links the connection to appflare.dev with this manager's origin, quietly", () => {
+  it("shows the account and how Appflare connects, and keeps the rest under Details", () => {
     const html = render(
       createElement(AccountSettingsView, {
         tokenStatus,
@@ -171,15 +181,67 @@ describe("AccountSettingsView", () => {
         managerUrl: "https://appflare.acme.workers.dev",
       }),
     );
-    expect(html).toContain(
-      'href="https://appflare.dev/my/?utm_source=appflare-manager&amp;utm_medium=app&amp;utm_content=appflareDev#manager=https%3A%2F%2Fappflare.acme.workers.dev"',
-    );
-    expect(html).toMatch(/rel="noreferrer"/);
-    expect(text(html)).toContain(
-      "Remembers this Appflare in your browser so Install buttons on appflare.dev open here.",
-    );
+    expect(text(html)).toContain("Connected with An API token");
+    expect(text(html)).toContain("Details");
+    // The ids and the appflare.dev link open with Details (the DOM test opens it).
+    expect(html).not.toContain("appflare.dev/my/");
+    expect(text(html)).not.toContain(tokenStatus.accountId ?? "no account id");
     // Still one primary action at most, and no extra section.
     expect(sectionIds(html)).toEqual(["connection", "capabilities"]);
+  });
+
+  it("says in plain words when the Cloudflare authorization needs reconnecting", () => {
+    const needsReconnect: TokenStatus = {
+      ...tokenStatus,
+      hasSecret: false,
+      connection: {
+        kind: "oauth",
+        state: "needs_reconnect",
+        problem: "Cloudflare no longer accepts this connection: it was withdrawn in Cloudflare.",
+        problemAt: ISO,
+        connectedSince: ISO,
+        ready: false,
+        oauth: {
+          clientId: "b99863433175d812f9595af56dd1b71d",
+          scopes: ["workers-scripts.write"],
+          missingScopes: [],
+          renewedAt: ISO,
+        },
+      },
+    };
+    const forAdmin = text(
+      render(
+        createElement(AccountSettingsView, {
+          tokenStatus: needsReconnect,
+          capabilities: capabilityRowsData,
+          danger: null,
+          viewer: { role: "admin", isOwner: false },
+        }),
+      ),
+    );
+    expect(forAdmin).toContain("Needs reconnecting");
+    expect(forAdmin).toContain(RECONNECT_COPY.title);
+    expect(forAdmin).toContain(RECONNECT_COPY.adminLine);
+    // Why it happened is under Details.
+    expect(forAdmin).not.toContain("it was withdrawn in Cloudflare");
+    expect(forAdmin).toContain("Was connected with Cloudflare sign-in");
+    // One action, which offers signing in again or an API token.
+    expect(forAdmin).toContain("Reconnect Cloudflare");
+    expect(forAdmin).not.toContain("Change how Appflare connects");
+    // Technical details stay behind a toggle.
+    expect(forAdmin).toContain("Details");
+    const forMember = text(
+      render(
+        createElement(AccountSettingsView, {
+          tokenStatus: needsReconnect,
+          capabilities: capabilityRowsData,
+          danger: null,
+          viewer: { role: "member", isOwner: false },
+        }),
+      ),
+    );
+    expect(forMember).toContain(RECONNECT_COPY.memberLine);
+    expect(forMember).not.toContain("Reconnect Cloudflare");
   });
 
   it("shows no danger zone to admins who are not the owner", () => {
@@ -206,7 +268,7 @@ describe("AccountSettingsView", () => {
       }),
     );
     expect(sectionIds(html)).toEqual(["connection", "capabilities"]);
-    expect(text(html)).not.toContain("Rotate token");
+    expect(text(html)).not.toContain("Change how Appflare connects");
     expect(count(html, ">Check again<")).toBe(0);
   });
 });

@@ -1,6 +1,7 @@
 import { NonRetryableError } from "cloudflare:workflows";
 import { selfDeployingStage } from "@appflare/schema";
 import { and, eq, isNull } from "drizzle-orm";
+import { requireConnection } from "../../cloudflare/connection.server";
 import { createDb } from "../../db/client";
 import { installs, jobs, resources } from "../../db/schema";
 import { readSettings, SETTING } from "../../db/settings";
@@ -85,9 +86,8 @@ export async function runSelfDeployingReconfigure(
         .where(and(eq(resources.install_id, params.installId), isNull(resources.deleted_at)));
       const settings = await readSettings(orm, [SETTING.accountId]);
       if (!settings.account_id) throw new JobError("the Cloudflare account is not known yet");
-      if (!env.CF_API_TOKEN) {
-        throw new JobError("the Cloudflare API token is not configured; finish setup first");
-      }
+      // An API token, or a stored grant that does not need reconnecting.
+      await requireConnection(env);
       log.info(
         `Changing the settings of ${install.app_slug} ${install.catalog_version}: its installer deploys the installed commit again with them, as stage ${selfDeployingStage(params.installId)}.`,
       );

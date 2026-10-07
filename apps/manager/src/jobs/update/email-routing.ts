@@ -1,5 +1,6 @@
 import type { CatalogEmailRouting } from "@appflare/schema";
 import { and, eq, isNull, sql } from "drizzle-orm";
+import { TOKEN_REFUSALS } from "../../cloudflare/token-refusals";
 import { appPlace } from "../../components/app-links";
 import { resources } from "../../db/schema";
 import {
@@ -312,14 +313,19 @@ async function checkAdditionsPhase(
         log,
       );
       if (found.zoneName === null) {
+        // In the token's words; the step runner rewords them for a Cloudflare sign-in.
         log.warn(
-          `Appflare cannot see ${request.zone.zoneName}, the domain the app receives email for: it may have been removed from Cloudflare, or the token lacks ${found.missing.join(", ") || "Zone: Read"}. Nothing new is set up for this version's email; choose another domain under ${settingsPlace(request.installId)}, or fix the token. ${later(request.installId, offered)}`,
+          `${TOKEN_REFUSALS.emailZoneGone(request.zone.zoneName, found.missing.join(", ") || "Zone: Read")} Nothing new is set up for this version's email; another domain can be chosen under ${settingsPlace(request.installId)}. ${later(request.installId, offered)}`,
         );
         return { inspection: null };
       }
       if (found.missing.length > 0) {
+        const lacks = TOKEN_REFUSALS.emailPermissions(
+          found.missing.join(", "),
+          "setting up this version's email",
+        );
         log.warn(
-          `The Cloudflare token lacks ${found.missing.join(", ")}, which setting up this version's email needs, so nothing new is set up for it; add them to the token (for this zone). ${later(request.installId, offered)}`,
+          `${lacks.charAt(0).toUpperCase()}${lacks.slice(1)}, so nothing new is set up for it. ${later(request.installId, offered)}`,
         );
         return { inspection: null };
       }

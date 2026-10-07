@@ -1,19 +1,34 @@
 ---
 title: Security model
-description: Signed artifacts, pinned builds, what the manager does with your API token, sessions, roles, notification credentials, and the optional Cloudflare Access protection.
+description: Signed artifacts, pinned builds, what the manager does with its access to your Cloudflare account, the browser installer's part, sessions, roles, notification credentials, and the optional Cloudflare Access protection.
 ---
 
-The manager holds an API token that can change Workers and data across your
-Cloudflare account. Everything below exists to keep that token safe and to make sure
-the code it deploys is the code the catalog pinned and built.
+The manager holds access to your Cloudflare account that can change Workers and data
+across it. Everything below exists to keep that access safe and to make sure the code
+it deploys is the code the catalog pinned and built.
 
-## The API token
+## Appflare's Cloudflare connection
 
-The token you paste in the setup wizard is stored as an encrypted secret,
-`CF_API_TOKEN`, on the manager's own Worker. The manager:
+The manager connects to Cloudflare in one of two ways, shown under **Settings > Your
+account > Cloudflare connection**:
 
-- sends it only to `api.cloudflare.com`,
-- never writes it to its database or KV,
+- **An API token** you created and pasted, stored as an encrypted secret,
+  `CF_API_TOKEN`, on the manager's own Worker.
+- **Cloudflare sign-in**, which an [install from your browser](/start/browser-install/)
+  sets up and which an admin can choose later. Cloudflare issues a refresh token, which
+  the manager stores in its D1 database encrypted with AES-GCM, under a key held in a
+  Worker secret of its own, `CF_GRANT_KEY`. The database alone does not reveal it. The
+  manager trades it for an access token that lasts an hour whenever it needs one, and
+  stores the new refresh token Cloudflare returns each time. Renewals are serialized,
+  so two requests never spend the same refresh token. Revoked access shows as
+  **Needs reconnecting**; a renewal that fails for a moment is retried, never taken for
+  a revocation.
+
+Either way, the manager:
+
+- sends its credential only to Cloudflare (`api.cloudflare.com`, and `dash.cloudflare.com`
+  to renew or withdraw a sign-in),
+- never writes a token in plain text to its database or KV,
 - never shows it again in the UI, and never sends it back to the browser,
 - never includes it in logs, job logs, or error messages. Job logs record each API
   call as `METHOD path -> status` only, without query strings or bodies,
@@ -21,8 +36,41 @@ The token you paste in the setup wizard is stored as an encrypted secret,
   enter for them. An app that needs Cloudflare API access gets its own token, which
   you create with only the permissions it lists.
 
-To replace the token, use **Rotate token** in **Settings > Your account > Cloudflare connection**, then revoke the old one in
-the Cloudflare dashboard.
+The manager never changes the kind of connection by itself. Replacing a token,
+switching between the two, reconnecting and withdrawing access are described in
+[Appflare's Cloudflare connection](/guides/cloudflare-connection/).
+
+## Installing from appflare.dev
+
+An [install from your browser](/start/browser-install/) adds one more party for a few
+minutes: Appflare's hosted installer, which deploys the manager because Cloudflare's API
+does not accept requests from a web page.
+
+- It receives the short-lived access token from your Cloudflare sign-in with every
+  request. That token carries every permission you allowed Appflare, and while it is
+  valid (about an hour) the installer could use it for anything those permissions
+  allow. It uses it to deploy, keeps it only for the request, and never logs it.
+  Discarding it does not cancel it at Cloudflare.
+- It never receives the refresh token. Your browser hands that to the new manager,
+  which renews it at once, so the copy the browser held stops working. That is how the
+  published code behaves; an installer running other code could still use the access
+  token for more while it is valid, which is the trust decision below.
+- The manager accepts that handover only with a secret your browser made and kept to
+  itself: the installer deploys the manager with the secret's SHA-256 alone
+  (`APPFLARE_HANDOFF`). Before handing anything over, the browser has the manager at
+  the chosen address prove it holds that hash. Browsers may send the handover only
+  from appflare.dev, and the manager allows 20 tries per client address in 10 minutes.
+- In return the manager gives that browser a one-time link to the owner step, valid
+  for 30 minutes, stored only as a hash.
+- Until the owner account exists, the installer keeps a record of the installation:
+  account id, name, address, release, what it created, and its progress. No token, no
+  password, no app data. It is deleted when the owner account is created or the
+  installation is removed.
+
+The installer's code is open source, but whether the service on appflare.dev runs
+exactly that code is something you take on trust. The Deploy to Cloudflare button and
+`create-appflare` avoid it. See
+[What the installer sees and keeps](/start/browser-install/#what-the-installer-sees-and-keeps).
 
 ## Signed artifacts
 
@@ -76,8 +124,8 @@ Some apps have no prebuilt release. If you enable the optional sandbox Worker
   commit by hand, and that a build runs with no credentials.
 - **The build has no credentials.** The container holds no Cloudflare token, no API
   key and no R2 keys, so the code it runs has nothing to act on your account with.
-  Dependency install scripts do not run. The manager's API token never leaves the
-  manager; it talks to the sandbox Worker only over a service binding, and the sandbox
+  Dependency install scripts do not run. The manager's Cloudflare credential never
+  leaves the manager; it talks to the sandbox Worker only over a service binding, and the sandbox
   Worker has no public URL.
 - **Requests that name the API are refused.** The sandbox Worker refuses a build's HTTP
   and HTTPS requests addressed to `api.cloudflare.com`. It matches the host name a
@@ -119,8 +167,8 @@ app, never the manager's.
   build apps, because an installer deploys through the Cloudflare API and the sandbox
   Worker refuses build containers' requests addressed to `api.cloudflare.com`.
 - **What reads the account.** After a run, the sandbox Worker lists the app's Workers
-  and their bindings with the same app token. The manager's own token is used only to
-  store and delete the secrets on the sandbox Worker.
+  and their bindings with the same app token. The manager's own connection is used only
+  to store and delete the secrets on the sandbox Worker.
 - **What the installer can do** is whatever the token allows, for as long as it runs.
   Create the token with only the permissions the catalog entry lists, and scope it to
   this account. Like build scripts, the installer is third-party code at a pinned
@@ -151,7 +199,10 @@ app, never the manager's.
   the sign-in page once the owner exists. Token checks, each one call that
   verifies and saves, are limited to 20 per client address in 10 minutes, and refusals
   carry fixed messages. A manager that cannot identify its own version refuses
-  every token unless it is opened at its `workers.dev` address.
+  every token unless it is opened at its `workers.dev` address. A manager
+  [installed from appflare.dev](#installing-from-appflaredev) gets its connection
+  from the browser that installed it, and that browser gets the setup claim through
+  its one-time link. Until then, a pasted token works there too.
 - **Better Auth.** Users sign in with email and password, or with a passkey they
   added in **Settings > Users and sign-in > Your passkeys**. Passkeys are bound to the manager's own hostname. There is no
   public sign-up; admins create users. Session cookies are `HttpOnly`, `Secure`, and
@@ -204,6 +255,13 @@ What turning it on does:
   request except `/api/health` must carry a `Cf-Access-Jwt-Assertion` token signed
   by your team's keys and issued for that application; otherwise the manager answers
   with a 403 page that says why. The token is never logged.
+- Leaves two more paths out of the manager's own check. `/api/handoff` is where the
+  browser that [installed Appflare from appflare.dev](#installing-from-appflaredev)
+  hands over its connection; it accepts a handover only before the owner account
+  exists. `/api/cloudflare/oauth-return` is where a
+  [Cloudflare sign-in from Settings](/guides/cloudflare-connection/#sign-in-with-cloudflare)
+  comes back; it accepts only a sign-in an administrator started there in the last 10
+  minutes, once. Cloudflare Access itself still checks both at its edge.
 - Keeps the allow list current: adding an admin in **Settings > Users and sign-in** adds their email, and
   **Re-sync admins** rewrites the list after any other change.
 
@@ -223,10 +281,11 @@ new hostname.
 
 - The account needs a Zero Trust organization. The Free plan covers up to 50 users;
   the manager links to the dashboard to create one if there is none.
-- The API token needs **Access: Apps and Policies** (Edit) and **Access:
+- Appflare's API token needs **Access: Apps and Policies** (Edit) and **Access:
   Organizations, Identity Providers, and Groups** (Read). The token template
-  requests both; an older token needs rotating first. The manager checks both
-  before it changes anything.
+  requests both; an older token needs replacing first. Connected with Cloudflare
+  sign-in, Appflare has both already. The manager checks both before it changes
+  anything.
 - You must be able to sign in to Access with your own admin email. A new Zero
   Trust organization often offers only the Cloudflare account login method, which
   admits members of this Cloudflare account with their Cloudflare login email. To

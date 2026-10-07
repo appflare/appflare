@@ -1,6 +1,8 @@
+import { missingManagerScopes } from "@appflare/cf-api/oauth";
 import { eq, ne } from "drizzle-orm";
 import { type CatalogIndexRead, listedApps, readEnabledCatalogs } from "../catalog/merged.server";
 import { appKey } from "../catalog/sources";
+import { readGrant } from "../cloudflare/grant-store.server";
 import type { Database } from "../db/client";
 import { install_access, installs } from "../db/schema";
 import type { SandboxJobState } from "../sandbox/readiness";
@@ -13,6 +15,7 @@ import {
   catalogNeeds,
   type InstallOfApp,
   installedNeeds,
+  type RowsConnection,
   type SandboxBuildsState,
 } from "./capability-rows";
 
@@ -31,6 +34,20 @@ export interface CapabilityRowsData {
   inUse: CatalogNeeds;
   /** An enable in progress and the last failed sandbox job, for the sandbox builds row. */
   sandboxJobs: SandboxJobState;
+  /** How Appflare connects, and the permissions a Cloudflare sign-in lacks; an API token when left out. */
+  connection?: RowsConnection;
+}
+
+/**
+ * How Appflare connects, from the stored grant (one D1 read): no grant is
+ * an API token; a grant is Cloudflare sign-in, with the manager permissions
+ * it was not given.
+ */
+export async function readRowsConnection(db: D1Database): Promise<RowsConnection> {
+  const grant = await readGrant(db);
+  return grant === null
+    ? { kind: "api_token", missingScopes: [] }
+    : { kind: "oauth", missingScopes: missingManagerScopes(grant.scopes) };
 }
 
 /**
@@ -38,7 +55,7 @@ export interface CapabilityRowsData {
  * running Worker has the `SANDBOX` binding, to a sandbox Worker not recorded
  * as deleted) or being turned on, the cached
  * catalog, and the account's installs with the catalog entries they came
- * from. No Cloudflare API call; "Check again" refreshes the capabilities
+ * from, and how Appflare connects. No Cloudflare API call; "Check again" refreshes the capabilities
  * first. A caller that already read the enabled catalogs or the installs,
  * or is reading them, passes them (or the reads under way) in `known`,
  * which saves reading them again; its own reads start at once either way.
@@ -51,7 +68,7 @@ export async function readCapabilityRowsData(
     installs?: readonly InstallOfApp[] | Promise<readonly InstallOfApp[]>;
   } = {},
 ): Promise<CapabilityRowsData> {
-  const [view, reads, sandboxJobs, bound, present] = await Promise.all([
+  const [view, reads, sandboxJobs, bound, present, connection] = await Promise.all([
     readCapabilitiesView(db),
     known.reads ?? readEnabledCatalogs(env, { refreshOnMiss: false }),
     readSandboxJobState(env.DB),
@@ -75,6 +92,7 @@ export async function readCapabilityRowsData(
             }),
           ),
         ),
+    readRowsConnection(env.DB),
   ]);
   // What the enabled catalogs' apps need, from their cached indexes.
   const cached = reads.filter((r) => r.ok);
@@ -86,5 +104,6 @@ export async function readCapabilityRowsData(
     needs: cached.length === 0 ? null : catalogNeeds(apps),
     inUse: installedNeeds(present, (i) => byKey.get(appKey(i.catalogId, i.appSlug))),
     sandboxJobs,
+    connection,
   };
 }

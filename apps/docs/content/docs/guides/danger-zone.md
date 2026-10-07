@@ -86,6 +86,8 @@ In this order, each step one call to the Cloudflare API:
 6. Last, the manager Worker itself, with its Workflow, cron trigger and `workers.dev`
    address. It deletes itself after the result page has been sent. Once the database
    is gone it deletes itself even if you closed the page.
+7. For an Appflare connected with [Cloudflare sign-in](/guides/cloudflare-connection/),
+   it withdraws that sign-in at Cloudflare.
 
 While the removal runs, no job starts, not even an automatic update.
 
@@ -102,8 +104,13 @@ the dashboard a minute later, delete it there.
   [protects](/guides/protect-apps/), and the "Appflare users" policy they use, so
   those apps keep asking for a sign-in. Who can sign in is
   managed under **Zero Trust**, **Access** in the Cloudflare dashboard from then on.
-- The `Appflare` API token. Nothing uses it any more: revoke it in the Cloudflare
-  dashboard, with any tokens you created for apps that you no longer need.
+- The `Appflare` API token, if Appflare connected with one. Nothing uses it any more:
+  revoke it in the Cloudflare dashboard, with any tokens you created for apps that you
+  no longer need. An Appflare connected with
+  [Cloudflare sign-in](/guides/cloudflare-connection/) withdraws that sign-in itself
+  as the last step; check under
+  [Manage OAuth authorizations](https://dash.cloudflare.com/?to=/profile/access-management/authorization)
+  in your Cloudflare profile that Appflare is gone, and revoke it there if not.
 
 To manage the apps again later, reinstall Appflare with the installer from the
 repository, as [Install Appflare](/start/install/) describes. The new manager starts

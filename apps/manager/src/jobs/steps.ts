@@ -2,6 +2,8 @@ import { NonRetryableError } from "cloudflare:workflows";
 import { type CloudflareClient, createClient, type FetchLike } from "@appflare/cf-api";
 import { probeCredentials, zoneNamesVia } from "../access/probe-credentials.server";
 import { apiBaseOption } from "../cloudflare/api-base";
+import { type CloudflareConnection, cloudflareConnection } from "../cloudflare/connection.server";
+import { inConnectionWordsOf } from "../cloudflare/sign-in-words.server";
 import { createDb, type Database } from "../db/client";
 import { errorMessage, JobError, toStepError } from "./errors";
 import { isSubrequestLimitError } from "./install/budget";
@@ -125,6 +127,12 @@ export function createJobSteps(ctx: JobContext, jobId: string): JobSteps {
     now,
   });
   let accountId: string | null = null;
+  /**
+   * The manager's own Cloudflare credential, one provider for the whole run:
+   * it reads D1 once and then answers from this isolate's memo, renewing an
+   * OAuth access token when it runs out, through the counting fetch.
+   */
+  let connection: CloudflareConnection | null = null;
   /** How many times each step name was run so far, replays included, for unique pause names. */
   const seen = new Map<string, number>();
 
@@ -134,14 +142,17 @@ export function createJobSteps(ctx: JobContext, jobId: string): JobSteps {
   }
 
   function client(log: StepLog, other?: string): CloudflareClient {
-    const token = other ?? env.CF_API_TOKEN;
-    if (token === undefined || token.length === 0) {
-      throw new JobError("the Cloudflare API token is not configured; finish setup first");
-    }
+    connection ??= cloudflareConnection(env, {
+      fetch: baseFetch,
+      now,
+      ...(deps.sleep === undefined ? {} : { sleep: deps.sleep }),
+    });
     return createClient({
       accountId: knownAccount(),
-      token,
-      fetch: baseFetch,
+      token: other ?? connection.token,
+      // Another token (an app's own) is sent as is; the manager's own access
+      // token is renewed once when the API refuses it.
+      fetch: other === undefined ? connection.retrying(baseFetch) : baseFetch,
       onRequest: log.onRequest,
       ...apiBaseOption(env),
     });
@@ -224,6 +235,20 @@ export function createJobSteps(ctx: JobContext, jobId: string): JobSteps {
     },
   };
 
+  /**
+   * A refusal written for an API token says, on a manager connected with
+   * Cloudflare sign-in, what the sign-in needs instead. Reads the connection
+   * only for such a message.
+   */
+  async function inSignInWords(error: unknown): Promise<void> {
+    if (error instanceof Error) error.message = await inConnectionWordsOf(db, error.message);
+  }
+
+  /** The same for the step's log lines (a warning that a permission is missing), before they are written. */
+  async function inSignInLines(log: StepLog): Promise<void> {
+    for (const line of log.lines) line.message = await inConnectionWordsOf(db, line.message);
+  }
+
   async function runStep<T extends object>(
     name: string,
     body: (tools: StepTools) => Promise<T>,
@@ -253,9 +278,11 @@ export function createJobSteps(ctx: JobContext, jobId: string): JobSteps {
               url,
             ),
         });
+        await inSignInLines(log);
         await log.flush(db, jobId);
         return value;
       } catch (error) {
+        await inSignInWords(error);
         const failure = toStepError(error);
         // The job's own invocation ran out (not a unit's): said so, for the rerun above.
         const own =
@@ -263,6 +290,7 @@ export function createJobSteps(ctx: JobContext, jobId: string): JobSteps {
             ? new NonRetryableError(`${errorMessage(failure)} ${OWN_LIMIT_NOTE}`)
             : failure;
         log.error(`${name} failed: ${errorMessage(own)}`);
+        await inSignInLines(log);
         await log.flush(db, jobId);
         throw own;
       }

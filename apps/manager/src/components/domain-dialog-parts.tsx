@@ -1,8 +1,10 @@
 import { Banner, Checkbox, Link, LinkButton } from "@cloudflare/kumo";
-import { KeyIcon, WarningIcon } from "@phosphor-icons/react";
+import { KeyIcon, PlugsConnectedIcon, WarningIcon } from "@phosphor-icons/react";
 import { useId } from "react";
+import { reconnectDialogHref } from "../cloudflare/reconnect-outcome";
 import { accountTokenTemplateUrl } from "../cloudflare/token-template";
 import type { ConflictingRecord, DomainOptions } from "../installs/custom-domains.server";
+import { ACTIONS_UNDER_ON_PHONE, BannerActions } from "./message-text";
 import { settingsLink } from "./settings-links";
 
 /**
@@ -20,9 +22,10 @@ export function TokenPermissionsBanner({
   options,
   accountId,
 }: {
-  options: Pick<DomainOptions, "missing" | "noZones">;
+  options: Pick<DomainOptions, "missing" | "noZones" | "connection">;
   accountId: string | null;
 }) {
+  if (options.connection === "oauth") return <SignInPermissionsBanner noZones={options.noZones} />;
   const permissions = options.missing.join(", ");
   const title = options.noZones
     ? "Appflare cannot see any domain in this account"
@@ -45,7 +48,7 @@ export function TokenPermissionsBanner({
             <Link href={settingsLink("account", "connection")} target="_blank" rel="noopener">
               Cloudflare connection settings
             </Link>{" "}
-            with Rotate token.
+            with Change how Appflare connects.
           </span>
         </span>
       }
@@ -58,6 +61,47 @@ export function TokenPermissionsBanner({
         >
           Create a new token
         </LinkButton>
+      }
+    />
+  );
+}
+
+/**
+ * The same for a Cloudflare sign-in, which asked for every permission when
+ * it connected: there is no token to edit, so the way out is to reconnect
+ * and allow them all. One line, and Reconnect Cloudflare.
+ */
+export function SignInPermissionsBanner({
+  noZones,
+  what = "manage custom domains",
+}: {
+  noZones: boolean;
+  /** What Appflare cannot do yet, after "cannot". */
+  what?: string;
+}) {
+  return (
+    <Banner
+      variant="alert"
+      icon={<WarningIcon weight="fill" />}
+      className={ACTIONS_UNDER_ON_PHONE}
+      title={
+        noZones ? "Appflare cannot see any domain in this account" : `Appflare cannot ${what} yet`
+      }
+      description={
+        noZones
+          ? "The account has no active domain yet, or the sign-in did not allow Appflare to see them."
+          : "The Cloudflare sign-in did not allow it. Reconnect and allow every permission."
+      }
+      action={
+        <BannerActions>
+          <LinkButton
+            href={reconnectDialogHref()}
+            variant="secondary"
+            icon={<PlugsConnectedIcon />}
+          >
+            Reconnect Cloudflare
+          </LinkButton>
+        </BannerActions>
       }
     />
   );

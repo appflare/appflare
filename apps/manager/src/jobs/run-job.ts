@@ -68,9 +68,16 @@ export interface JobEnv {
    * update job reads the cached index entry of the app.
    */
   KV?: KVNamespace;
+  /** The Cloudflare connection: an API token, or the key of the grant stored in D1. */
   CF_API_TOKEN?: string;
+  CF_GRANT_KEY?: string;
   /** Opens the sealed Access service token secret for health checks of protected apps. */
   BETTER_AUTH_SECRET?: string;
+  /**
+   * On a manager installed from the browser, `v1.<hash>` of its handoff
+   * secret: the move to a new address checks the handoff proof there.
+   */
+  APPFLARE_HANDOFF?: string;
   /** Optional Cloudflare API base override (tests, local dev against a fake API). */
   CF_API_BASE_URL?: string;
   /** The running manager's version; the self-update compares it with its target. */

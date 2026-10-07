@@ -5,6 +5,12 @@ declare module "virtual:appflare-catalog" {
   export default catalog;
 }
 
+declare module "virtual:appflare-scope-examples" {
+  /** Example app names by permission group (`deploy/scope-examples.ts`). */
+  const examples: import("../deploy/scope-examples.ts").ScopeExamples;
+  export default examples;
+}
+
 declare module "virtual:appflare-catalog-og-icons" {
   /** Data URIs of app icons, by slug. */
   const icons: Record<string, string>;

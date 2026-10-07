@@ -1,0 +1,20 @@
+/*
+ * Appflare's loading indicator (`AppflareLoader`) moves in script
+ * (`logo-morph.ts`, driven from `appflare-loader.tsx`). When the system asks
+ * for reduced motion the loader is the still mark, pulsing gently instead.
+ */
+@keyframes appflare-loader-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.55;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .appflare-loader {
+    animation: appflare-loader-pulse 2s ease-in-out infinite both;
+  }
+}

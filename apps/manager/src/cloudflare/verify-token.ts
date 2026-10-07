@@ -11,6 +11,7 @@ import {
 } from "@appflare/cf-api";
 import {
   DEFAULT_WORKER_NAME,
+  discoverWorkerName,
   workerNameCandidates,
   workersDevSubdomainFromHost,
 } from "./worker-name";
@@ -360,6 +361,98 @@ async function pickAccount(
       ? MESSAGES.subdomainUnreadable(label)
       : MESSAGES.wrongAccount(label, subdomain),
   );
+}
+
+export const GRANT_MESSAGES = {
+  workersUnreadable:
+    "This Cloudflare authorization cannot list the account's Workers, so Appflare cannot confirm it runs there. Connect again and allow every permission Appflare asks for.",
+  notThisAccount: (account: string) =>
+    `This Cloudflare authorization is for account ${account}, but this Appflare does not run in that account. Connect the account Appflare is installed in.`,
+  cannotVerifyAccount: MESSAGES.cannotVerifyAccount,
+  unreachable: MESSAGES.unreachable,
+} as const;
+
+export interface VerifyGrantAccountOptions {
+  /** An OAuth access token (or a provider of one) for the grant being checked. */
+  token: string | (() => Promise<string>);
+  /** The account the grant must manage. */
+  accountId: string;
+  /** The request host, for a manager without the running version's id. */
+  host: string;
+  /** The Worker version serving this request (`CF_VERSION_METADATA.id`), when bound. */
+  runningVersionId: string | null;
+  fetch?: FetchLike;
+  onRequest?: (log: RequestLog) => void;
+  baseUrl?: string;
+}
+
+export type VerifyGrantAccountResult =
+  | { ok: true; accountId: string; accountName: string | null; workerName: string }
+  | { ok: false; error: string };
+
+/**
+ * Checks that an OAuth grant can manage this manager in `accountId`, the way
+ * the token step checks a pasted token: the account's scripts are listed
+ * and the Worker version serving this request is looked up in them (a hit
+ * proves this exact manager runs there), or, for a manager without the
+ * version's id, the account's workers.dev subdomain is compared with the
+ * host. The token-verify endpoints describe API tokens and do not promise
+ * to accept OAuth access tokens, so they are not asked. The account's name
+ * comes from `GET /accounts` when the grant can read it.
+ */
+export async function verifyGrantAccount(
+  opts: VerifyGrantAccountOptions,
+): Promise<VerifyGrantAccountResult> {
+  const client = createClient({
+    accountId: opts.accountId,
+    token: opts.token,
+    fetch: opts.fetch,
+    onRequest: opts.onRequest,
+    baseUrl: opts.baseUrl,
+  });
+  try {
+    const versionId = opts.runningVersionId ?? null;
+    const hasVersion = versionId !== null && versionId.length > 0;
+    if (!hasVersion && workersDevSubdomainFromHost(opts.host) === null) {
+      return { ok: false, error: GRANT_MESSAGES.cannotVerifyAccount };
+    }
+    const scripts = await attempt(() => client.workers.listScripts());
+    if (scripts === null) return { ok: false, error: GRANT_MESSAGES.workersUnreadable };
+    const named = await attempt(async () => {
+      const token = typeof opts.token === "function" ? await opts.token() : opts.token;
+      return listAccounts({ ...opts, token, knownAccountId: opts.accountId });
+    });
+    const accountName = named?.find((a) => a.id === opts.accountId)?.name ?? null;
+    const label = accountName ? `${accountName} (${opts.accountId})` : opts.accountId;
+    let workerName: string | null = null;
+    if (hasVersion && versionId !== null) {
+      let lookups = 0;
+      for (const name of managerNameCandidates(opts.host, scripts)) {
+        if (lookups >= MAX_VERSION_LOOKUPS) break;
+        lookups++;
+        if ((await attempt(() => client.versions.getVersion(name, versionId))) !== null) {
+          workerName = name;
+          break;
+        }
+      }
+    } else {
+      const subdomain = workersDevSubdomainFromHost(opts.host);
+      const found = await attempt(() => client.workers.getAccountSubdomain());
+      if (found !== null && subdomain !== null && found.subdomain.toLowerCase() === subdomain) {
+        const discovered = discoverWorkerName(opts.host, scripts);
+        workerName = discovered.ok ? discovered.workerName : null;
+      }
+    }
+    if (workerName === null) return { ok: false, error: GRANT_MESSAGES.notThisAccount(label) };
+    return { ok: true, accountId: opts.accountId, accountName, workerName };
+  } catch (error) {
+    // A network failure, or the credential provider's own refusal.
+    if (error instanceof CloudflareApiError) {
+      return { ok: false, error: GRANT_MESSAGES.workersUnreadable };
+    }
+    if (error instanceof TypeError) return { ok: false, error: GRANT_MESSAGES.unreachable };
+    throw error;
+  }
 }
 
 /** `GET /accounts` page size, and the most pages followed. */

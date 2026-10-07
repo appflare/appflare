@@ -1,4 +1,4 @@
-import { Banner, Link, LinkButton } from "@cloudflare/kumo";
+import { Banner, Collapsible, Link, LinkButton } from "@cloudflare/kumo";
 import { CheckCircleIcon, InfoIcon, WarningCircleIcon, WarningIcon } from "@phosphor-icons/react";
 import { Children, type ComponentProps, Fragment, type ReactElement, type ReactNode } from "react";
 import { messageSegments } from "./message-links";
@@ -193,6 +193,55 @@ export const BANNER_ICON: Readonly<Record<BannerTone, ReactElement>> = {
  */
 export function bannerRole(variant: BannerTone): "alert" | "status" {
   return variant === "error" ? "alert" : "status";
+}
+
+/**
+ * For a Kumo banner with an `action`: on a phone the actions go under the
+ * text, where they fit, instead of beside it, where they ran off the
+ * screen; from `sm` up they stay at the right. Kumo's banner lays its text
+ * and its actions out as one row, its last child; below `sm` that row
+ * becomes a column. Pair it with {@link BannerActions}.
+ */
+export const ACTIONS_UNDER_ON_PHONE =
+  "max-sm:[&>:last-child]:flex-col max-sm:[&>:last-child]:items-start";
+
+/**
+ * At least 44 px tall on a phone, the size a thumb can hit (Kumo's buttons
+ * are 36 px); unchanged from `sm` up. For a control, or with `*:` for each
+ * control in a row.
+ */
+export const TOUCH_TARGET = "max-sm:min-h-11";
+
+/**
+ * A banner's actions, wrapping onto another line rather than leaving the
+ * screen, each at least {@link TOUCH_TARGET} tall on a phone.
+ */
+export function BannerActions({ children }: { children: ReactNode }) {
+  return <div className="flex flex-wrap items-center gap-2 max-sm:*:min-h-11">{children}</div>;
+}
+
+/**
+ * Technical words (a job's error, Cloudflare's answer) behind "Details", for
+ * a banner or a row whose own text says what happened in plain words. Long
+ * paths and ids wrap instead of widening the page.
+ */
+export function TechnicalDetails({
+  message,
+  label = "Details",
+}: {
+  message: string;
+  label?: string;
+}) {
+  return (
+    <Collapsible.Root>
+      <Collapsible.DefaultTrigger className={TOUCH_TARGET}>{label}</Collapsible.DefaultTrigger>
+      <Collapsible.DefaultPanel>
+        <p className="[overflow-wrap:anywhere]">
+          <MessageText message={message} />
+        </p>
+      </Collapsible.DefaultPanel>
+    </Collapsible.Root>
+  );
 }
 
 /**

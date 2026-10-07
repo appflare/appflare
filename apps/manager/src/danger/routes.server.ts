@@ -1,5 +1,7 @@
 import type { CloudflareClient, FetchLike } from "@appflare/cf-api";
 import { CfTokenNotConfiguredError, getCfClient } from "../cloudflare/client.server";
+import { type HeldGrant, holdGrantForRemoval, revokeGrant } from "../cloudflare/connection.server";
+import { CloudflareConnectionError } from "../cloudflare/connection-errors";
 import { settingsPlace } from "../components/settings-links";
 import { createDb } from "../db/client";
 import type { WorkflowLookup } from "../jobs/reconcile.server";
@@ -38,11 +40,19 @@ import {
 /** How long the removal waits after its page was sent before the manager deletes itself. */
 export const SELF_DELETE_DELAY_MS = 1500;
 
+/**
+ * How long the access token of a manager connected with OAuth must still
+ * last when the removal starts: nothing can renew it once the database is
+ * gone, and the removal takes a few minutes at most.
+ */
+export const REMOVAL_ACCESS_MS = 20 * 60_000;
+
 export interface DangerEnv {
   DB: D1Database;
   JOBS?: WorkflowLookup;
   SELF?: unknown;
   CF_API_TOKEN?: string;
+  CF_GRANT_KEY?: string;
   CF_API_BASE_URL?: string;
   /** For the units run in place (no `SELF`), which read D1 (Access). */
   BETTER_AUTH_SECRET?: string;
@@ -78,6 +88,9 @@ function page(html: string, status = 200): Response {
 function refusal(title: string, error: unknown): Response {
   if (error instanceof DangerError) return page(errorPage(title, error.message), error.status);
   if (error instanceof CfTokenNotConfiguredError) return page(errorPage(title, error.message), 409);
+  if (error instanceof CloudflareConnectionError) {
+    return page(errorPage(title, error.message), error.retryable ? 503 : 409);
+  }
   const message = error instanceof Error ? error.message : String(error);
   console.error("danger zone action failed", { error: message });
   return page(errorPage(title, `Cloudflare or the manager refused the request: ${message}`), 502);
@@ -99,6 +112,10 @@ async function guard(request: Request, env: DangerEnv, deps: DangerDeps): Promis
   const form = await request.formData();
   const typed = form.get("confirm");
   return typeof typed === "string" ? typed.trim() : "";
+}
+
+function connectionDeps(deps: DangerDeps): { fetch?: FetchLike } {
+  return deps.fetch === undefined ? {} : { fetch: deps.fetch };
 }
 
 function client(env: DangerEnv, deps: DangerDeps): Promise<CloudflareClient> {
@@ -146,6 +163,7 @@ export async function handleRemoveAppflare(
   const title = "Appflare was not removed";
   let api: CloudflareClient;
   let targets: Awaited<ReturnType<typeof findRemovalTargets>>;
+  let grant: HeldGrant | null;
   try {
     const typed = await guard(request, env, deps);
     api = await client(env, deps);
@@ -157,6 +175,9 @@ export async function handleRemoveAppflare(
     }
     const external = await externalDomainsInUse(env.DB);
     if (external.length > 0) throw new DangerError(externalDomainsMessage(external), 409);
+    // An OAuth grant: an access token that outlasts the removal, and the
+    // grant itself, held in memory to revoke once the Worker is gone.
+    grant = await holdGrantForRemoval(env, REMOVAL_ACCESS_MS, connectionDeps(deps));
     if ((await removalInProgress(env.DB)) !== null) {
       throw new DangerError(
         "A removal of Appflare is already running. Wait for its page to finish.",
@@ -183,6 +204,7 @@ export async function handleRemoveAppflare(
     {
       SELF: selfUnits(env),
       CF_API_TOKEN: env.CF_API_TOKEN,
+      CF_GRANT_KEY: env.CF_GRANT_KEY,
       CF_API_BASE_URL: env.CF_API_BASE_URL,
       DB: env.DB,
       BETTER_AUTH_SECRET: env.BETTER_AUTH_SECRET,
@@ -234,6 +256,7 @@ export async function handleRemoveAppflare(
             accessOn: targets.accessAppIds.length > 0,
             protectedApps: (targets.appAccessInstalls ?? []).length,
             accessLeft: outcome.kind === "complete" ? outcome.accessLeft : [],
+            authorization: grant !== null,
           }),
         );
         await writer.close();
@@ -248,6 +271,13 @@ export async function handleRemoveAppflare(
     await sleep(SELF_DELETE_DELAY_MS);
     if (await deleteManagerWorker(api, targets.manager)) {
       console.log(`removal: deleted the Worker ${targets.manager.workerName}`);
+    }
+    // Last, with the Worker gone or not (its database is): the grant ends
+    // here. Revoking a refresh token may end the access tokens issued with
+    // it as well (RFC 7009 (2.1) asks servers to), which would make
+    // the calls that delete the Worker fail, so it comes after them.
+    if (grant !== null && (await revokeGrant(grant, connectionDeps(deps)))) {
+      console.log("removal: revoked Appflare's Cloudflare authorization");
     }
   };
   deps.waitUntil(run());

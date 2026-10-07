@@ -25,6 +25,8 @@ export function fakeStep(
   options: {
     onSleep?: (name: string, duration: string | number) => void;
     failing?: readonly string[];
+    /** Runs after a step succeeds, before the job goes on (a test changes the world between steps). */
+    afterStep?: (name: string) => Promise<void>;
   } = {},
 ): FakeStep {
   const names: string[] = [];
@@ -53,6 +55,7 @@ export function fakeStep(
       for (let attempt = 1; ; attempt++) {
         try {
           const result = await callback({ attempt });
+          await options.afterStep?.(name);
           return JSON.parse(JSON.stringify(result ?? null)) as T;
         } catch (error) {
           if (error instanceof NonRetryableError || attempt > limit) throw error;

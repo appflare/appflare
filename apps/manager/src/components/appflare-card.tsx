@@ -1,3 +1,4 @@
+import { AppflareLoader } from "@appflare/brand/loader";
 import { Button, LayerCard, Link, Sidebar, Text } from "@cloudflare/kumo";
 import {
   ArrowCircleUpIcon,
@@ -21,7 +22,6 @@ import {
   UPDATED_CARD_MS,
   UPDATED_TO_KEY,
 } from "./appflare-card-state";
-import { AppflareLoader } from "./appflare-loader";
 import { SelfUpdateDialog } from "./appflare-updates-card";
 import { SendReportButton } from "./job-report-dialog";
 import { MessageText } from "./message-text";

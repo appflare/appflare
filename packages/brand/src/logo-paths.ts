@@ -1,4 +1,4 @@
-/** The full Appflare logo's artwork, shared by the component and its test (client-safe). */
+/** The Appflare logo's artwork: the full logo and the square mark (client-safe). */
 
 /** The logo's box: the mark on the left, the word "appflare" to its right. */
 export const VIEW_BOX = { width: 69.89, height: 14.96 } as const;

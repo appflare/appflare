@@ -1,3 +1,4 @@
+import { AppflareLoader } from "@appflare/brand/loader";
 import { Badge, Banner, Button, InlineCopyText, LinkButton, Text } from "@cloudflare/kumo";
 import {
   ArrowSquareOutIcon,
@@ -18,7 +19,6 @@ import {
 } from "../gateway/gateway";
 import { checkGatewayZone, setUpGateway, turnOffGateway } from "../gateway/gateway.functions";
 import type { GatewayView } from "../gateway/gateway.server";
-import { AppflareLoader } from "./appflare-loader";
 import { BusyButton } from "./busy-button";
 import { ConfirmDialog } from "./confirm-dialog";
 import { DescriptionItem, DescriptionList } from "./description-list";

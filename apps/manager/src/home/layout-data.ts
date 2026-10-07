@@ -30,4 +30,6 @@ export interface LayoutData {
   /** For admins of a manager the Deploy to Cloudflare button deployed, until one dismisses it. */
   deployCopy: DeployCopyCleanup | null;
   downgrade: Downgrade | null;
+  /** Appflare's connection to Cloudflare needs reconnecting; everyone is told. */
+  reconnectNeeded: boolean;
 }

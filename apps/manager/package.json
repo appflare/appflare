@@ -19,6 +19,7 @@
     "cf-typegen": "wrangler types"
   },
   "dependencies": {
+    "@appflare/brand": "workspace:*",
     "@appflare/cf-api": "workspace:*",
     "@appflare/schema": "workspace:*",
     "@better-auth/core": "1.7.7",

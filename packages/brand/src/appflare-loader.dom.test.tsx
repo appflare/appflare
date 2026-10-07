@@ -1,8 +1,8 @@
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { AppflareLoader, loaderPixels } from "./appflare-loader";
-import { MARK_SHAPES } from "./logo-morph";
+import { AppflareLoader, loaderPixels } from "./appflare-loader.tsx";
+import { MARK_SHAPES } from "./logo-morph.ts";
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 

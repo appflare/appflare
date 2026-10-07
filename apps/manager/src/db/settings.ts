@@ -12,10 +12,20 @@ export const SETTING = {
   accountId: "account_id",
   accountName: "account_name",
   workerName: "worker_name",
-  /** "1" once `CF_API_TOKEN` has been written to the Worker by the setup wizard. */
+  /**
+   * "1" once Appflare has a Cloudflare connection: `CF_API_TOKEN` written to
+   * the Worker by the setup wizard, or an OAuth grant stored
+   * (cloudflare/connection.server.ts).
+   */
   cfTokenConfigured: "cf_token_configured",
-  /** ISO 8601 time of the last successful verify-and-store. */
+  /** ISO 8601 time of the last successful verify-and-store, of a token or a grant. */
   cfTokenVerifiedAt: "cf_token_verified_at",
+  /**
+   * JSON `{ id, writtenAt }`: the fingerprint of the `CF_GRANT_KEY` secret
+   * last written to the Worker and when (epoch ms), so a version that does
+   * not have that key yet can tell a redeploy in progress from a lost key.
+   */
+  cfGrantKey: "cf_grant_key",
   /**
    * JSON `{ hash, expiresAt }`: the setup claim issued to the browser that
    * connected Cloudflare before any user existed (server/setup.server.ts).
@@ -153,6 +163,23 @@ export const SETTING = {
   managerZoneId: "manager_zone_id",
   managerPreviousHostname: "manager_previous_hostname",
   managerMovedAt: "manager_moved_at",
+  /**
+   * The custom domain Appflare was installed for while it does not serve
+   * yet (domains/pending-address.server.ts): its hostname and zone, written
+   * when the browser that installed Appflare hands over at the workers.dev
+   * address instead. Appflare moves there by itself once the domain serves;
+   * any change of address deletes both.
+   */
+  managerPendingHostname: "manager_pending_hostname",
+  managerPendingZoneId: "manager_pending_zone_id",
+  /** The move job started for the pending address, while it may still run. */
+  managerPendingJobId: "manager_pending_job_id",
+  /**
+   * ISO 8601 time the move to the pending address failed, and why: no
+   * further automatic try until an admin chooses Try again.
+   */
+  managerPendingFailedAt: "manager_pending_failed_at",
+  managerPendingFailure: "manager_pending_failure",
   /**
    * UTC day (`YYYY-MM-DD`) the cron last finished looking for Workflows of
    * installed apps that do not exist in Cloudflare (installs/workflow-repair.server.ts).

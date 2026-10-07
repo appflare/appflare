@@ -2,6 +2,7 @@ import { CloudflareApiError } from "@appflare/cf-api";
 import type { CatalogEmailRouting } from "@appflare/schema";
 import { and, eq, isNotNull, isNull } from "drizzle-orm";
 import { z } from "zod";
+import { TOKEN_REFUSALS } from "../../cloudflare/token-refusals";
 import { resources } from "../../db/schema";
 import {
   DEFAULT_CATCH_ALL,
@@ -124,8 +125,9 @@ export async function checkEmailRoutingPhase(
       log,
     );
     if (inspection.missing.length > 0) {
+      // In the token's words; the step runner rewords them for a Cloudflare sign-in.
       throw new JobError(
-        `the Cloudflare token lacks ${inspection.missing.join(", ")}, which receiving email needs; add them to the token (for this zone) and install again`,
+        `${TOKEN_REFUSALS.emailPermissions(inspection.missing.join(", "), "receiving email")} and install again`,
       );
     }
     if (inspection.problems.length > 0) throw new JobError(inspection.problems.join(" "));

@@ -18,6 +18,7 @@ import { storedBypassPaths, storedCatalogAccess } from "../access/stored-access.
 import { readAccountPlan } from "../account/plan.server";
 import { effectiveAutoUpdate, settingOn } from "../auto-update/auto-update";
 import { type StoredRelease, storedEffectiveManifest } from "../catalog/revisions.server";
+import { requireConnection } from "../cloudflare/connection.server";
 import { appPlace } from "../components/app-links";
 import { createDb, type Database } from "../db/client";
 import { installs, jobs, resources, snapshots } from "../db/schema";
@@ -616,9 +617,8 @@ export async function runRollback(ctx: JobContext): Promise<void> {
       const hyperdriveRow = hyperdriveRows[0];
       const settings = await readSettings(orm, [SETTING.accountId]);
       if (!settings.account_id) throw new JobError("the Cloudflare account is not known yet");
-      if (!env.CF_API_TOKEN) {
-        throw new JobError("the Cloudflare API token is not configured; finish setup first");
-      }
+      // An API token, or a stored grant that does not need reconnecting.
+      await requireConnection(env);
       // The snapshot's version as the newest revision recorded for its
       // release says; null when the snapshot kept no readable manifest.
       const snapshotEffective =

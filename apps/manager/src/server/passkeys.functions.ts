@@ -1,6 +1,7 @@
 import { env } from "cloudflare:workers";
 import { createServerFn } from "@tanstack/react-start";
 import { getRequest } from "@tanstack/react-start/server";
+import { endPasskeyOffer, passkeyOfferDue } from "../auth/passkey-offer.server";
 import {
   listOwnPasskeys,
   type PasskeyRow,
@@ -8,6 +9,7 @@ import {
   withPasskeyHosts,
 } from "../auth/passkeys.server";
 import { readPasskeyHosts } from "../domains/manager-address.server";
+import { passkeyMoveNotice } from "../domains/pending-address.server";
 import { currentAuth, requireSession } from "./auth.server";
 import { removePasskeyInput } from "./schemas";
 import { authErrorMessage } from "./users.server";
@@ -35,6 +37,53 @@ export const listPasskeys = createServerFn({ method: "GET" }).handler(
     return withPasskeyHosts(rows, hosts, new URL(request.url).hostname);
   },
 );
+
+/**
+ * The domain Appflare is about to move to, while this request comes to its
+ * workers.dev address: a passkey made here would work only here, so none is
+ * offered until the move. Null otherwise.
+ */
+export const getPasskeyMoveNotice = createServerFn({ method: "GET" }).handler(
+  async (): Promise<string | null> => {
+    await requireSession();
+    return passkeyMoveNotice(env.DB, new URL(getRequest().url).hostname);
+  },
+);
+
+/**
+ * Whether to offer this user a passkey right after signing in: Appflare
+ * moved to this address lately, none of their passkeys works here, and they
+ * have not added one or said Not now here yet (auth/passkey-offer.server.ts).
+ */
+export const getPasskeyOffer = createServerFn({ method: "GET" }).handler(
+  async (): Promise<boolean> => {
+    const session = await requireSession();
+    const request = getRequest();
+    const host = new URL(request.url).hostname;
+    const rows = await listOwnPasskeys(currentAuth(), request.headers);
+    const hosts = await readPasskeyHosts(
+      env.DB,
+      rows.map((r) => r.id),
+    );
+    const worksHere = withPasskeyHosts(rows, hosts, host).some((p) => !p.worksAt);
+    return passkeyOfferDue(env.DB, {
+      userId: session.user.id,
+      host,
+      now: new Date(),
+      passkeyWorksHere: worksHere,
+    });
+  },
+);
+
+/** Ends that offer for this user here: a passkey was added, or Not now. */
+export const dismissPasskeyOffer = createServerFn({ method: "POST" }).handler(async () => {
+  const session = await requireSession();
+  await endPasskeyOffer(env.DB, {
+    userId: session.user.id,
+    host: new URL(getRequest().url).hostname,
+    now: new Date(),
+  });
+});
 
 export const removePasskey = createServerFn({ method: "POST" })
   .validator(removePasskeyInput)

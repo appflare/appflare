@@ -1,9 +1,9 @@
+import { AppflareLoader } from "@appflare/brand/loader";
 import { Button, LayerDialog } from "@cloudflare/kumo";
 import { PaperPlaneTiltIcon } from "@phosphor-icons/react";
 import { useState } from "react";
 import { FAILURE_REPORT_COPY, type FailureReportPreview } from "../telemetry/failure-report";
 import { previewJobReport, sendJobReport } from "../telemetry/telemetry.functions";
-import { AppflareLoader } from "./appflare-loader";
 import { BusyMark, busyActionProps } from "./busy-button";
 import { FailureReportBody, ReportSent } from "./job-report-parts";
 import { ErrorMessageBanner } from "./message-text";

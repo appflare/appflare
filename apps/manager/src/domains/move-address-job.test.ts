@@ -53,7 +53,13 @@ type Start = "move" | "change";
 /** Starts a move as the request does, then runs its job to the end. */
 async function moveAndRun(
   w: ReturnType<typeof fakeWorld>,
-  options: { start?: Start; overrideExistingDnsRecord?: boolean; jobId?: string } = {},
+  options: {
+    start?: Start;
+    overrideExistingDnsRecord?: boolean;
+    jobId?: string;
+    /** `APPFLARE_HANDOFF` of the manager: a browser install proves its identity. */
+    handoff?: string;
+  } = {},
 ) {
   const { jobId } = options;
   const d = { ...deps(w), ...(jobId === undefined ? {} : { newId: () => jobId }) };
@@ -66,7 +72,7 @@ async function moveAndRun(
   if (!started.ok) throw new Error("the move did not start");
   const params = d.started.at(-1);
   if (params === undefined) throw new Error("no job was started");
-  return { started, params, ...(await runMove(w, params)) };
+  return { started, params, ...(await runMove(w, params, env.DB, options.handoff)) };
 }
 
 /** Runs one move job; returns the step record, and the error it ended with. */
@@ -74,15 +80,23 @@ async function runMove(
   w: ReturnType<typeof fakeWorld>,
   params: MoveAddressJobParams,
   db: D1Database = env.DB,
+  handoff?: string,
 ) {
   let clock = NOW.getTime();
   const step = fakeStep({ onSleep: (_name, duration) => (clock += sleepMs(duration)) });
   let error: unknown = null;
   try {
-    await runJob(params, step, { DB: db, KV: env.KV, CF_API_TOKEN: TOKEN }, undefined, {
-      fetch: w.anyFetch,
-      now: () => clock,
-    });
+    const jobEnv = { DB: db, KV: env.KV, CF_API_TOKEN: TOKEN };
+    await runJob(
+      params,
+      step,
+      handoff === undefined ? jobEnv : { ...jobEnv, APPFLARE_HANDOFF: handoff },
+      undefined,
+      {
+        fetch: w.anyFetch,
+        now: () => clock,
+      },
+    );
   } catch (err) {
     error = err;
   }
@@ -208,6 +222,25 @@ describe("the move job", () => {
     const { started } = await moveAndRun(w);
     expect((await job(started.jobId))?.error).toContain("last answer: Appflare 1.3.9, not 1.4.0");
     expect(await addressRows()).toEqual({});
+  });
+
+  it("on a browser install, switches only for this installation's handoff proof", async () => {
+    const mine = "c".repeat(64);
+    const other = fakeWorld({ handoffHash: "d".repeat(64) });
+    const refused = await moveAndRun(other, { handoff: `v1.${mine}` });
+    expect((await job(refused.started.jobId))?.error).toContain(
+      "last answer: another Appflare, not this one (its handoff proof differs)",
+    );
+    expect(await addressRows()).toEqual({});
+    expect(other.world.probes.every((url) => url.includes("/api/handoff?challenge="))).toBe(true);
+
+    const same = fakeWorld({ handoffHash: mine });
+    const { started } = await moveAndRun(same, {
+      handoff: `v1.${mine}`,
+      jobId: "01MOVEJOBSAMEINSTALL00000001",
+    });
+    expect((await job(started.jobId))?.status).toBe("succeeded");
+    expect((await addressRows()).manager_hostname).toBe(HOST);
   });
 
   it("moves both Access applications and the protected hostname along when Access is on", async () => {

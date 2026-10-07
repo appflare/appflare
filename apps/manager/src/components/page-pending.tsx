@@ -1,5 +1,5 @@
+import { AppflareLoader } from "@appflare/brand/loader";
 import { createContext, type ReactNode, useContext } from "react";
-import { AppflareLoader } from "./appflare-loader";
 
 /**
  * What shows while a page loads (the router's pending component). Inside the

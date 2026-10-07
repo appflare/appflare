@@ -8,7 +8,7 @@ Appflare has two roles, admin and member, and one owner.
 | Role | Can |
 | --- | --- |
 | **Owner** | Everything an admin can, and also change other users' roles, delete users, and transfer ownership. There is exactly one owner, and the owner is always an admin. |
-| **Admin** | Everything else: install, update, roll back, and uninstall apps, update Appflare, rotate the Cloudflare token, set the account's Workers plan, and add users. |
+| **Admin** | Everything else: install, update, roll back, and uninstall apps, update Appflare, change how Appflare connects to Cloudflare, set the account's Workers plan, and add users. |
 | **Member** | Read everything: installed apps, the catalog, jobs, and logs. Change nothing except their own [passkeys](#passkeys). |
 
 The first user, created in the setup wizard, is the owner. On a manager set up before

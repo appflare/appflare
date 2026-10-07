@@ -106,9 +106,10 @@ database before it answers, and binds the resulting Hyperdrive configuration
 (`<worker name>-<binding>`) to the app's Worker. A database Cloudflare cannot reach
 ends the install before the Worker is uploaded, with Cloudflare's reason. Appflare
 never stores the connection string: it is not shown again, and it is not in the job's
-record or log. The API token needs the optional **Hyperdrive: Edit** permission. When a
-new version of an installed app adds a database, its
-[update](/guides/updates/#update-an-app) asks for that connection string the same way.
+record or log. An API token needs the optional **Hyperdrive: Edit** permission
+(Cloudflare sign-in includes it). When a new version of an installed app adds a
+database, its [update](/guides/updates/#update-an-app) asks for that connection string
+the same way.
 
 To point the app at another database, or to change its password, open the app's
 **Settings**, choose **Replace connection string**, and save. Appflare creates a new
@@ -177,11 +178,13 @@ per account.
 
 ## Workers Free or Workers Paid
 
-Appflare reads your account's Workers plan from its subscriptions when the Cloudflare
+Appflare reads your account's Workers plan from its subscriptions when its Cloudflare
 token has the optional **Billing: Read** permission (or from Containers, which only
 Workers Paid includes), and shows it in **Settings > Your account**, under **What this
 account can run**; the row's **Details** say it was detected. It checks when the token is
-saved, once a day, and when you select **Check again**. When Appflare cannot tell, the
+saved, once a day, and when you select **Check again**.
+[Cloudflare sign-in](/guides/cloudflare-connection/) cannot include Billing, so an
+Appflare connected that way has only Containers and your choice to go on. When Appflare cannot tell, the
 Workers plan row offers **Choose plan** so you state it yourself (its **Details** then say
 "set by you"); until you do, Appflare treats the account as on Workers Free. A detected
 plan always comes first.

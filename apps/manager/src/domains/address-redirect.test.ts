@@ -147,6 +147,24 @@ describe("createAddressRedirect", () => {
     expect(await redirect.check(new Request(`${DEV}/apps`), env.DB)).toBeNull();
   });
 
+  it("knows of a pending address from the same read, and only while Appflare has none", async () => {
+    const redirect = createAddressRedirect();
+    expect(redirect.pendingSeen()).toBe(false);
+    await writeSettings(createDb(env.DB), { [SETTING.managerPendingHostname]: HOST });
+    // Nothing read yet: a page request at workers.dev reads it.
+    expect(redirect.pendingSeen()).toBe(false);
+    expect(await redirect.check(new Request(`${DEV}/apps`), env.DB)).toBeNull();
+    expect(redirect.pendingSeen()).toBe(true);
+    // Other requests read nothing.
+    redirect.invalidate();
+    await redirect.check(new Request(`${DEV}/_serverFn/x`, { method: "POST" }), env.DB);
+    expect(redirect.pendingSeen()).toBe(false);
+    // Once Appflare has its address, the page goes there and nothing is pending.
+    await writeSettings(createDb(env.DB), { [SETTING.managerHostname]: HOST });
+    expect((await redirect.check(new Request(`${DEV}/apps`), env.DB))?.status).toBe(302);
+    expect(redirect.pendingSeen()).toBe(false);
+  });
+
   it("serves the request here when the address cannot be read", async () => {
     const redirect = createAddressRedirect();
     const broken = {

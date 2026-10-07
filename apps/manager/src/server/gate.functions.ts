@@ -4,8 +4,11 @@ import { createServerFn } from "@tanstack/react-start";
 import { getCookie, getRequest } from "@tanstack/react-start/server";
 import { z } from "zod";
 import { MAX_RETURN_PATH_LENGTH } from "../components/internal-path";
+import { readPendingAddress } from "../domains/pending-address.server";
+import { handoffHashOf } from "../handoff/handoff-proof";
+import { installerOriginOf } from "../handoff/installer-completion.server";
 import { authSecretBound, sessionFor } from "./auth.server";
-import { appGate, redirectHref, setupGate } from "./gate";
+import { appGate, redirectHref, type SetupStep, setupGate } from "./gate";
 import { type GateRead, readGate, recordOpened } from "./gate.server";
 import type { Viewer } from "./session.functions";
 import { SETUP_CLAIM_COOKIE, setupClaimMatches } from "./setup.server";
@@ -21,6 +24,7 @@ function loadGateState(): Promise<GateRead> {
     loadSession: () => sessionFor(request),
     setupClaimed: () => setupClaimMatches(env.DB, getCookie(SETUP_CLAIM_COOKIE), new Date()),
     authReady: authSecretBound(),
+    handoffBound: handoffHashOf(env.APPFLARE_HANDOFF) !== null,
   });
 }
 
@@ -62,13 +66,36 @@ export const enterApp = createServerFn({ method: "GET" })
 
 /**
  * `/setup`'s gate: which step to show, or a redirect (to sign in, carrying
- * `returnTo`; once setup is done, to `returnTo` itself, else home).
+ * `returnTo`; once setup is done, to `returnTo` itself, else home). On a
+ * manager installed from the browser, also whether its Cloudflare
+ * connection has been handed over yet, and the page that installed it.
  */
 export const enterSetup = createServerFn({ method: "GET" })
   .validator(returnToInput.extend({ checklist: z.boolean().optional() }))
-  .handler(async ({ data }) => {
+  .handler(async ({ data }): Promise<SetupEntry> => {
     const { state } = await loadGateState();
     const gate = setupGate(state, { checklist: data.checklist === true });
     if ("redirect" in gate) throw redirect({ href: redirectHref(gate.redirect, data.returnTo) });
-    return gate;
+    if (state.handoff === undefined) return gate;
+    const installer = installerOriginOf(env.APPFLARE_INSTALLER_ORIGIN);
+    const pending = state.handoff === "received" ? await readPendingAddress(env.DB) : null;
+    return {
+      ...gate,
+      handoff: state.handoff,
+      ...(installer === null ? {} : { installPage: `${installer}/deploy` }),
+      ...(pending === null ? {} : { pendingAddress: pending.hostname }),
+    };
   });
+
+export interface SetupEntry {
+  step: SetupStep;
+  /** On a manager installed from the browser, before its owner exists. */
+  handoff?: "waiting" | "received";
+  /** The page that installed it, where setup continues. */
+  installPage?: string;
+  /**
+   * The custom domain the install chose, which Appflare moves to once it
+   * serves; setup meanwhile happens here, with a password only.
+   */
+  pendingAddress?: string;
+}

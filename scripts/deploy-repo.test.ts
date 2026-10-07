@@ -174,7 +174,7 @@ describe("the deploy repository's npm project", () => {
   });
 
   it("points the README's button at another repository when asked", () => {
-    expect(DEPLOY_BUTTON_URL).toBe("https://link.appflare.dev/deploy");
+    expect(DEPLOY_BUTTON_URL).toBe("https://link.appflare.dev/deploy-1c");
     const readme = deployRepoReadme("1.2.3", { repository: "someone/appflare-deploy-trial" });
     expect(readme).toContain(
       "(https://deploy.workers.cloudflare.com/?url=https://github.com/someone/appflare-deploy-trial)",

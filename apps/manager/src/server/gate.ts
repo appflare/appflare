@@ -26,6 +26,12 @@ export interface GateState {
    * owner can be created only once a version with it serves.
    */
   authReady: boolean;
+  /**
+   * Before any user exists, on a manager installed from the browser: whether
+   * the page that installed it has handed over the Cloudflare connection
+   * yet. Absent on every other manager.
+   */
+  handoff?: "waiting" | "received";
 }
 
 export type Redirect = { redirect: "/login" | "/setup" | "/" };
@@ -52,6 +58,12 @@ export type SetupStep =
   /** Step 1: paste an API token for this account (anyone, before any user exists). */
   | "connect"
   /**
+   * Step 1 on a manager installed from the browser, for a browser without
+   * the setup claim: finish from the page that installed it (which hands
+   * over the connection and opens owner setup), or paste an API token.
+   */
+  | "handoff"
+  /**
    * Between steps 1 and 2 for a manager deployed without secrets: waiting for
    * the version with the new auth secret to serve.
    */
@@ -76,7 +88,9 @@ export function setupGate(
   opts: { checklist?: boolean } = {},
 ): Redirect | { step: SetupStep } {
   if (!state.hasUser) {
-    if (!state.tokenConfigured || !state.setupClaimed) return { step: "connect" };
+    if (!state.tokenConfigured || !state.setupClaimed) {
+      return { step: state.handoff === undefined ? "connect" : "handoff" };
+    }
     return { step: state.authReady ? "create-owner" : "redeploying" };
   }
   if (!state.signedIn) return { redirect: "/login" };

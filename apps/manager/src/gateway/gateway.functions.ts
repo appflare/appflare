@@ -2,6 +2,7 @@ import { env } from "cloudflare:workers";
 import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 import { CfTokenNotConfiguredError, getCfClient } from "../cloudflare/client.server";
+import { inConnectionWordsOf } from "../cloudflare/sign-in-words.server";
 import { requireRole, requireSession } from "../server/auth.server";
 import { zoneIdSchema } from "./gateway";
 import {
@@ -25,7 +26,7 @@ async function asUserError<T>(run: () => Promise<T>): Promise<T> {
     return await run();
   } catch (error) {
     if (error instanceof GatewayError || error instanceof CfTokenNotConfiguredError) {
-      throw new Error(error.message);
+      throw new Error(await inConnectionWordsOf(env.DB, error.message));
     }
     throw error;
   }

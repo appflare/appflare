@@ -1,6 +1,9 @@
 import { reset } from "cloudflare:test";
 import { env } from "cloudflare:workers";
 import { beforeEach, describe, expect, it } from "vitest";
+import { createConnectionMemo, isolateConnectionMemo } from "../cloudflare/connection.server";
+import { generateGrantKey, importGrantKey, sealContext, sealValue } from "../cloudflare/grant-seal";
+import { type GrantRow, replaceGrantStatements } from "../cloudflare/grant-store.server";
 import { COLOR_MODE_SCRIPT, COLOR_MODE_SCRIPT_SHA256 } from "../components/color-mode";
 import { createDb } from "../db/client";
 import { createMigrator } from "../db/migrate";
@@ -8,6 +11,7 @@ import { migrations } from "../db/migrations/index";
 import { user } from "../db/schema";
 import { SETTING, writeSettings } from "../db/settings";
 import { ACC, TOKEN } from "../test/fake-account";
+import { fakeOAuth } from "../test/fake-oauth";
 import {
   ACCOUNT_NAME,
   type FakeRemovalOptions,
@@ -284,6 +288,71 @@ describe("handleRemoveAppflare", () => {
     expect(s.account.deletes()).not.toContain("DELETE /a/d1/database/d1-manager");
     expect(s.account.deletes()).not.toContain(`DELETE /a/workers/scripts/${MANAGER_WORKER}`);
     expect(await removalInProgress(env.DB)).toBeNull();
+  });
+
+  it("on an OAuth connection, revokes the grant as its very last step, after the Worker is deleted", async () => {
+    // The grant's access token is the one the fake account accepts.
+    const keySecret = generateGrantKey();
+    const key = await importGrantKey(keySecret);
+    if (key === null) throw new Error("no key");
+    const memo = isolateConnectionMemo();
+    Object.assign(memo, createConnectionMemo());
+    const grant: GrantRow = {
+      id: "grant-removal",
+      clientId: "client-removal",
+      scopes: [],
+      refreshToken: await sealValue(
+        key.key,
+        "refresh-held",
+        sealContext("grant-removal", "refresh"),
+      ),
+      accessToken: await sealValue(key.key, TOKEN, sealContext("grant-removal", "access")),
+      accessExpiresAt: Date.now() + 2 * 60 * 60_000,
+      keyId: key.id,
+      status: "connected",
+      problem: null,
+      problemAt: null,
+      connectedAt: Date.now() - 86_400_000,
+      refreshedAt: Date.now() - 60_000,
+    };
+    await env.DB.batch(replaceGrantStatements(env.DB, grant));
+    const account = fakeRemovalAccount();
+    const order: string[] = [];
+    const oauth = fakeOAuth(async (input, init) => {
+      const response = await account.fetch(input, init);
+      order.push(account.calls.at(-1) ?? "");
+      return response;
+    });
+    const pending: Promise<unknown>[] = [];
+    const response = await handleRemoveAppflare(
+      post(REMOVE_PATH, ACCOUNT_NAME),
+      {
+        DB: env.DB,
+        CF_GRANT_KEY: keySecret,
+        SELF: fakeSelf({ DB: env.DB, CF_GRANT_KEY: keySecret }, { fetch: oauth.fetch }),
+      },
+      {
+        userId: async () => "owner",
+        waitUntil: (p) => {
+          pending.push(p);
+        },
+        fetch: async (input, init) => {
+          if (String(input).includes("/oauth2/revoke")) order.push("revoke");
+          return oauth.fetch(input, init);
+        },
+        sleep: async () => {},
+      },
+    );
+    const html = await response.text();
+    await Promise.all(pending);
+    expect(html).toContain("withdraws that authorization");
+    expect(html).not.toContain("Revoke the Appflare API token");
+    expect(oauth.revokes).toEqual([{ clientId: "client-removal", refreshToken: "refresh-held" }]);
+    expect(order.at(-1)).toBe("revoke");
+    expect(order.indexOf("revoke")).toBeGreaterThan(
+      order.indexOf(`DELETE /a/workers/scripts/${MANAGER_WORKER}`),
+    );
+    expect(oauth.refreshes).toEqual([]);
   });
 });
 

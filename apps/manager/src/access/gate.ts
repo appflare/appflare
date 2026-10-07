@@ -23,8 +23,17 @@ import { accessRecoverySteps } from "./recovery";
  * the edge.
  */
 
-/** Paths answered without an Access token: what the health check canaries and the installer read. */
-export const ACCESS_EXEMPT_PATHS: ReadonlySet<string> = new Set(["/api/health"]);
+/**
+ * Paths answered without an Access token: what the health check canaries and
+ * the installers read, the browser installer's handoff, and the return from
+ * "Sign in with Cloudflare" (a form appflare.dev posts, authorized by the
+ * sign-in an administrator started).
+ */
+export const ACCESS_EXEMPT_PATHS: ReadonlySet<string> = new Set([
+  "/api/health",
+  "/api/handoff",
+  "/api/cloudflare/oauth-return",
+]);
 
 export type AccessDenial = AccessJwtFailure | "settings-unavailable";
 

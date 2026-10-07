@@ -1,7 +1,7 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import type { FlowPage, FlowState, FlowView } from "../../install/flow.ts";
-import { DEPLOY_BUTTON_IMAGE, DEPLOY_URL, FlowPanel } from "./flow-panel.tsx";
+import { DEPLOY_BUTTON_IMAGE, DEPLOY_BUTTON_URL, FlowPanel } from "./flow-panel.tsx";
 
 const origin = "https://appflare.example.com";
 const apps = [{ slug: "2fa", name: "2FA" }];
@@ -64,13 +64,16 @@ describe("FlowPanel", () => {
     );
   });
 
-  it("offers the Deploy button first, then the installer, then the way back", () => {
+  it("offers the install from the browser first, then Cloudflare's Deploy button, then the way back", () => {
     const html = render({ step: "get", intentSaved: true });
-    const deploy = html.indexOf(DEPLOY_URL);
-    const installer = html.indexOf("npx create-appflare");
-    expect(deploy).toBeGreaterThan(-1);
-    expect(installer).toBeGreaterThan(deploy);
-    expect(html).not.toContain("from a checkout");
+    const browser = html.indexOf('href="/deploy/"');
+    const deploy = html.indexOf(DEPLOY_BUTTON_URL);
+    expect(browser).toBeGreaterThan(-1);
+    expect(deploy).toBeGreaterThan(browser);
+    expect(html).toContain(">Install Appflare<");
+    // The command line is one of the other ways, on the install page.
+    expect(html).not.toContain("npx create-appflare");
+    expect(html).toContain('href="/start/install/"');
     expect(html).toContain(`src="${DEPLOY_BUTTON_IMAGE}"`);
     expect(html).toContain("Your account › Use this Appflare on appflare.dev");
     expect(html).toContain("keeps 2FA for 7 days");

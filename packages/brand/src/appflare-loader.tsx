@@ -1,4 +1,3 @@
-import { cn } from "@cloudflare/kumo";
 import { useEffect, useId, useRef } from "react";
 import {
   CLOUD_INDEX,
@@ -9,8 +8,8 @@ import {
   morphProgress,
   PASS_START_SECONDS,
   turnDegrees,
-} from "./logo-morph";
-import { CLOUD_ORANGE, SQUARE_VIEW_BOX } from "./logo-paths";
+} from "./logo-morph.ts";
+import { CLOUD_ORANGE, SQUARE_VIEW_BOX } from "./logo-paths.ts";
 
 /** The sizes Kumo's own `Loader` takes: a preset name or pixels. */
 export type AppflareLoaderSize = "sm" | "base" | "lg" | number;
@@ -189,7 +188,8 @@ export function MorphMark({
  * step. Same props as Kumo's `Loader` (`size` "sm" 16 px, "base" 24 px,
  * "lg" 32 px, or pixels); the quadrants take the text colour and the cloud
  * stays orange. When the system asks for reduced motion the still mark
- * pulses in opacity instead. With `aria-hidden` it is decoration only (no
+ * pulses in opacity instead (that rule is `@appflare/brand/loader.css`, which
+ * the app's stylesheet imports). With `aria-hidden` it is decoration only (no
  * status role or label), for when something else, such as a button's
  * `aria-busy`, already says that work is under way.
  */
@@ -211,7 +211,11 @@ export function AppflareLoader({
       viewBox={`0 0 ${SQUARE_VIEW_BOX} ${SQUARE_VIEW_BOX}`}
       width={pixels}
       height={pixels}
-      className={cn("appflare-loader shrink-0", className)}
+      className={
+        className === undefined
+          ? "appflare-loader shrink-0"
+          : `appflare-loader shrink-0 ${className}`
+      }
       role={ariaHidden ? undefined : "status"}
       aria-label={ariaHidden ? undefined : ariaLabel}
       aria-hidden={ariaHidden || undefined}

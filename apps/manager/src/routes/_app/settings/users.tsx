@@ -2,7 +2,7 @@ import { createFileRoute } from "@tanstack/react-router";
 import { SETTINGS_PAGES } from "../../../components/navigation";
 import { UsersSettingsView } from "../../../components/settings-pages";
 import { getAccessStatus } from "../../../server/access.functions";
-import { listPasskeys } from "../../../server/passkeys.functions";
+import { getPasskeyMoveNotice, listPasskeys } from "../../../server/passkeys.functions";
 import { getPasswordRecoverySettings } from "../../../server/recovery.functions";
 import { listUsers } from "../../../server/users.functions";
 
@@ -16,13 +16,14 @@ export const Route = createFileRoute("/_app/settings/users")({
   staticData: { title: SETTINGS_PAGES.users.label },
   loader: async ({ context }) => {
     const admin = context.viewer.role === "admin";
-    const [users, recovery, passkeys, accessStatus] = await Promise.all([
+    const [users, recovery, passkeys, passkeysAfterMove, accessStatus] = await Promise.all([
       admin ? listUsers() : null,
       admin ? getPasswordRecoverySettings() : null,
       listPasskeys(),
+      getPasskeyMoveNotice(),
       getAccessStatus(),
     ]);
-    return { users, recovery, passkeys, accessStatus };
+    return { users, recovery, passkeys, passkeysAfterMove, accessStatus };
   },
   component: UsersSettingsPage,
 });

@@ -5,6 +5,7 @@ import type { FileObject } from "next-validate-link";
 import { beforeAll, describe, expect, it } from "vitest";
 import { siteCatalog } from "./catalog/data.ts";
 import { catalogPagePaths, handoffPagePaths } from "./catalog/urls.ts";
+import { DEPLOY_PATH } from "./deploy/paths.ts";
 import { AGENT_PROMPTS } from "./lib/agent-prompts.ts";
 import {
   type BrokenLink,
@@ -42,8 +43,13 @@ async function contentFiles(): Promise<FileObject[]> {
  */
 const scanTimeout = 120_000;
 
-/** The front page, the catalog's pages and the install pages, which content may link to. */
-const catalogPages = ["/", ...catalogPagePaths(siteCatalog), ...handoffPagePaths(siteCatalog)];
+/** The front page, the catalog's pages, the install pages and the deploy page, which content may link to. */
+const catalogPages = [
+  "/",
+  DEPLOY_PATH,
+  ...catalogPagePaths(siteCatalog),
+  ...handoffPagePaths(siteCatalog),
+];
 
 /** The instructions the agent prompts point at, served as they are from `public/agent/`. */
 function agentFiles(): FileObject[] {
@@ -94,6 +100,14 @@ const PREVIEW_ADDRESS = ["appflare-docs", "appflare-dev", "workers", "dev"].join
 const DESCRIBES_THE_PREVIEW = new Set([
   ".github/workflows/docs.yml",
   "apps/docs/README.md",
+  // The deploy page signs in to Cloudflare there too: its OAuth callback is registered.
+  "apps/docs/src/deploy/config.ts",
+  // The hosted installer behind the preview answers for that origin.
+  "apps/installer/wrangler.jsonc",
+  "apps/installer/src/deploy/deploy.test.ts",
+  // A manager installed from the preview reconnects Cloudflare through the preview's callback.
+  "apps/manager/src/cloudflare/oauth-client.test.ts",
+  "apps/manager/src/cloudflare/reconnect.server.test.ts",
   "docs/RELEASING.md",
 ]);
 /** Files that are not text a person or a build reads as links. */

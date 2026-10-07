@@ -21,25 +21,31 @@ describe("Markdown for agents", () => {
   });
 
   it("writes a Callout as a blockquote led by its title", async () => {
-    const text = await docsLlms.page(page("start", "install"));
+    const text = await docsLlms.page(page("guides", "builds"));
     expect(text).toContain(
-      "> **The easiest way: the Deploy to Cloudflare button**\n>\n> Everything happens in your browser.",
+      "> **No sandbox tier apps in the catalog yet**\n>\n> The manager and the sandbox Worker",
     );
+    expect(text).not.toContain("<Callout");
   });
 
   it("writes Cards as a list of links", async () => {
     const text = await docsLlms.page(page("start", "overview"));
     expect(text).toContain(
-      "- [Run the installer](/start/install/): Run `npx create-appflare` in a terminal on your computer.",
+      "- [Install from your browser](/start/browser-install/): The recommended way.",
     );
   });
 
-  it("writes an agent prompt as the address of the instructions it points at", async () => {
+  it("keeps the command line's steps, folded on the page, in the text agents read", async () => {
     const install = await docsLlms.page(page("start", "install"));
-    expect(install).toContain(`its instructions are at ${agentInstructionsUrl("install")}.`);
-    const submit = await docsLlms.page(page("catalog", "submit"));
-    expect(submit).toContain(`its instructions are at ${agentInstructionsUrl("submit")}.`);
-    expect(install).not.toContain("Copy prompt");
+    expect(install).toContain("npx create-appflare");
+    expect(install).toContain("Cloudflare lets\naccount admins block public OAuth apps");
+  });
+
+  it("points no page at the instructions for coding agents", async () => {
+    const full = await docsLlms.full();
+    expect(full).not.toContain("its instructions are at");
+    expect(full).not.toContain(agentInstructionsUrl("install"));
+    expect(full).not.toContain("Copy prompt");
   });
 
   it("lists every page in llms.txt, linked to its Markdown file, those the sidebar leaves out too", () => {

@@ -1,7 +1,9 @@
 /**
  * `@appflare/cf-api`: a thin, typed, runtime-agnostic client over the Cloudflare
- * REST API for the endpoints Appflare uses. Entry `.` is safe in Workers and
- * Node; the Node-only `loadDevContext` lives at the `./dev` subpath.
+ * REST API for the endpoints Appflare uses, and Cloudflare OAuth for a public
+ * client. Entry `.` is safe in Workers and Node; the Node-only
+ * `loadDevContext` lives at the `./dev` subpath, and `./oauth` carries the
+ * OAuth module alone for browser bundles.
  */
 
 export type { AssetManifestFile, AssetUploadManifest } from "./asset-hash";
@@ -12,6 +14,7 @@ export type {
   AccountSetupCapabilities,
   AnalyticsEngineCapability,
   CapabilityClient,
+  CapabilityProbe,
   CapabilityUnknown,
   CapabilityUnknownReason,
   ContainersCapability,
@@ -58,7 +61,6 @@ export type {
 export { CLOUDFLARE_API_BASE } from "./http";
 export type { WorkerModule, WorkerModuleType } from "./modules";
 export { buildUploadFormData, MODULE_CONTENT_TYPES } from "./modules";
-
 export {
   ACCESS_SERVICE_TOKEN_IN_USE,
   AccessCertsError,
@@ -154,7 +156,6 @@ export {
   WORKFLOW_CRON_REQUIRES_PAID_PLAN_CODE,
   WORKFLOW_NOT_FOUND_CODE,
 } from "./namespaces/workflows";
-
 export type {
   CreateDnsRecordArgs,
   DnsRecord,
@@ -163,5 +164,45 @@ export type {
   Zone,
   ZoneStatus,
 } from "./namespaces/zones";
+export type {
+  AuthorizationUrlArgs,
+  CloudflareOAuthErrorInit,
+  ExchangeCodeArgs,
+  ManagerOAuthGroupKey,
+  OAuthOperation,
+  OAuthRequestOptions,
+  OAuthState,
+  OAuthTokens,
+  Pkce,
+  RefreshedTokens,
+  RefreshGrantArgs,
+  RevokeTokenArgs,
+} from "./oauth";
+export {
+  APPFLARE_OAUTH_CALLBACK_URL,
+  authorizationUrl,
+  CLOUDFLARE_OAUTH_AUTHORIZE_URL,
+  CLOUDFLARE_OAUTH_REVOKE_URL,
+  CLOUDFLARE_OAUTH_TOKEN_URL,
+  CloudflareOAuthError,
+  createOAuthState,
+  createPkce,
+  decodeOAuthState,
+  encodeOAuthState,
+  exchangeCode,
+  isOAuthRelayOrigin,
+  MANAGER_OAUTH_API_SCOPES,
+  MANAGER_OAUTH_SCOPE_BY_GROUP,
+  MANAGER_OAUTH_SCOPES,
+  MANAGER_OAUTH_SCOPES_BY_PROBE,
+  missingManagerScopes,
+  OAUTH_INVALID_RESPONSE,
+  OAUTH_NETWORK_ERROR,
+  OFFLINE_ACCESS_SCOPE,
+  pkceChallenge,
+  refreshGrant,
+  revokeToken,
+  signInCanProbe,
+} from "./oauth";
 
 export type * from "./types";

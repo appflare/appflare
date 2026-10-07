@@ -8,9 +8,12 @@ import {
 } from "@phosphor-icons/react";
 import { useRouter } from "@tanstack/react-router";
 import { type ReactNode, useState } from "react";
+import { RECONNECT_COPY } from "../cloudflare/connection-view";
+import { reconnectDialogHref } from "../cloudflare/reconnect-outcome";
 import { appLink } from "../components/app-links";
 import { BusyButton } from "../components/busy-button";
 import { Section, SectionRows } from "../components/section";
+import { settingsLink } from "../components/settings-links";
 import type { StartUpdateHandle } from "../components/update-banner";
 import { useOptimisticDismiss } from "../components/use-optimistic-dismiss";
 import { dismissDeployCopy } from "../deploy-button/deploy-copy.functions";
@@ -27,6 +30,9 @@ import {
   updateAllTargets,
 } from "./attention";
 import { attentionCopy } from "./attention-copy";
+
+/** Reconnect Cloudflare on the connection settings, opened at once. */
+const RECONNECT_HREF = reconnectDialogHref();
 
 /**
  * Home's "Needs attention": one card of rows, most severe first (see
@@ -146,6 +152,18 @@ function AttentionRow({
   if (item.kind === "deploy-copy") return <DeployCopyRow item={item} />;
   let action: ReactNode;
   switch (item.kind) {
+    case "connection":
+      // Admins land in Reconnect Cloudflare itself; members see where it happens.
+      action = isAdmin ? (
+        <LinkButton href={RECONNECT_HREF} variant="secondary">
+          {RECONNECT_COPY.action}
+        </LinkButton>
+      ) : (
+        <LinkButton href={settingsLink("account", "connection")} variant="secondary">
+          Go to Your account
+        </LinkButton>
+      );
+      break;
     case "failed-job":
       action = (
         <>
@@ -201,15 +219,21 @@ function AttentionRow({
     case "account":
       action = (
         <>
-          {/* Never for what every app needs, such as the token's permissions. */}
+          {/* Never for what every app needs, such as Appflare's own permissions. */}
           {item.row.dismissible && (
             <Button variant="ghost" onClick={() => onDismissAccountRow(item.row)}>
               Not needed
             </Button>
           )}
-          <LinkButton href={accountRowLink(item.row)} variant="secondary">
-            Go to Your account
-          </LinkButton>
+          {item.row.reconnect === true ? (
+            <LinkButton href={RECONNECT_HREF} variant="secondary">
+              {RECONNECT_COPY.action}
+            </LinkButton>
+          ) : (
+            <LinkButton href={accountRowLink(item.row)} variant="secondary">
+              Go to Your account
+            </LinkButton>
+          )}
         </>
       );
       break;
@@ -248,7 +272,7 @@ function AttentionRowLayout({
           </Text>
           <Text variant="secondary">{description}</Text>
         </div>
-        <div className="flex flex-col-reverse gap-2 *:w-full *:justify-center sm:shrink-0 sm:flex-row sm:items-center sm:*:w-auto">
+        <div className="flex flex-col-reverse gap-2 *:w-full *:justify-center max-sm:*:min-h-11 sm:shrink-0 sm:flex-row sm:items-center sm:*:w-auto">
           {actions}
         </div>
       </div>

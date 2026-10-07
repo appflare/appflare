@@ -25,8 +25,8 @@ export function setupStepLabel(step: SetupStep, count: number = SETUP_STEP_COUNT
   return `Step ${step} of ${count}`;
 }
 
-/** Makes a Kumo Button span the card, its content centred. */
-export const FULL_WIDTH_ACTION = "w-full justify-center";
+/** Makes a Kumo Button span the card, its content centred; 44 px tall on a phone. */
+export const FULL_WIDTH_ACTION = "w-full justify-center max-sm:min-h-11";
 
 /**
  * The one layout of every screen shown before the app itself: sign-in, each

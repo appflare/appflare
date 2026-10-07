@@ -5,6 +5,8 @@ import { z } from "zod";
 import { getCatalogManifest } from "../catalog/app-manifest.server";
 import { findCatalogApp } from "../catalog/merged.server";
 import { CfTokenNotConfiguredError, getCfClient } from "../cloudflare/client.server";
+import { connectionKindOf } from "../cloudflare/connection.server";
+import { inConnectionWordsOf } from "../cloudflare/sign-in-words.server";
 import { requireRole } from "../server/auth.server";
 import {
   EmailRoutingError,
@@ -22,7 +24,7 @@ async function asUserError<T>(run: () => Promise<T>): Promise<T> {
     return await run();
   } catch (error) {
     if (error instanceof EmailRoutingError || error instanceof CfTokenNotConfiguredError) {
-      throw new Error(error.message);
+      throw new Error(await inConnectionWordsOf(env.DB, error.message));
     }
     throw error;
   }
@@ -32,7 +34,10 @@ async function asUserError<T>(run: () => Promise<T>): Promise<T> {
 export const getEmailZoneOptions = createServerFn({ method: "GET" }).handler(
   async (): Promise<EmailZoneOptions> => {
     await requireRole("admin");
-    return asUserError(async () => getEmailZoneOptionsCore(await getCfClient(env)));
+    return asUserError(async () => ({
+      ...(await getEmailZoneOptionsCore(await getCfClient(env))),
+      connection: await connectionKindOf(env.DB),
+    }));
   },
 );
 
@@ -58,11 +63,20 @@ export const previewEmailRouting = createServerFn({ method: "GET" })
       // builds it, so its bindings (and whether it sends email) are unknown.
       const entry = await getCatalogManifest(env, read.listed.app, read.listed.trust);
       if (!entry.ok) throw new EmailRoutingError(entry.error);
-      return previewEmailRoutingCore(await getCfClient(env), {
+      const preview = await previewEmailRoutingCore(await getCfClient(env), {
         catalog: entry.catalog,
         bindings: entry.manifest == null ? null : combinedWorkerFacts(entry.manifest).bindings,
         zoneId: data.zoneId,
         workerName: data.workerName,
       });
+      // What Cloudflare refused, in the words for how Appflare connects.
+      const words = (lines: string[]) =>
+        Promise.all(lines.map((line) => inConnectionWordsOf(env.DB, line)));
+      return {
+        ...preview,
+        problems: await words(preview.problems),
+        warnings: await words(preview.warnings),
+        connection: await connectionKindOf(env.DB),
+      };
     });
   });

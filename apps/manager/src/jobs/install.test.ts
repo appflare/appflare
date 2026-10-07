@@ -33,9 +33,11 @@ import { fakeEngine } from "../test/fake-invocations";
 import { fakeSelf } from "../test/fake-self";
 import { fakeStep } from "../test/fake-step";
 import { redirectingArtifactHost, STORAGE_URL } from "../test/redirecting-host";
+import { seedSignIn as seedGrant } from "../test/seed-sign-in";
 import { entryJobCost, otherWorkerCost } from "./entry-budget";
 import { entryWorkers } from "./entry-workers";
 import { API_STEP, type InstallJobParams, runInstall } from "./install";
+import { SIGN_IN_ACCESS_STEP, SIGN_IN_REFUSED } from "./install/sign-in-access";
 import { FRESH_INVOCATION_SLEEP } from "./invocation-budget";
 import type { JobEnv } from "./run-job";
 import { FRESH_INVOCATION_NOTE } from "./steps";
@@ -172,6 +174,15 @@ interface FakeState {
   access?: ReturnType<typeof fakeAccessAccount>;
   /** Answers the Worker's own URL instead of `health`, from the request's headers. */
   healthAnswer?: (url: string, headers: Headers) => Response;
+  /**
+   * The manager is connected with Cloudflare sign-in (its grant's access
+   * token is `TOKEN`): both token verify endpoints answer 401, code 1000,
+   * as Cloudflare answers any OAuth access token. `refused`: Cloudflare also
+   * refuses the sign-in the account's Worker list.
+   */
+  signIn?: "connected" | "refused";
+  /** Runs after each step of the job succeeds (a test changes the manager between steps). */
+  afterStep?: (name: string) => Promise<void>;
 }
 
 /** What the fake records for an app's Worker other than `cut`. */
@@ -317,6 +328,18 @@ function fakeWorld(fixture: ArtifactFixture, over: Partial<FakeState> = {}) {
     const key = `${request.method} ${path}`;
     state.calls.push(key);
     const auth = request.headers.get("authorization");
+    if (state.signIn !== undefined && url.pathname.endsWith("/tokens/verify")) {
+      return Response.json(
+        { success: false, errors: [{ code: 1000, message: "Invalid API Token" }] },
+        { status: 401 },
+      );
+    }
+    if (state.signIn === "refused" && key === "GET /workers/scripts") {
+      return Response.json(
+        { success: false, errors: [{ code: 10000, message: "Authentication error" }] },
+        { status: 403 },
+      );
+    }
     if (path.startsWith("/r2-catalog/")) return catalog(request, path, auth);
     if (path.startsWith("/pipelines/") && state.pipelinesTokenRefused === true) {
       return Response.json(
@@ -760,7 +783,28 @@ function fakeWorld(fixture: ArtifactFixture, over: Partial<FakeState> = {}) {
 
 /** Seals a protected app's service token secret. */
 const AUTH_SECRET = "auth-secret-0123456789abcdef0123456789";
-const jobEnv = (): JobEnv => ({ DB: env.DB, CF_API_TOKEN: TOKEN, BETTER_AUTH_SECRET: AUTH_SECRET });
+/**
+ * The manager's environment; once a test seeded a sign-in, also the key its
+ * grant is sealed with (a stored grant wins over the token).
+ */
+const jobEnv = (): JobEnv => ({
+  DB: env.DB,
+  CF_API_TOKEN: TOKEN,
+  BETTER_AUTH_SECRET: AUTH_SECRET,
+  ...(grantKey === "" ? {} : { CF_GRANT_KEY: grantKey }),
+});
+
+/** The key a test's Cloudflare sign-in is sealed with; its access token is `TOKEN`. */
+let grantKey = "";
+
+async function seedSignIn(): Promise<void> {
+  grantKey = await seedGrant(env.DB, { accessToken: TOKEN });
+}
+
+/** Takes the sign-in away again, leaving the API token. */
+async function dropSignIn(): Promise<void> {
+  await env.DB.prepare("DELETE FROM cloudflare_grant").run();
+}
 
 async function start(fixture: ArtifactFixture, over: Partial<StartInstallInput> = {}) {
   let params: InstallJobParams | null = null;
@@ -818,9 +862,11 @@ async function install(
   const step = fakeStep({
     ...(clock === undefined ? {} : { onSleep: clock.onSleep }),
     ...(failing === undefined ? {} : { failing }),
+    ...(world.afterStep === undefined ? {} : { afterStep: world.afterStep }),
   });
   fake.state.stepOf = () => step.names.at(-1);
-  const self = fakeSelf(jobEnv(), {
+  const managerEnv = jobEnv();
+  const self = fakeSelf(managerEnv, {
     fetch: fake.fetch,
     ...(clock === undefined ? {} : { now: clock.now }),
   });
@@ -829,7 +875,7 @@ async function install(
     await runInstall({
       params,
       step,
-      env: units === "self" ? { ...jobEnv(), SELF: self } : jobEnv(),
+      env: units === "self" ? { ...managerEnv, SELF: self } : managerEnv,
       deps: {
         fetch: fake.fetch,
         signingKeys: fixture.keys,
@@ -916,6 +962,7 @@ beforeEach(async () => {
   await reset();
   await createMigrator(migrations).ensure(env.DB);
   await writeSettings(createDb(env.DB), { [SETTING.accountId]: ACC });
+  grantKey = "";
 });
 
 describe("install job", () => {
@@ -4461,5 +4508,88 @@ describe("install job, a database with query caching set", () => {
     const omitted = await install(options(undefined), {}, connection);
     expect(omitted.job?.status).toBe("succeeded");
     expect(omitted.fake.state.hyperdrive[0]).not.toHaveProperty("caching");
+  });
+});
+
+describe("install job on a manager connected with Cloudflare sign-in", () => {
+  it("confirms the sign-in with one read instead of the token verify endpoints, and installs", async () => {
+    await seedSignIn();
+    const r = await install(
+      { bindings: [{ type: "kv_namespace", name: "CUT_KV" }] },
+      { signIn: "connected" },
+    );
+    expect(r.error).toBeNull();
+    expect(r.job).toMatchObject({ status: "succeeded", error: null });
+    expect(r.installRow?.status).toBe("installed");
+    // Cloudflare refuses a sign-in at both verify endpoints: neither is asked.
+    expect(r.fake.state.calls.filter((c) => c.includes("tokens/verify"))).toEqual([]);
+    expect(r.step.names).not.toContain("verify API token");
+    const preflight = r.step.names.indexOf("preflight checks");
+    expect(r.step.names.slice(preflight + 1, preflight + 3)).toEqual([
+      SIGN_IN_ACCESS_STEP,
+      "check Worker name",
+    ]);
+    // One request, as the token check it replaces, and the Worker name check
+    // reads its list instead of asking again.
+    const asked = r.fake.state.requestsByStep[SIGN_IN_ACCESS_STEP] ?? [];
+    expect(asked).toHaveLength(1);
+    expect(new URL(asked[0] ?? "").pathname).toBe(`/client/v4/accounts/${ACC}/workers/scripts`);
+    expect(r.fake.state.requestsByStep["check Worker name"] ?? []).toEqual([]);
+    expect(r.logs.map((l) => l.message)).toContain(
+      "Appflare's Cloudflare sign-in reaches this account.",
+    );
+    expect(JSON.stringify(r.logs)).not.toContain("DO-NOT-LEAK");
+  });
+
+  it("ends in plain words, with Cloudflare's answer only in the log, when the account refuses the sign-in", async () => {
+    await seedSignIn();
+    const r = await install(
+      { bindings: [{ type: "kv_namespace", name: "CUT_KV" }] },
+      { signIn: "refused" },
+    );
+    expect(r.job?.status).toBe("failed");
+    expect(r.job?.error).toBe(`${SIGN_IN_ACCESS_STEP}: ${SIGN_IN_REFUSED}`);
+    expect(r.job?.error).not.toMatch(/Cloudflare API request failed|->|token/i);
+    expect(r.resources).toEqual([]);
+    expect(r.fake.state.kv).toEqual([]);
+    expect(r.logs.map((l) => l.message)).toContain(
+      "Cloudflare refused to list the account's Workers (HTTP 403, Cloudflare code 10000).",
+    );
+    expect(JSON.stringify(r.logs)).not.toContain("DO-NOT-LEAK");
+  });
+
+  it("refuses a Worker name the sign-in check found taken", async () => {
+    await seedSignIn();
+    const r = await install(
+      { bindings: [{ type: "kv_namespace", name: "CUT_KV" }] },
+      { signIn: "connected", scripts: ["appflare", "cut"] },
+    );
+    expect(r.job?.status).toBe("failed");
+    expect(r.job?.error).toContain("a Worker named cut already exists in this account");
+    expect(r.fake.state.requestsByStep["check Worker name"] ?? []).toEqual([]);
+  });
+
+  it("checks the connection again at the access step, not from the preflight", async () => {
+    // Cloudflare sign-in at the preflight; an API token again by the access step.
+    await seedSignIn();
+    const r = await install(
+      { bindings: [{ type: "kv_namespace", name: "CUT_KV" }] },
+      {
+        afterStep: async (name) => {
+          if (name === "preflight checks") await dropSignIn();
+        },
+      },
+    );
+    expect(r.job?.status).toBe("succeeded");
+    expect(r.step.names).toContain("verify API token");
+    expect(r.step.names).not.toContain(SIGN_IN_ACCESS_STEP);
+  });
+
+  it("keeps verifying an API token at Cloudflare's verify endpoint", async () => {
+    const r = await install({ bindings: [{ type: "kv_namespace", name: "CUT_KV" }] });
+    expect(r.job?.status).toBe("succeeded");
+    expect(r.step.names).toContain("verify API token");
+    expect(r.step.names).not.toContain(SIGN_IN_ACCESS_STEP);
+    expect(r.fake.state.calls).toContain("GET /tokens/verify");
   });
 });

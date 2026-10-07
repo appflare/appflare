@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
 import { dashboardLinks } from "../cloudflare/dashboard-links";
-import { type CapabilitiesView, capabilitiesView, type StoredCapabilities } from "./capabilities";
+import {
+  type CapabilitiesView,
+  capabilitiesView,
+  SIGN_IN_PLAN_COPY,
+  type StoredCapabilities,
+} from "./capabilities";
 import {
   ANALYTICS_ENGINE_CAPABILITY_LINK,
   type CapabilityId,
@@ -536,6 +541,143 @@ describe("capabilityRows", () => {
         state: "could-not-check",
         details: { problem: "Not checked yet." },
       });
+    });
+  });
+
+  describe("on a manager connected with Cloudflare sign-in", () => {
+    const SIGNED_IN = { kind: "oauth", missingScopes: [] } as const;
+    const RECONNECT = {
+      kind: "reconnect",
+      label: "Reconnect Cloudflare",
+      href: "/settings/account?reconnect=1#connection",
+    };
+    const NEVER_TOKEN = /token|Edit token|Billing: Read|Zone: Read|Containers: Edit/;
+    /** Every word a row shows (not its id, which links keep using). */
+    const shown = (row: CapabilityRow) =>
+      [row.name, row.why, row.action?.label, ...Object.values(row.details)]
+        .map((v) => JSON.stringify(v ?? ""))
+        .join(" ");
+
+    it("names the sign-in's permissions, ready when every one was allowed", () => {
+      const row = rows(EVERYTHING, { connection: SIGNED_IN })["token-permissions"];
+      expect(row).toMatchObject({
+        name: "Sign-in permissions",
+        state: "ready",
+        action: null,
+        details: { found: "Every permission Appflare needs" },
+      });
+      expect(shown(row)).not.toMatch(NEVER_TOKEN);
+    });
+
+    it("needs action, with Reconnect Cloudflare, for a permission not allowed at sign-in", () => {
+      const row = rows(EVERYTHING, {
+        connection: { kind: "oauth", missingScopes: ["workers-r2.write", "d1.write"] },
+      })["token-permissions"];
+      expect(row.state).toBe("needs-action");
+      expect(row.action).toEqual(RECONNECT);
+      expect(row.details.problem).toBe(
+        "These were not allowed when you signed in with Cloudflare: Workers R2 Storage and D1. Reconnect Cloudflare and allow every permission Appflare asks for.",
+      );
+      expect(rowsNeedingAction(Object.values(rows(EVERYTHING, { connection: SIGNED_IN })))).toEqual(
+        [],
+      );
+    });
+
+    it("needs action, with Reconnect Cloudflare, when Cloudflare refused a read it cannot work without", () => {
+      const row = rows({ ...EVERYTHING, workersDev: NO_PERMISSION }, { connection: SIGNED_IN })[
+        "token-permissions"
+      ];
+      expect(row).toMatchObject({ state: "needs-action", action: RECONNECT });
+    });
+
+    it("never asks for a token permission in any row, even where Cloudflare refused a read", () => {
+      const refused: StoredCapabilities = {
+        ...FREE,
+        workersPlan: NO_PERMISSION,
+        zone: { state: "none" },
+        containers: NO_PERMISSION,
+        zeroTrust: NO_PERMISSION,
+        r2: NO_PERMISSION,
+      };
+      const byId = rows(refused, {
+        connection: { kind: "oauth", missingScopes: ["zone.read"] },
+        inUse: ALL_IN_USE,
+      });
+      for (const row of Object.values(byId)) {
+        expect(shown(row)).not.toMatch(NEVER_TOKEN);
+        expect(row.action?.kind).not.toBe("edit-token");
+      }
+      expect(byId["workers-plan"].details.problem).toBe(SIGN_IN_PLAN_COPY.ask);
+      expect(byId.zone.details.note).toContain(
+        "Appflare was not allowed to see domains when you signed in with Cloudflare.",
+      );
+      expect(byId["zero-trust"].details.problem).toBe(
+        "Cloudflare did not let Appflare read this with its sign-in. Reconnect Cloudflare and allow every permission Appflare asks for.",
+      );
+    });
+
+    describe("the Workers plan, which a sign-in cannot read", () => {
+      const NOT_SHARED = {
+        state: "unknown",
+        reason: "no-permission",
+        detail: "Cloudflare sign-in has no permission to read the plan",
+      } as const;
+
+      it("asks once with Choose plan, saying Containers count as Paid", () => {
+        const plan = rows(
+          { ...FREE, workersPlan: NOT_SHARED, containers: NO_PERMISSION },
+          { connection: SIGNED_IN },
+        )["workers-plan"];
+        expect(plan).toMatchObject({ state: "needs-action", action: { kind: "choose-plan" } });
+        expect(plan.details.problem).toBe(SIGN_IN_PLAN_COPY.ask);
+        expect(plan.details.problem).toContain("choose it once");
+        expect(plan.details.problem).toContain("Containers");
+        expect(plan.details.problem).not.toMatch(NEVER_TOKEN);
+      });
+
+      it("uses the chosen plan, saying why in a note that does not ask again", () => {
+        const plan = rows(
+          { ...FREE, workersPlan: NOT_SHARED, containers: NO_PERMISSION },
+          { connection: SIGNED_IN, manual: "free" },
+        )["workers-plan"];
+        expect(plan).toMatchObject({ state: "ready", details: { source: "set-by-you" } });
+        expect(plan.details.note).toBe(SIGN_IN_PLAN_COPY.chosen);
+      });
+
+      it("is detected without asking when Containers answer, or refuse for the plan", () => {
+        const paid = rows({ ...EVERYTHING, workersPlan: NOT_SHARED }, { connection: SIGNED_IN })[
+          "workers-plan"
+        ];
+        expect(paid).toMatchObject({
+          state: "ready",
+          action: null,
+          details: { found: "Workers Paid", source: "detected", note: null },
+        });
+        const free = rows({ ...FREE, workersPlan: NOT_SHARED }, { connection: SIGNED_IN })[
+          "workers-plan"
+        ];
+        expect(free).toMatchObject({
+          state: "ready",
+          action: null,
+          details: { found: "Workers Free", source: "detected" },
+        });
+      });
+    });
+
+    it("leaves a domain note out when the sign-in may see domains", () => {
+      expect(
+        rows({ ...EVERYTHING, zone: { state: "none" } }, { connection: SIGNED_IN }).zone.details
+          .note,
+      ).toBeNull();
+    });
+
+    it("keeps the token's wording for a manager connected with an API token", () => {
+      const token = { kind: "api_token", missingScopes: [] } as const;
+      const stored = { ...EVERYTHING, r2: NO_PERMISSION };
+      expect(rows(stored, { connection: token })).toEqual(rows(stored));
+      expect(rows(stored, { connection: token })["token-permissions"].action?.kind).toBe(
+        "edit-token",
+      );
     });
   });
 

@@ -111,6 +111,36 @@ describe("the setup wizard", () => {
     });
   });
 
+  it("on a manager installed from the browser, points to the installer or lets a token in", () => {
+    const handoff = initialWizardState("handoff", null, {
+      handoff: "waiting",
+      installPage: "https://appflare.dev/deploy",
+    });
+    expect(handoff).toEqual({
+      step: "handoff",
+      received: false,
+      installPage: "https://appflare.dev/deploy",
+    });
+    expect(wizardProgress(handoff)).toEqual({ step: 1, count: 3 });
+    expect(wizardCopy(handoff).title).toBe("Finish where you installed Appflare");
+    const received = initialWizardState("handoff", null, { handoff: "received" });
+    expect(received).toEqual({ step: "handoff", received: true, installPage: null });
+    expect(wizardCopy(received).description).toContain("to create your owner account");
+    expect(wizardCopy(handoff).description).toContain("It connects Appflare");
+    // Connect with an API token instead.
+    expect(run(handoff, { type: "use-token" })).toEqual({ step: "connect" });
+    expect(run({ step: "create-owner" }, { type: "use-token" })).toEqual({ step: "create-owner" });
+  });
+
+  it("skips the address step when Appflare already lives on a domain of the account", () => {
+    const last = run(
+      { step: "create-owner" },
+      { type: "owner-created", checklist: CHECKLIST, address: "set" },
+    );
+    expect(last).toEqual({ step: "checklist", checklist: CHECKLIST });
+    expect(wizardProgress(last)).toEqual({ step: 3, count: 3 });
+  });
+
   it("waits for the redeploy when connecting wrote a new auth secret", () => {
     const waiting = run({ step: "connect" }, { type: "connected", next: "redeploying" });
     expect(waiting).toEqual({ step: "redeploying" });

@@ -5,6 +5,8 @@ import { getRequest } from "@tanstack/react-start/server";
 import { refreshCapabilitiesForNewToken } from "../capabilities/capabilities.server";
 import { apiBaseOption } from "../cloudflare/api-base";
 import { logCfRequest } from "../cloudflare/client.server";
+import { readConnectionState } from "../cloudflare/connection.server";
+import type { ConnectionView } from "../cloudflare/connection-view";
 import type { VerifyTokenResult } from "../cloudflare/verify-token";
 import { createDb } from "../db/client";
 import { readSettings, SETTING } from "../db/settings";
@@ -37,6 +39,7 @@ function deps(token: string): TokenFlowDeps {
     host: new URL(getRequest().url).host,
     runningVersionId: env.CF_VERSION_METADATA?.id ?? null,
     setupTokenBound: typeof env.SETUP_TOKEN === "string" && env.SETUP_TOKEN.length > 0,
+    grantKey: env.CF_GRANT_KEY,
     onRequest: logCfRequest,
     ...apiBaseOption(env),
   };
@@ -112,7 +115,9 @@ export const saveToken = createServerFn({ method: "POST" })
 
 /**
  * Admin only, settings: verify and replace `CF_API_TOKEN` on the same Worker,
- * then read the account's capabilities with the new token.
+ * then read the account's capabilities with the new token. On a manager
+ * connected with a Cloudflare authorization, the token takes its place and
+ * the authorization is revoked.
  */
 export const rotateToken = createServerFn({ method: "POST" })
   .validator(cfTokenInput)
@@ -131,10 +136,13 @@ export interface TokenStatus {
   /** ISO 8601 */
   verifiedAt: string | null;
   /**
-   * `CF_API_TOKEN` is bound in the running version. False between saving the
-   * token and the manager's redeploy reaching this request.
+   * The running version can use the connection: `CF_API_TOKEN` is bound, or
+   * it has the key of the stored grant. False between saving a credential
+   * and the manager's redeploy reaching this request.
    */
   hasSecret: boolean;
+  /** How Appflare connects to Cloudflare, and whether it needs reconnecting. */
+  connection: ConnectionView;
   /**
    * The address links to this manager use (`managerOrigin`): its custom
    * domain when it has one, else the address this page was loaded from.
@@ -146,12 +154,15 @@ export interface TokenStatus {
 export const getTokenStatus = createServerFn({ method: "GET" }).handler(
   async (): Promise<TokenStatus> => {
     await requireSession();
-    const s = await readSettings(createDb(env.DB), [
-      SETTING.cfTokenConfigured,
-      SETTING.accountId,
-      SETTING.accountName,
-      SETTING.workerName,
-      SETTING.cfTokenVerifiedAt,
+    const [s, connection] = await Promise.all([
+      readSettings(createDb(env.DB), [
+        SETTING.cfTokenConfigured,
+        SETTING.accountId,
+        SETTING.accountName,
+        SETTING.workerName,
+        SETTING.cfTokenVerifiedAt,
+      ]),
+      readConnectionState(env),
     ]);
     return {
       configured: s.cf_token_configured === "1",
@@ -159,7 +170,8 @@ export const getTokenStatus = createServerFn({ method: "GET" }).handler(
       accountName: s.account_name || null,
       workerName: s.worker_name || null,
       verifiedAt: s.cf_token_verified_at || null,
-      hasSecret: typeof env.CF_API_TOKEN === "string" && env.CF_API_TOKEN.length > 0,
+      hasSecret: connection.ready,
+      connection,
       managerOrigin: await managerOrigin(env, getRequest()),
     };
   },

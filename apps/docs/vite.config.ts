@@ -5,9 +5,11 @@ import react from "@vitejs/plugin-react";
 import { getSlugs } from "fumadocs-core/source";
 import { fumadocsMdx } from "fumadocs-mdx/vite";
 import { defaultClientConditions, defaultServerConditions, defineConfig } from "vite";
+import { deployHeaders } from "./src/build/deploy-headers.ts";
 import { ogImages } from "./src/build/og-images.ts";
 import { catalogData, loadCatalog, snapshotMode } from "./src/catalog/plugin.ts";
 import { catalogPagePaths, handoffPagePaths } from "./src/catalog/urls.ts";
+import { CALLBACK_PATH, DEPLOY_PATH } from "./src/deploy/paths.ts";
 import { markdownUrl, pageUrl, SITE_URL, searchIndexPath } from "./src/lib/shared.ts";
 import { docsScreenshots } from "./src/og/plugin.ts";
 import { manifestReference, referencePage } from "./src/reference/integration.ts";
@@ -82,6 +84,10 @@ export default defineConfig(async () => {
           ]),
           ...catalogPagePaths(catalog.site).map((path) => ({ path })),
           ...handoffPagePaths(catalog.site).map((path) => ({ path })),
+          { path: DEPLOY_PATH },
+          // Cloudflare returns to the registered callback, `/deploy/callback`,
+          // exactly; as `callback.html` it is served there without a redirect.
+          { path: CALLBACK_PATH, prerender: { outputPath: "/deploy/callback.html" } },
         ],
         // TanStack Start's own sitemap lists every prerendered file, the Markdown
         // and text files included; `sitemap.xml` is a route instead, listing pages.
@@ -89,6 +95,7 @@ export default defineConfig(async () => {
       }),
       react(),
       ogImages({ siteUrl: SITE_URL }),
+      deployHeaders(),
     ],
   };
 });

@@ -1,4 +1,6 @@
 import { z } from "zod";
+import { RECONNECT_PLACE } from "../cloudflare/connection-errors";
+import type { ConnectionKind } from "../cloudflare/connection-view";
 
 /**
  * The install form's live check of a custom domain's hostname (a name in one
@@ -30,10 +32,11 @@ export type InstallHostnameAnswer =
   /** DNS address records of its own (A, AAAA, CNAME) that the install would not replace. */
   | { state: "records"; records: Array<{ type: string; content: string | null }> }
   /**
-   * The token lacks a permission Cloudflare needs to attach a name to a
+   * Appflare lacks a permission Cloudflare needs to attach a name to a
    * Worker (Workers Routes: Edit), so the job's attach would be refused.
+   * `connection` says how to add it (an API token when left out).
    */
-  | { state: "cannot-attach"; missing: string[] }
+  | { state: "cannot-attach"; missing: string[]; connection?: ConnectionKind }
   /** A custom domain of another Worker, which Appflare never moves. */
   | { state: "other-worker"; worker: string }
   /** A domain another app installed here records; starting the install refuses it. */
@@ -84,7 +87,13 @@ export function hostnameStatus(
     case "other-worker":
       return { tone: "warning", text: `This name already serves the Worker ${check.worker}.` };
     case "cannot-attach":
-      return { tone: "warning", text: "The Cloudflare token cannot add domains to apps yet." };
+      return {
+        tone: "warning",
+        text:
+          check.connection === "oauth"
+            ? "Appflare's Cloudflare sign-in cannot add domains to apps yet."
+            : "The Cloudflare token cannot add domains to apps yet.",
+      };
     case "other-app":
       return { tone: "danger", text: "Another app here already uses this name. Choose another." };
     case "unknown":
@@ -120,7 +129,10 @@ export function hostnameConsequence(
     case "cannot-attach":
       return {
         title: LEFT_OUT_TITLE,
-        description: `Cloudflare needs ${check.missing.join(", ")} on this domain to add a name to an app, and the Appflare token does not have it, ${after} Add it to the token in Cloudflare (API Tokens, edit the Appflare token), then install; or install anyway and add the domain from the app's page once it is added.`,
+        description:
+          check.connection === "oauth"
+            ? `Cloudflare did not let Appflare add a name to an app with its Cloudflare sign-in, ${after} Reconnect Cloudflare in ${RECONNECT_PLACE} and allow every permission Appflare asks for, then install; or install anyway and add the domain from the app's page later.`
+            : `Cloudflare needs ${check.missing.join(", ")} on this domain to add a name to an app, and the Appflare token does not have it, ${after} Add it to the token in Cloudflare (API Tokens, edit the Appflare token), then install; or install anyway and add the domain from the app's page once it is added.`,
       };
     default:
       return null;

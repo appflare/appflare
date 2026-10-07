@@ -34,7 +34,7 @@ export async function checkAppAccessCore(deps: {
   client: Pick<CloudflareClient, "access">;
 }): Promise<AppAccessCheck> {
   const [problem, providers, emails] = await Promise.all([
-    accessCapabilityCheck(deps.client),
+    accessCapabilityCheck(deps.client, deps.db),
     deps.client.access.listIdentityProviders().catch((error: unknown) => {
       if (error instanceof CloudflareApiError) return null;
       throw error;

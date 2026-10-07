@@ -67,7 +67,8 @@ Before it switches, the manager:
    are refused too.
 4. Deploys the older version to all traffic. Cloudflare refuses a version whose
    secrets changed since it was deployed, for example after the API token was
-   replaced or the auth secret rotated, because rolling back would bring back the old
+   replaced, Appflare's [Cloudflare connection](/guides/cloudflare-connection/)
+   changed kind, or the auth secret was rotated, because rolling back would bring back the old
    values. Pick a newer version of the same release.
 
 The rollback is listed under **Jobs** as an Appflare rollback, with its log. It turns

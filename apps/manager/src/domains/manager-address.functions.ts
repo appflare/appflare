@@ -2,6 +2,7 @@ import { env } from "cloudflare:workers";
 import { createServerFn } from "@tanstack/react-start";
 import { accessGate } from "../access/gate";
 import { CfTokenNotConfiguredError, getCfClient } from "../cloudflare/client.server";
+import { inConnectionWordsOf } from "../cloudflare/sign-in-words.server";
 import { CustomDomainError } from "../installs/custom-domains.server";
 import { jobCreator } from "../jobs/create-job.server";
 import { requireRole } from "../server/auth.server";
@@ -19,6 +20,10 @@ import {
   revertManagerAddress as revertCore,
 } from "./manager-address.server";
 import { moveAddressInput, revertAddressInput } from "./manager-address-input";
+import {
+  retryPendingMove as retryPendingCore,
+  stayAtWorkersDev as stayCore,
+} from "./pending-address.server";
 
 export type {
   AddressOptions,
@@ -30,7 +35,7 @@ export type {
 /**
  * Settings, Domains, "Appflare's address": read it, the zones it can move
  * to, move it to a custom domain, change it, go back to workers.dev. All
- * admin only; every call goes through the manager's own `CF_API_TOKEN`.
+ * admin only; every call goes through the manager's own Cloudflare connection.
  */
 
 async function asUserError<T>(run: () => Promise<T>): Promise<T> {
@@ -42,7 +47,7 @@ async function asUserError<T>(run: () => Promise<T>): Promise<T> {
       error instanceof CustomDomainError ||
       error instanceof CfTokenNotConfiguredError
     ) {
-      throw new Error(error.message);
+      throw new Error(await inConnectionWordsOf(env.DB, error.message));
     }
     throw error;
   }
@@ -98,6 +103,23 @@ export const changeManagerAddress = createServerFn({ method: "POST" })
     await requireRole("admin");
     return asUserError(async () => changeCore(await deps(), data));
   });
+
+/**
+ * Try again, after the automatic move to the pending address failed: one
+ * move there, started by this admin and followed like any other.
+ */
+export const retryPendingMove = createServerFn({ method: "POST" })
+  .validator(revertAddressInput)
+  .handler(async ({ data }): Promise<MoveAddressResult> => {
+    await requireRole("admin");
+    return asUserError(async () => retryPendingCore(await deps(), data));
+  });
+
+/** Stay at workers.dev: Appflare no longer moves to the pending address by itself. */
+export const stayAtWorkersDev = createServerFn({ method: "POST" }).handler(async () => {
+  await requireRole("admin");
+  await stayCore(env.DB);
+});
 
 /** Back to workers.dev; `url` is the sign-in page there. */
 export const revertManagerAddress = createServerFn({ method: "POST" })

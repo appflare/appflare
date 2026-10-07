@@ -19,6 +19,7 @@ import {
 } from "../access/toggle.server";
 import { hasRole } from "../auth/roles";
 import { CfTokenNotConfiguredError, getCfClient } from "../cloudflare/client.server";
+import { inConnectionWordsOf } from "../cloudflare/sign-in-words.server";
 import { requireRole, requireSession } from "./auth.server";
 
 export type { AccessCheck } from "../access/toggle.server";
@@ -26,7 +27,7 @@ export type { AccessCheck } from "../access/toggle.server";
 /**
  * Settings → Cloudflare Access. Reading the state is open to every signed-in
  * user; checking, turning on or off, and re-syncing the policy are admin only.
- * Every call goes through the manager's own `CF_API_TOKEN`; errors carry
+ * Every call goes through the manager's own Cloudflare connection; errors carry
  * fixed messages or `CloudflareApiError` text (method, path, status), never
  * the token.
  */
@@ -54,17 +55,33 @@ async function deps(actorEmail: string): Promise<AccessToggleDeps> {
   };
 }
 
+/** A check's or a start's refusal, `{ ok: false, message }`. */
+function isProblemResult(value: unknown): value is { ok: false; message: string } {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    (value as { ok?: unknown }).ok === false &&
+    typeof (value as { message?: unknown }).message === "string"
+  );
+}
+
 /** Re-throws expected failures as plain errors with a user-facing message. */
 async function userFacing<T>(run: () => Promise<T>): Promise<T> {
   try {
-    return await run();
+    const result = await run();
+    // A refusal the checks return, in the words for how Appflare connects.
+    if (isProblemResult(result)) {
+      return { ...result, message: await inConnectionWordsOf(env.DB, result.message) };
+    }
+    return result;
   } catch (error) {
     if (
       error instanceof AccessToggleError ||
       error instanceof CloudflareApiError ||
       error instanceof CfTokenNotConfiguredError
     ) {
-      throw new Error(error.message);
+      // Edit the token, or reconnect a Cloudflare sign-in.
+      throw new Error(await inConnectionWordsOf(env.DB, error.message));
     }
     throw error;
   }

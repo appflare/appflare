@@ -375,6 +375,17 @@ describe("creating the owner", () => {
   });
 });
 
+describe("an unfinished handoff from the browser installer", () => {
+  it("leaves nothing kept once a pasted token connects instead", async () => {
+    await env.DB.prepare(
+      `INSERT INTO settings (key, value, updated_at) VALUES ('handoff_grant', '{"sealed":"x"}', 0)`,
+    ).run();
+    await connect(fakeCloudflare(accountToken(ACC, true)));
+    const row = await env.DB.prepare("SELECT 1 FROM settings WHERE key = 'handoff_grant'").first();
+    expect(row).toBeNull();
+  });
+});
+
 describe("a manager deployed without secrets or SELF (the Deploy to Cloudflare button)", () => {
   const SELF_PATCH = `PATCH ${A}/workers/workers/appflare/versions/latest`;
   const DEPLOY = `POST ${A}/workers/scripts/appflare/deployments`;
@@ -384,15 +395,15 @@ describe("a manager deployed without secrets or SELF (the Deploy to Cloudflare b
     [DEPLOY]: ok({ id: "d1" }),
   });
 
-  it("writes a random BETTER_AUTH_SECRET with the pasted token, then CF_API_TOKEN", async () => {
+  it("writes CF_API_TOKEN, then a random BETTER_AUTH_SECRET with the pasted token", async () => {
     const api = fakeCloudflare(withPatch());
     await connect(api, { authSecretBound: false, generateAuthSecret: () => "generated-secret" });
     const puts = api.calls.filter((c) => c.key === `PUT ${A}/workers/scripts/appflare/secrets`);
     expect(puts.map((c) => JSON.parse(c.body ?? "null").name)).toEqual([
-      "BETTER_AUTH_SECRET",
       "CF_API_TOKEN",
+      "BETTER_AUTH_SECRET",
     ]);
-    expect(JSON.parse(puts[0]?.body ?? "null")).toMatchObject({
+    expect(JSON.parse(puts[1]?.body ?? "null")).toMatchObject({
       type: "secret_text",
       text: "generated-secret",
     });

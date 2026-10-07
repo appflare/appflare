@@ -1,3 +1,4 @@
+import { RECONNECT_COPY } from "../cloudflare/connection-view";
 import type { AttentionItem, FailedJob } from "./attention";
 
 /**
@@ -7,7 +8,10 @@ import type { AttentionItem, FailedJob } from "./attention";
  */
 
 /** What a failed job was doing, as the start of a sentence about the app. */
-export function failedJobTitle(job: FailedJob, label: string): string {
+export function failedJobTitle(
+  job: Pick<FailedJob, "kind" | "restore" | "deleteRetained" | "version">,
+  label: string,
+): string {
   if (job.kind === "rollback" && job.restore)
     return `Restoring the database of ${label} did not finish`;
   if (job.kind === "uninstall" && job.deleteRetained) {
@@ -45,6 +49,8 @@ function failedJobLine(job: FailedJob): string {
 
 export function attentionCopy(item: AttentionItem): { title: string; description: string } {
   switch (item.kind) {
+    case "connection":
+      return { title: RECONNECT_COPY.title, description: RECONNECT_COPY.description };
     case "failed-job":
       return { title: failedJobTitle(item.job, item.label), description: failedJobLine(item.job) };
     case "not-responding":

@@ -16,6 +16,7 @@ const EXPECTED_TABLES = [
   "account",
   "catalog_revisions",
   "catalogs",
+  "cloudflare_grant",
   "featured_dismissals",
   "github_tokens",
   "install_access",

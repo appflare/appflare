@@ -1,3 +1,4 @@
+import { AppflareLoader } from "@appflare/brand/loader";
 import { Badge, Banner, Code, Empty, LinkButton, Table, Text } from "@cloudflare/kumo";
 import {
   ArrowCounterClockwiseIcon,
@@ -8,13 +9,19 @@ import {
 import { createFileRoute } from "@tanstack/react-router";
 import { useLayoutEffect, useRef } from "react";
 import { startedByLabel } from "../../../auto-update/auto-update";
-import { AppflareLoader } from "../../../components/appflare-loader";
 import { DescriptionItem, DescriptionList } from "../../../components/description-list";
 import { DocsLink } from "../../../components/docs-link";
 import { TechnicalNamesSwitch, useShowTechnicalNames } from "../../../components/field-label";
 import { formatTime, jobKindLabel } from "../../../components/format";
 import { SendReportButton } from "../../../components/job-report-dialog";
-import { BANNER_ICON, bannerRole, MessageText } from "../../../components/message-text";
+import {
+  ACTIONS_UNDER_ON_PHONE,
+  BANNER_ICON,
+  BannerActions,
+  bannerRole,
+  MessageText,
+  TechnicalDetails,
+} from "../../../components/message-text";
 import { OpenAppButton } from "../../../components/open-app-button";
 import { PageHeader } from "../../../components/page-header";
 import { Section, SectionBody, SectionEmpty, SectionTable } from "../../../components/section";
@@ -22,7 +29,13 @@ import { SeedCredentialsCard } from "../../../components/seed-credentials-card";
 import { StatusBadge } from "../../../components/status-badge";
 import { Timestamp } from "../../../components/timestamp";
 import { jobFailureTopic } from "../../../docs-topics";
-import { type BuildProgressView, getJob, type JobLogRow } from "../../../jobs/jobs.functions";
+import { jobFailureHeadline, jobFailureLine } from "../../../jobs/job-failure-copy";
+import {
+  type BuildProgressView,
+  getJob,
+  type JobLogRow,
+  type JobView,
+} from "../../../jobs/jobs.functions";
 import { isActive, useLiveJob, useVersionSwitch } from "../../../jobs/live-job";
 
 const JOBS_CRUMB = { label: "Jobs", href: "/jobs" };
@@ -143,31 +156,7 @@ function JobPage() {
         />
       )}
       {job.status === "failed" && (
-        <Banner
-          variant="error"
-          icon={BANNER_ICON.error}
-          role={bannerRole("error")}
-          title="The job failed"
-          description={job.error === null ? undefined : <MessageText message={job.error} />}
-          action={
-            failureTopic === null && !isAdmin ? undefined : (
-              <div className="flex flex-wrap items-center gap-3">
-                {failureTopic !== null && <DocsLink topic={failureTopic} variant="inline" />}
-                {isAdmin && <SendReportButton jobId={job.id} reportedAt={job.reportedAt} />}
-                {/* An install that did not finish, once its cause is fixed. */}
-                {isAdmin && job.againHref != null && (
-                  <LinkButton
-                    href={job.againHref}
-                    variant="primary"
-                    icon={<ArrowCounterClockwiseIcon />}
-                  >
-                    Install again
-                  </LinkButton>
-                )}
-              </div>
-            )
-          }
-        />
+        <JobFailure job={job} failureTopic={failureTopic} isAdmin={isAdmin} />
       )}
       {job.sourceBuild !== null && job.status === "succeeded" && (
         <Banner
@@ -203,11 +192,12 @@ function JobPage() {
           ) : null
         }
       >
-        <SectionTable label="Log">
+        {/* On a phone the level sits under the time and long lines wrap: nothing to swipe to. */}
+        <SectionTable label="Log" minWidth="none">
           <Table.Header>
             <Table.Row>
               <Table.Head>Time</Table.Head>
-              <Table.Head>Level</Table.Head>
+              <Table.Head className="max-sm:hidden">Level</Table.Head>
               <Table.Head>Message</Table.Head>
             </Table.Row>
           </Table.Header>
@@ -291,18 +281,20 @@ const LEVEL_VARIANT: Record<string, "neutral" | "info" | "warning" | "error"> = 
 };
 
 function LogRow({ line }: { line: JobLogRow }) {
+  const level = <Badge variant={LEVEL_VARIANT[line.level] ?? "neutral"}>{line.level}</Badge>;
   return (
     <Table.Row>
       <Table.Cell className="align-top whitespace-nowrap">
-        <Text as="time" variant="secondary" size="sm">
-          {formatTime(line.ts)}
-        </Text>
+        <div className="grid justify-items-start gap-1.5">
+          <Text as="time" variant="secondary" size="sm">
+            {formatTime(line.ts)}
+          </Text>
+          <span className="sm:hidden">{level}</span>
+        </div>
       </Table.Cell>
+      <Table.Cell className="align-top max-sm:hidden">{level}</Table.Cell>
       <Table.Cell className="align-top">
-        <Badge variant={LEVEL_VARIANT[line.level] ?? "neutral"}>{line.level}</Badge>
-      </Table.Cell>
-      <Table.Cell className="align-top">
-        <div className="grid gap-1">
+        <div className="grid min-w-0 gap-1 [overflow-wrap:anywhere]">
           <Text>
             <MessageText message={line.message} />
           </Text>
@@ -317,5 +309,55 @@ function LogRow({ line }: { line: JobLogRow }) {
         </div>
       </Table.Cell>
     </Table.Row>
+  );
+}
+
+/**
+ * A failed job: what did not finish, in a plain sentence, and what that
+ * means in one line; the job's own error (the step that stopped and
+ * Cloudflare's answer) behind Details; then the docs, the report and
+ * Install again, which go under the text on a phone.
+ */
+function JobFailure({
+  job,
+  failureTopic,
+  isAdmin,
+}: {
+  job: JobView;
+  failureTopic: ReturnType<typeof jobFailureTopic>;
+  isAdmin: boolean;
+}) {
+  const line = jobFailureLine(job);
+  const again = isAdmin && job.againHref != null ? job.againHref : null;
+  return (
+    <Banner
+      variant="error"
+      icon={BANNER_ICON.error}
+      role={bannerRole("error")}
+      className={ACTIONS_UNDER_ON_PHONE}
+      title={jobFailureHeadline(job)}
+      description={
+        line === null && job.error === null ? undefined : (
+          <div className="grid gap-1">
+            {line !== null && <p>{line}</p>}
+            {job.error !== null && <TechnicalDetails message={job.error} />}
+          </div>
+        )
+      }
+      action={
+        failureTopic === null && !isAdmin ? undefined : (
+          <BannerActions>
+            {failureTopic !== null && <DocsLink topic={failureTopic} variant="inline" />}
+            {isAdmin && <SendReportButton jobId={job.id} reportedAt={job.reportedAt} />}
+            {/* An install that did not finish, once its cause is fixed. */}
+            {again !== null && (
+              <LinkButton href={again} variant="primary" icon={<ArrowCounterClockwiseIcon />}>
+                Install again
+              </LinkButton>
+            )}
+          </BannerActions>
+        )
+      }
+    />
   );
 }

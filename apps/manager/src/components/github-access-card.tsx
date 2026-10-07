@@ -1,3 +1,4 @@
+import { AppflareLoader } from "@appflare/brand/loader";
 import {
   Badge,
   Banner,
@@ -28,7 +29,7 @@ import {
   type GithubAccessState,
   getGithubAccess,
 } from "../github/tokens.functions";
-import { AppflareLoader } from "./appflare-loader";
+import { ENABLE_SANDBOX_PLACE, UPDATE_SANDBOX_HINT } from "../sandbox/connect-copy";
 import { BusyMark, busyActionProps } from "./busy-button";
 import { ConfirmDialog } from "./confirm-dialog";
 import { DocsLink } from "./docs-link";

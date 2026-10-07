@@ -20,7 +20,12 @@ export interface RequestLog {
 
 export interface ClientOptions {
   accountId: string;
-  token: string;
+  /**
+   * A permanent API token, or a provider resolved before each account-authenticated
+   * request. The provider owns caching and refresh; failures abort before fetch.
+   * Explicit request tokens (such as asset-upload JWTs) bypass the provider.
+   */
+  token: string | (() => Promise<string>);
   /** Injectable fetch (defaults to the global). */
   fetch?: FetchLike;
   /** Called once per response with method, path and status only. */
@@ -123,7 +128,8 @@ export function createHttpApi(options: ClientOptions): HttpApi {
   ): Promise<CloudflareEnvelope<unknown>> {
     const url = buildUrl(baseUrl, path, opts.query);
     const headers = new Headers();
-    headers.set("Authorization", `Bearer ${opts.token ?? token}`);
+    const bearer = opts.token ?? (typeof token === "function" ? await token() : token);
+    headers.set("Authorization", `Bearer ${bearer}`);
     headers.set("Accept", "application/json");
 
     let body: RequestInit["body"];

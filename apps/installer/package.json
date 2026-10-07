@@ -1,0 +1,26 @@
+{
+  "name": "@appflare/installer",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev",
+    "typecheck": "tsc --noEmit",
+    "lint": "biome check .",
+    "format": "biome format --write .",
+    "test": "vitest run",
+    "db:generate": "drizzle-kit generate && node scripts/gen-migrations-index.mjs"
+  },
+  "dependencies": {
+    "@appflare/cf-api": "workspace:*",
+    "@appflare/schema": "workspace:*",
+    "drizzle-orm": "0.45.3",
+    "zod": "4.6.5"
+  },
+  "devDependencies": {
+    "@cloudflare/vitest-pool-workers": "0.22.0",
+    "drizzle-kit": "0.31.11",
+    "vitest": "4.1.11",
+    "wrangler": "4.136.2"
+  }
+}

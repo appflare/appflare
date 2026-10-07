@@ -1,3 +1,4 @@
+import { AppflareLoader } from "@appflare/brand/loader";
 import { Badge, Button, LayerDialog, Link, Text } from "@cloudflare/kumo";
 import { ArrowsClockwiseIcon, PlusIcon, TrashIcon } from "@phosphor-icons/react";
 import { useRouter } from "@tanstack/react-router";
@@ -18,7 +19,6 @@ import {
 } from "../installs/wildcard-domain-input";
 import { addWildcardDomain, removeWildcardDomain } from "../installs/wildcard-domains.functions";
 import { ACCESS_DOMAIN_NOTE } from "../installs/workers-dev";
-import { AppflareLoader } from "./appflare-loader";
 import { BusyButton, BusyMark, busyActionProps } from "./busy-button";
 import { ConfirmDialog } from "./confirm-dialog";
 import { DocsLink } from "./docs-link";

@@ -3,6 +3,7 @@ import { probeContainers, probeR2 } from "@appflare/cf-api/capabilities";
 import { SANDBOX_WORKER_NAME } from "@appflare/schema";
 import { and, asc, desc, eq, inArray } from "drizzle-orm";
 import { ulid } from "ulidx";
+import { inConnectionWordsOf } from "../cloudflare/sign-in-words.server";
 import { NO_REMOVAL_IN_PROGRESS_SQL } from "../danger/removal-flag";
 import { createDb } from "../db/client";
 import { job_logs, jobs } from "../db/schema";
@@ -87,7 +88,8 @@ export async function startSandboxJobCore(
     { r2, containers, accountId: settings.account_id },
     { containersOnly: disable },
   );
-  if (problems.length > 0) throw fail(problems.join(" "));
+  // Edit the token, or reconnect a Cloudflare sign-in.
+  if (problems.length > 0) throw fail(await inConnectionWordsOf(deps.db, problems.join(" ")));
 
   const active = await orm
     .select()

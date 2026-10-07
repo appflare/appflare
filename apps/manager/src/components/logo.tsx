@@ -1,7 +1,7 @@
+import { MorphMark } from "@appflare/brand/loader";
+import { CLOUD_ORANGE, CLOUD_PATH, INK_PATHS, VIEW_BOX } from "@appflare/brand/logo-paths";
 import { cn } from "@cloudflare/kumo";
 import { type PointerEvent, useState } from "react";
-import { MorphMark } from "./appflare-loader";
-import { CLOUD_ORANGE, CLOUD_PATH, INK_PATHS, VIEW_BOX } from "./logo-paths";
 
 /** Black on light surfaces, white on dark ones, following Kumo's colour scheme. */
 const INK = "light-dark(#000, #fff)";

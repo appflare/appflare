@@ -1,4 +1,13 @@
-import { Banner, Button, ClipboardText, Collapsible, Input, Text } from "@cloudflare/kumo";
+import { AppflareLoader } from "@appflare/brand/loader";
+import {
+  Banner,
+  Button,
+  ClipboardText,
+  Collapsible,
+  Input,
+  LinkButton,
+  Text,
+} from "@cloudflare/kumo";
 import { CheckCircleIcon, InfoIcon, SignOutIcon, WarningIcon } from "@phosphor-icons/react";
 import { createFileRoute, useRouter } from "@tanstack/react-router";
 import { type FormEvent, useCallback, useEffect, useReducer, useState } from "react";
@@ -8,17 +17,24 @@ import { serverErrorMessage } from "../auth/sign-in-errors";
 import { getCapabilityRowsData } from "../capabilities/capability-rows.functions";
 import type { CapabilityRowsData } from "../capabilities/capability-rows.server";
 import { SetupCapabilities } from "../capabilities/capability-section";
-import { AppflareLoader } from "../components/appflare-loader";
 import { AuthError, AuthLayout, FULL_WIDTH_ACTION } from "../components/auth-layout";
 import { BusyButton } from "../components/busy-button";
 import { SetupTokenForm, type SetupTokenSaved } from "../components/cloudflare-token-form";
-import { MessageText } from "../components/message-text";
+import { ACTIONS_UNDER_ON_PHONE, MessageText, TOUCH_TARGET } from "../components/message-text";
 import { PasswordInput } from "../components/password-input";
 import { afterSignIn, returnToSearchSchema, withReturnTo } from "../components/return-to";
 import {
   type AddressOptions,
   getManagerAddressOptions,
 } from "../domains/manager-address.functions";
+import { pendingAddressNote } from "../domains/moved-note";
+import {
+  type ClaimNotice as ClaimNoticeState,
+  claimNoticeFor,
+  type RedeemResult,
+  redeemOwnerClaimWith,
+  takeOwnerClaimFromAddressBar,
+} from "../handoff/owner-claim";
 import { AddressSkippedNote, AddressStep } from "../onboarding/address-step";
 import {
   initialWizardState,
@@ -33,7 +49,7 @@ import {
 } from "../onboarding/wizard";
 import { enterSetup } from "../server/gate.functions";
 import { MIN_PASSWORD_LENGTH } from "../server/schemas";
-import { createOwner } from "../server/setup.functions";
+import { createOwner, redeemOwnerClaim } from "../server/setup.functions";
 import { getTokenStatus } from "../server/token.functions";
 import { loadAppflareVersion } from "../server/version.functions";
 
@@ -52,6 +68,14 @@ import { loadAppflareVersion } from "../server/version.functions";
  * of the new address, which returns here). Last: what the account can run
  * (the same rows as on Your account), then Finish goes home. Once the owner
  * exists, everyone else is sent to sign in.
+ *
+ * On a manager installed from the browser, step 1 happens on the page that
+ * installed it: that page hands over the Cloudflare connection and opens
+ * `/setup#claim=<code>`. The code leaves the address bar before anything
+ * else and is exchanged, once, for this browser's setup claim; step 2
+ * follows. Any other browser is told to finish there, or may connect with
+ * an API token instead. Installed on a domain of the account, Appflare
+ * lives there already, and the address step is skipped.
  *
  * `?checklist=true` marks the last step, so a reload stays there (a reload
  * on the address step goes on to it too); `?address=true` says the address
@@ -72,6 +96,10 @@ export const Route = createFileRoute("/setup")({
   shouldReload: false,
   loader: async ({ location }) => {
     stripTokenFromAddressBar();
+    // Before anything else: the code leaves the address bar, then is
+    // exchanged for this browser's setup claim.
+    const taken = takeOwnerClaimFromAddressBar();
+    const redeemed = taken === null ? null : await redeem(taken.code);
     const { checklist, address, returnTo } = location.search as {
       checklist?: boolean;
       address?: boolean;
@@ -84,7 +112,17 @@ export const Route = createFileRoute("/setup")({
     ]);
     const checklistData = gate.step === "checklist" ? await getCapabilityRowsData() : null;
     return {
-      initial: initialWizardState(gate.step, checklistData, { addressShown: address === true }),
+      initial: initialWizardState(gate.step, checklistData, {
+        addressShown: address === true,
+        handoff: gate.handoff,
+        installPage: gate.installPage,
+      }),
+      // What became of the code, shown only where it would have led past:
+      // the first step. A code that got no definite answer stays in memory
+      // (never in the address bar again) for Try again.
+      claim: claimNoticeFor(taken, redeemed, gate.step === "handoff" || gate.step === "connect"),
+      // The domain the install chose, while it does not serve yet.
+      pendingAddress: gate.pendingAddress ?? null,
       version,
     };
   },
@@ -103,10 +141,17 @@ function stripTokenFromAddressBar() {
   window.history.replaceState(window.history.state, "", url.pathname + url.search + url.hash);
 }
 
+/** Exchanges an owner claim for the setup claim cookie (see `redeemOwnerClaimWith`). */
+function redeem(code: string | null): Promise<RedeemResult> {
+  return redeemOwnerClaimWith((claim) => redeemOwnerClaim({ data: { claim } }), code);
+}
+
 function SetupPage() {
   const loaded = Route.useLoaderData();
   const [state, dispatch] = useReducer(wizardReducer, loaded.initial);
   const router = useRouter();
+  // Kept across reloads of the loader, which no longer sees the code.
+  const [claim, setClaim] = useState(loaded.claim);
 
   // A refusal can mean setup moved on elsewhere: the loader reads where it
   // stands again, and the wizard follows. The first run only repeats the start.
@@ -128,8 +173,74 @@ function SetupPage() {
       description={<MessageText message={copy.description} newTab />}
       version={loaded.version}
     >
-      <StepContent state={state} dispatch={dispatch} resync={resync} />
+      {claim !== null && (state.step === "handoff" || state.step === "connect") && (
+        <ClaimNotice
+          claim={claim}
+          onAnswer={async (outcome) => {
+            if (outcome === "retry") return;
+            setClaim(outcome === "refused" ? { kind: "refused" } : null);
+            if (outcome === "ok") await resync();
+          }}
+        />
+      )}
+      <StepContent
+        state={state}
+        dispatch={dispatch}
+        resync={resync}
+        pendingAddress={loaded.pendingAddress}
+      />
     </AuthLayout>
+  );
+}
+
+/**
+ * What became of the setup link's code: refused for good, or not answered
+ * yet, with Try again (the code is still in this page's memory).
+ */
+function ClaimNotice({
+  claim,
+  onAnswer,
+}: {
+  claim: ClaimNoticeState;
+  onAnswer: (outcome: RedeemResult) => Promise<void>;
+}) {
+  const [trying, setTrying] = useState(false);
+  if (claim.kind === "refused") {
+    return (
+      <Banner
+        variant="alert"
+        icon={<WarningIcon weight="fill" />}
+        title="This setup link has expired"
+        description="Links work once, for 30 minutes. Open Appflare again from the page that installed it."
+      />
+    );
+  }
+  return (
+    <Banner
+      variant="alert"
+      icon={<WarningIcon weight="fill" />}
+      className={ACTIONS_UNDER_ON_PHONE}
+      title="Your setup link did not go through"
+      description="Appflare did not answer yet."
+      action={
+        <BusyButton
+          pending={trying}
+          variant="secondary"
+          size="sm"
+          className={TOUCH_TARGET}
+          onClick={async () => {
+            setTrying(true);
+            try {
+              await onAnswer(await redeem(claim.code));
+            } finally {
+              setTrying(false);
+            }
+          }}
+        >
+          Try again
+        </BusyButton>
+      }
+    />
   );
 }
 
@@ -137,10 +248,13 @@ function StepContent({
   state,
   dispatch,
   resync,
+  pendingAddress,
 }: {
   state: WizardState;
   dispatch: (event: WizardEvent) => void;
   resync: () => Promise<void>;
+  /** The domain Appflare moves to once it serves; null when none is pending. */
+  pendingAddress: string | null;
 }) {
   switch (state.step) {
     case "connect":
@@ -152,6 +266,13 @@ function StepContent({
           }
         />
       );
+    case "handoff":
+      return (
+        <HandoffStep
+          installPage={state.installPage}
+          onUseToken={() => dispatch({ type: "use-token" })}
+        />
+      );
     case "redeploying":
       return <RedeployingStep onReady={() => dispatch({ type: "auth-ready" })} />;
     case "create-owner":
@@ -161,6 +282,7 @@ function StepContent({
             dispatch({ type: "owner-created", checklist, address })
           }
           resync={resync}
+          pendingAddress={pendingAddress}
         />
       );
     case "address":
@@ -239,6 +361,44 @@ function SetupAddressStep({
   );
 }
 
+/**
+ * Step 1 on a manager installed from the browser, in a browser that has
+ * not come from the page that installed it: go back there, or connect with
+ * an API token instead (anyone with a token for this account controls it
+ * anyway, so the token is enough on its own).
+ */
+function HandoffStep({
+  installPage,
+  onUseToken,
+}: {
+  installPage: string | null;
+  onUseToken: () => void;
+}) {
+  const otherWays = (
+    <div className="grid gap-3">
+      <Text variant="secondary">
+        Closed it? Open it again in the same browser; it picks up where it stopped. Or connect with
+        an API token for this account.
+      </Text>
+      <Button variant="secondary" className={FULL_WIDTH_ACTION} onClick={onUseToken}>
+        Connect with an API token instead
+      </Button>
+    </div>
+  );
+  if (installPage === null) return otherWays;
+  return (
+    <>
+      <LinkButton href={installPage} variant="primary" className={FULL_WIDTH_ACTION}>
+        Back to the installer
+      </LinkButton>
+      <Collapsible.Root>
+        <Collapsible.DefaultTrigger className={TOUCH_TARGET}>Other ways</Collapsible.DefaultTrigger>
+        <Collapsible.DefaultPanel>{otherWays}</Collapsible.DefaultPanel>
+      </Collapsible.Root>
+    </>
+  );
+}
+
 /** How often the redeploy wait asks `/api/health` whether the new version serves. */
 const REDEPLOY_POLL_MS = 2000;
 
@@ -272,13 +432,19 @@ function RedeployingStep({ onReady }: { onReady: () => void }) {
   );
 }
 
-/** Step 2: the owner account, only in the browser that connected Cloudflare. */
+/**
+ * Step 2: the owner account, only in the browser that connected Cloudflare.
+ * A password only: while the chosen domain is pending, a passkey made here
+ * would belong to this temporary address, so passkeys come after the move.
+ */
 function CreateOwnerStep({
   onCreated,
   resync,
+  pendingAddress,
 }: {
-  onCreated: (checklist: CapabilityRowsData, address: AddressOptions | null) => void;
+  onCreated: (checklist: CapabilityRowsData, address: AddressOptions | null | "set") => void;
   resync: () => Promise<void>;
+  pendingAddress: string | null;
 }) {
   const router = useRouter();
   const { returnTo } = Route.useSearch();
@@ -293,8 +459,11 @@ function CreateOwnerStep({
     const password = String(form.get("password") ?? "");
     setPending(true);
     setError(null);
+    let addressSet = false;
     try {
-      await createOwner({ data: { email, name: String(form.get("name") ?? ""), password } });
+      ({ addressSet } = await createOwner({
+        data: { email, name: String(form.get("name") ?? ""), password },
+      }));
     } catch (err) {
       setError(serverErrorMessage(err, "Could not create the owner account. Try again."));
       setPending(false);
@@ -307,13 +476,14 @@ function CreateOwnerStep({
       await router.navigate({ href: withReturnTo("/login", returnTo) });
       return;
     }
-    // The zones decide whether the address step shows; without them, it does not.
+    // The zones decide whether the address step shows; without them, it does
+    // not. Nor when Appflare already lives on a domain (installed there).
     const [checklist, address] = await Promise.all([
       getCapabilityRowsData(),
-      getManagerAddressOptions().catch(() => null),
+      addressSet ? ("set" as const) : getManagerAddressOptions().catch(() => null),
     ]);
     onCreated(checklist, address);
-    await showChecklist({ address: offersAddressStep(address) });
+    await showChecklist({ address: address !== "set" && offersAddressStep(address) });
   }
 
   return (
@@ -329,6 +499,11 @@ function CreateOwnerStep({
         maxLength={128}
         description={`At least ${MIN_PASSWORD_LENGTH} characters.`}
       />
+      {pendingAddress !== null && (
+        <Text variant="secondary" size="sm" as="p">
+          {pendingAddressNote(pendingAddress)}
+        </Text>
+      )}
       <BusyButton pending={pending} type="submit" variant="primary" className={FULL_WIDTH_ACTION}>
         Create owner account
       </BusyButton>

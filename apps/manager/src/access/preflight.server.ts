@@ -1,4 +1,5 @@
 import { CloudflareApiError, type CloudflareClient, isAccessTeamDomain } from "@appflare/cf-api";
+import { inConnectionWordsOf } from "../cloudflare/sign-in-words.server";
 import type { AppAccessProblem } from "./app-access";
 import { ACCESS_MESSAGES, INSTALL_ACCESS_MESSAGES } from "./messages";
 
@@ -108,8 +109,13 @@ export async function accessCapabilityReport(
  */
 export async function accessCapabilityCheck(
   client: Pick<CloudflareClient, "access">,
+  /** The manager's D1: a refusal is then worded for how Appflare connects. */
+  db?: D1Database,
 ): Promise<AppAccessProblem | null> {
-  return (await accessCapabilityReport(client)).problem;
+  const { problem } = await accessCapabilityReport(client);
+  return problem === null || db === undefined
+    ? problem
+    : { ...problem, message: await inConnectionWordsOf(db, problem.message) };
 }
 
 /** Why protection cannot start now (`accessCapabilityProblem`). */
@@ -131,9 +137,17 @@ export interface AccessPreflightProblem {
  */
 export async function accessCapabilityProblem(
   client: Pick<CloudflareClient, "access">,
+  /** The manager's D1: a refusal is then worded for how Appflare connects. */
+  db?: D1Database,
 ): Promise<AccessPreflightProblem | null> {
   const report = await accessCapabilityReport(client);
-  if (report.problem !== null) return { message: report.problem.message, unchecked: false };
+  if (report.problem !== null) {
+    const { message } = report.problem;
+    return {
+      message: db === undefined ? message : await inConnectionWordsOf(db, message),
+      unchecked: false,
+    };
+  }
   return report.unchecked === null
     ? null
     : { message: INSTALL_ACCESS_MESSAGES.unchecked(report.unchecked), unchecked: true };

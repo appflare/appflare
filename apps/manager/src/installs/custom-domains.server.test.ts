@@ -192,6 +192,7 @@ describe("getDomainOptionsCore", () => {
       inactiveZones: ["pending.org"],
       missing: [],
       noZones: false,
+      connection: "api_token",
     });
     expect(world.calls).toContain(`GET /zones?account.id=${ACC}&page=1&per_page=50`);
     // The permission probes read the first active zone.
@@ -220,6 +221,7 @@ describe("getDomainOptionsCore", () => {
       inactiveZones: [],
       missing: ["Zone: Read", "DNS: Edit", "Workers Routes: Edit"],
       noZones: true,
+      connection: "api_token",
     });
   });
 

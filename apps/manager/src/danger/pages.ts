@@ -135,7 +135,8 @@ export interface RemovalSummary {
   workerName: string;
   /**
    * The sandbox Worker's container applications could not be seen (the
-   * token lacks Containers), so they may remain and must be deleted by hand.
+   * token or the sign-in lacks Containers), so they may remain and must be
+   * deleted by hand.
    */
   containersLeft: boolean;
   /** Cloudflare Access protection was on when the removal started. */
@@ -144,6 +145,12 @@ export interface RemovalSummary {
   accessLeft: string[];
   /** Apps protected with Cloudflare Access, whose Access applications stay (absent: none). */
   protectedApps?: number;
+  /**
+   * The manager connected with a Cloudflare authorization (OAuth), which it
+   * revokes itself as its very last step, instead of an API token the owner
+   * has to revoke (absent: an API token).
+   */
+  authorization?: boolean;
 }
 
 function accessStatus(summary: RemovalSummary): string {
@@ -175,7 +182,7 @@ ${accessStatus(summary)}
 ${TAIL}`;
   }
   const containers = summary.containersLeft
-    ? `<p>Appflare's token cannot use Containers, so the sandbox Worker's container applications were not deleted. If they are still listed under Workers, Containers in the dashboard, delete them there.</p>`
+    ? `<p>${summary.authorization === true ? "Cloudflare did not let Appflare use Containers with its Cloudflare sign-in" : "Appflare's token cannot use Containers"}, so the sandbox Worker's container applications were not deleted. If they are still listed under Workers, Containers in the dashboard, delete them there.</p>`
     : "";
   return `</ol>
 <div class="box">
@@ -184,8 +191,13 @@ ${TAIL}`;
 <p>If <code>${worker}</code> is still listed in the <a href="${escapeHtml(dashboard)}" rel="noreferrer">Cloudflare dashboard</a> in a minute, delete it there.</p>
 ${accessStatus(summary)}
 ${containers}</div>
-<h2>Revoke the Appflare API token</h2>
-<p>The Cloudflare API token you created for Appflare still works. Nothing uses it any more: revoke it under <a href="${escapeHtml(tokens)}" rel="noreferrer">Account API tokens</a> (or under My Profile, API Tokens if you created a user token), together with any tokens you created for apps that you no longer need.</p>
+${
+  summary.authorization === true
+    ? `<h2>Appflare's access to your account</h2>
+<p>Appflare connected to Cloudflare with an authorization, not an API token. Right after deleting its Worker it withdraws that authorization, so it ends with nothing that can reach your account. If Appflare is still listed among the applications your Cloudflare profile has authorized, remove it there. Revoke any API tokens you created for apps that you no longer need under <a href="${escapeHtml(tokens)}" rel="noreferrer">Account API tokens</a>.</p>`
+    : `<h2>Revoke the Appflare API token</h2>
+<p>The Cloudflare API token you created for Appflare still works. Nothing uses it any more: revoke it under <a href="${escapeHtml(tokens)}" rel="noreferrer">Account API tokens</a> (or under My Profile, API Tokens if you created a user token), together with any tokens you created for apps that you no longer need.</p>`
+}
 <h2>What stays</h2>
 <ul>
 <li>Every app Appflare installed, with its Worker, databases, buckets, namespaces and secrets. They keep running, unmanaged: nothing updates them any more.</li>

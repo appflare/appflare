@@ -5,6 +5,7 @@ import type { CapabilityRowsData } from "../capabilities/capability-rows.server"
 import { CapabilitiesSection } from "../capabilities/capability-section";
 import type { CatalogView } from "../catalog/catalogs.functions";
 import type { ManagerUpdateState } from "../catalog/manager-releases.functions";
+import type { ReconnectOutcome } from "../cloudflare/reconnect-outcome";
 import type { DangerZoneState } from "../danger/danger.functions";
 import { DangerZone } from "../danger/danger-zone";
 import type { GatewayView } from "../gateway/gateway.server";
@@ -78,7 +79,7 @@ function SettingsPageHeader({
 
 /**
  * `/settings/account` (Your account): the Cloudflare connection (admins
- * rotate the token), what the account can run (admins check it again and
+ * reconnect it or change how Appflare connects), what the account can run (admins check it again and
  * choose the Workers plan while it cannot be detected), and last, for the
  * owner only, the danger zone.
  */
@@ -88,6 +89,8 @@ export function AccountSettingsView({
   danger,
   viewer,
   managerUrl,
+  reconnectOutcome = null,
+  reconnectOpen = false,
 }: {
   tokenStatus: TokenStatus;
   capabilities: CapabilityRowsData;
@@ -99,6 +102,10 @@ export function AccountSettingsView({
    * link when the server did not name one (`tokenStatus.managerOrigin`).
    */
   managerUrl?: string | null;
+  /** How a Cloudflare sign-in that just came back ended. */
+  reconnectOutcome?: ReconnectOutcome | null;
+  /** Open Reconnect Cloudflare at once (admins). */
+  reconnectOpen?: boolean;
 }) {
   const isAdmin = viewer.role === "admin";
   return (
@@ -108,6 +115,8 @@ export function AccountSettingsView({
         status={tokenStatus}
         canRotate={isAdmin}
         managerUrl={tokenStatus.managerOrigin ?? managerUrl}
+        outcome={reconnectOutcome}
+        startOpen={reconnectOpen}
       />
       <CapabilitiesSection data={capabilities} isAdmin={isAdmin} />
       {viewer.isOwner && danger !== null && <DangerZone state={danger} />}
@@ -175,6 +184,7 @@ export function UsersSettingsView({
   users,
   recovery,
   passkeys,
+  passkeysAfterMove = null,
   accessStatus,
   viewer,
 }: {
@@ -182,6 +192,8 @@ export function UsersSettingsView({
   /** Null for members. */
   recovery: PasswordRecoverySettings | null;
   passkeys: PasskeyRow[];
+  /** The domain Appflare moves to; passkeys wait for the move. Null when none is pending. */
+  passkeysAfterMove?: string | null;
   accessStatus: AccessStatus;
   viewer: Pick<Viewer, "id" | "email" | "role">;
 }) {
@@ -196,7 +208,7 @@ export function UsersSettingsView({
         emailReset={recovery?.email.enabled ?? false}
       />
       {recovery !== null && <PasswordRecoveryCard settings={recovery} />}
-      <PasskeysSection passkeys={passkeys} />
+      <PasskeysSection passkeys={passkeys} afterMove={passkeysAfterMove} />
       <AccessCard
         status={accessStatus}
         isAdmin={viewer.role === "admin"}

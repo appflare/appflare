@@ -5,10 +5,9 @@ import { appPath, appsPath } from "../../catalog/urls.ts";
 import { catalogRepositoryUrl, type LandingData, landingLinks } from "../../lib/landing.ts";
 import { appsLink, baseOptions, DOCS_HOME, docsLink } from "../../lib/layout.shared.tsx";
 import { repositoryUrl } from "../../lib/shared.ts";
-import { AgentPrompt } from "../agent-prompt.tsx";
 import { AppIcon } from "../catalog/tiles.tsx";
 import { ClickHere } from "./click-here.tsx";
-import { DeployButton, GhostButton, Shot, Wordmark } from "./parts.tsx";
+import { DeployButtonLine, GhostButton, InstallButton, Shot, Wordmark } from "./parts.tsx";
 
 const notAffiliated =
   "Appflare is an independent open-source project, not affiliated with, endorsed by, or sponsored by Cloudflare, Inc.";
@@ -26,7 +25,7 @@ export function LandingPage({ data }: { data: LandingData }) {
 }
 
 /**
- * The real Home screen as the hero under one line of copy and the Deploy
+ * The real Home screen as the hero under one line of copy and the Install
  * button, then the catalog's numbers, three steps, the best-known apps, what
  * Appflare does after an install, a closing call to action and a footer.
  */
@@ -57,15 +56,16 @@ export function LandingContent({ data }: { data: LandingData }) {
             Your account. Your apps. Kept up to date.
           </h2>
           <p className="m-0 max-w-xl text-fd-muted-foreground">
-            The button deploys a prebuilt, signed Appflare and opens the setup wizard. It takes a
-            few minutes and a Cloudflare API token.
+            Sign in to Cloudflare, choose where Appflare goes, and the page deploys a prebuilt,
+            signed Appflare there. It takes a few minutes and no API token.
           </p>
           <div className={BUTTON_ROW}>
-            <DeployButton size="lg" />
+            <InstallButton size="lg" />
             <GhostButton href={DOCS_HOME} size="lg">
               Read the docs
             </GhostButton>
           </div>
+          <DeployButtonLine />
         </div>
       </section>
 
@@ -98,7 +98,7 @@ function Hero({ data }: { data: LandingData }) {
         </p>
         <div className={BUTTON_ROW}>
           <span className="relative flex">
-            <DeployButton size="lg" className="grow" />
+            <InstallButton size="lg" className="grow" />
             {/* The arrow's tip sits just before the button's left edge, level with its middle, and the words rise above it. A phone has no room beside the button. */}
             <ClickHere className="pointer-events-none absolute top-1/2 right-full mr-1 hidden w-60 -translate-y-[18%] text-[#c75400] lg:block dark:text-[#ff8a3d]" />
           </span>
@@ -107,7 +107,7 @@ function Hero({ data }: { data: LandingData }) {
           </GhostButton>
         </div>
         <div className="grid justify-items-center gap-2">
-          <AgentPrompt kind="install" align="center" />
+          <DeployButtonLine />
           <p className="m-0 text-fd-muted-foreground text-sm">
             Runs on the Workers free plan.{" "}
             <Link
@@ -181,8 +181,8 @@ function HowItWorks({ data }: { data: LandingData }) {
       <ol className="m-0 mt-12 grid list-none gap-4 p-0 md:grid-cols-3">
         <Step
           n={1}
-          title="Deploy Appflare"
-          text="The Deploy to Cloudflare button puts the manager into your account and opens the setup wizard. Afterwards Appflare updates itself."
+          title="Install Appflare"
+          text="Sign in to Cloudflare at appflare.dev/deploy and choose an address. The page puts the manager into your account, and afterwards Appflare updates itself."
         >
           <div className="flex flex-wrap gap-1.5 font-mono text-xs">
             {["Worker", "D1", "KV", "Workflow", "Cron"].map((item) => (

@@ -8,7 +8,7 @@ import {
   PASS_START_SECONDS,
   sampleOutline,
   turnDegrees,
-} from "./logo-morph";
+} from "./logo-morph.ts";
 
 /** The points of a frame's `M…L…Z` path, in polar form around the box's centre. */
 function polar(d: string): { angle: number; radius: number }[] {

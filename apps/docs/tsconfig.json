@@ -9,6 +9,6 @@
     "declarationMap": false,
     "allowImportingTsExtensions": true
   },
-  "include": ["src", "scripts", "vite.config.ts", "vitest.config.ts"],
+  "include": ["src", "scripts", "worker", "vite.config.ts", "vitest.config.ts"],
   "exclude": ["dist"]
 }

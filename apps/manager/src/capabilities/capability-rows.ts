@@ -6,7 +6,10 @@ import {
   type ServiceId,
 } from "@appflare/schema";
 import { listWords } from "@appflare/schema/catalog-display";
+import type { ConnectionKind } from "../cloudflare/connection-view";
 import { dashboardLinks } from "../cloudflare/dashboard-links";
+import { reconnectDialogHref } from "../cloudflare/reconnect-outcome";
+import { MANAGER_SCOPE_LABELS } from "../cloudflare/token-template";
 import { settingsLink } from "../components/settings-links";
 import {
   NO_SANDBOX_JOBS,
@@ -14,13 +17,19 @@ import {
   sandboxReadinessOf,
   withSandboxJobs,
 } from "../sandbox/readiness";
-import { type CapabilitiesView, PLAN_LABELS, unknownSentence } from "./capabilities";
+import {
+  type CapabilitiesView,
+  PLAN_LABELS,
+  SIGN_IN_PLAN_COPY,
+  unknownSentence,
+} from "./capabilities";
 
 /**
  * "What this account can run": one row per thing apps rely on in the
  * Cloudflare account (the Workers plan, a workers.dev address, R2, a
  * domain, Email Routing, Analytics Engine, Zero Trust, sandbox builds and
- * the token's permissions), read from the stored capability probes. Each row
+ * the permissions of Appflare's token or Cloudflare sign-in), read from the
+ * stored capability probes. Each row
  * has a name, one sentence on why apps need it, a state (Ready, Needs
  * action, Not set up, Paid plan only, Could not check), at most one action, and the
  * details shown on demand: what was found and by whom, when, what went
@@ -63,15 +72,17 @@ export const CAPABILITY_STATE_LABELS: Record<CapabilityState, string> = {
 /**
  * The row's one action: a page of the Cloudflare dashboard where it is
  * turned on, where a domain is added, or where the token is edited; the
- * Workers plan an admin states while Appflare cannot detect it; or the
- * Building apps settings for sandbox builds.
+ * Workers plan an admin states while Appflare cannot detect it; the
+ * Building apps settings for sandbox builds; or Reconnect Cloudflare, for a
+ * Cloudflare sign-in that is missing permissions.
  */
 export type CapabilityAction =
   | { kind: "turn-on"; label: "Turn on in Cloudflare"; href: string }
   | { kind: "add-domain"; label: "Add a domain in Cloudflare"; href: string }
   | { kind: "edit-token"; label: "Edit token in Cloudflare"; href: string }
   | { kind: "choose-plan"; label: "Choose plan" }
-  | { kind: "set-up"; label: "Set up"; href: string };
+  | { kind: "set-up"; label: "Set up"; href: string }
+  | { kind: "reconnect"; label: "Reconnect Cloudflare"; href: string };
 
 /** Where a row's state came from: Appflare's own check, or an admin's statement. */
 export type CapabilitySource = "detected" | "set-by-you";
@@ -135,7 +146,33 @@ export interface CapabilityRowsInput {
   inUse?: CatalogNeeds | null;
   /** An enable in progress and the last failed sandbox job; none when left out. */
   sandboxJobs?: SandboxJobState;
+  /** How Appflare connects to Cloudflare; an API token when left out. */
+  connection?: RowsConnection | null;
 }
+
+/**
+ * How Appflare connects, as the rows need it: the words for what Cloudflare
+ * refused depend on it (a token is edited in the dashboard; a sign-in is
+ * done again), and a sign-in names the permissions it was not given.
+ */
+export interface RowsConnection {
+  kind: ConnectionKind;
+  /** The manager's OAuth scopes the stored sign-in lacks (`missingManagerScopes`); empty for a token. */
+  missingScopes: readonly string[];
+}
+
+function connectionKind(input: CapabilityRowsInput): ConnectionKind {
+  return input.connection?.kind ?? "api_token";
+}
+
+const RECONNECT: CapabilityAction = {
+  kind: "reconnect",
+  label: "Reconnect Cloudflare",
+  href: reconnectDialogHref(),
+};
+
+/** What a Cloudflare sign-in missing permissions tells the admin to do. */
+const SIGN_IN_AGAIN = "Reconnect Cloudflare and allow every permission Appflare asks for.";
 
 /** The services an index row names that this version knows. */
 function servicesOf(app: Pick<IndexApp, "services">): Set<ServiceId> {
@@ -331,7 +368,8 @@ function probeRow<P extends Probe>(
  * The Workers plan: ready once it is known, detected or stated by an admin.
  * "Choose plan" is offered whenever Appflare cannot detect it.
  */
-function planRow({ view, needs }: CapabilityRowsInput): CapabilityRow {
+function planRow(input: CapabilityRowsInput): CapabilityRow {
+  const { view, needs } = input;
   const { plan, source } = view.plan;
   const base = {
     id: "workers-plan" as const,
@@ -347,7 +385,11 @@ function planRow({ view, needs }: CapabilityRowsInput): CapabilityRow {
       : probe === null
         ? NOT_CHECKED
         : isUnknown(probe)
-          ? unknownSentence(probe, "plan")
+          ? source === "set-by-you" &&
+            probe.reason === "no-permission" &&
+            connectionKind(input) === "oauth"
+            ? SIGN_IN_PLAN_COPY.chosen
+            : unknownSentence(probe, "plan", connectionKind(input))
           : null;
   if (source !== "default") {
     return {
@@ -397,7 +439,7 @@ function workersDevRow(input: CapabilityRowsInput): CapabilityRow {
         : { ready: false, found: "No address registered" },
     // Without the account id the registration page cannot be reached directly.
     turnOn(input.view.accountId === null ? links.workersAndPages : links.workersOnboarding),
-    (probe) => unknownSentence(probe, "workers-dev"),
+    (probe) => unknownSentence(probe, "workers-dev", connectionKind(input)),
   );
 }
 
@@ -421,8 +463,18 @@ function r2Row(input: CapabilityRowsInput): CapabilityRow {
             note: "Cloudflare asks for a payment method before turning R2 on, even on its free tier.",
           },
     turnOn(dashboardLinks(input.view.accountId).r2),
-    (probe) => unknownSentence(probe, "r2"),
+    (probe) => unknownSentence(probe, "r2", connectionKind(input)),
   );
+}
+
+/** Why a domain the account has may not show: what Appflare's credential may lack. */
+function zoneNote(input: CapabilityRowsInput): string | null {
+  if (connectionKind(input) === "api_token") {
+    return "If the account has one, Appflare's token may lack the optional Zone: Read permission.";
+  }
+  return input.connection?.missingScopes.includes("zone.read")
+    ? `If the account has one, Appflare was not allowed to see domains when you signed in with Cloudflare. ${SIGN_IN_AGAIN}`
+    : null;
 }
 
 function zoneRow(input: CapabilityRowsInput): CapabilityRow {
@@ -442,10 +494,10 @@ function zoneRow(input: CapabilityRowsInput): CapabilityRow {
         : {
             ready: false,
             found: "No active domain",
-            note: "If the account has one, Appflare's token may lack the optional Zone: Read permission.",
+            note: zoneNote(input),
           },
     addDomain(dashboardLinks(input.view.accountId).domains),
-    (probe) => unknownSentence(probe, "zone"),
+    (probe) => unknownSentence(probe, "zone", connectionKind(input)),
   );
 }
 
@@ -472,7 +524,7 @@ function emailRoutingRow(input: CapabilityRowsInput): CapabilityRow {
     (probe) =>
       view.zone?.state === "unknown"
         ? "Appflare checks Email Routing on a domain of the account, and could not list the domains."
-        : unknownSentence(probe, "email-routing"),
+        : unknownSentence(probe, "email-routing", connectionKind(input)),
   );
 }
 
@@ -497,7 +549,7 @@ function analyticsEngineRow(input: CapabilityRowsInput): CapabilityRow {
               "It stays off until its page in the Cloudflare dashboard is opened once. Apps that write to it cannot be installed until then.",
           },
     turnOn(dashboardLinks(input.view.accountId).analyticsEngine),
-    (probe) => unknownSentence(probe, "analytics-engine"),
+    (probe) => unknownSentence(probe, "analytics-engine", connectionKind(input)),
   );
 }
 
@@ -517,7 +569,7 @@ function zeroTrustRow(input: CapabilityRowsInput): CapabilityRow {
         ? { ready: true, found: `Set up, team domain ${probe.teamDomain}` }
         : { ready: false, found: "Not set up" },
     turnOn(dashboardLinks(input.view.accountId).zeroTrust),
-    (probe) => unknownSentence(probe, "zero-trust"),
+    (probe) => unknownSentence(probe, "zero-trust", connectionKind(input)),
   );
 }
 
@@ -587,10 +639,12 @@ function sandboxRow(input: CapabilityRowsInput): CapabilityRow {
       return row("paid-only", {
         found: "Needs Workers Paid",
         problem: "Builds run in Cloudflare Containers, which only Workers Paid includes.",
-        // Why the plan could not be told, when the token lacks Containers: Edit.
+        // Why the plan could not be told, when Appflare may not use Containers.
         note:
           view.containers?.state === "unknown" && view.containers.reason === "no-permission"
-            ? "If the account is on Workers Paid, add Containers: Edit to Appflare's token so Appflare can tell."
+            ? connectionKind(input) === "oauth"
+              ? `If the account is on Workers Paid, Appflare cannot tell yet. ${SIGN_IN_AGAIN}`
+              : "If the account is on Workers Paid, add Containers: Edit to Appflare's token so Appflare can tell."
             : null,
       });
     case "needs-r2":
@@ -600,10 +654,19 @@ function sandboxRow(input: CapabilityRowsInput): CapabilityRow {
           "The sandbox keeps build outputs in R2. Open R2 in the Cloudflare dashboard once to turn it on.",
       });
     case "needs-permission":
-      return row(missing, {
-        found: "Needs a token permission",
-        problem: readiness.missing,
-      });
+      return connectionKind(input) === "oauth"
+        ? row(
+            missing,
+            {
+              found: "Needs a permission",
+              problem: `Appflare was not allowed everything sandbox builds need when you signed in with Cloudflare. ${SIGN_IN_AGAIN}`,
+            },
+            RECONNECT,
+          )
+        : row(missing, {
+            found: "Needs a token permission",
+            problem: readiness.missing,
+          });
   }
 }
 
@@ -643,7 +706,9 @@ function answered(view: CapabilitiesView, probe: keyof CapabilitiesView): boolea
  * ready otherwise, with the optional permissions it lacks named in the
  * details.
  */
-function tokenPermissionsRow({ view }: CapabilityRowsInput): CapabilityRow {
+function tokenPermissionsRow(input: CapabilityRowsInput): CapabilityRow {
+  if (connectionKind(input) === "oauth") return signInPermissionsRow(input);
+  const { view } = input;
   const base = {
     id: "token-permissions" as const,
     name: "Token permissions",
@@ -697,6 +762,49 @@ function tokenPermissionsRow({ view }: CapabilityRowsInput): CapabilityRow {
     state: "ready",
     action: null,
     details: details(view, { found: "Has what Appflare needs", source: "detected", note }),
+  };
+}
+
+/**
+ * The same row for a Cloudflare sign-in, which asks for every permission
+ * Appflare needs at once: ready when the stored sign-in has them all; needs
+ * action, with Reconnect Cloudflare, when it lacks any (named the way the
+ * token form names them), or when Cloudflare refused a read Appflare cannot
+ * work without. The Workers plan is not one of them: Cloudflare sign-in has
+ * no permission for it, and the plan's own row says so.
+ */
+function signInPermissionsRow(input: CapabilityRowsInput): CapabilityRow {
+  const { view } = input;
+  const base = {
+    id: "token-permissions" as const,
+    name: "Sign-in permissions",
+    why: "Appflare can only do what you allowed when you signed in.",
+  };
+  const notGranted = [
+    ...new Set((input.connection?.missingScopes ?? []).map((s) => MANAGER_SCOPE_LABELS[s] ?? s)),
+  ];
+  const refusedReads = REQUIRED_PERMISSIONS.filter((p) => refused(view, p.probe)).map(
+    (p) => p.name,
+  );
+  if (notGranted.length > 0 || refusedReads.length > 0) {
+    return {
+      ...base,
+      state: "needs-action",
+      action: RECONNECT,
+      details: details(view, {
+        found: "Some permissions are missing",
+        problem:
+          notGranted.length > 0
+            ? `These were not allowed when you signed in with Cloudflare: ${listWords(notGranted)}. ${SIGN_IN_AGAIN}`
+            : `Cloudflare refused reads that need ${listWords(refusedReads)}. ${SIGN_IN_AGAIN}`,
+      }),
+    };
+  }
+  return {
+    ...base,
+    state: "ready",
+    action: null,
+    details: details(view, { found: "Every permission Appflare needs", source: "detected" }),
   };
 }
 

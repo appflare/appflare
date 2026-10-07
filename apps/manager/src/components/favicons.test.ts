@@ -1,10 +1,10 @@
+import { CLOUD_ORANGE } from "@appflare/brand/logo-paths";
 import { describe, expect, it } from "vitest";
 import logoSquare from "../../../../docs/assets/logo_square.svg?raw";
 import favicon from "../../public/favicon.svg?raw";
 import manifestText from "../../public/site.webmanifest?raw";
 import { THEME_COLOR } from "./color-mode";
 import { FAVICON_LINKS, FAVICON_META } from "./favicons";
-import { CLOUD_ORANGE } from "./logo-paths";
 
 /** The files in public/, by their URL path. */
 const PUBLIC_FILES = new Set(

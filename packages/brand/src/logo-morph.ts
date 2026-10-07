@@ -1,4 +1,4 @@
-import { SQUARE_CLOUD_PATH, SQUARE_INK_PATHS, SQUARE_VIEW_BOX } from "./logo-paths";
+import { SQUARE_CLOUD_PATH, SQUARE_INK_PATHS, SQUARE_VIEW_BOX } from "./logo-paths.ts";
 
 /**
  * The loading indicator's motion, as plain geometry (no DOM, so it runs in

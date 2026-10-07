@@ -13,6 +13,7 @@ import {
   refreshMissingInBackground,
 } from "../catalog/merged.server";
 import { appKey } from "../catalog/sources";
+import { connectionNeedsReconnecting } from "../cloudflare/connection.server";
 import { createDb } from "../db/client";
 import { ensureMigrated, schemaDowngrade } from "../db/migrate";
 import { deployButtonInstalled } from "../deploy-button/deploy-copy";
@@ -75,6 +76,7 @@ export async function readLayoutData(session: AuthSession): Promise<LayoutData> 
     removedApps,
     deployCopy,
     migrated,
+    reconnectNeeded,
   ] = await Promise.all([
     recordsRead,
     rowsRead,
@@ -98,6 +100,8 @@ export async function readLayoutData(session: AuthSession): Promise<LayoutData> 
     readDeployCopyCleanup(env, isAdmin),
     // Cached after the isolate's first request: no D1 read here.
     ensureMigrated(env),
+    // One read: whether a stored Cloudflare grant needs reconnecting.
+    connectionNeedsReconnecting(env),
   ]);
   // A catalog not cached yet (a new manager before its first cron run) is
   // fetched after the answer, so the next page shows its icons and updates.
@@ -143,5 +147,6 @@ export async function readLayoutData(session: AuthSession): Promise<LayoutData> 
           ),
     deployCopy,
     downgrade,
+    reconnectNeeded,
   };
 }
