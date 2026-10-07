@@ -2,6 +2,7 @@ import {
   type CatalogManifest,
   type CatalogSecret,
   catalogHomepage,
+  catalogRepository,
   type InstallTier,
   licenseFile,
   type Plan,
@@ -391,16 +392,19 @@ function hostOf(url: string): string {
  * a plain-language page about a single standard license.
  */
 export function appLinks(
-  catalog: Pick<CatalogManifest, "repo" | "homepage"> & { source: { sha: string } },
+  catalog: Pick<CatalogManifest, "repo" | "upstreamRepo" | "homepage"> & {
+    source: { sha: string };
+  },
   license: AppLicense | null,
 ): AppLink[] {
-  const repoUrl = `https://github.com/${catalog.repo}`;
+  const repo = catalogRepository(catalog);
+  const repoUrl = `https://github.com/${repo}`;
   const links: AppLink[] = [
     {
       kind: "repository",
       label: "Source code",
       href: repoUrl,
-      detail: `github.com/${catalog.repo}`,
+      detail: `github.com/${repo}`,
     },
   ];
   const homepage = catalogHomepage(catalog);

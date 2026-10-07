@@ -84,6 +84,27 @@ describe("catalog manifest revision", () => {
     ).toBeNull();
   });
 
+  it("can revise the public repository without changing the build repository or pin", () => {
+    const revised = { ...released, revision: 2, upstreamRepo: "upstream/cut" };
+    expect(REVISABLE_CATALOG_FIELDS).toContain("upstreamRepo");
+    expect(catalogRevisionProblem(released, revised)).toBeNull();
+    expect(
+      catalogRevisionProblem(revised, { ...revised, revision: 3, upstreamRepo: "other/cut" }),
+    ).toBeNull();
+    expect(catalogRevisionProblem(revised, { ...released, revision: 3 })).toBeNull();
+    expect(catalogRevisionProblem(released, { ...revised, repo: "upstream/cut" })).toMatch(
+      /changes repo, which only a new build can change/,
+    );
+    const worker = { bindings: [] };
+    const artifact = { catalog: released, worker } as unknown as ArtifactManifest;
+    expect(revisedArtifactProblem(artifact, revised)).toBeNull();
+    const effective = withRevisedCatalog(artifact, revised);
+    expect(effective.catalog.upstreamRepo).toBe("upstream/cut");
+    expect(effective.catalog.repo).toBe(released.repo);
+    expect(effective.catalog.source).toEqual(released.source);
+    expect(effective.worker).toBe(worker);
+  });
+
   it("refuses a revision that is not above the released one", () => {
     expect(catalogRevisionProblem(released, { ...released, vars: [selectVar] })).toMatch(
       /revision 1 is not above revision 1/,

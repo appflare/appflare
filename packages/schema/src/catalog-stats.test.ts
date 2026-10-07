@@ -37,4 +37,18 @@ describe("catalogStatsSchema", () => {
     const { sources: _sources, ...bare } = valid();
     expect(catalogStatsSchema.safeParse(bare).success).toBe(false);
   });
+
+  it("reads repository provenance while accepting older star counts", () => {
+    const stats = valid();
+    const withRepo = {
+      ...stats,
+      apps: {
+        cut: { ...stats.apps.cut, stars: { ...stats.apps.cut.stars, repo: "MendyLanda/cut" } },
+      },
+    };
+    expect(catalogStatsSchema.parse(withRepo).apps.cut?.stars?.repo).toBe("MendyLanda/cut");
+    expect(catalogStatsSchema.parse(stats).apps.cut?.stars?.repo).toBeUndefined();
+    withRepo.apps.cut.stars.repo = "https://github.com/MendyLanda/cut";
+    expect(catalogStatsSchema.safeParse(withRepo).success).toBe(false);
+  });
 });

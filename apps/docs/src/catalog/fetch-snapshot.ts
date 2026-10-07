@@ -1,5 +1,14 @@
 import { createHash } from "node:crypto";
-import { type IndexApp, type IndexJson, indexJsonSchema, readIndexJson } from "@appflare/schema";
+import {
+  catalogHomepage,
+  catalogRepository,
+  type IndexApp,
+  type IndexJson,
+  indexJsonSchema,
+  ownerRepoSchema,
+  readIndexJson,
+} from "@appflare/schema";
+import { z } from "zod";
 import { type OgPicture, pngPicture } from "../og/picture.ts";
 import {
   type AppLinks,
@@ -100,21 +109,27 @@ export function manifestSource(
   return null;
 }
 
+const manifestLinksSchema = z.object({
+  repo: ownerRepoSchema,
+  upstreamRepo: ownerRepoSchema.optional(),
+  homepage: appLinksSchema.shape.homepage.optional(),
+});
+
 /**
- * The repository and homepage of a catalog manifest. The homepage defaults
- * to the repository, as the manifest's own rules do.
+ * The public repository and homepage of a catalog manifest. When its build
+ * repository differs, keep that too so existing repository install links
+ * still find this app.
  */
 export function linksOf(manifest: unknown): AppLinks {
-  const fields = (typeof manifest === "object" && manifest !== null ? manifest : {}) as {
-    repo?: unknown;
-    homepage?: unknown;
-  };
-  const repo = fields.repo;
-  const homepage =
-    fields.homepage ?? (typeof repo === "string" ? `https://github.com/${repo}` : undefined);
-  const result = appLinksSchema.safeParse({ repo, homepage });
+  const result = manifestLinksSchema.safeParse(manifest);
   if (!result.success) throw new Error(snapshotProblems(result.error).join("; "));
-  return result.data;
+  const fields = result.data;
+  const repo = catalogRepository(fields);
+  return {
+    repo,
+    homepage: catalogHomepage(fields),
+    ...(repo === fields.repo ? {} : { sourceRepo: fields.repo }),
+  };
 }
 
 function dataUri(bytes: Uint8Array, url: string): string {

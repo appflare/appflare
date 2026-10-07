@@ -16,7 +16,7 @@ import {
   readCachedCustomCatalogIndex,
   refreshCatalogIndex,
 } from "./index.server";
-import { CATALOG_STATS_KEY, readCatalogStats } from "./stats.server";
+import { CATALOG_STATS_KEY, readCatalogStats, refreshCatalogStats } from "./stats.server";
 
 const INDEX = {
   generatedAt: "2026-09-22T18:20:44.584Z",
@@ -376,6 +376,25 @@ describe("conditional refresh", () => {
     expect(JSON.parse(store.get(CATALOG_STATS_KEY) ?? "{}").generatedAt).toBe(
       "2026-09-22T20:23:00.000Z",
     );
+  });
+
+  it("refreshes legacy stats unconditionally to recover repository provenance", async () => {
+    const { kv, store, meta } = fakeKv();
+    store.set(CATALOG_STATS_KEY, JSON.stringify(STATS));
+    meta.set(CATALOG_STATS_KEY, { url: STATS_URL, v: 1, etag: '"s1"' });
+    const proven = {
+      ...STATS,
+      apps: {
+        cut: { ...STATS.apps.cut, stars: { ...STATS.apps.cut.stars, repo: "MendyLanda/cut" } },
+      },
+    };
+    const s = site({ [STATS_URL]: { body: proven, etag: '"s1"' } });
+    expect(
+      (await refreshCatalogStats(kv, STATS_URL, { fetch: s.fetch })).apps.cut?.stars?.repo,
+    ).toBe("MendyLanda/cut");
+    await refreshCatalogStats(kv, STATS_URL, { fetch: s.fetch });
+    expect(s.requests.map((request) => request.ifNoneMatch)).toEqual([null, '"s1"']);
+    expect(meta.get(CATALOG_STATS_KEY)).toMatchObject({ v: 2 });
   });
 
   it("keeps the last stats and the index when the stats fetch fails or is invalid", async () => {

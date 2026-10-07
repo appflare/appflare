@@ -20,7 +20,9 @@ import { fetchCatalogJson, storeIfChanged, validatorFor } from "./conditional-fe
 export const CATALOG_STATS_KEY = "catalog:stats";
 
 /** Bumped when what is cached under `catalog:stats` changes shape. */
-const CACHE_FORMAT = 1;
+// Version 1 parsed away stars.repo while retaining the live file's ETag.
+// Refresh it unconditionally once so provenance survives manager upgrades.
+const CACHE_FORMAT = 2;
 
 const statsEnvelopeSchema = z.object({
   generatedAt: z.iso.datetime(),
