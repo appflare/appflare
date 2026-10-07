@@ -1,5 +1,22 @@
 # @appflare/cf-api
 
+## 0.3.0
+
+### Minor Changes
+
+- 0987d9a: A client can take a function that returns the credential instead of a fixed token. It is called before each request, so a client that lives through a long job always sends a current credential; when it fails, nothing is sent. Asset-upload requests keep using their own upload token.
+- 0987d9a: `accounts.list()` lists every account a credential can reach (`GET /accounts`, every page up to a limit), whatever account the client is bound to.
+- 0987d9a: Helpers for Cloudflare's OAuth protocol, for a public client. A new `@appflare/cf-api/oauth` entry (also exported from the package root) uses only `fetch` and WebCrypto, so it runs in a browser, a Worker and Node 22. It has the authorize, token and revoke endpoints and Appflare's callback address, PKCE (S256), the authorization URL, and requests that exchange a code, refresh a grant and revoke a token. A refresh returns the rotated refresh token, or the one it sent when Cloudflare returns none. A failed request throws `CloudflareOAuthError`, which says whether the grant is gone and has to be authorized again (`invalid_grant`), or whether the failure was temporary and can be retried (no complete response, HTTP 5xx or 429). Codes, verifiers and tokens never appear in its message or its `code`, in any encoding. The `state` helpers encode and check which kind of authorization a callback belongs to. A reconnect may pass its code only to an `https:` origin, or over `http:` to `localhost` or `127.0.0.1`.
+  
+  The entry also lists the OAuth scopes Appflare's manager asks for: one per permission group of its API token, plus `offline_access` so that Cloudflare issues a refresh token. Billing is the one group with no OAuth scope, so an OAuth grant cannot list the account's subscriptions to read its Workers plan. `missingManagerScopes` lists the scopes a grant lacks.
+- bfb0d36: `hyperdrive.patchConfig` changes a configuration's query caching alone (`PATCH /hyperdrive/configs/{id}`), and `emailRouting.updateRule` replaces a routing rule in place (`PUT /zones/{zone_id}/email/routing/rules/{rule_id}`).
+
+### Patch Changes
+
+- 8197a5c: `pipelines.getStream` and `pipelines.getSink` now type the stream's `schema` and where a sink writes (`config.bucket`, `namespace`, `table_name`), as Cloudflare returns them. A sink's credential stays untyped and unread.
+- b890dd0: `queues.listQueues` reads every page of the account's queues instead of only the first.
+- f71f0b9: `WorkflowInfo` now types the `schedules` that `getWorkflow` answers with (each `cron` and its `next_instance`), absent when the Workflow has none, and `WorkflowPutBody` notes that an empty `schedules` list, which Workers Free accepts too, says the Workflow has none.
+
 ## 0.2.1
 
 ### Patch Changes
