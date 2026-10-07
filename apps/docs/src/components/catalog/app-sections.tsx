@@ -10,7 +10,8 @@ import type { SiteApp } from "../../catalog/site-catalog.ts";
 
 /**
  * The sections of an app's page, as Appflare's own app page lays them out:
- * the stat strip, the screenshots, and the titled sections below them.
+ * the stat strip and the titled sections below the screenshots (those are
+ * in `screenshot-gallery.tsx`).
  */
 
 /** How a link reads on these pages: underlined, in the link colour. */
@@ -52,43 +53,6 @@ export function StatStrip({ stats }: { stats: readonly AppStat[] }) {
         </div>
       ))}
     </dl>
-  );
-}
-
-/** Screenshots in a row that scrolls sideways, each at a fixed size and opened in full on click. */
-export function ScreenshotGallery({
-  images,
-  appName,
-}: {
-  images: ReadonlyArray<{ url: string; alt: string }>;
-  appName: string;
-}) {
-  if (images.length === 0) return null;
-  return (
-    <section aria-label={`Screenshots of ${appName}`}>
-      <ul className="m-0 flex list-none snap-x snap-mandatory gap-3 overflow-x-auto p-0 pb-2">
-        {images.map((image) => (
-          <li key={image.url} className="shrink-0 snap-start">
-            <figure className="m-0 grid gap-1.5">
-              <a href={image.url} rel="noopener noreferrer" className="block">
-                <img
-                  src={image.url}
-                  alt={image.alt}
-                  width={480}
-                  height={300}
-                  loading="lazy"
-                  decoding="async"
-                  className="aspect-[8/5] h-auto w-[min(480px,80vw)] rounded-lg border border-fd-border bg-fd-secondary object-cover object-top"
-                />
-              </a>
-              <figcaption className="line-clamp-1 w-[min(480px,80vw)] text-fd-muted-foreground text-xs">
-                {image.alt}
-              </figcaption>
-            </figure>
-          </li>
-        ))}
-      </ul>
-    </section>
   );
 }
 

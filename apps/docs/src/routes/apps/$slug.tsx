@@ -16,10 +16,10 @@ import {
   AuthorsList,
   LinksList,
   NeedsList,
-  ScreenshotGallery,
   StatStrip,
 } from "../../components/catalog/app-sections.tsx";
 import { CatalogLayout } from "../../components/catalog/catalog-layout.tsx";
+import { ScreenshotGallery } from "../../components/catalog/screenshot-gallery.tsx";
 import { AppIcon } from "../../components/catalog/tiles.tsx";
 import { pageHead } from "../../lib/meta.ts";
 import { ogImagePath, SITE_URL, siteName } from "../../lib/shared.ts";
@@ -110,7 +110,7 @@ function AppPage() {
         <StatStrip stats={appStats(app, now)} />
       </div>
 
-      <ScreenshotGallery images={images} appName={app.name} />
+      <ScreenshotGallery key={app.slug} images={images} appName={app.name} />
 
       <AppSection title="About">
         <div className="grid max-w-3xl gap-3 text-base leading-relaxed">
