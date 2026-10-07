@@ -183,8 +183,8 @@ jobs:
           done
           # `/` is the front page, not the documentation's index.
           if ! curl -sS --retry 5 --retry-delay 3 --retry-all-errors "${PREVIEW_URL}/" |
-            grep -q "Deploy to Cloudflare"; then
-            echo "::error::${PREVIEW_URL}/ does not say \"Deploy to Cloudflare\"; it is not the front page"
+            grep -q "Install Appflare"; then
+            echo "::error::${PREVIEW_URL}/ does not say \"Install Appflare\"; it is not the front page"
             exit 1
           fi
           # The index's Markdown moved to the overview; public/_redirects sends
