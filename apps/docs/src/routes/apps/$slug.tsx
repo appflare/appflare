@@ -110,7 +110,7 @@ function AppPage() {
         <StatStrip stats={appStats(app, now)} />
       </div>
 
-      <ScreenshotGallery images={images} appName={app.name} />
+      <ScreenshotGallery key={app.slug} images={images} appName={app.name} />
 
       <AppSection title="About">
         <div className="grid max-w-3xl gap-3 text-base leading-relaxed">
