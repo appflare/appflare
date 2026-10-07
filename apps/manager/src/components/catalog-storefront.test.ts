@@ -185,7 +185,7 @@ describe("rows", () => {
     }
   });
 
-  it("puts the same tiles in a grid of cells at least 14rem wide, 1.5rem apart", () => {
+  it("puts the same tiles in a grid of cells at least 14rem wide, 1.5rem apart, two to a row on a phone", () => {
     const html = renderToStaticMarkup(
       createElement(AppGrid, {
         apps: [tile(), tile({ key: "mail", name: "Mail" })],
@@ -195,7 +195,8 @@ describe("rows", () => {
     const list = openingTag(html, 'role="list"');
     expect(list).toContain('aria-labelledby="h"');
     expect(list).toContain("minmax(14rem,1fr)");
-    expect(list).toMatch(/\bgap-6\b/);
+    expect(list).toMatch(/\bsm:gap-6\b/);
+    expect(list).toMatch(/(^|\s)grid-cols-2\b/);
     expect(html.match(/data-tile-link=""/g)).toHaveLength(2);
     expect(html.match(/aria-label="Get /g)).toHaveLength(2);
   });

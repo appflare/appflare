@@ -25,6 +25,15 @@ import { useIsNarrow } from "./sidebar-rail";
 const NO_SCROLLBAR = "[scrollbar-width:none] [&::-webkit-scrollbar]:hidden";
 
 /**
+ * On every tile's list item: the browser skips laying out and painting tiles
+ * out of view, and stops their animations. A long catalog keeps a skeleton
+ * shimmering in each icon that has not loaded (lazy icons far down never
+ * have), and running all of them made scrolling stutter on a phone. The size
+ * stands in for a tile not yet shown; once shown, its real size is kept.
+ */
+const OFFSCREEN_SKIPPED = "[content-visibility:auto] [contain-intrinsic-size:auto_12rem]";
+
+/**
  * Between tiles, in a row and in a grid: 1.5rem, so each tile reads as its
  * own unit even when its hover tint shows.
  */
@@ -48,11 +57,15 @@ function useScrollEdges(scroller: RefObject<HTMLElement | null>, count: number):
   useEffect(() => {
     const el = scroller.current;
     if (el === null) return;
-    const measure = () =>
-      setEdges({
-        atStart: el.scrollLeft <= 1,
-        atEnd: el.scrollLeft + el.clientWidth >= el.scrollWidth - 1,
-      });
+    // The same object while neither edge changes: a new one on every scroll
+    // event re-rendered the whole row many times a second while it was swiped.
+    const measure = () => {
+      const atStart = el.scrollLeft <= 1;
+      const atEnd = el.scrollLeft + el.clientWidth >= el.scrollWidth - 1;
+      setEdges((prev) =>
+        prev.atStart === atStart && prev.atEnd === atEnd ? prev : { atStart, atEnd },
+      );
+    };
     measure();
     el.addEventListener("scroll", measure, { passive: true });
     const observer = new ResizeObserver(measure);
@@ -228,7 +241,7 @@ export function AppRow({
       >
         {apps.map((app) => (
           // w-56 is TILE_WIDTH_REM: every tile in a row is the same width.
-          <li key={app.key} className="w-56 shrink-0 snap-start">
+          <li key={app.key} className={cn("w-56 shrink-0 snap-start", OFFSCREEN_SKIPPED)}>
             <AppTile app={app} />
           </li>
         ))}
@@ -239,7 +252,9 @@ export function AppRow({
 
 /**
  * The same tiles in a grid that fills the width, cells at least 14rem and
- * 1.5rem apart: the results of a search or filter, and "All apps".
+ * 1.5rem apart: the results of a search or filter, and "All apps". On a
+ * phone, where one 14rem cell would take the whole width, two columns
+ * closer together.
  */
 export function AppGrid({
   apps,
@@ -254,10 +269,10 @@ export function AppGrid({
       // biome-ignore lint/a11y/noRedundantRoles: list styles are removed, and Safari then drops the list role
       role="list"
       aria-labelledby={labelledBy}
-      className="-mx-3 grid grid-cols-[repeat(auto-fill,minmax(14rem,1fr))] gap-6"
+      className="-mx-3 grid grid-cols-2 gap-x-2 gap-y-4 sm:grid-cols-[repeat(auto-fill,minmax(14rem,1fr))] sm:gap-6"
     >
       {apps.map((app) => (
-        <li key={app.key} className="min-w-0">
+        <li key={app.key} className={cn("min-w-0", OFFSCREEN_SKIPPED)}>
           <AppTile app={app} />
         </li>
       ))}
