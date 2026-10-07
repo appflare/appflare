@@ -91,14 +91,15 @@ export function installPagePath(request: InstallRequest): string {
   return request.kind === "app" ? installPath(request.slug) : `/install/?repo=${request.repo}`;
 }
 
-/** The catalog app for a public or build repository. GitHub names ignore case. */
+/** The catalog app for a repository, preferring public matches. GitHub names ignore case. */
 export function catalogAppForRepo<App extends Pick<InstallApp, "repo" | "sourceRepo">>(
   apps: readonly App[],
   repo: string,
 ): App | undefined {
   const wanted = repo.toLowerCase();
-  return apps.find(
-    (app) => app.repo.toLowerCase() === wanted || app.sourceRepo?.toLowerCase() === wanted,
+  return (
+    apps.find((app) => app.repo.toLowerCase() === wanted) ??
+    apps.find((app) => app.sourceRepo?.toLowerCase() === wanted)
   );
 }
 
