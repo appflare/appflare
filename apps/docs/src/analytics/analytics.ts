@@ -66,8 +66,10 @@ export interface SiteEvents {
     /** `manager`: the page sends them to their Appflare; `no-manager`: it asks or offers the catalog's app. */
     target: "manager" | "no-manager";
   };
-  /** A Deploy to Cloudflare button (or link) was clicked. */
+  /** A Deploy to Cloudflare button (or Appflare's short link to it) was clicked. */
   deploy_button_clicked: { path: string };
+  /** An Install Appflare link was clicked: to the deploy page, or Appflare's short link to it. */
+  install_button_clicked: { path: string };
   /** A visitor told the site where their Appflare is. The address itself is never sent. */
   manager_registered: { has_manager: true; page: "my" | "install" };
   /** A prompt for a coding agent was copied, on the page it was copied from. */
@@ -314,17 +316,37 @@ export function linkEvents(href: string, here: Here): EventCall[] {
     return [];
   }
   if (url.protocol !== "https:" && url.protocol !== "http:") return [];
-  if (url.host === here.host) return [];
+  if (url.host === here.host) {
+    // The deploy page sends no analytics of its own, so the click that leads there counts.
+    return isDeployPath(url.pathname) && !isDeployPath(here.pathname)
+      ? [["install_button_clicked", { path: here.pathname }]]
+      : [];
+  }
   const events: EventCall[] = [["outbound_click", { host: url.host }]];
-  if (url.host === "deploy.workers.cloudflare.com" || isDeployLink(url)) {
+  const short = shortLink(url);
+  if (url.host === "deploy.workers.cloudflare.com" || short === "deploy-button") {
     events.push(["deploy_button_clicked", { path: here.pathname }]);
+  } else if (short === "install") {
+    events.push(["install_button_clicked", { path: here.pathname }]);
   }
   return events;
 }
 
-/** Appflare's own short link to the Deploy to Cloudflare button, which counts its clicks. */
-function isDeployLink(url: URL): boolean {
-  return url.host === "link.appflare.dev" && url.pathname.replace(/\/$/, "") === "/deploy";
+/**
+ * Which of Appflare's counted short links `url` is: `/deploy` leads to the
+ * install from the browser (appflare.dev/deploy), `/deploy-1c` to the Deploy
+ * to Cloudflare button. Null for any other address.
+ */
+function shortLink(url: URL): "install" | "deploy-button" | null {
+  if (url.host !== "link.appflare.dev") return null;
+  switch (url.pathname.replace(/\/$/, "")) {
+    case "/deploy":
+      return "install";
+    case "/deploy-1c":
+      return "deploy-button";
+    default:
+      return null;
+  }
 }
 
 const THEMES = new Set(["light", "dark", "system"] as const);

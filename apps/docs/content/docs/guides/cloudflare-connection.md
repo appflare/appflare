@@ -19,8 +19,8 @@ encrypted in Appflare's D1 database, under a key in its own Worker secret,
 `CF_GRANT_KEY`.
 
 **An API token.** You created a token in the Cloudflare dashboard and pasted it into
-Appflare. Installs with [the button](/start/deploy-button/), [the installer](/start/install/)
-or an agent start this way. The token has the permissions you gave it, and the optional
+Appflare. Installs with [the button](/start/deploy-button/) or
+[the command line](/start/install/#advanced-install-from-the-command-line) start this way. The token has the permissions you gave it, and the optional
 ones can be left out. Appflare keeps it as the encrypted Worker secret `CF_API_TOKEN`.
 
 Either way the credential stays in Appflare: it is never shown again, never logged,

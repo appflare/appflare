@@ -319,8 +319,12 @@ export function parseDeployRepository(value: string): string {
   return repository;
 }
 
-/** Appflare's short link to the button for `appflare/deploy`; it counts how many use it. */
-export const DEPLOY_SHORT_LINK = "https://link.appflare.dev/deploy";
+/**
+ * Appflare's short link to the button for `appflare/deploy`; it counts how
+ * many use it. (`https://link.appflare.dev/deploy` is the short link to the
+ * install from the browser, appflare.dev/deploy.)
+ */
+export const DEPLOY_SHORT_LINK = "https://link.appflare.dev/deploy-1c";
 
 /**
  * The Deploy to Cloudflare button's URL for a GitHub repository: the short

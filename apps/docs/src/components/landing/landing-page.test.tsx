@@ -1,21 +1,30 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import { siteCatalog } from "../../catalog/data.ts";
-import { agentPrompt } from "../../lib/agent-prompts.ts";
 import { landingData } from "../../lib/landing.ts";
-import { DEPLOY_URL } from "../install/flow-panel.tsx";
+import { DEPLOY_BUTTON_URL } from "../install/flow-panel.tsx";
 import { LandingContent } from "./landing-page.tsx";
 
 const data = landingData(siteCatalog);
 const html = renderToStaticMarkup(<LandingContent data={data} />);
 
 describe("the front page", () => {
-  it("leads with the Deploy to Cloudflare button, twice", () => {
-    const deploy = `href="${DEPLOY_URL.replaceAll("&", "&amp;")}"`;
-    expect(html.split(deploy).length - 1).toBe(2);
+  it("leads with Install Appflare, the deploy page, twice", () => {
+    const install = /<a href="\/deploy\/"[^>]*>Install Appflare<\/a>/g;
+    expect(html.match(install)).toHaveLength(2);
     // The hero's button comes before the screenshot.
-    expect(html.indexOf(deploy)).toBeLessThan(
+    expect(html.indexOf('href="/deploy/"')).toBeLessThan(
       html.indexOf('<img src="/screenshots/landing-home.png"'),
+    );
+  });
+
+  it("keeps Cloudflare's Deploy button as a quiet second way, after each Install button", () => {
+    const deploy = `href="${DEPLOY_BUTTON_URL.replaceAll("&", "&amp;")}"`;
+    expect(html.split(deploy).length - 1).toBe(2);
+    expect(html.indexOf(deploy)).toBeGreaterThan(html.indexOf('href="/deploy/"'));
+    expect(html).toContain("Cloudflare&#x27;s Deploy button");
+    expect(html).not.toMatch(
+      /<a[^>]*href="https:\/\/link\.appflare\.dev\/deploy-1c"[^>]*bg-\[#fb6b00\]/,
     );
   });
 
@@ -23,12 +32,10 @@ describe("the front page", () => {
     expect(html).toMatch(/<a[^>]*href="\/start\/overview\/"[^>]*>Read the docs<\/a>/);
   });
 
-  it("offers the install prompt for an agent under the button", () => {
-    expect(html).toContain("Or set it up with an agent:");
-    expect(html).toContain(`title="${agentPrompt("install")}"`);
-    expect(html.indexOf("Copy prompt")).toBeGreaterThan(
-      html.indexOf(DEPLOY_URL.split("?")[0] ?? ""),
-    );
+  it("offers no prompt for a coding agent", () => {
+    expect(html).not.toContain("Copy prompt");
+    expect(html).not.toContain("/agent/");
+    expect(html).not.toMatch(/with an agent/i);
   });
 
   it("points at the button with a drawing that loads nothing and that screen readers skip", () => {

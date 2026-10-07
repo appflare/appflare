@@ -105,6 +105,9 @@ const DESCRIBES_THE_PREVIEW = new Set([
   // The hosted installer behind the preview answers for that origin.
   "apps/installer/wrangler.jsonc",
   "apps/installer/src/deploy/deploy.test.ts",
+  // A manager installed from the preview reconnects Cloudflare through the preview's callback.
+  "apps/manager/src/cloudflare/oauth-client.test.ts",
+  "apps/manager/src/cloudflare/reconnect.server.test.ts",
   "docs/RELEASING.md",
 ]);
 /** Files that are not text a person or a build reads as links. */

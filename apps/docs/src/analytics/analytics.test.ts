@@ -235,13 +235,35 @@ describe("linkEvents", () => {
   });
 
   it("counts Appflare's short link to the button the same way", () => {
-    expect(linkEvents("https://link.appflare.dev/deploy", here)).toEqual([
+    expect(linkEvents("https://link.appflare.dev/deploy-1c", here)).toEqual([
       ["outbound_click", { host: "link.appflare.dev" }],
       ["deploy_button_clicked", { path: "/start/install/" }],
     ]);
     expect(linkEvents("https://link.appflare.dev/other", here)).toEqual([
       ["outbound_click", { host: "link.appflare.dev" }],
     ]);
+  });
+
+  it("counts Install Appflare apart from the button: the short link and the deploy page", () => {
+    expect(linkEvents("https://link.appflare.dev/deploy", here)).toEqual([
+      ["outbound_click", { host: "link.appflare.dev" }],
+      ["install_button_clicked", { path: "/start/install/" }],
+    ]);
+    expect(linkEvents("https://link.appflare.dev/deploy/", here)).toEqual([
+      ["outbound_click", { host: "link.appflare.dev" }],
+      ["install_button_clicked", { path: "/start/install/" }],
+    ]);
+    // On the site itself the Install button goes straight to the deploy page.
+    expect(linkEvents("/deploy/", here)).toEqual([
+      ["install_button_clicked", { path: "/start/install/" }],
+    ]);
+    expect(linkEvents("https://appflare.dev/deploy/", here)).toEqual([
+      ["install_button_clicked", { path: "/start/install/" }],
+    ]);
+    // A link within the deploy pages is not a new install.
+    expect(linkEvents("/deploy/", { host: "appflare.dev", pathname: "/deploy/callback" })).toEqual(
+      [],
+    );
   });
 
   it("ignores links within the site and links that are not web pages", () => {

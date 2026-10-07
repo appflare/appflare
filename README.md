@@ -14,16 +14,23 @@
 Appflare is one Worker in your own Cloudflare account that installs apps from a
 catalog and keeps them updated.
 
-[![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://link.appflare.dev/deploy)
+[![Install Appflare](https://img.shields.io/badge/Install_Appflare-appflare.dev%2Fdeploy-fb6b00)](https://link.appflare.dev/deploy)
 
-The button copies a prebuilt Appflare into your Git account, deploys it to your
-Cloudflare account, and opens the setup wizard; afterwards Appflare updates itself
-and you can remove the copy. See [Deploy with the button](https://appflare.dev/start/deploy-button/).
+[Install Appflare](https://link.appflare.dev/deploy) from your browser: sign in to
+Cloudflare, choose the account and Appflare's address, and the page deploys Appflare
+into your account. Nothing to install on your computer. See
+[Install from your browser](https://appflare.dev/start/browser-install/).
 
-Two other ways to install:
+Or use Cloudflare's Deploy button:
 
-- **The installer:** run `npx create-appflare` in a terminal. See [Install Appflare](https://appflare.dev/start/install/).
-- **An AI agent:** paste a two-sentence prompt into a coding agent, and it runs the installer for you by following [these instructions](https://appflare.dev/agent/install.md). The prompt is on [Install Appflare](https://appflare.dev/start/install/).
+[![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://link.appflare.dev/deploy-1c)
+
+The button copies a prebuilt Appflare into your Git account and deploys it; afterwards
+Appflare updates itself and you can remove the copy. See
+[Deploy with the button](https://appflare.dev/start/deploy-button/).
+
+From a terminal, `npx create-appflare` installs it too. See
+[Install Appflare](https://appflare.dev/start/install/).
 
 ## Documentation
 
