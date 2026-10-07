@@ -1,14 +1,16 @@
 import { formatCount, PLAN_WORDS } from "@appflare/schema/catalog-display";
+import { ScrollArea } from "@cloudflare/kumo/primitives/scroll-area";
+import { CaretLeftIcon, CaretRightIcon } from "@phosphor-icons/react";
 import Link from "fumadocs-core/link";
-import type { ReactNode } from "react";
+import { type ReactNode, type RefObject, useEffect, useId, useRef, useState } from "react";
 import type { SiteApp, SiteCategory, SiteFeatured } from "../../catalog/site-catalog.ts";
 import type { StorefrontRow } from "../../catalog/storefront.ts";
 import { appPath, categoryPath } from "../../catalog/urls.ts";
 
 /**
  * The pieces of the apps page, laid out as Appflare's own catalog page: apps
- * as vertical tiles (icon, name, pitch, plan and stars), in rows that scroll
- * sideways or in a grid, and the categories as cards. Images load from the
+ * as vertical tiles (icon, name, pitch, plan and stars), in rows that page
+ * sideways with arrows or in a grid, and the categories as cards. Images load from the
  * catalog's own site, lazily and at fixed sizes, so nothing moves as they
  * arrive.
  */
@@ -157,30 +159,153 @@ export function AppGrid({ apps, phoneLimit }: { apps: readonly SiteApp[]; phoneL
   );
 }
 
-/** One row of the apps page: its tiles scroll sideways, "See all" opens the whole list. */
+interface ScrollEdges {
+  atStart: boolean;
+  atEnd: boolean;
+}
+
+/** Whether a scroller is at its start and at its end, kept current on scroll and resize. */
+function useScrollEdges(scroller: RefObject<HTMLElement | null>): ScrollEdges {
+  const [edges, setEdges] = useState<ScrollEdges>({ atStart: true, atEnd: true });
+  useEffect(() => {
+    const el = scroller.current;
+    if (el === null) return;
+    const measure = () =>
+      setEdges({
+        atStart: el.scrollLeft <= 1,
+        atEnd: el.scrollLeft + el.clientWidth >= el.scrollWidth - 1,
+      });
+    measure();
+    el.addEventListener("scroll", measure, { passive: true });
+    const observer = new ResizeObserver(measure);
+    observer.observe(el);
+    return () => {
+      el.removeEventListener("scroll", measure);
+      observer.disconnect();
+    };
+  }, [scroller]);
+  return edges;
+}
+
+/** A tile (w-52) plus the gap (gap-1); a page step keeps one tile of the last view as an anchor. */
+const TILE_STEP_PX = 13 * 16 + 4;
+
+/**
+ * A previous or next arrow. At the row's end it is `aria-disabled` rather
+ * than `disabled` and ignores the press: a disabled button drops keyboard
+ * focus the moment the last page is reached.
+ */
+function ArrowButton({
+  label,
+  direction,
+  controls,
+  enabled,
+  onPress,
+}: {
+  label: string;
+  direction: 1 | -1;
+  controls: string;
+  enabled: boolean;
+  onPress: () => void;
+}) {
+  const Icon = direction === 1 ? CaretRightIcon : CaretLeftIcon;
+  return (
+    <button
+      type="button"
+      aria-label={label}
+      aria-controls={controls}
+      aria-disabled={!enabled}
+      onClick={() => {
+        if (enabled) onPress();
+      }}
+      className="inline-flex size-8 items-center justify-center rounded-md text-fd-foreground transition-colors hover:bg-fd-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-fd-ring aria-disabled:cursor-not-allowed aria-disabled:opacity-40 aria-disabled:hover:bg-transparent"
+    >
+      <Icon aria-hidden="true" size={16} weight="bold" />
+    </button>
+  );
+}
+
+/**
+ * One row of the apps page: its tiles scroll sideways and snap to tile
+ * starts, with a thin scrollbar that shows while the row is hovered or
+ * scrolled (Base UI's scroll area, through Kumo). When the tiles do not fit,
+ * previous and next arrows page through them; on a phone the arrows go and
+ * the row is swiped. "See all" opens the whole list.
+ */
 export function AppRow({ row }: { row: StorefrontRow }) {
+  const scroller = useRef<HTMLDivElement>(null);
+  const edges = useScrollEdges(scroller);
+  const listId = useId();
+  const overflows = !(edges.atStart && edges.atEnd);
+
+  function page(direction: 1 | -1) {
+    const el = scroller.current;
+    if (el === null) return;
+    const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    el.scrollBy({
+      left: direction * Math.max(el.clientWidth - TILE_STEP_PX, TILE_STEP_PX),
+      behavior: reduce ? "auto" : "smooth",
+    });
+  }
+
   return (
     <CatalogSection
       title={row.title}
       caption={row.caption}
       action={
-        row.seeAll !== null && (
-          <Link
-            href={row.seeAll}
-            className="relative shrink-0 font-medium text-fd-primary text-sm hover:underline"
-          >
-            See all<span className="sr-only"> {row.title} apps</span>
-          </Link>
-        )
+        <div className="flex shrink-0 items-center gap-1">
+          {row.seeAll !== null && (
+            <Link
+              href={row.seeAll}
+              className="relative mr-1 shrink-0 font-medium text-fd-primary text-sm hover:underline"
+            >
+              See all<span className="sr-only"> {row.title} apps</span>
+            </Link>
+          )}
+          {overflows && (
+            <span className="flex items-center gap-1 max-sm:hidden">
+              <ArrowButton
+                label={`Previous apps in ${row.title}`}
+                direction={-1}
+                controls={listId}
+                enabled={!edges.atStart}
+                onPress={() => page(-1)}
+              />
+              <ArrowButton
+                label={`Next apps in ${row.title}`}
+                direction={1}
+                controls={listId}
+                enabled={!edges.atEnd}
+                onPress={() => page(1)}
+              />
+            </span>
+          )}
+        </div>
       }
     >
-      <ul className="m-0 flex list-none snap-x snap-mandatory gap-1 overflow-x-auto p-0 pb-2">
-        {row.apps.map((app) => (
-          <li key={app.slug} className="w-52 shrink-0 snap-start">
-            <AppTile app={app} />
-          </li>
-        ))}
-      </ul>
+      <ScrollArea.Root className="relative min-w-0">
+        <ScrollArea.Viewport
+          ref={scroller}
+          id={listId}
+          // Base UI makes the viewport focusable; the tiles are the tab stops.
+          tabIndex={-1}
+          className="snap-x snap-mandatory overscroll-x-contain pb-2"
+        >
+          <ul className="m-0 flex list-none gap-1 p-0">
+            {row.apps.map((app) => (
+              <li key={app.slug} className="w-52 shrink-0 snap-start">
+                <AppTile app={app} />
+              </li>
+            ))}
+          </ul>
+        </ScrollArea.Viewport>
+        <ScrollArea.Scrollbar
+          orientation="horizontal"
+          className="flex h-1.5 touch-none select-none p-px opacity-0 transition-opacity duration-150 data-[hovering]:opacity-100 data-[scrolling]:opacity-100"
+        >
+          <ScrollArea.Thumb className="rounded-full bg-fd-border" />
+        </ScrollArea.Scrollbar>
+      </ScrollArea.Root>
     </CatalogSection>
   );
 }
