@@ -2219,9 +2219,9 @@ export const catalogRevisionSchema = z
       "`requires`, without moving `source`: the released artifact stays as it is, and managers " +
       "show the new form without an update. `tagline`, `features`, `alternativeTo`, " +
       "`licenseNote` and `authors` need no revision while the entry has never published one: the " +
-      "catalog shows them from the current manifest. A published revision never changes, so on an " +
-      "entry that has one, an edit to any of them raises it by one too. Anything else needs a new " +
-      "build, so move `source` instead.",
+      "catalog shows them from the current manifest. A published revision is signed with the whole " +
+      "manifest and never changes, so on an entry that has one, an edit to any of them needs a " +
+      "higher revision too. Anything else needs a new build, so move `source` instead.",
   );
 
 /**
