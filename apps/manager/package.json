@@ -13,7 +13,7 @@
     "screenshots:check": "biome check screenshots && tsc --noEmit --project screenshots/tsconfig.json",
     "lint": "biome check .",
     "format": "biome format --write .",
-    "test": "vitest run && vitest run --config vitest.dom.config.ts",
+    "test": "vitest run",
     "db:generate": "drizzle-kit generate && node scripts/gen-migrations-index.mjs",
     "auth:generate": "NODE_OPTIONS=--conditions=@appflare/source pnpm dlx auth@1.7.7 generate --config scripts/better-auth.config.ts --output src/db/auth-schema.ts --yes",
     "cf-typegen": "wrangler types"

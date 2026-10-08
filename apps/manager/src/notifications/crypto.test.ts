@@ -36,7 +36,11 @@ describe("channel credentials at rest", () => {
       await decryptConfig(await channelKey("secret-two-0123456789"), "ch1", sealed),
     ).toBeNull();
     const key = await channelKey("secret-one-0123456789");
-    expect(await decryptConfig(key, "ch1", `${sealed.slice(0, -2)}AA`)).toBeNull();
+    // Flip a character whose bits are all ciphertext: writing "AA" over the end
+    // left a seal unchanged whenever it already ended in "AA".
+    const flipped = sealed.at(-6) === "A" ? "B" : "A";
+    const damaged = `${sealed.slice(0, -6)}${flipped}${sealed.slice(-5)}`;
+    expect(await decryptConfig(key, "ch1", damaged)).toBeNull();
     expect(await decryptConfig(key, "ch1", "v2.x.y")).toBeNull();
     expect(await decryptConfig(key, "ch1", "garbage")).toBeNull();
   });
