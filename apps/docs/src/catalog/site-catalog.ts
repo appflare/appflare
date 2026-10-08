@@ -30,6 +30,10 @@ export interface SiteApp {
   /** The one line under the name: the tagline. */
   pitch: string;
   summary: string;
+  /** What the app does for people, one line each; empty when the catalog lists none. */
+  features: string[];
+  /** Well-known products the app can replace; empty when the catalog lists none. */
+  alternativeTo: string[];
   version: string;
   plan: Plan;
   tier: InstallTier;
@@ -114,6 +118,8 @@ export function siteCatalog(snapshot: CatalogSnapshot): SiteCatalog {
       name: app.name,
       pitch: appPitch(app),
       summary: app.summary,
+      features: app.features ?? [],
+      alternativeTo: app.alternativeTo ?? [],
       version: app.version,
       plan: app.plan,
       tier: app.tier,

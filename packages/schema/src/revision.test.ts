@@ -105,6 +105,24 @@ describe("catalog manifest revision", () => {
     expect(effective.worker).toBe(worker);
   });
 
+  it("accepts a revision that carries features and alternativeTo edited since the release", () => {
+    // They need no revision of their own, so a later one may carry any copy.
+    const revised = {
+      ...released,
+      revision: 2,
+      name: "Cut links",
+      features: [
+        "Shorten links on your own domain",
+        "See how often each link is opened",
+        "Change where a link goes at any time",
+      ],
+      alternativeTo: ["Bitly"],
+    };
+    expect(catalogRevisionProblem(released, revised)).toBeNull();
+    const { features: _f, alternativeTo: _a, ...withoutThem } = revised;
+    expect(catalogRevisionProblem(revised, { ...withoutThem, revision: 3 })).toBeNull();
+  });
+
   it("refuses a revision that is not above the released one", () => {
     expect(catalogRevisionProblem(released, { ...released, vars: [selectVar] })).toMatch(
       /revision 1 is not above revision 1/,

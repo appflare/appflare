@@ -23,6 +23,8 @@ function app(overrides: Partial<SiteApp> & { slug: string }): SiteApp {
     name: overrides.slug,
     pitch: "An app",
     summary: "An app.",
+    features: [],
+    alternativeTo: [],
     version: "1.0.0",
     plan: "free",
     tier: "artifact",
@@ -161,6 +163,20 @@ describe("siteCatalog", () => {
     expect(popularity(undefined, undefined, "upstream/app")).toEqual(hidden);
     expect(popularity("UPSTREAM/App", "packager/template")).toEqual({ ...hidden, stars: 9000 });
     expect(popularity()).toEqual({ ...hidden, stars: 9000 });
+  });
+
+  it("lists the features and alternatives the index carries, and none for a row without them", () => {
+    const [first] = snapshot.index.apps;
+    if (first === undefined) throw new Error("empty fixture");
+    const { features: _f, alternativeTo: _a, ...bare } = first;
+    const display = {
+      features: ["Keep your codes in one place", "Back them up on your own", "Import them"],
+      alternativeTo: ["Google Authenticator"],
+    };
+    const derive = (row: typeof first) =>
+      deriveSiteCatalog({ ...snapshot, index: { ...snapshot.index, apps: [row] } }).apps[0];
+    expect(derive(bare)).toMatchObject({ features: [], alternativeTo: [] });
+    expect(derive({ ...bare, ...display })).toMatchObject(display);
   });
 
   it("keeps no release addresses, and the authors the index lists", () => {

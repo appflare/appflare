@@ -63,6 +63,8 @@ export const REVISABLE_CATALOG_FIELDS: readonly string[] = [
   "name",
   "summary",
   "tagline",
+  "features",
+  "alternativeTo",
   "homepage",
   "upstreamRepo",
   "license",

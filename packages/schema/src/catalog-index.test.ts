@@ -94,7 +94,33 @@ describe("indexJsonSchema", () => {
   });
 
   it("names the catalog fields only the index shows", () => {
-    expect(INDEX_ONLY_CATALOG_FIELDS).toEqual(["authors", "tagline", "licenseNote"]);
+    expect(INDEX_ONLY_CATALOG_FIELDS).toEqual([
+      "authors",
+      "tagline",
+      "licenseNote",
+      "features",
+      "alternativeTo",
+    ]);
+  });
+
+  it("carries features and alternativeTo when listed, and reads older rows without them", () => {
+    const row = validIndex.apps[0];
+    const older = readIndexApp(indexAppSchema.parse(row));
+    expect(older.features).toBeUndefined();
+    expect(older.alternativeTo).toBeUndefined();
+    const display = {
+      features: ["Shorten links on your own domain", "See how often each one is opened"],
+      alternativeTo: ["Bitly", "TinyURL"],
+    };
+    expect(readIndexApp(indexAppSchema.parse({ ...row, ...display }))).toMatchObject(display);
+    // The manifest's counts and lengths are not held here, so a later change
+    // to them cannot make a reader leave the app out.
+    const many = Array.from({ length: 9 }, (_, i) => `Feature ${i} `.repeat(20));
+    expect(indexAppSchema.safeParse({ ...row, features: many }).success).toBe(true);
+    for (const bad of [[""], "Bitly", [1]]) {
+      expect(indexAppSchema.safeParse({ ...row, alternativeTo: bad }).success).toBe(false);
+      expect(indexAppSchema.safeParse({ ...row, features: bad }).success).toBe(false);
+    }
   });
 
   it("accepts rows with authors, at least one", () => {
