@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
+import { appFaq } from "../catalog/app-guide.ts";
 import { siteCatalog } from "../catalog/data.ts";
+import { testApp } from "../catalog/test-app.ts";
 import { pageHead } from "./meta.ts";
 import { SITE_URL } from "./shared.ts";
 import { appStructuredData, siteStructuredData } from "./structured-data.ts";
@@ -19,6 +21,25 @@ describe("structured data", () => {
       offers: { "@type": "Offer", price: "0" },
     });
     expect(breadcrumb).toMatchObject({ "@type": "BreadcrumbList" });
+  });
+
+  it("states exactly the questions the page answers, as an FAQPage", () => {
+    const cut = testApp({ plan: "paid", services: ["kv"] });
+    const nodes = appStructuredData(cut)["@graph"] as Array<Record<string, unknown>>;
+    expect(nodes.map((node) => node["@type"])).toEqual([
+      "WebApplication",
+      "BreadcrumbList",
+      "FAQPage",
+    ]);
+    const faq = nodes[2];
+    expect(faq?.["@id"]).toBe(`${SITE_URL}/apps/cut/#faq`);
+    expect(faq?.mainEntity).toEqual(
+      appFaq(cut).map(({ question, answer }) => ({
+        "@type": "Question",
+        name: question,
+        acceptedAnswer: { "@type": "Answer", text: answer },
+      })),
+    );
   });
 
   it("describes the front page as the site, its publisher and Appflare", () => {

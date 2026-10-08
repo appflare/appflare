@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { appPageDescription, appPageTitle } from "../catalog/app-page.ts";
 import { siteCatalog } from "../catalog/data.ts";
 import { Route as PageRoute } from "../routes/$.tsx";
 import { Route as AppRoute } from "../routes/apps/$slug.tsx";
@@ -77,7 +78,8 @@ describe("the pages' OpenGraph tags", () => {
   it("give an app page the app's card", async () => {
     const meta = await headOf(AppRoute, { slug: app.slug });
     expect(tag(meta, "og:url")).toBe(`${SITE_URL}/apps/${app.slug}/`);
-    expect(tag(meta, "og:description")).toBe(app.summary);
+    expect(tag(meta, "og:description")).toBe(appPageDescription(app));
+    expect(tag(meta, "og:title")).toBe(appPageTitle(app, "Appflare"));
     expectCard(meta, `${SITE_URL}/og/apps/${app.slug}/image.png`);
   });
 

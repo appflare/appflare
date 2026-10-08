@@ -75,6 +75,27 @@ describe("the catalog snapshot", () => {
     expect(problems(twice)).toContainEqual(expect.stringMatching(/is listed twice/));
   });
 
+  it("takes install forms when it has them, but none for an app it does not list", () => {
+    const without = fixture();
+    delete without.forms;
+    expect(problems(without)).toEqual([]);
+
+    const extra = fixture();
+    extra.forms = {
+      ghost: {
+        asks: [],
+        databases: [],
+        emailDomain: false,
+        generated: [],
+        optional: 0,
+        access: null,
+        publicPaths: [],
+        postInstallSteps: 0,
+      },
+    };
+    expect(problems(extra)).toEqual(['forms.ghost: no app "ghost"']);
+  });
+
   it("refuses a homepage that is not https", () => {
     const value = fixture();
     const slug = value.index.apps[0].slug;

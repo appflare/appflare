@@ -514,5 +514,108 @@
       "repo": "megaconfidence/veet",
       "homepage": "https://github.com/megaconfidence/veet"
     }
+  },
+  "forms": {
+    "2fa": {
+      "asks": [],
+      "databases": [],
+      "emailDomain": false,
+      "generated": ["Encryption key"],
+      "optional": 0,
+      "access": "offered",
+      "publicPaths": [],
+      "postInstallSteps": 2
+    },
+    "agentic-inbox": {
+      "asks": [
+        {
+          "label": "Mail domain",
+          "link": null,
+          "seedOnly": false
+        }
+      ],
+      "databases": [],
+      "emailDomain": true,
+      "generated": [],
+      "optional": 1,
+      "access": "offered",
+      "publicPaths": [],
+      "postInstallSteps": 4
+    },
+    "cattopic": {
+      "asks": [],
+      "databases": [],
+      "emailDomain": false,
+      "generated": [],
+      "optional": 1,
+      "access": "offered",
+      "publicPaths": [],
+      "postInstallSteps": 3
+    },
+    "flaremo": {
+      "asks": [],
+      "databases": [],
+      "emailDomain": false,
+      "generated": ["Session signing secret", "Setup secret"],
+      "optional": 2,
+      "access": "offered",
+      "publicPaths": [],
+      "postInstallSteps": 3
+    },
+    "mailflare": {
+      "asks": [
+        {
+          "label": "Cloudflare API token for Mailflare",
+          "link": null,
+          "seedOnly": false
+        }
+      ],
+      "databases": [],
+      "emailDomain": false,
+      "generated": [],
+      "optional": 1,
+      "access": "offered",
+      "publicPaths": [],
+      "postInstallSteps": 3
+    },
+    "open-seo": {
+      "asks": [
+        {
+          "label": "DataForSEO API key",
+          "link": {
+            "label": "Get a key",
+            "url": "https://app.dataforseo.com/api-access?aff=255379"
+          },
+          "seedOnly": false
+        }
+      ],
+      "databases": [],
+      "emailDomain": false,
+      "generated": ["Token encryption key"],
+      "optional": 5,
+      "access": null,
+      "publicPaths": [],
+      "postInstallSteps": 3
+    },
+    "resolvehq": {
+      "asks": [],
+      "databases": [],
+      "emailDomain": true,
+      "generated": ["Session pepper"],
+      "optional": 8,
+      "access": "offered",
+      "publicPaths": [],
+      "postInstallSteps": 2
+    },
+    "veet": {
+      "asks": [],
+      "databases": [],
+      "emailDomain": false,
+      "generated": [],
+      "optional": 2,
+      "access": "offered",
+      "publicPaths": [],
+      "postInstallSteps": 1
+    }
   }
 }

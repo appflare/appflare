@@ -43,6 +43,7 @@ function app(overrides: Partial<SiteApp> & { slug: string }): SiteApp {
     repo: `acme/${overrides.slug}`,
     homepage: `https://github.com/acme/${overrides.slug}`,
     popularity: null,
+    installForm: null,
     ...overrides,
   };
 }
@@ -81,7 +82,7 @@ describe("the catalog pages", () => {
 
   it("title an app page with its name and tagline", () => {
     expect(appPageTitle({ name: "Cut", pitch: "Short links" }, "Appflare")).toBe(
-      "Cut: Short links | Appflare",
+      "Deploy Cut on Cloudflare: Short links | Appflare",
     );
   });
 });

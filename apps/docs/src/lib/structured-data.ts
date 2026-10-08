@@ -1,3 +1,4 @@
+import { appFaq, type FaqItem } from "../catalog/app-guide.ts";
 import type { SiteApp } from "../catalog/site-catalog.ts";
 import { appPath, appsPath } from "../catalog/urls.ts";
 import { repositoryUrl, SITE_URL, siteDescription, siteName } from "./shared.ts";
@@ -56,8 +57,25 @@ export function siteStructuredData(): StructuredData {
 }
 
 /**
+ * The questions an app's page answers, as an `FAQPage`: exactly the ones
+ * the page shows, with the same words.
+ */
+export function faqPage(url: string, items: readonly FaqItem[]): { [key: string]: JsonValue } {
+  return {
+    "@type": "FAQPage",
+    "@id": `${url}#faq`,
+    mainEntity: items.map((item) => ({
+      "@type": "Question",
+      name: item.question,
+      acceptedAnswer: { "@type": "Answer", text: item.answer },
+    })),
+  };
+}
+
+/**
  * An app's page: the app, as a web application that runs on Cloudflare
- * Workers and costs nothing to install, and the breadcrumb above its name.
+ * Workers and costs nothing to install, the breadcrumb above its name, and
+ * the questions its FAQ answers.
  */
 export function appStructuredData(app: SiteApp): StructuredData {
   const url = `${SITE_URL}${appPath(app.slug)}`;
@@ -89,5 +107,6 @@ export function appStructuredData(app: SiteApp): StructuredData {
         { "@type": "ListItem", position: 2, name: app.name, item: url },
       ],
     },
+    faqPage(url, appFaq(app)),
   );
 }

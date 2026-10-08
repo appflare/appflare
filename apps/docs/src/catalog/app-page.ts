@@ -271,9 +271,43 @@ export function maintainerProfile(handle: string): { label: string; href: string
     : { label: handle, href: null };
 }
 
-/** The page title: `"<Name>: <tagline> | Appflare"`. */
+/** Past this many characters search results cut a title, so the site's name is left off. */
+export const TITLE_LIMIT = 70;
+
+/**
+ * The page title, as people search for it: `"Deploy <Name> on Cloudflare:
+ * <tagline> | Appflare"`, without ` | Appflare` when that makes it longer
+ * than {@link TITLE_LIMIT} characters.
+ */
 export function appPageTitle(app: Pick<SiteApp, "name" | "pitch">, siteName: string): string {
-  return `${app.name}: ${app.pitch} | ${siteName}`;
+  const title = `Deploy ${app.name} on Cloudflare: ${app.pitch}`;
+  const full = `${title} | ${siteName}`;
+  return full.length > TITLE_LIMIT ? title : full;
+}
+
+/** Past this many characters search results cut a description. */
+export const DESCRIPTION_LIMIT = 160;
+
+/** What the description adds after the app's summary. */
+export const DESCRIPTION_SENTENCE = "Deploy it to your own Cloudflare account with Appflare.";
+
+/**
+ * The meta description: the app's summary, then {@link DESCRIPTION_SENTENCE}.
+ * When both do not fit in {@link DESCRIPTION_LIMIT} characters, the summary
+ * is cut at a word and ends in "…", so the sentence about Appflare still
+ * shows in search results.
+ */
+export function appPageDescription(app: Pick<SiteApp, "summary">): string {
+  const summary = app.summary.replace(/\s+/g, " ").trim();
+  const full = `${summary} ${DESCRIPTION_SENTENCE}`;
+  if (full.length <= DESCRIPTION_LIMIT) return full;
+  // Room for the summary, the ellipsis, a space and the sentence.
+  const room = DESCRIPTION_LIMIT - DESCRIPTION_SENTENCE.length - 2;
+  const atWord = summary.slice(0, room + 1).lastIndexOf(" ");
+  // A summary with no space to cut at is kept whole.
+  if (atWord <= 0) return full;
+  const shortened = summary.slice(0, atWord).replace(/[\s,;:.–—-]+$/u, "");
+  return `${shortened}… ${DESCRIPTION_SENTENCE}`;
 }
 
 /** The categories as the page lists them, with labels. */

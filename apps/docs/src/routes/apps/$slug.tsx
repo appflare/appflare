@@ -4,9 +4,17 @@ import Link from "fumadocs-core/link";
 import { useEffect } from "react";
 import { track } from "../../analytics/analytics.ts";
 import {
+  alternativesLine,
+  appFaq,
+  deployGuide,
+  NEEDS_ANCHOR,
+  withAppflare,
+} from "../../catalog/app-guide.ts";
+import {
   accountNeeds,
   appCategories,
   appLinks,
+  appPageDescription,
   appPageTitle,
   appStats,
 } from "../../catalog/app-page.ts";
@@ -19,6 +27,12 @@ import {
   StatStrip,
 } from "../../components/catalog/app-sections.tsx";
 import { CatalogLayout } from "../../components/catalog/catalog-layout.tsx";
+import {
+  DeploySteps,
+  FaqList,
+  FeatureList,
+  WithAppflareList,
+} from "../../components/catalog/deploy-sections.tsx";
 import { ScreenshotGallery } from "../../components/catalog/screenshot-gallery.tsx";
 import { AppIcon } from "../../components/catalog/tiles.tsx";
 import { pageHead } from "../../lib/meta.ts";
@@ -27,9 +41,12 @@ import { appStructuredData } from "../../lib/structured-data.ts";
 
 /**
  * `/apps/<slug>/`: one app, laid out as its page in Appflare: the header with
- * Install, the stat strip, the screenshots, what it does, what it needs on a
- * Cloudflare account, its links and who made it. "Install" leads to the
- * install page, which opens the app in the visitor's own Appflare.
+ * Install, the stat strip, the screenshots, what it does, the steps to
+ * deploy it on Cloudflare with Appflare, what it needs on a Cloudflare
+ * account, the questions people ask first, its links and who made it.
+ * "Install" leads to the install page, which opens the app in the visitor's
+ * own Appflare. The page is titled for the search it answers: "Deploy
+ * <Name> on Cloudflare".
  */
 export const Route = createFileRoute("/apps/$slug")({
   loader: async ({ params }) => {
@@ -42,7 +59,7 @@ export const Route = createFileRoute("/apps/$slug")({
     loaderData
       ? pageHead({
           title: appPageTitle(loaderData.app, siteName),
-          description: loaderData.app.summary,
+          description: appPageDescription(loaderData.app),
           url: `${SITE_URL}${appPath(loaderData.app.slug)}`,
           image: `${SITE_URL}${ogImagePath(["apps", loaderData.app.slug])}`,
           structuredData: appStructuredData(loaderData.app),
@@ -69,6 +86,8 @@ function AppPage() {
         ? []
         : [{ url: app.cover, alt: `${app.name} cover image` }];
   const authors = app.authors.map((author) => author.name);
+  const alternatives = alternativesLine(app);
+  const guide = deployGuide(app);
   useEffect(() => {
     track("app_page_viewed", {
       slug: app.slug,
@@ -116,14 +135,33 @@ function AppPage() {
 
       <AppSection title="About">
         <div className="grid max-w-3xl gap-3 text-base leading-relaxed">
+          {alternatives !== null && <p className="font-medium">{alternatives}</p>}
           {paragraphs(app.summary).map((paragraph) => (
             <p key={paragraph}>{paragraph}</p>
           ))}
         </div>
       </AppSection>
 
-      <AppSection title="What it needs on your account">
+      {app.features.length > 0 && (
+        <AppSection title="Features">
+          <FeatureList features={app.features} />
+        </AppSection>
+      )}
+
+      <AppSection title={guide.title}>
+        <DeploySteps guide={guide} appName={app.name} />
+      </AppSection>
+
+      <AppSection title="With Appflare instead of by hand">
+        <WithAppflareList items={withAppflare(app.tier)} />
+      </AppSection>
+
+      <AppSection title="What it needs on your account" id={NEEDS_ANCHOR}>
         <NeedsList needs={accountNeeds(app)} />
+      </AppSection>
+
+      <AppSection title="Questions">
+        <FaqList items={appFaq(app)} />
       </AppSection>
 
       <AppSection title="Links">
