@@ -1,3 +1,4 @@
+import { browserMemory } from "../install/memory.ts";
 import { buildOAuthSetup } from "./config.ts";
 import { DeployFlow } from "./flow.ts";
 import { type FetchLike, installerApi } from "./installer-api.ts";
@@ -20,5 +21,7 @@ export function createBrowserFlow(): DeployFlow {
     now: Date.now,
     sleep: (ms) => new Promise((resolve) => window.setTimeout(resolve, ms)),
     navigate: (url) => window.location.assign(url),
+    search: window.location.search,
+    memory: browserMemory(),
   });
 }

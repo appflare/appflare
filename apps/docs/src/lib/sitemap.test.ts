@@ -17,4 +17,18 @@ describe("renderSitemap", () => {
       ].join("\n"),
     );
   });
+
+  it("gives a page the latest of its days, as a day", () => {
+    const xml = renderSitemap([
+      "/apps/a/",
+      { path: "/apps/a/", lastmod: "2026-09-01T10:00:00.000Z" },
+      { path: "/apps/a/", lastmod: "2026-10-08T23:59:00.000Z" },
+      { path: "/apps/b/", lastmod: null },
+    ]);
+    expect(xml).toContain(
+      `  <url><loc>${SITE_URL}/apps/a/</loc><lastmod>2026-10-08</lastmod></url>`,
+    );
+    expect(xml).toContain(`  <url><loc>${SITE_URL}/apps/b/</loc></url>`);
+    expect(xml.match(/apps\/a\//g)).toHaveLength(1);
+  });
 });

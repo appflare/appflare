@@ -15,13 +15,21 @@ import type { SiteApp } from "../../catalog/site-catalog.ts";
  */
 
 /** How a link reads on these pages: underlined, in the link colour. */
-const LINK =
+export const LINK =
   "font-medium text-fd-primary underline decoration-fd-primary/40 underline-offset-4 hover:decoration-fd-primary";
 
-/** A titled section of the app page. */
-export function AppSection({ title, children }: { title: string; children: ReactNode }) {
+/** A titled section of the app page; `id` makes it a link target. */
+export function AppSection({
+  title,
+  id,
+  children,
+}: {
+  title: string;
+  id?: string;
+  children: ReactNode;
+}) {
   return (
-    <section className="grid gap-3">
+    <section id={id} className="grid scroll-mt-24 gap-3">
       <h2 className="font-semibold text-xl">{title}</h2>
       {children}
     </section>

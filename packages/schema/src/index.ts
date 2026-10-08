@@ -1,4 +1,5 @@
 export * from "./access";
+export * from "./app-features";
 export * from "./artifact";
 export * from "./assets-only";
 export * from "./build-env";

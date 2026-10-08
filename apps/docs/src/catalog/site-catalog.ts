@@ -14,6 +14,7 @@ import {
   categoryLabel,
   freshStats,
 } from "@appflare/schema/catalog-display";
+import type { InstallForm } from "./install-form.ts";
 import type { CatalogSnapshot } from "./snapshot.ts";
 import { catalogMediaUrl } from "./urls.ts";
 
@@ -30,6 +31,10 @@ export interface SiteApp {
   /** The one line under the name: the tagline. */
   pitch: string;
   summary: string;
+  /** What the app does for people, one line each; empty when the catalog lists none. */
+  features: string[];
+  /** Well-known products the app can replace; empty when the catalog lists none. */
+  alternativeTo: string[];
   version: string;
   plan: Plan;
   tier: InstallTier;
@@ -57,6 +62,8 @@ export interface SiteApp {
   homepage: string;
   /** Null when the stats were stale or do not list the app. */
   popularity: AppPopularity | null;
+  /** What Appflare's install form asks for this app; null when the snapshot does not say. */
+  installForm: InstallForm | null;
 }
 
 /** A sponsored item, its image kept only when the catalog's own site hosts it. */
@@ -114,6 +121,8 @@ export function siteCatalog(snapshot: CatalogSnapshot): SiteCatalog {
       name: app.name,
       pitch: appPitch(app),
       summary: app.summary,
+      features: app.features ?? [],
+      alternativeTo: app.alternativeTo ?? [],
       version: app.version,
       plan: app.plan,
       tier: app.tier,
@@ -136,6 +145,7 @@ export function siteCatalog(snapshot: CatalogSnapshot): SiteCatalog {
       ...(links.sourceRepo === undefined ? {} : { sourceRepo: links.sourceRepo }),
       homepage: links.homepage,
       popularity: appPopularity(stats, app.slug, expectedRepo),
+      installForm: snapshot.forms?.[app.slug] ?? null,
     };
   });
   const slugs = new Set(apps.map((app) => app.slug));

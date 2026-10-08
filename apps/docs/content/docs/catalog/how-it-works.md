@@ -69,8 +69,8 @@ Releases are immutable. A change to `appflare.jsonc` alone, without a new pin, c
 be published as a new release; re-pin `source` to ship it. Two exceptions need no
 release:
 
-- `authors`, `tagline` and `licenseNote`, which `index.json` reads from the current
-  manifest.
+- `authors`, `tagline`, `licenseNote`, `features` and `alternativeTo`, which
+  `index.json` reads from the current manifest.
 - A change to the app's form or copy (its `secrets`, `vars`, `postInstall`, name,
   summary, and similar), or to how it goes with Cloudflare Access (its `access`
   block, and adding `"access"` to `requires`), made together with a higher

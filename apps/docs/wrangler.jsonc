@@ -17,8 +17,9 @@
   "account_id": "e56348678f83352622c33faa66f43c13",
   "compatibility_date": "2026-09-21",
   "workers_dev": true,
-  // Runs only for /api/install/* (`run_worker_first` below); every other
-  // request is answered by the static files without it.
+  // Runs for the pages and /api/install/* (`run_worker_first` below), to hand
+  // the installer its requests and to answer a page with its Markdown when the
+  // request asks for it; the build's own files are served without it.
   "main": "./worker/index.ts",
   "assets": {
     // The prerendered site. `dist/server` holds the bundle the build renders
@@ -29,7 +30,24 @@
     // page (`404.html`).
     "html_handling": "auto-trailing-slash",
     "not_found_handling": "404-page",
-    "run_worker_first": ["/api/install/*"]
+    "run_worker_first": [
+      "/*",
+      "!/assets/*",
+      "!/screenshots/*",
+      "!/og/*",
+      "!/agent/*",
+      "!/.well-known/*",
+      "!/api/search.json",
+      // Files never have a Markdown version; only pages pay for the Worker.
+      // Not "!/*.*": that would also take dotted /api/install/ paths.
+      "!/*.svg",
+      "!/*.png",
+      "!/*.ico",
+      "!/*.txt",
+      "!/*.xml",
+      "!/*.md",
+      "!/*.webmanifest"
+    ]
   },
   // The hosted installer, which has no address of its own. Bindings are not
   // inherited by environments, so `production` repeats it.

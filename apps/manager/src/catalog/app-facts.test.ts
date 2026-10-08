@@ -37,8 +37,16 @@ describe("appFacts", () => {
   it("covers every field only the index row carries", () => {
     // The list and app pages read these from the row, never from a manifest:
     // `authors` and `tagline` (the tile's line) directly, `licenseNote` here.
-    // A field the schema adds to the list needs reading from the row too.
-    expect([...INDEX_ONLY_CATALOG_FIELDS].sort()).toEqual(["authors", "licenseNote", "tagline"]);
+    // `features` and `alternativeTo` are for the website's app pages; the
+    // manager shows neither. A field the schema adds to the list needs
+    // reading from the row too, or a note here saying why not.
+    expect([...INDEX_ONLY_CATALOG_FIELDS].sort()).toEqual([
+      "alternativeTo",
+      "authors",
+      "features",
+      "licenseNote",
+      "tagline",
+    ]);
   });
 
   it("knows nothing where no app is shown", () => {

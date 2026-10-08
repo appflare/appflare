@@ -151,6 +151,28 @@ the account. Such a person controls the account already.
 Once the owner account exists, Appflare tells the installer, and the installer deletes
 its record of the installation.
 
+## Install an app right after
+
+When you select **Install** on an app's page on appflare.dev and this browser does not
+know your Appflare yet, choose **Get Appflare**, then **Install Appflare**. It opens this
+page as `appflare.dev/deploy/?app=<slug>`, and the page says that the app you chose
+opens once Appflare is set up. The steps are the same.
+
+When Appflare is ready, the page opens setup with the app's
+[install link](/guides/install-links/) waiting behind it. Create the owner account,
+select **Finish**, and the app's page opens in your new Appflare, ready to install. If
+Appflare already has its owner, **Open the app in Appflare** opens the app's page
+directly, after you sign in.
+
+The page keeps the app in this tab only, while you sign in to Cloudflare, and comes
+back from Cloudflare with it. Opened without `?app=`, or with something that is not an
+app, it installs Appflare alone. If you close the tab and continue later, select the app's
+**Install** button again once Appflare is set up.
+
+The page also remembers your new Appflare's address in this browser, as
+[Use this Appflare on appflare.dev](/guides/install-links/#use-your-appflare-on-appflaredev)
+does, so Install buttons on appflare.dev open apps there from then on.
+
 ## If the domain takes a while
 
 A new name on your domain needs a DNS record and a certificate before browsers can open

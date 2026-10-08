@@ -10,6 +10,7 @@ import type { CallbackParams } from "./arrival.ts";
 import { decideCallback } from "./authorize.ts";
 import { type FormDocument, returnForm, runCallback, submitReturn } from "./callback.ts";
 import {
+  APP_KEY,
   AUTHORIZATION_KEY,
   deployStorage,
   GRANT_KEY,
@@ -193,6 +194,35 @@ describe("runCallback", () => {
     expect(s.session.data.has(AUTHORIZATION_KEY)).toBe(false);
     expect(s.local.data.size).toBe(0);
     expect(s.navigations.join()).not.toContain(CODE);
+  });
+
+  it("goes back to /deploy/?app=<slug> when this tab is installing Appflare for an app", async () => {
+    const { state, pending } = installState();
+    const s = setup(pending);
+    s.deps.storage.app.write("open-seo");
+    const token = tokenFetch({
+      access_token: "access-x",
+      expires_in: 3600,
+      refresh_token: "refresh-x",
+      scope: MANAGER_OAUTH_SCOPES.join(" "),
+    });
+    await runCallback({ ...s.deps, params: params({ code: CODE, state }), fetch: token.fetch });
+    expect(s.navigations).toEqual(["/deploy/?app=open-seo"]);
+    expect(s.local.data.size).toBe(0);
+  });
+
+  it("does not carry a kept value that is not a slug", async () => {
+    const { state, pending } = installState();
+    const s = setup(pending);
+    s.session.data.set(APP_KEY, '"../settings"');
+    const token = tokenFetch({
+      access_token: "access-x",
+      expires_in: 3600,
+      refresh_token: "refresh-x",
+      scope: MANAGER_OAUTH_SCOPES.join(" "),
+    });
+    await runCallback({ ...s.deps, params: params({ code: CODE, state }), fetch: token.fetch });
+    expect(s.navigations).toEqual(["/deploy/"]);
   });
 
   it("refuses a grant without every permission Appflare needs, keeping nothing", async () => {

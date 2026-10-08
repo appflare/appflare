@@ -11,6 +11,12 @@ import {
 import { z } from "zod";
 import { type OgPicture, pngPicture } from "../og/picture.ts";
 import {
+  type InstallForm,
+  installFormOf,
+  needsWranglerVars,
+  wranglerVarsOf,
+} from "./install-form.ts";
+import {
   type AppLinks,
   appLinksSchema,
   type CatalogSnapshot,
@@ -21,8 +27,8 @@ import { CATALOG_ORIGIN, catalogMediaUrl } from "./urls.ts";
 
 /**
  * Takes a snapshot of the published catalog for the build: `index.json`, the
- * stats file the index names, and each app's repository and homepage from its
- * catalog manifest, fetched a few at a time with retries. Every file whose
+ * stats file the index names, and each app's repository, homepage and install
+ * form from its catalog manifest, fetched a few at a time with retries. Every file whose
  * digest the index gives is checked against it. Any failure throws, so the
  * build fails and the site already deployed stays up.
  */
@@ -197,17 +203,34 @@ export async function fetchCatalogSnapshot(
       ? publishedStats
       : narrowStats(publishedStats, only);
 
-  const links = await mapLimit(index.apps, concurrency, async (app) => {
+  const manifests = await mapLimit(index.apps, concurrency, async (app) => {
     const source = manifestSource(app);
     if (source === null) throw new Error(`"${app.slug}" has no catalog manifest to read`);
     const document = await jsonOf(source.url, source.sha256);
     const manifest = source.inRelease ? (document as { catalog?: unknown }).catalog : document;
+    let links: AppLinks;
     try {
-      return [app.slug, linksOf(manifest)] as const;
+      links = linksOf(manifest);
     } catch (error) {
       throw new Error(`The catalog manifest of "${app.slug}" at ${source.url}: ${String(error)}`);
     }
+    // A setting without a catalog default starts from the wrangler config's
+    // value, which only the release's manifest carries: read it when needed.
+    let release: unknown = source.inRelease ? document : undefined;
+    if (release === undefined && app.artifacts !== undefined && needsWranglerVars(manifest)) {
+      release = await jsonOf(app.artifacts.manifest, app.artifacts.digest);
+    }
+    const form = installFormOf(manifest, {
+      wrangler: release === undefined ? null : wranglerVarsOf(release),
+      tier: app.tier,
+    });
+    return { slug: app.slug, links, form };
   });
+  const links = manifests.map(({ slug, links }) => [slug, links] as const);
+  const forms = manifests.flatMap(
+    ({ slug, form }): Array<readonly [string, InstallForm]> =>
+      form === null ? [] : [[slug, form]],
+  );
 
   // Only media on the catalog's own site, as the pages show them.
   const origin = new URL(baseUrl).origin;
@@ -243,6 +266,7 @@ export async function fetchCatalogSnapshot(
       index: rawIndex,
       stats,
       links: Object.fromEntries(links),
+      forms: Object.fromEntries(forms),
     },
     baseUrl,
   );

@@ -9,6 +9,7 @@ import {
   NO_ACTIONS,
   showsIntro,
   stageOf,
+  THEN_APP_LINE,
 } from "./deploy-panel.tsx";
 import { InstallerTerms, journeyPosition, OtherWays } from "./deploy-shell.tsx";
 import { SAMPLE_CALLBACK_VIEWS, SAMPLE_SECRETS, SAMPLE_VIEWS } from "./sample-views.ts";
@@ -251,6 +252,32 @@ describe("DeployPanel", () => {
     expect(t).toContain("Appflare itself, a Worker named appflare");
     expect(t).toContain("Anything that was in the account before stays");
     expect(t).toContain("cannot be undone");
+  });
+
+  it("says the app comes next when the page was opened from an app's install page", () => {
+    for (const name of ["welcome", "review", "deploying"]) {
+      const withApp = renderToStaticMarkup(
+        <DeployPanel view={sample(name)} actions={NO_ACTIONS} canGoBack thenApp />,
+      );
+      expect(text(withApp), name).toContain(THEN_APP_LINE);
+      expect(text(render(sample(name))), name).not.toContain(THEN_APP_LINE);
+    }
+    const opening = render(sample("opening-then-app"));
+    expect(text(opening)).toContain("Then the app you chose opens, ready to install.");
+    expect(opening).toContain(
+      `href="https://appflare.acme.example/setup?returnTo=%2Finstall%2Fopen-seo#claim=${SAMPLE_SECRETS.claim}"`,
+    );
+    expect(text(render(sample("opening")))).not.toContain("the app you chose");
+  });
+
+  it("opens the app's install link in an Appflare that is already set up", () => {
+    const html = render(sample("set-up-then-app"));
+    expect(html).toContain('href="https://appflare.acme.example/install/open-seo"');
+    expect(text(html)).toContain("Open the app in Appflare");
+    const plain = render(sample("set-up"));
+    expect(plain).toContain('href="https://appflare.acme.example"');
+    expect(text(plain)).toContain("Open Appflare");
+    expect(text(plain)).not.toContain("the app you chose");
   });
 
   it("opens owner setup on the chosen address, with no referrer", () => {

@@ -4,6 +4,7 @@ import {
   accessRequirementProblems,
   catalogAccessSchema,
 } from "./access.ts";
+import { appAlternativesSchema, appFeaturesSchema } from "./app-features.ts";
 // With its extension: the JSON Schema export runs this file directly under
 // Node's type stripping, which resolves relative imports literally.
 import { buildEnvSchema } from "./build-env.ts";
@@ -2216,7 +2217,7 @@ export const catalogRevisionSchema = z
       "change to `name`, `summary`, `homepage`, `upstreamRepo`, `license`, `categories`, `maintainers`, " +
       '`secrets`, `vars`, `postInstall`, `bump`, `access` or `openPath`, or to add `"access"` to ' +
       "`requires`, without moving `source`: the released artifact stays as it is, and managers " +
-      "show the new form without an update. `tagline`, " +
+      "show the new form without an update. `tagline`, `features`, `alternativeTo`, " +
       "`licenseNote` and `authors` need no revision: the catalog shows them from the current " +
       "manifest. Anything else needs a new build, so move `source` instead.",
   );
@@ -2256,6 +2257,10 @@ export const catalogManifestSchema = z
       ),
     /** The one-line pitch on catalog tiles. */
     tagline: taglineSchema,
+    /** What the app does for people, one line each, for the app's page. */
+    features: appFeaturesSchema.optional(),
+    /** Well-known products the app can replace, for the app's page. */
+    alternativeTo: appAlternativesSchema.optional(),
     /**
      * Shown as a link in the manager; https only (the regex also lands in the
      * JSON Schema). Omitted means the repository on GitHub; read it with

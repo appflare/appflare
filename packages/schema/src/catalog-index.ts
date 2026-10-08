@@ -179,6 +179,18 @@ export const indexAppSchema = z
     /** The catalog manifest's `tagline`, the pitch on catalog tiles. */
     tagline: taglineSchema,
     /**
+     * The catalog manifest's `features` and `alternativeTo`, for the app's
+     * page; written only when the manifest lists them, and absent in rows
+     * written before these fields. Plain non-empty strings, without the
+     * manifest's counts and lengths: a reader parses each row on its own and
+     * leaves out a row it refuses, so a later change to those limits must not
+     * hide the app from readers released before it. The catalog checks the
+     * limits when the manifest is written. Managers from before these fields
+     * strip them, as they strip any key they do not know.
+     */
+    features: z.array(z.string().min(1)).optional(),
+    alternativeTo: z.array(z.string().min(1)).optional(),
+    /**
      * When the entry first appeared in the catalog (the commit that added its
      * manifest), for "New this week".
      */
@@ -352,8 +364,16 @@ export function indexAppArtifact(app: Pick<IndexApp, "artifacts">): IndexArtifac
  *   from the index row only.
  * - `licenseNote`: shown next to the license; managers read it from the
  *   index row, and an installed app does not use it.
+ * - `features` and `alternativeTo`: what the app does and which products it
+ *   can replace, on the app's page; read from the index row only.
  */
-export const INDEX_ONLY_CATALOG_FIELDS: readonly string[] = ["authors", "tagline", "licenseNote"];
+export const INDEX_ONLY_CATALOG_FIELDS: readonly string[] = [
+  "authors",
+  "tagline",
+  "licenseNote",
+  "features",
+  "alternativeTo",
+];
 
 /**
  * One item of the catalog's sponsored slot. It can promote anything, an app

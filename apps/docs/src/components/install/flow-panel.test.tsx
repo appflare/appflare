@@ -23,6 +23,15 @@ function render(
   );
 }
 
+/** Visible text, roughly: tags removed. */
+function text(html: string): string {
+  return html
+    .replace(/<[^>]+>/g, " ")
+    .replace(/&#x27;/g, "'")
+    .replace(/\s+/g, " ")
+    .replace(/ ([,.:])/g, "$1");
+}
+
 describe("FlowPanel", () => {
   it("shows where a remembered visitor is going, with the link and Change", () => {
     const html = render({
@@ -64,9 +73,33 @@ describe("FlowPanel", () => {
     );
   });
 
+  it("sends an app along to the install from the browser, which installs it right after", () => {
+    const html = render({ step: "get", intentSaved: true });
+    expect(html).toContain('href="/deploy/?app=2fa"');
+    expect(html).not.toContain("https://link.appflare.dev/deploy?");
+    expect(text(html)).toContain(
+      "Install it from your browser and 2FA comes right after: once Appflare is set up, 2FA opens in it, ready to install.",
+    );
+    expect(text(html)).toContain("Installed another way? When it is ready, open");
+  });
+
+  it("keeps the short link for a repository, which a new Appflare cannot build yet", () => {
+    const repoPage: FlowPage = {
+      page: "install",
+      request: { kind: "repo", repo: "o/r" },
+      catalogApp: null,
+    };
+    const html = render({ step: "get", intentSaved: true }, repoPage);
+    expect(html).toContain("https://link.appflare.dev/deploy?");
+    expect(html).not.toContain("/deploy/?app=");
+    expect(text(html)).toContain("Install it one of these ways:");
+    expect(text(html)).toContain("When it is ready, open");
+    expect(text(html)).not.toContain("Installed another way?");
+  });
+
   it("offers the install from the browser first, then Cloudflare's Deploy button, then the way back", () => {
     const html = render({ step: "get", intentSaved: true });
-    const browser = html.indexOf("https://link.appflare.dev/deploy?");
+    const browser = html.indexOf('href="/deploy/?app=2fa"');
     const deploy = html.indexOf(DEPLOY_BUTTON_URL);
     expect(browser).toBeGreaterThan(-1);
     expect(deploy).toBeGreaterThan(browser);

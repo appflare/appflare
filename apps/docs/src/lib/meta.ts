@@ -1,4 +1,5 @@
 import { siteName } from "./shared.ts";
+import type { StructuredData } from "./structured-data.ts";
 
 export interface PageMeta {
   /** The document title. */
@@ -8,13 +9,25 @@ export interface PageMeta {
   url: string;
   /** Absolute URL of the page's OpenGraph image, a 1200x630 PNG. */
   image: string;
+  /** Site-relative URL of the page as Markdown, linked as its `text/markdown` alternate. */
+  markdownUrl?: string | undefined;
+  /** schema.org data about the page, written as a JSON-LD script. */
+  structuredData?: StructuredData | undefined;
 }
 
 /**
  * The `<head>` entries of a docs page: title, description, canonical link, and
- * the OpenGraph and Twitter card tags that point at the page's generated image.
+ * the OpenGraph and Twitter card tags that point at the page's generated image,
+ * and, when given, the page's Markdown alternate and its JSON-LD.
  */
-export function pageHead({ title, description, url, image }: PageMeta) {
+export function pageHead({
+  title,
+  description,
+  url,
+  image,
+  markdownUrl,
+  structuredData,
+}: PageMeta) {
   const meta: Array<Record<string, string>> = [
     { title },
     { property: "og:type", content: "website" },
@@ -38,7 +51,18 @@ export function pageHead({ title, description, url, image }: PageMeta) {
       { name: "twitter:description", content: description },
     );
   }
-  return { meta, links: [{ rel: "canonical", href: url }] };
+  const links: Array<Record<string, string>> = [{ rel: "canonical", href: url }];
+  if (markdownUrl) links.push({ rel: "alternate", type: "text/markdown", href: markdownUrl });
+  // App data comes from the catalog, so `<` is escaped: no text can close the script.
+  const scripts = structuredData
+    ? [
+        {
+          type: "application/ld+json",
+          children: JSON.stringify(structuredData).replaceAll("<", "\\u003c"),
+        },
+      ]
+    : [];
+  return { meta, links, scripts };
 }
 
 /**

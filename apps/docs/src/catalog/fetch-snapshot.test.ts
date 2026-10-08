@@ -162,6 +162,61 @@ describe("fetchCatalogSnapshot", () => {
     expect(calls).not.toContain(`${BASE}cut/manifest.json`);
   });
 
+  it("reads what each app's install form asks from its manifest", async () => {
+    const { fetch } = fakeFetch(catalog());
+    const { snapshot } = await fetchCatalogSnapshot({ ...options, fetch });
+    const nothing = {
+      asks: [],
+      databases: [],
+      emailDomain: false,
+      generated: [],
+      optional: 0,
+      publicPaths: [],
+      postInstallSteps: 0,
+    };
+    expect(snapshot.forms).toEqual({
+      cut: { ...nothing, access: "offered" },
+      // An app with its own installer: the form offers no Access.
+      seo: { ...nothing, access: null },
+    });
+  });
+
+  it("reads a revised entry's settings from its release only when the form needs them", async () => {
+    const files = catalog();
+    const release = JSON.stringify({
+      format: 1,
+      catalog: { repo: "acme/cut" },
+      worker: { bindings: [{ type: "plain_text", name: "TITLE", text: "Cut" }] },
+    });
+    const revised = JSON.stringify({
+      repo: "acme/cut",
+      vars: [
+        { name: "TITLE", label: "Site title" },
+        { name: "OWNER", label: "Owner" },
+      ],
+      postInstall: [{ type: "markdown", content: "Open it." }],
+    });
+    const index = JSON.parse(String(files.get(`${BASE}index.json`)));
+    index.apps[0].artifacts.digest = sha(release);
+    index.apps[0].catalogManifest = {
+      url: `${BASE}cut/revised.json`,
+      sha256: sha(revised),
+      keyId: "test-key",
+      signature: "test-signature",
+    };
+    files.set(`${BASE}index.json`, JSON.stringify(index));
+    files.set(`${BASE}cut/manifest.json`, release);
+    files.set(`${BASE}cut/revised.json`, revised);
+    const { fetch, calls } = fakeFetch(files);
+    const { snapshot } = await fetchCatalogSnapshot({ ...options, fetch });
+    // The release gives the title a value, so only the owner is asked for.
+    expect(snapshot.forms?.cut).toMatchObject({
+      asks: [{ label: "Owner", link: null }],
+      postInstallSteps: 1,
+    });
+    expect(calls).toContain(`${BASE}cut/manifest.json`);
+  });
+
   it("fails when a file cannot be fetched, so the build fails", async () => {
     const { fetch } = fakeFetch(catalog(), new Map([[`${BASE}seo.json`, 3]]));
     await expect(fetchCatalogSnapshot({ ...options, fetch })).rejects.toThrow(

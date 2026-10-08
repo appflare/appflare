@@ -6,11 +6,13 @@ import {
   readIndexJson,
 } from "@appflare/schema";
 import { z } from "zod";
+import { installFormSchema } from "./install-form.ts";
 
 /**
  * The catalog as the site is built from it: the published `index.json` and
- * `stats.json`, plus each app's source repository and homepage, which the
- * index does not carry (they are in each app's catalog manifest). The build
+ * `stats.json`, plus each app's source repository and homepage and what its
+ * install form asks, which the index does not carry (they are in each app's
+ * catalog manifest). The build
  * checks all of it against `@appflare/schema` before any page is made, so a
  * catalog the manager would refuse never reaches the site either.
  */
@@ -37,6 +39,12 @@ export const catalogSnapshotSchema = z
     stats: catalogStatsSchema.nullable(),
     /** Each app's links, keyed by slug. */
     links: z.record(z.string(), appLinksSchema),
+    /**
+     * What each app's install form asks, keyed by slug. Absent from
+     * snapshots taken before it; an app without one gets steps that do not
+     * name the form's fields.
+     */
+    forms: z.record(z.string(), installFormSchema).optional(),
   })
   .superRefine((snapshot, ctx) => {
     const seen = new Set<string>();
@@ -65,6 +73,11 @@ export const catalogSnapshotSchema = z
         });
       }
     });
+    for (const slug of Object.keys(snapshot.forms ?? {})) {
+      if (!seen.has(slug)) {
+        ctx.addIssue({ code: "custom", path: ["forms", slug], message: `no app "${slug}"` });
+      }
+    }
     for (const slug of Object.keys(snapshot.links)) {
       if (!seen.has(slug)) {
         ctx.addIssue({ code: "custom", path: ["links", slug], message: `no app "${slug}"` });

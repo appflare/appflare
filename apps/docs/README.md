@@ -6,12 +6,31 @@ browser. Fumadocs on TanStack Start, prerendered in full and served as static
 files. `_headers` sets the response headers; the build adds the deploy pages' own
 (see below).
 
-One path runs Worker code: `worker/index.ts` forwards `/api/install/*`, unchanged,
-to the hosted installer (`apps/installer`, the Worker `appflare-installer`)
-through a service binding, so the deploy page and the installer's API share one
-origin. `run_worker_first` names only that path; everything else is answered by
-the static files as before. The Worker keeps no logs, since those requests carry
-the visitor's Cloudflare access token.
+`worker/index.ts` runs before the static files for the pages and
+`/api/install/*` (`run_worker_first`; the build's assets, screenshots, OpenGraph
+images and agent files skip it). It forwards `/api/install/*`, unchanged, to the
+hosted installer (`apps/installer`, the Worker `appflare-installer`) through a
+service binding, so the deploy page and the installer's API share one origin. The
+Worker keeps no logs, since those requests carry the visitor's Cloudflare access
+token. A page asked for with `Accept: text/markdown` gets its Markdown (the `.md`
+the build writes next to it, `llms.txt` for the front page) instead of its HTML;
+every other request gets the static files' own answer.
+
+## For search engines and agents
+
+- `robots.txt` (in `public/`) lets every crawler in, states the site's Content
+  Signals, and names `sitemap.xml`. Cloudflare puts its Content Signals Policy
+  comments above it.
+- `sitemap.xml` gives each app's page the day the catalog last tested the app.
+- App pages and the front page carry schema.org JSON-LD
+  (`src/lib/structured-data.ts`); docs pages link their Markdown as a
+  `text/markdown` alternate.
+- The front page's response has `Link` headers (`_headers`) to `llms.txt` and
+  the agent skills index.
+- `/.well-known/agent-skills/` publishes the instructions in `public/agent/` as
+  Agent Skills, with an index of their digests (`src/lib/agent-skills.ts`).
+
+https://isitagentready.com scores the site on these.
 
 ## The deploy page
 
@@ -26,10 +45,22 @@ which reports the outcome. Without that confirmation anyone could start
 Appflare's genuine consent with their own address and collect the code. The logic
 is in `src/deploy/`, the steps' drawing in `src/components/deploy/`.
 
+- **An app to install after.** An app's install page sends a visitor without an
+  Appflare to `/deploy/?app=<slug>` (`src/deploy/app.ts`). The slug must follow the
+  catalog's slug rule, or the plain journey runs. The tab keeps it in
+  `sessionStorage` across Cloudflare's sign-in, and the callback returns to
+  `/deploy/?app=<slug>`; a visit without `?app=` forgets it. Once the new
+  Appflare has its connection, owner setup opens as
+  `<address>/setup?returnTo=/install/<slug>#claim=…`, the return path Appflare
+  itself gives an install link opened before setup, so Finish opens the app's
+  install link. The address is then remembered as `/my/` remembers it
+  (`appflare.manager` in `localStorage`). The page cannot name the app: it does
+  not load the catalog.
 - **Tokens.** The access and refresh token live in the tab's memory and
   `sessionStorage` only. The refresh token goes to the new Appflare and nowhere
-  else; the installer gets the access token. `localStorage` keeps only the
-  unfinished installation (`{ installationId, key, handoffSecret, accountId }`).
+  else; the installer gets the access token. `localStorage` keeps the unfinished
+  installation (`{ installationId, key, handoffSecret, accountId }`) and, after
+  a journey with an app, the new Appflare's address; never a token.
 - **No analytics.** PostHog never loads in a page opened at `/deploy/…`, and the
   router reloads the page rather than moving there from another page.
 - **Headers.** After prerendering, the build hashes each deploy page's inline

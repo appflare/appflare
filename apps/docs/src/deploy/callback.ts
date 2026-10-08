@@ -1,3 +1,4 @@
+import { deployPathFor } from "./app.ts";
 import type { CallbackParams } from "./arrival.ts";
 import {
   type CallbackProblem,
@@ -39,7 +40,7 @@ export type CallbackView =
 
 export interface CallbackDeps {
   params: CallbackParams | null;
-  storage: Pick<DeployStorage, "authorization">;
+  storage: Pick<DeployStorage, "authorization" | "app">;
   tokens: Pick<TokenKeeper, "keep">;
   navigate: (url: string) => void;
   fetch?: FetchLike;
@@ -64,7 +65,9 @@ export async function runCallback(deps: CallbackDeps): Promise<CallbackView> {
       const result = await exchangeForGrant(decision.code, decision.pending, deps.fetch, deps.now);
       if (!result.ok) return { step: "problem", problem: result.problem };
       deps.tokens.keep(result.grant);
-      deps.navigate(DEPLOY_PATH);
+      // Back to the deploy page, with the app this tab is installing Appflare for.
+      const app = deps.storage.app.read();
+      deps.navigate((app === null ? null : deployPathFor(app)) ?? DEPLOY_PATH);
       return { step: "done" };
     }
   }
