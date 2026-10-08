@@ -1,0 +1,37 @@
+name: setup
+description: >
+  pnpm and Node from the repository's pins, the workspace's dependencies, and
+  Turbo's local cache from an earlier run of the same job.
+
+inputs:
+  turbo-cache:
+    description: Names this job's Turbo cache, so jobs that run different tasks keep apart.
+    required: true
+
+runs:
+  using: composite
+  steps:
+    # pnpm 10, the exact version from package.json's packageManager field.
+    - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+    - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+      with:
+        node-version-file: .node-version
+        cache: pnpm
+    - run: pnpm install --frozen-lockfile
+      shell: bash
+    # Turbo hashes each task's inputs, so a restored entry replays only when
+    # nothing it reads changed. A pull request restores from its own earlier
+    # runs or, failing that, from main's; main never reads a pull request's.
+    - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: .turbo/cache
+        key: turbo-${{ inputs.turbo-cache }}-${{ github.sha }}
+        restore-keys: turbo-${{ inputs.turbo-cache }}-
+    # Every run saves the whole directory again; drop entries a week old so it
+    # does not grow without end. One still in use is rebuilt on its next miss.
+    - name: Prune Turbo's cache
+      shell: bash
+      run: |
+        if [[ -d .turbo/cache ]]; then
+          find .turbo/cache -type f -mtime +7 -delete
+        fi

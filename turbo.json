@@ -1,6 +1,13 @@
 {
   "$schema": "https://turborepo.com/schema.json",
   "ui": "stream",
+  "globalDependencies": [
+    "biome.json",
+    "tsconfig.json",
+    "vitest.shared.ts",
+    ".node-version",
+    "docs/assets/**"
+  ],
   "tasks": {
     "build": {
       "dependsOn": ["^build"],

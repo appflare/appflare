@@ -3,6 +3,11 @@ name: ci
 # Pull requests and main: lint every new commit message, typecheck, lint, and
 # test every package, build the dist outputs, smoke-test them, and check the root
 # release scripts against the built manager. No secrets, read-only token.
+#
+# The jobs run side by side. The manager's tests are the longest part, so they
+# are split across a matrix of shards; every other package checks in one job.
+# Each job keeps Turbo's cache between runs (.github/actions/setup), so a task
+# whose inputs did not change replays its earlier result instead of running.
 
 on:
   pull_request:
@@ -54,21 +59,52 @@ jobs:
           fi
 
   check:
-    name: check, build, test:dist
+    name: check (packages but the manager)
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      # pnpm 10, the exact version from package.json's packageManager field.
-      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+      - uses: ./.github/actions/setup
         with:
-          node-version-file: .node-version
-          cache: pnpm
-      - run: pnpm install --frozen-lockfile
-      - run: pnpm check
+          turbo-cache: check
+      # `pnpm check` without the manager, which the `manager` job covers.
+      - run: pnpm exec turbo run typecheck lint test --filter='!@appflare/manager'
+
+  manager:
+    name: manager ${{ matrix.name }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { name: "typecheck, lint", id: check, tasks: typecheck lint, args: "" }
+          - { name: "test 1/3", id: test-1, tasks: test, args: "-- --shard=1/3" }
+          - { name: "test 2/3", id: test-2, tasks: test, args: "-- --shard=2/3" }
+          - { name: "test 3/3", id: test-3, tasks: test, args: "-- --shard=3/3" }
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup
+        with:
+          turbo-cache: manager-${{ matrix.id }}
+      # Turbo hashes the arguments after `--`, so each shard caches on its own.
+      - run: pnpm exec turbo run ${{ matrix.tasks }} --filter=@appflare/manager ${{ matrix.args }}
+
+  build:
+    name: build, test:dist
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup
+        with:
+          turbo-cache: build
       - run: pnpm build
       - run: pnpm test:dist
       # scripts/ is not a workspace package, so `pnpm check` does not cover it.
