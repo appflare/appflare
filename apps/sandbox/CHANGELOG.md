@@ -1,5 +1,13 @@
 # @appflare/sandbox-worker
 
+## 0.1.4
+
+### Patch Changes
+
+- Updated dependencies [14277d5]
+- Updated dependencies [89a6581]
+  - @appflare/schema@0.5.0
+
 ## 0.1.3
 
 ### Patch Changes

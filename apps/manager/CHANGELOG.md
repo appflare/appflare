@@ -1,5 +1,13 @@
 # @appflare/manager
 
+## 0.4.2
+
+### Patch Changes
+
+- Updated dependencies [14277d5]
+- Updated dependencies [89a6581]
+  - @appflare/schema@0.5.0
+
 ## 0.4.1
 
 ### Patch Changes
