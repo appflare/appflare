@@ -49,7 +49,8 @@ is in `src/deploy/`, the steps' drawing in `src/components/deploy/`.
   Appflare to `/deploy/?app=<slug>` (`src/deploy/app.ts`). The slug must follow the
   catalog's slug rule, or the plain journey runs. The tab keeps it in
   `sessionStorage` across Cloudflare's sign-in, and the callback returns to
-  `/deploy/?app=<slug>`; a visit without `?app=` forgets it. Once the new Appflare has its connection, owner setup opens as
+  `/deploy/?app=<slug>`; a visit without `?app=` forgets it. Once the new
+  Appflare has its connection, owner setup opens as
   `<address>/setup?returnTo=/install/<slug>#claim=…`, the return path Appflare
   itself gives an install link opened before setup, so Finish opens the app's
   install link. The address is then remembered as `/my/` remembers it

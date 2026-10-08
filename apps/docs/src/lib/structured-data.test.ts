@@ -4,7 +4,7 @@ import { siteCatalog } from "../catalog/data.ts";
 import { testApp } from "../catalog/test-app.ts";
 import { pageHead } from "./meta.ts";
 import { SITE_URL } from "./shared.ts";
-import { appStructuredData, siteStructuredData } from "./structured-data.ts";
+import { applicationCategory, appStructuredData, siteStructuredData } from "./structured-data.ts";
 
 const app = siteCatalog.apps[0];
 if (!app) throw new Error("the catalog fixture has no apps");
@@ -61,5 +61,14 @@ describe("structured data", () => {
     expect(JSON.parse(script?.children ?? "")).toEqual({
       name: "</script><script>alert(1)</script>",
     });
+  });
+});
+
+describe("applicationCategory", () => {
+  it("maps the app's first catalog category, and anything else to utilities", () => {
+    expect(applicationCategory(["notes", "sync"])).toBe("BusinessApplication");
+    expect(applicationCategory(["analytics"])).toBe("DeveloperApplication");
+    expect(applicationCategory(["files"])).toBe("UtilitiesApplication");
+    expect(applicationCategory([])).toBe("UtilitiesApplication");
   });
 });

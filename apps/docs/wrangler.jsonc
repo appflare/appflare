@@ -37,7 +37,16 @@
       "!/og/*",
       "!/agent/*",
       "!/.well-known/*",
-      "!/api/search.json"
+      "!/api/search.json",
+      // Files never have a Markdown version; only pages pay for the Worker.
+      // Not "!/*.*": that would also take dotted /api/install/ paths.
+      "!/*.svg",
+      "!/*.png",
+      "!/*.ico",
+      "!/*.txt",
+      "!/*.xml",
+      "!/*.md",
+      "!/*.webmanifest"
     ]
   },
   // The hosted installer, which has no address of its own. Bindings are not

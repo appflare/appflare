@@ -73,6 +73,46 @@ export function faqPage(url: string, items: readonly FaqItem[]): { [key: string]
 }
 
 /**
+ * The application category Google reads (one of the values its software app
+ * documentation lists), from the app's first catalog category.
+ */
+const APPLICATION_CATEGORIES: Record<string, string> = {
+  ai: "DeveloperApplication",
+  analytics: "DeveloperApplication",
+  "developer-tools": "DeveloperApplication",
+  monitoring: "DeveloperApplication",
+  networking: "DeveloperApplication",
+  "remote-access": "DeveloperApplication",
+  bots: "CommunicationApplication",
+  chat: "CommunicationApplication",
+  community: "CommunicationApplication",
+  email: "CommunicationApplication",
+  notifications: "CommunicationApplication",
+  business: "BusinessApplication",
+  cms: "BusinessApplication",
+  marketing: "BusinessApplication",
+  notes: "BusinessApplication",
+  productivity: "BusinessApplication",
+  scheduling: "BusinessApplication",
+  ecommerce: "ShoppingApplication",
+  education: "EducationalApplication",
+  family: "LifestyleApplication",
+  finance: "FinanceApplication",
+  games: "GameApplication",
+  media: "MultimediaApplication",
+  passwords: "SecurityApplication",
+  privacy: "SecurityApplication",
+  security: "SecurityApplication",
+};
+
+export function applicationCategory(categories: readonly string[]): string {
+  const first = categories[0];
+  return (
+    (first === undefined ? undefined : APPLICATION_CATEGORIES[first]) ?? "UtilitiesApplication"
+  );
+}
+
+/**
  * An app's page: the app, as a web application that runs on Cloudflare
  * Workers and costs nothing to install, the breadcrumb above its name, and
  * the questions its FAQ answers.
@@ -92,7 +132,7 @@ export function appStructuredData(app: SiteApp): StructuredData {
       description: app.summary,
       headline: app.pitch,
       softwareVersion: app.version,
-      applicationCategory: "WebApplication",
+      applicationCategory: applicationCategory(app.categories),
       operatingSystem: "Cloudflare Workers",
       isAccessibleForFree: true,
       offers: { "@type": "Offer", price: "0", priceCurrency: "USD" },
