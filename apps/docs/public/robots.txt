@@ -1,0 +1,13 @@
+# appflare.dev: Appflare's documentation and the catalog's pages. Every crawler
+# may read all of it, for search, for AI answers and for training. The install
+# pages and /my/ say noindex in their own <head>, so they are left crawlable for
+# search engines to read that. /api/install/ is the hosted installer's API.
+#
+# Cloudflare puts its Content Signals Policy (comments only) above this file.
+
+User-agent: *
+Content-Signal: search=yes, ai-input=yes, ai-train=yes
+Allow: /
+Disallow: /api/install/
+
+Sitemap: https://appflare.dev/sitemap.xml

@@ -6,12 +6,31 @@ browser. Fumadocs on TanStack Start, prerendered in full and served as static
 files. `_headers` sets the response headers; the build adds the deploy pages' own
 (see below).
 
-One path runs Worker code: `worker/index.ts` forwards `/api/install/*`, unchanged,
-to the hosted installer (`apps/installer`, the Worker `appflare-installer`)
-through a service binding, so the deploy page and the installer's API share one
-origin. `run_worker_first` names only that path; everything else is answered by
-the static files as before. The Worker keeps no logs, since those requests carry
-the visitor's Cloudflare access token.
+`worker/index.ts` runs before the static files for the pages and
+`/api/install/*` (`run_worker_first`; the build's assets, screenshots, OpenGraph
+images and agent files skip it). It forwards `/api/install/*`, unchanged, to the
+hosted installer (`apps/installer`, the Worker `appflare-installer`) through a
+service binding, so the deploy page and the installer's API share one origin. The
+Worker keeps no logs, since those requests carry the visitor's Cloudflare access
+token. A page asked for with `Accept: text/markdown` gets its Markdown (the `.md`
+the build writes next to it, `llms.txt` for the front page) instead of its HTML;
+every other request gets the static files' own answer.
+
+## For search engines and agents
+
+- `robots.txt` (in `public/`) lets every crawler in, states the site's Content
+  Signals, and names `sitemap.xml`. Cloudflare puts its Content Signals Policy
+  comments above it.
+- `sitemap.xml` gives each app's page the day the catalog last tested the app.
+- App pages and the front page carry schema.org JSON-LD
+  (`src/lib/structured-data.ts`); docs pages link their Markdown as a
+  `text/markdown` alternate.
+- The front page's response has `Link` headers (`_headers`) to `llms.txt` and
+  the agent skills index.
+- `/.well-known/agent-skills/` publishes the instructions in `public/agent/` as
+  Agent Skills, with an index of their digests (`src/lib/agent-skills.ts`).
+
+https://isitagentready.com scores the site on these.
 
 ## The deploy page
 

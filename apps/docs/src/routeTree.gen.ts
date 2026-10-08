@@ -26,6 +26,8 @@ import { Route as InstallIndexRouteImport } from './routes/install/index'
 import { Route as InstallSlugRouteImport } from './routes/install/$slug'
 import { Route as MyIndexRouteImport } from './routes/my/index'
 import { Route as OgSplatRouteImport } from './routes/og/$'
+import { Route as DotwellKnownAgentSkillsIndexDotjsonRouteImport } from './routes/[.]well-known/agent-skills/index[.]json'
+import { Route as DotwellKnownAgentSkillsNameSKILLDotmdRouteImport } from './routes/[.]well-known/agent-skills/$name/SKILL[.]md'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
@@ -112,6 +114,18 @@ const OgSplatRoute = OgSplatRouteImport.update({
   path: '/og/$',
   getParentRoute: () => rootRouteImport,
 } as any)
+const DotwellKnownAgentSkillsIndexDotjsonRoute =
+  DotwellKnownAgentSkillsIndexDotjsonRouteImport.update({
+    id: '/.well-known/agent-skills/index.json',
+    path: '/.well-known/agent-skills/index.json',
+    getParentRoute: () => rootRouteImport,
+  } as any)
+const DotwellKnownAgentSkillsNameSKILLDotmdRoute =
+  DotwellKnownAgentSkillsNameSKILLDotmdRouteImport.update({
+    id: '/.well-known/agent-skills/$name/SKILL.md',
+    path: '/.well-known/agent-skills/$name/SKILL.md',
+    getParentRoute: () => rootRouteImport,
+  } as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
@@ -131,6 +145,8 @@ export interface FileRoutesByFullPath {
   '/deploy/': typeof DeployIndexRoute
   '/install/': typeof InstallIndexRoute
   '/my/': typeof MyIndexRoute
+  '/.well-known/agent-skills/index.json': typeof DotwellKnownAgentSkillsIndexDotjsonRoute
+  '/.well-known/agent-skills/$name/SKILL.md': typeof DotwellKnownAgentSkillsNameSKILLDotmdRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
@@ -150,6 +166,8 @@ export interface FileRoutesByTo {
   '/deploy': typeof DeployIndexRoute
   '/install': typeof InstallIndexRoute
   '/my': typeof MyIndexRoute
+  '/.well-known/agent-skills/index.json': typeof DotwellKnownAgentSkillsIndexDotjsonRoute
+  '/.well-known/agent-skills/$name/SKILL.md': typeof DotwellKnownAgentSkillsNameSKILLDotmdRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -170,6 +188,8 @@ export interface FileRoutesById {
   '/deploy/': typeof DeployIndexRoute
   '/install/': typeof InstallIndexRoute
   '/my/': typeof MyIndexRoute
+  '/.well-known/agent-skills/index.json': typeof DotwellKnownAgentSkillsIndexDotjsonRoute
+  '/.well-known/agent-skills/$name/SKILL.md': typeof DotwellKnownAgentSkillsNameSKILLDotmdRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -191,6 +211,8 @@ export interface FileRouteTypes {
     | '/deploy/'
     | '/install/'
     | '/my/'
+    | '/.well-known/agent-skills/index.json'
+    | '/.well-known/agent-skills/$name/SKILL.md'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
@@ -210,6 +232,8 @@ export interface FileRouteTypes {
     | '/deploy'
     | '/install'
     | '/my'
+    | '/.well-known/agent-skills/index.json'
+    | '/.well-known/agent-skills/$name/SKILL.md'
   id:
     | '__root__'
     | '/'
@@ -229,6 +253,8 @@ export interface FileRouteTypes {
     | '/deploy/'
     | '/install/'
     | '/my/'
+    | '/.well-known/agent-skills/index.json'
+    | '/.well-known/agent-skills/$name/SKILL.md'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -249,6 +275,8 @@ export interface RootRouteChildren {
   DeployIndexRoute: typeof DeployIndexRoute
   InstallIndexRoute: typeof InstallIndexRoute
   MyIndexRoute: typeof MyIndexRoute
+  DotwellKnownAgentSkillsIndexDotjsonRoute: typeof DotwellKnownAgentSkillsIndexDotjsonRoute
+  DotwellKnownAgentSkillsNameSKILLDotmdRoute: typeof DotwellKnownAgentSkillsNameSKILLDotmdRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -372,6 +400,20 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof OgSplatRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/.well-known/agent-skills/index.json': {
+      id: '/.well-known/agent-skills/index.json'
+      path: '/.well-known/agent-skills/index.json'
+      fullPath: '/.well-known/agent-skills/index.json'
+      preLoaderRoute: typeof DotwellKnownAgentSkillsIndexDotjsonRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/.well-known/agent-skills/$name/SKILL.md': {
+      id: '/.well-known/agent-skills/$name/SKILL.md'
+      path: '/.well-known/agent-skills/$name/SKILL.md'
+      fullPath: '/.well-known/agent-skills/$name/SKILL.md'
+      preLoaderRoute: typeof DotwellKnownAgentSkillsNameSKILLDotmdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
   }
 }
 
@@ -393,6 +435,10 @@ const rootRouteChildren: RootRouteChildren = {
   DeployIndexRoute: DeployIndexRoute,
   InstallIndexRoute: InstallIndexRoute,
   MyIndexRoute: MyIndexRoute,
+  DotwellKnownAgentSkillsIndexDotjsonRoute:
+    DotwellKnownAgentSkillsIndexDotjsonRoute,
+  DotwellKnownAgentSkillsNameSKILLDotmdRoute:
+    DotwellKnownAgentSkillsNameSKILLDotmdRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

@@ -18,3 +18,9 @@
 /deploy-badge.svg
   Cache-Control: public, max-age=86400
   Cross-Origin-Resource-Policy: cross-origin
+
+# The front page points agents at the site's machine-readable indexes
+# (RFC 8288): the Markdown index of every page, and the agent skills.
+/
+  Link: </llms.txt>; rel="describedby"; type="text/markdown"
+  Link: </.well-known/agent-skills/index.json>; rel="describedby"; type="application/json"

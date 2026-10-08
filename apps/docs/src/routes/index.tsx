@@ -3,6 +3,7 @@ import { LandingPage } from "../components/landing/landing-page.tsx";
 import { landingData } from "../lib/landing.ts";
 import { pageHead } from "../lib/meta.ts";
 import { ogImagePath, SITE_URL, siteDescription, siteName } from "../lib/shared.ts";
+import { siteStructuredData } from "../lib/structured-data.ts";
 
 /**
  * `/`, the front page: what Appflare is, the Deploy button and the catalog
@@ -19,6 +20,8 @@ export const Route = createFileRoute("/")({
       description: siteDescription,
       url: `${SITE_URL}/`,
       image: `${SITE_URL}${ogImagePath([])}`,
+      markdownUrl: "/llms.txt",
+      structuredData: siteStructuredData(),
     }),
   component: Landing,
 });

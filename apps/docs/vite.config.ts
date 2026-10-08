@@ -10,6 +10,7 @@ import { ogImages } from "./src/build/og-images.ts";
 import { catalogData, loadCatalog, snapshotMode } from "./src/catalog/plugin.ts";
 import { catalogPagePaths, handoffPagePaths } from "./src/catalog/urls.ts";
 import { CALLBACK_PATH, DEPLOY_PATH } from "./src/deploy/paths.ts";
+import { AGENT_SKILLS, agentSkillPath, agentSkillsIndexPath } from "./src/lib/agent-skills.ts";
 import { markdownUrl, pageUrl, SITE_URL, searchIndexPath } from "./src/lib/shared.ts";
 import { docsScreenshots } from "./src/og/plugin.ts";
 import { manifestReference, referencePage } from "./src/reference/integration.ts";
@@ -38,6 +39,7 @@ const SOURCE_CONDITION = "@appflare/source";
  * writes the front page, every docs page as `<path>/index.html` plus its `.md`
  * Markdown, `llms.txt`,
  * `llms-full.txt`, the search index at `/api/search.json`, `sitemap.xml`, `404.html`,
+ * the agent skills and their index under `/.well-known/agent-skills/`,
  * the catalog's pages (`/apps/`, one per app, one per category), the pages
  * that pass a visitor on to their own Appflare (`/install/<slug>/`,
  * `/install/`, `/my/`), and one
@@ -78,6 +80,8 @@ export default defineConfig(async () => {
           { path: "/llms-full.txt" },
           { path: "/sitemap.xml" },
           { path: searchIndexPath },
+          { path: agentSkillsIndexPath },
+          ...AGENT_SKILLS.map((skill) => ({ path: agentSkillPath(skill.name) })),
           ...contentSlugs().flatMap((slugs) => [
             { path: pageUrl(slugs) },
             { path: markdownUrl(slugs) },

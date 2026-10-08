@@ -44,6 +44,7 @@ export const Route = createFileRoute("/$")({
           description: loaderData.description,
           url: `${SITE_URL}${loaderData.url}`,
           image: `${SITE_URL}${loaderData.ogImage}`,
+          markdownUrl: loaderData.markdownUrl,
         })
       : {},
   component: Page,

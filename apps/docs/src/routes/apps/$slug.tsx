@@ -23,6 +23,7 @@ import { ScreenshotGallery } from "../../components/catalog/screenshot-gallery.t
 import { AppIcon } from "../../components/catalog/tiles.tsx";
 import { pageHead } from "../../lib/meta.ts";
 import { ogImagePath, SITE_URL, siteName } from "../../lib/shared.ts";
+import { appStructuredData } from "../../lib/structured-data.ts";
 
 /**
  * `/apps/<slug>/`: one app, laid out as its page in Appflare: the header with
@@ -44,6 +45,7 @@ export const Route = createFileRoute("/apps/$slug")({
           description: loaderData.app.summary,
           url: `${SITE_URL}${appPath(loaderData.app.slug)}`,
           image: `${SITE_URL}${ogImagePath(["apps", loaderData.app.slug])}`,
+          structuredData: appStructuredData(loaderData.app),
         })
       : {},
   component: AppPage,
