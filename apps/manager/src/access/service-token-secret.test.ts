@@ -34,7 +34,11 @@ describe("the service token's secret at rest", () => {
     expect(await openServiceTokenSecret("auth-secret-two-0123456789", T1, sealed)).toBeNull();
     expect(await openServiceTokenSecret(undefined, T1, sealed)).toBeNull();
     expect(await openServiceTokenSecret("", T1, sealed)).toBeNull();
-    expect(await openServiceTokenSecret(AUTH, T1, `${sealed.slice(0, -2)}AA`)).toBeNull();
+    // Flip a character whose bits are all ciphertext: writing "AA" over the end
+    // left a seal unchanged whenever it already ended in "AA".
+    const flipped = sealed.at(-6) === "A" ? "B" : "A";
+    const damaged = `${sealed.slice(0, -6)}${flipped}${sealed.slice(-5)}`;
+    expect(await openServiceTokenSecret(AUTH, T1, damaged)).toBeNull();
     expect(await openServiceTokenSecret(AUTH, T1, "v2.x.y")).toBeNull();
     expect(await openServiceTokenSecret(AUTH, T1, "garbage")).toBeNull();
   });
