@@ -1,3 +1,6 @@
+import { checkAddress } from "../install/address.ts";
+import type { Memory } from "../install/memory.ts";
+import { appInstallUrl, appParam, ownerSetupThenInstall } from "./app.ts";
 import { StorageRefused, startAuthorization } from "./authorize.ts";
 import type { OAuthSetup } from "./config.ts";
 import { handoffHash, newHandoffSecret } from "./handoff-secret.ts";
@@ -22,6 +25,10 @@ import { AuthorizationNeeded, type TokenKeeper } from "./tokens.ts";
  * address → review → deploy (the hosted installer's `/step`, repeated) →
  * handoff (the browser checks the new Appflare's proof, then sends it the
  * Cloudflare grant) → owner setup at the chosen address.
+ *
+ * Opened as `/deploy/?app=<slug>` (from an app's install page), the journey
+ * is the same, and owner setup ends at that app's install link in the new
+ * Appflare, whose address this site then remembers (see `app.ts`).
  *
  * Every call to Cloudflare, the hosted installer, the new Appflare, the
  * clock and the browser's address bar goes through {@link FlowDeps}, so the
@@ -233,7 +240,10 @@ export type DeployView =
   | {
       step: "opening";
       address: string;
+      /** Owner setup; when an app is carried, ending at its install link. */
       ownerSetupUrl: string;
+      /** Owner setup goes on to the app the visitor came to install. */
+      thenApp: boolean;
       notices: FinishedNote[];
       /**
        * `checking`: asking the address before opening it; `yes`: it answered
@@ -241,8 +251,11 @@ export type DeployView =
        */
       answering: "checking" | "yes" | "not-yet";
     }
-  /** Appflare already has its owner: nothing more to do here. */
-  | { step: "set-up"; address: string; notices: FinishedNote[] }
+  /**
+   * Appflare already has its owner: nothing more to do here but open it, at
+   * `open` (the app's install link when one is carried, else the address).
+   */
+  | { step: "set-up"; address: string; open: string; thenApp: boolean; notices: FinishedNote[] }
   | { step: "confirm-remove"; target: RemovalTarget; back: DeployView }
   | {
       step: "removing";
@@ -265,6 +278,10 @@ export interface FlowDeps {
   sleep: (ms: number) => Promise<void>;
   /** Leaves the page for `url` (Cloudflare's consent page, or owner setup). */
   navigate: (url: string) => void;
+  /** The query the page was opened with, for `?app=`. */
+  search: string;
+  /** This site's memory of the visitor's Appflare, as `/my/` keeps it. */
+  memory: Pick<Memory, "rememberManager" | "clearIntentFor">;
 }
 
 const GENERIC_ERROR = "Something went wrong. Try again.";
@@ -336,6 +353,8 @@ export class DeployFlow {
   private wake: (() => void) | null = null;
   /** When Check now was pressed, until the answer it asked for is shown. */
   private checkAskedAt: number | null = null;
+  /** The catalog app to open once Appflare is set up (`?app=`), or null. */
+  private app: string | null = null;
 
   constructor(private readonly deps: FlowDeps) {}
 
@@ -382,6 +401,7 @@ export class DeployFlow {
   /** The first step, once the page runs in the browser. */
   start(): void {
     const { setup, storage, tokens } = this.deps;
+    this.app = this.carriedApp();
     if (!setup.ok) {
       this.set({ step: "unavailable", reason: setup.reason });
       return;
@@ -397,6 +417,62 @@ export class DeployFlow {
       return;
     }
     void this.loadAccounts();
+  }
+
+  /**
+   * The app this visit installs Appflare for: `?app=`, and nothing else. A
+   * valid one is kept in this tab while Cloudflare's sign-in runs, so the
+   * callback can return here with it (`/deploy/?app=<slug>`), and a reload
+   * keeps it because it stays in the address. Any other visit, the plain
+   * page included, runs the plain journey and forgets an app kept before.
+   */
+  private carriedApp(): string | null {
+    const { storage } = this.deps;
+    const param = appParam(this.deps.search);
+    if (param.kind === "app") {
+      storage.app.write(param.slug);
+      return param.slug;
+    }
+    storage.app.clear();
+    return null;
+  }
+
+  /** Whether owner setup goes on to an app the visitor came to install. */
+  thenApp(): boolean {
+    return this.app !== null;
+  }
+
+  /**
+   * Once `address` has proved it is this installation, with an app carried:
+   * remember it as the visitor's Appflare, as `/my/` does, so this site's
+   * install links open there from now on. The app is on its way there, so
+   * the copy the install pages saved while the visitor got Appflare is done
+   * with, as when they open it themselves.
+   */
+  private rememberFor(address: string, slug: string): void {
+    const check = checkAddress(address);
+    if (check.ok) this.deps.memory.rememberManager(check.origin);
+    this.deps.memory.clearIntentFor({ kind: "app", slug });
+    this.deps.storage.app.clear();
+  }
+
+  /**
+   * The last step for an Appflare that already has its owner. `proved`: the
+   * address answered with this installation's proof, so it may be sent the
+   * app and remembered; otherwise it is only offered to open.
+   */
+  private setUp(address: string, notices: FinishedNote[], proved: boolean): DeployView {
+    // The journey ends here either way: the tab keeps no app for a later visit.
+    this.deps.storage.app.clear();
+    const install = proved && this.app !== null ? appInstallUrl(address, this.app) : null;
+    if (install !== null && this.app !== null) this.rememberFor(address, this.app);
+    return {
+      step: "set-up",
+      address,
+      open: install ?? address,
+      thenApp: install !== null,
+      notices,
+    };
   }
 
   /** Connect Cloudflare: off to Cloudflare's consent page. */
@@ -1009,7 +1085,7 @@ export class DeployFlow {
     }
     if (probe.state === "done") {
       this.deps.storage.installation.clear();
-      this.set({ step: "set-up", address, notices: active.notices });
+      this.set(this.setUp(address, active.notices, true));
       return;
     }
     let ownerSetupUrl: string;
@@ -1038,7 +1114,8 @@ export class DeployFlow {
       if (error instanceof AuthorizationNeeded) return this.toReconnect();
       if (error instanceof HandoffError && error.kind === "done") {
         this.deps.storage.installation.clear();
-        this.set({ step: "set-up", address, notices: active.notices });
+        // The address proved itself before the request went out.
+        this.set(this.setUp(address, active.notices, true));
         return;
       }
       const problem: HandoffProblem =
@@ -1055,8 +1132,18 @@ export class DeployFlow {
     }
     // Appflare refreshes the grant at once, so this tab's copy is spent.
     this.deps.tokens.forget();
+    this.deps.storage.app.clear();
     if (!this.current(generation)) return;
-    this.opening = { address, secret, ownerSetupUrl, notices: active.notices };
+    const app = this.app;
+    const thenInstall = app === null ? null : ownerSetupThenInstall(ownerSetupUrl, app);
+    if (thenInstall !== null && app !== null) this.rememberFor(address, app);
+    this.opening = {
+      address,
+      secret,
+      ownerSetupUrl: thenInstall ?? ownerSetupUrl,
+      thenApp: thenInstall !== null,
+      notices: active.notices,
+    };
     await this.openWhenAnswering(generation);
   }
 
@@ -1065,6 +1152,7 @@ export class DeployFlow {
     address: string;
     secret: string;
     ownerSetupUrl: string;
+    thenApp: boolean;
     notices: FinishedNote[];
   } | null = null;
 
@@ -1076,9 +1164,9 @@ export class DeployFlow {
   private async openWhenAnswering(generation: number): Promise<void> {
     const opening = this.opening;
     if (opening === null) return;
-    const { address, secret, ownerSetupUrl, notices } = opening;
+    const { address, secret, ownerSetupUrl, thenApp, notices } = opening;
     const show = (answering: "checking" | "yes" | "not-yet") =>
-      this.set({ step: "opening", address, ownerSetupUrl, notices, answering });
+      this.set({ step: "opening", address, ownerSetupUrl, thenApp, notices, answering });
     show("checking");
     const until = this.deps.now() + OPEN_TRY_FOR_MS;
     for (;;) {
@@ -1163,7 +1251,8 @@ export class DeployFlow {
         if (error instanceof InstallerApiError && error.code === "already_set_up") {
           const local = this.deps.storage.installation.read();
           if (local?.installationId === target.id) this.deps.storage.installation.clear();
-          this.set({ step: "set-up", address: target.address, notices: [] });
+          // The installer's word only: the address has not proved itself here.
+          this.set(this.setUp(target.address, [], false));
           return;
         }
         if (error instanceof InstallerApiError && error.retryable) {

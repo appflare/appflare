@@ -2,6 +2,7 @@ import { buttonVariants } from "@fumadocs/base-ui/components/ui/button";
 import { type FormEvent, type ReactNode, useId } from "react";
 import { PRIVATE_CLASS } from "../../analytics/analytics.ts";
 import { appsPath, installPath } from "../../catalog/urls.ts";
+import { deployPathFor } from "../../deploy/app.ts";
 import { EXAMPLE_ADDRESS } from "../../install/address.ts";
 import type { FlowAction, FlowState } from "../../install/flow.ts";
 import { type InstallApp, installPagePath, requestLabel } from "../../install/request.ts";
@@ -208,19 +209,26 @@ export function FlowPanel({ state, dispatch, apps, forwarding = true }: FlowPane
         </div>
       );
 
-    case "get":
+    case "get": {
+      // An app goes along to the deploy page, which opens it in the new Appflare.
+      // A repository does not: building one needs Workers Paid and sandbox
+      // builds turned on, which a brand-new Appflare does not have yet.
+      const deployPath = request?.kind === "app" ? deployPathFor(request.slug) : null;
       return (
         <div className="grid gap-4">
           <Title>Get Appflare</Title>
           <Text>
-            Appflare runs in your own Cloudflare account, on the free plan or Workers Paid. Install
-            it one of these ways:
+            Appflare runs in your own Cloudflare account, on the free plan or Workers Paid.{" "}
+            {deployPath === null
+              ? "Install it one of these ways:"
+              : `Install it from your browser and ${what} comes right after: once Appflare is set up, ${what} opens in it, ready to install.`}
           </Text>
           <ol className="m-0 grid list-none gap-4 p-0">
             <li className="grid gap-2">
               <InstallButton
                 placement={`${state.context.page}-get-appflare-install`}
                 className="justify-self-start"
+                {...(deployPath === null ? {} : { href: deployPath })}
               />
               <span className="text-fd-muted-foreground text-sm">
                 Sign in to Cloudflare and choose where it goes. Nothing to install on your computer.
@@ -249,8 +257,8 @@ export function FlowPanel({ state, dispatch, apps, forwarding = true }: FlowPane
             </li>
           </ol>
           <p className="leading-relaxed">
-            When it is ready, open <strong>Your account › Use this Appflare on appflare.dev</strong>{" "}
-            in your Appflare.{" "}
+            {deployPath === null ? "When it is ready" : "Installed another way? When it is ready"},
+            open <strong>Your account › Use this Appflare on appflare.dev</strong> in your Appflare.{" "}
             {view.intentSaved
               ? `This browser keeps ${what} for 7 days, so you can continue installing it then.`
               : `This browser does not let this site keep ${what}, so come back to this link then.`}
@@ -269,6 +277,7 @@ export function FlowPanel({ state, dispatch, apps, forwarding = true }: FlowPane
           </Actions>
         </div>
       );
+    }
 
     case "opening":
       return (

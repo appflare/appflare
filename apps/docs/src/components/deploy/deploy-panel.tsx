@@ -286,14 +286,28 @@ const NOTICES: Record<Notice, string> = {
     "This Cloudflare login does not reach the account where you started. Connect with that login, or choose an account to start again.",
 };
 
+/**
+ * What happens after setup when the page was opened from an app's install
+ * page (`?app=`). The page does not carry the catalog, so it cannot name
+ * the app; the visitor chose it a moment ago.
+ */
+export const THEN_APP_LINE =
+  "When Appflare is set up, the app you chose opens in it, ready to install.";
+
+function ThenApp({ show }: { show: boolean }) {
+  return show ? <Text variant="secondary">{THEN_APP_LINE}</Text> : null;
+}
+
 function Welcome({
   view,
   actions,
   examples,
+  thenApp,
 }: {
   view: Extract<DeployView, { step: "welcome" }>;
   actions: DeployActions;
   examples: ScopeExamples;
+  thenApp: boolean;
 }) {
   return (
     <DeployCard
@@ -307,6 +321,7 @@ function Welcome({
     >
       {view.notice !== null && <AlertBanner>{NOTICES[view.notice]}</AlertBanner>}
       {view.error !== null && <ErrorBanner>{view.error}</ErrorBanner>}
+      <ThenApp show={thenApp} />
       <BusyButton
         variant="primary"
         size="lg"
@@ -742,9 +757,11 @@ export function createdItems(plan: Pick<Plan, "workerName" | "hostname" | "addre
 function Review({
   view,
   actions,
+  thenApp,
 }: {
   view: Extract<DeployView, { step: "review" }>;
   actions: DeployActions;
+  thenApp: boolean;
 }) {
   const { plan } = view;
   const rows: Array<[string, ReactNode]> = [
@@ -791,6 +808,7 @@ function Review({
           </div>
         ))}
       </dl>
+      <ThenApp show={thenApp} />
       <More summary={`What gets created in ${plan.account.name}`}>
         <ul className="grid list-disc gap-1 pl-5">
           {createdItems(plan).map((item) => (
@@ -938,9 +956,11 @@ export function addressWaitLine(view: Extract<DeployView, { step: "deploying" }>
 function Deploying({
   view,
   actions,
+  thenApp,
 }: {
   view: Extract<DeployView, { step: "deploying" }>;
   actions: DeployActions;
+  thenApp: boolean;
 }) {
   const { active, progress, reconnecting, wait } = view;
   const label = reconnecting ? "Reconnecting…" : (progress?.step.label ?? "Starting…");
@@ -1012,6 +1032,7 @@ function Deploying({
           onOpen={() => actions.openAtWorkersDev()}
         />
       )}
+      <ThenApp show={thenApp} />
       <Text variant="secondary" size="sm">
         {active.remembered
           ? "You can close this tab. Come back to this page in this browser to continue."
@@ -1222,6 +1243,7 @@ function Opening({
       description={
         <>
           At <Strong>{host}</Strong>, where you create your owner account.
+          {view.thenApp && " Then the app you chose opens, ready to install."}
         </>
       }
     >
@@ -1272,17 +1294,18 @@ function SetUp({ view }: { view: Extract<DeployView, { step: "set-up" }> }) {
       title="This Appflare is already set up"
       description={
         <>
-          It has its owner. Sign in at <Strong>{hostOf(view.address)}</Strong>.
+          It has its owner. Sign in at <Strong>{hostOf(view.address)}</Strong>
+          {view.thenApp ? ", and the app you chose opens, ready to install." : "."}
         </>
       }
     >
       <LinkButton
-        href={view.address}
+        href={view.open}
         variant="primary"
         className={`${WIDE} ${TOUCH}`}
         rel="noreferrer"
       >
-        Open Appflare
+        {view.thenApp ? "Open the app in Appflare" : "Open Appflare"}
       </LinkButton>
       <Notices notices={view.notices} />
     </DeployCard>
@@ -1469,6 +1492,8 @@ export interface DeployPanelProps {
   accountStep?: boolean;
   /** Example apps for the permissions' reasons, from the catalog the site is built with. */
   examples?: ScopeExamples;
+  /** The page was opened from an app's install page: setup ends at that app. */
+  thenApp?: boolean;
 }
 
 /** The current step, in its card. */
@@ -1478,23 +1503,30 @@ export function DeployPanel({
   canGoBack,
   accountStep = false,
   examples = {},
+  thenApp = false,
 }: DeployPanelProps) {
   useFocusOnStepChange(view.step);
   return (
     <JourneyContext.Provider value={{ accountStep }}>
-      <Step view={view} actions={actions} canGoBack={canGoBack} examples={examples} />
+      <Step
+        view={view}
+        actions={actions}
+        canGoBack={canGoBack}
+        examples={examples}
+        thenApp={thenApp}
+      />
     </JourneyContext.Provider>
   );
 }
 
-function Step({ view, actions, canGoBack, examples = {} }: DeployPanelProps) {
+function Step({ view, actions, canGoBack, examples = {}, thenApp = false }: DeployPanelProps) {
   switch (view.step) {
     case "loading":
       return <Loading view={view} />;
     case "unavailable":
       return <Unavailable view={view} />;
     case "welcome":
-      return <Welcome view={view} actions={actions} examples={examples} />;
+      return <Welcome view={view} actions={actions} examples={examples} thenApp={thenApp} />;
     case "working":
       return (
         <DeployCard meter={meterOf(view)} title="Connected to Cloudflare">
@@ -1510,9 +1542,9 @@ function Step({ view, actions, canGoBack, examples = {} }: DeployPanelProps) {
     case "address":
       return <AddressStep view={view} actions={actions} canGoBack={canGoBack} />;
     case "review":
-      return <Review view={view} actions={actions} />;
+      return <Review view={view} actions={actions} thenApp={thenApp} />;
     case "deploying":
-      return <Deploying view={view} actions={actions} />;
+      return <Deploying view={view} actions={actions} thenApp={thenApp} />;
     case "deploy-failed":
       return <DeployFailed view={view} actions={actions} />;
     case "handing-off":

@@ -1,5 +1,6 @@
 import { MANAGER_OAUTH_SCOPES } from "@appflare/cf-api/oauth";
 import { describe, expect, it, vi } from "vitest";
+import { INTENT_KEY, MANAGER_KEY, openMemory } from "../install/memory.ts";
 import { fakeStore } from "../install/test-store.ts";
 import type { OAuthSetup } from "./config.ts";
 import {
@@ -12,7 +13,13 @@ import {
 } from "./flow.ts";
 import { installerApi, type StepAnswer } from "./installer-api.ts";
 import { managerApi } from "./manager-api.ts";
-import { AUTHORIZATION_KEY, deployStorage, GRANT_KEY, INSTALLATION_KEY } from "./storage.ts";
+import {
+  APP_KEY,
+  AUTHORIZATION_KEY,
+  deployStorage,
+  GRANT_KEY,
+  INSTALLATION_KEY,
+} from "./storage.ts";
 import {
   ACCOUNT_ID,
   CLIENT_ID,
@@ -33,11 +40,16 @@ interface Options {
   /** Pauses for which this says true never end (a deploy that waits for good). */
   block?: (ms: number, count: number) => boolean;
   onPause?: (count: number) => void;
+  /** The query the page is opened with. */
+  search?: string;
+  /** This tab's sessionStorage and the site's localStorage, to carry over from an earlier page. */
+  session?: ReturnType<typeof fakeStore>;
+  local?: ReturnType<typeof fakeStore>;
 }
 
 function harness(world = new FakeWorld(), options: Options = {}) {
-  const session = fakeStore();
-  const local = fakeStore();
+  const session = options.session ?? fakeStore();
+  const local = options.local ?? fakeStore();
   const storage = deployStorage(
     () => session,
     () => local,
@@ -77,6 +89,8 @@ function harness(world = new FakeWorld(), options: Options = {}) {
       }
     },
     navigate: (url) => navigations.push(url),
+    search: options.search ?? "",
+    memory: openMemory(() => local),
   });
   return { world, flow, storage, session, local, tokens, navigations, now };
 }
@@ -191,6 +205,8 @@ describe("arrival", () => {
       now: () => START,
       sleep: async () => {},
       navigate: (url) => navigations.push(url),
+      search: "",
+      memory: openMemory(() => fakeStore({}, true)),
     });
     flow.start();
     await flow.connect();
@@ -949,5 +965,169 @@ describe("unfinished installations", () => {
     h.world.accounts = [{ id: OTHER_ACCOUNT_ID, name: "Side account", workersDevSubdomain: null }];
     await h.flow.loadAccounts();
     expect(view(h.flow, "account").notice).toBe("account-unreachable");
+  });
+});
+
+describe("an app carried from its install page (?app=)", () => {
+  const SETUP_THEN_APP =
+    "https://appflare.example.com/setup?returnTo=%2Finstall%2Fopen-seo#claim=claim0123456789abcdef";
+
+  it("keeps the app in this tab across Cloudflare's sign-in, then ends owner setup at the app's install link", async () => {
+    const world = new FakeWorld();
+    const session = fakeStore();
+    const intent = { kind: "app", slug: "open-seo", savedAt: new Date(START).toISOString() };
+    const local = fakeStore({ [INTENT_KEY]: JSON.stringify(intent) });
+
+    const before = harness(world, { signedIn: false, search: "?app=open-seo", session, local });
+    before.flow.start();
+    expect(before.flow.thenApp()).toBe(true);
+    await before.flow.connect();
+    const [consent] = before.navigations;
+    expect(consent).toMatch(/^https:\/\/dash\.cloudflare\.com\/oauth2\/auth\?/);
+    // Cloudflare is not told which app; the tab keeps it, and only the tab.
+    expect(consent).not.toContain("open-seo");
+    expect(session.data.get(APP_KEY)).toBe('"open-seo"');
+    expect(local.data.has(APP_KEY)).toBe(false);
+
+    // The callback finishes the sign-in and returns with the app it found in the tab.
+    session.data.delete(AUTHORIZATION_KEY);
+    const after = harness(world, { search: "?app=open-seo", session, local });
+    after.flow.start();
+    expect(after.flow.thenApp()).toBe(true);
+    await toReview(after);
+    await after.flow.deploy();
+
+    expect(after.navigations).toEqual([SETUP_THEN_APP]);
+    // The address Appflare itself sends an install link to before setup:
+    // `/setup?returnTo=/install/<slug>`, the claim still in the fragment.
+    const target = new URL(SETUP_THEN_APP);
+    expect(target.pathname).toBe("/setup");
+    expect([...target.searchParams.keys()]).toEqual(["returnTo"]);
+    expect(target.searchParams.get("returnTo")).toBe("/install/open-seo");
+    expect(view(after.flow, "opening")).toMatchObject({
+      ownerSetupUrl: SETUP_THEN_APP,
+      thenApp: true,
+    });
+    // Remembered as /my/ remembers it; the install pages' saved copy is done with.
+    expect(local.data.get(MANAGER_KEY)).toBe("https://appflare.example.com");
+    expect(local.data.has(INTENT_KEY)).toBe(false);
+    expect(session.data.has(APP_KEY)).toBe(false);
+    // localStorage: the installation record and the Appflare's address, nothing else.
+    expect([...local.data.keys()].sort()).toEqual([MANAGER_KEY, INSTALLATION_KEY].sort());
+    for (const value of local.data.values()) expect(value).not.toMatch(/access-\d|refresh-\d/);
+    // Nothing about the app reached the installer or the new Appflare's API.
+    for (const request of world.requests) expect(request.url).not.toContain("open-seo");
+    expectCleanUrls(after);
+  });
+
+  it("opens the app's install link in an Appflare that already has its owner", async () => {
+    const world = new FakeWorld();
+    const original = world.addManager.bind(world);
+    world.addManager = (address, hash) => {
+      const created = original(address, hash);
+      created.state = "done";
+      return created;
+    };
+    const h = harness(world, { search: "?app=open-seo" });
+    h.flow.start();
+    await toReview(h);
+    await h.flow.deploy();
+    expect(view(h.flow, "set-up")).toMatchObject({
+      address: "https://appflare.example.com",
+      open: "https://appflare.example.com/install/open-seo",
+      thenApp: true,
+    });
+    expect(h.local.data.get(MANAGER_KEY)).toBe("https://appflare.example.com");
+  });
+
+  it("runs the plain journey, remembering nothing, without an app", async () => {
+    const h = harness();
+    h.flow.start();
+    expect(h.flow.thenApp()).toBe(false);
+    await toReview(h);
+    await h.flow.deploy();
+    expect(h.navigations).toEqual([
+      "https://appflare.example.com/setup#claim=claim0123456789abcdef",
+    ]);
+    expect(view(h.flow, "opening").thenApp).toBe(false);
+    expect(h.local.data.has(MANAGER_KEY)).toBe(false);
+    expectLocalStorageRules(h);
+  });
+
+  it.each([
+    "?app=Open-SEO",
+    "?app=",
+    "?app=open-seo&app=cut",
+    "?app=-open",
+    "?app=open%2Fseo",
+    "?app=..%2Fsettings",
+    "?app=open-seo%23x",
+    `?app=${"a".repeat(64)}`,
+  ])("ignores %s and forgets an app kept before", async (search) => {
+    const session = fakeStore({ [APP_KEY]: '"cut"' });
+    const h = harness(undefined, { search, session });
+    h.flow.start();
+    expect(h.flow.thenApp()).toBe(false);
+    expect(session.data.has(APP_KEY)).toBe(false);
+    await toReview(h);
+    await h.flow.deploy();
+    expect(h.navigations).toEqual([
+      "https://appflare.example.com/setup#claim=claim0123456789abcdef",
+    ]);
+  });
+
+  it.each([
+    ["signed out", false],
+    ["still holding the Cloudflare connection", true],
+  ])("drops a kept app on a later visit to the plain page, %s", async (_name, signedIn) => {
+    const session = fakeStore({ [APP_KEY]: '"open-seo"' });
+    const h = harness(undefined, { signedIn, session });
+    h.flow.start();
+    expect(h.flow.thenApp()).toBe(false);
+    expect(session.data.has(APP_KEY)).toBe(false);
+    if (!signedIn) return;
+    await toReview(h);
+    await h.flow.deploy();
+    expect(h.navigations).toEqual([
+      "https://appflare.example.com/setup#claim=claim0123456789abcdef",
+    ]);
+    expect(h.local.data.has(MANAGER_KEY)).toBe(false);
+  });
+
+  it("forgets the app, opening nothing of it, when the installer says Appflare is set up already", async () => {
+    const world = new FakeWorld();
+    world.steps = [
+      { status: "failed", step: { id: "worker", label: "Upload Appflare" }, done: 2, total: 4 },
+    ];
+    const inner = world.fetch;
+    world.fetch = async (input, init) =>
+      String(input).endsWith("/cleanup")
+        ? Response.json(
+            { error: { code: "already_set_up", message: "Set up already." } },
+            { status: 409 },
+          )
+        : inner(input, init);
+    const h = harness(world, { search: "?app=open-seo" });
+    h.flow.start();
+    await toReview(h);
+    await h.flow.deploy();
+    const failed = view(h.flow, "deploy-failed");
+    expect(h.session.data.has(APP_KEY)).toBe(true);
+    h.flow.requestRemove(failed.active.local.installationId);
+    await h.flow.confirmRemove();
+    // Only the installer's word: the address proved nothing, so it is neither sent the app nor remembered.
+    expect(view(h.flow, "set-up")).toMatchObject({
+      open: "https://appflare.example.com",
+      thenApp: false,
+    });
+    expect(h.session.data.has(APP_KEY)).toBe(false);
+    expect(h.local.data.has(MANAGER_KEY)).toBe(false);
+  });
+
+  it("does not trust a kept value that is not a slug", () => {
+    const session = fakeStore({ [APP_KEY]: '"../settings"' });
+    const h = harness(undefined, { session });
+    h.flow.start();
+    expect(h.flow.thenApp()).toBe(false);
   });
 });

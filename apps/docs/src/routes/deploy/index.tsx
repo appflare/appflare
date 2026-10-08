@@ -14,10 +14,11 @@ import deployCss from "../../styles/deploy.css?url";
  * `/deploy/`: installs Appflare into the visitor's Cloudflare account from
  * the browser. Prerendered in its loading step; everything else happens in
  * the browser (`deploy/flow.ts`). Drawn with Kumo, like Appflare itself, from
- * a stylesheet only the deploy pages load.
+ * a stylesheet only the deploy pages load. `?app=<slug>` (from an app's
+ * install page) makes owner setup end at that app (`deploy/app.ts`).
  */
 export const Route = createFileRoute("/deploy/")({
-  beforeLoad: () => requireDeployDocument("/deploy/"),
+  beforeLoad: ({ location }) => requireDeployDocument("/deploy/", location.searchStr),
   head: () => {
     const head = pageHead({
       title: `Install Appflare | ${siteName}`,
@@ -46,6 +47,7 @@ function DeployPage() {
           actions={flow}
           canGoBack={flow.canGoBack()}
           accountStep={flow.choosesAccount()}
+          thenApp={flow.thenApp()}
           examples={examples}
         />
       )}

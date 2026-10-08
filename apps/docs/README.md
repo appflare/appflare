@@ -45,10 +45,21 @@ which reports the outcome. Without that confirmation anyone could start
 Appflare's genuine consent with their own address and collect the code. The logic
 is in `src/deploy/`, the steps' drawing in `src/components/deploy/`.
 
+- **An app to install after.** An app's install page sends a visitor without an
+  Appflare to `/deploy/?app=<slug>` (`src/deploy/app.ts`). The slug must follow the
+  catalog's slug rule, or the plain journey runs. The tab keeps it in
+  `sessionStorage` across Cloudflare's sign-in, and the callback returns to
+  `/deploy/?app=<slug>`; a visit without `?app=` forgets it. Once the new Appflare has its connection, owner setup opens as
+  `<address>/setup?returnTo=/install/<slug>#claim=…`, the return path Appflare
+  itself gives an install link opened before setup, so Finish opens the app's
+  install link. The address is then remembered as `/my/` remembers it
+  (`appflare.manager` in `localStorage`). The page cannot name the app: it does
+  not load the catalog.
 - **Tokens.** The access and refresh token live in the tab's memory and
   `sessionStorage` only. The refresh token goes to the new Appflare and nowhere
-  else; the installer gets the access token. `localStorage` keeps only the
-  unfinished installation (`{ installationId, key, handoffSecret, accountId }`).
+  else; the installer gets the access token. `localStorage` keeps the unfinished
+  installation (`{ installationId, key, handoffSecret, accountId }`) and, after
+  a journey with an app, the new Appflare's address; never a token.
 - **No analytics.** PostHog never loads in a page opened at `/deploy/…`, and the
   router reloads the page rather than moving there from another page.
 - **Headers.** After prerendering, the build hashes each deploy page's inline
