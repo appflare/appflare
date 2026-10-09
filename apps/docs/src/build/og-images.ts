@@ -1,6 +1,7 @@
 import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import type { Plugin } from "vite";
+import { ogImagePath } from "../lib/shared.ts";
 
 /**
  * The same-site OpenGraph image paths an HTML document references, such as
@@ -45,12 +46,11 @@ export function ogImages({ siteUrl }: { siteUrl: string }): Plugin {
         if (!client) throw new Error('Vite\'s "client" environment is missing');
         const outDir = resolve(viteBuilder.config.root, client.config.build.outDir);
 
-        const paths = new Set<string>();
+        // Existing shared links may still reference the previous default image.
+        const paths = new Set<string>([ogImagePath([])]);
         for (const file of await htmlFiles(outDir)) {
           for (const path of ogImagePaths(await readFile(file, "utf8"), siteUrl)) paths.add(path);
         }
-        if (paths.size === 0) return;
-
         const { preview } = await import("vite");
         const server = await preview({
           configFile: viteBuilder.config.configFile,

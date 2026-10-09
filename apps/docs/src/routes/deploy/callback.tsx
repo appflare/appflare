@@ -10,7 +10,7 @@ import { requireDeployDocument } from "../../deploy/route-guard.ts";
 import { browserDeployStorage } from "../../deploy/storage.ts";
 import { TokenKeeper } from "../../deploy/tokens.ts";
 import { noindexPageHead } from "../../lib/meta.ts";
-import { ogImagePath, SITE_URL, siteName } from "../../lib/shared.ts";
+import { SITE_URL, siteName, siteOgImagePath } from "../../lib/shared.ts";
 import deployCss from "../../styles/deploy.css?url";
 
 /**
@@ -28,7 +28,7 @@ export const Route = createFileRoute("/deploy/callback")({
       title: `Connecting Cloudflare | ${siteName}`,
       description: "Finishing the Cloudflare sign-in for Appflare.",
       url: `${SITE_URL}${CALLBACK_PATH}`,
-      image: `${SITE_URL}${ogImagePath([])}`,
+      image: `${SITE_URL}${siteOgImagePath}`,
     });
     return { ...head, links: [...head.links, { rel: "stylesheet", href: deployCss }] };
   },

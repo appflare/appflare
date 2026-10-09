@@ -9,8 +9,8 @@ import type { OgPicture } from "./picture.ts";
 /**
  * Which card each OpenGraph image path draws. The paths follow the pages:
  *
- * - `/og/image.png`: the site's own card, for the front page and the pages
- *   without a card of their own;
+ * - `/og/image.png`: the previous site card, kept for existing shared links;
+ *   current pages use the static launch artwork (`siteOgImagePath`);
  * - `/og/<page>/image.png`: a docs page;
  * - `/og/apps/image.png`, `/og/apps/<slug>/image.png`,
  *   `/og/categories/<id>/image.png`, `/og/install/<slug>/image.png`: the

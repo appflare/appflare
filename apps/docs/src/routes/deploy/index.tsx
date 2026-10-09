@@ -7,7 +7,7 @@ import { useDeployFlow } from "../../components/deploy/use-deploy-flow.ts";
 import { DEPLOY_PATH } from "../../deploy/config.ts";
 import { requireDeployDocument } from "../../deploy/route-guard.ts";
 import { pageHead } from "../../lib/meta.ts";
-import { ogImagePath, SITE_URL, siteName } from "../../lib/shared.ts";
+import { SITE_URL, siteName, siteOgImagePath } from "../../lib/shared.ts";
 import deployCss from "../../styles/deploy.css?url";
 
 /**
@@ -26,7 +26,7 @@ export const Route = createFileRoute("/deploy/")({
         "Install Appflare into your own Cloudflare account from your browser: connect Cloudflare, choose the account and address, deploy.",
       url: `${SITE_URL}${DEPLOY_PATH}`,
       // No card of its own: the site's card.
-      image: `${SITE_URL}${ogImagePath([])}`,
+      image: `${SITE_URL}${siteOgImagePath}`,
     });
     return { ...head, links: [...head.links, { rel: "stylesheet", href: deployCss }] };
   },
