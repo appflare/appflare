@@ -15,6 +15,9 @@ export { SITE_URL } from "@appflare/schema/links";
 
 export const siteName = "Appflare";
 
+/** The approved launch artwork, exported as a 1200x630 PNG for sharing the site. */
+export const siteOgImagePath = "/og/appflare-launch.png";
+
 export const siteDescription =
   "A self-hosted app manager for Cloudflare. Install, update, and remove Cloudflare-native apps in your own account.";
 

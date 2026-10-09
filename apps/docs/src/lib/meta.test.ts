@@ -64,7 +64,7 @@ describe("the pages' OpenGraph tags", () => {
   it("give the front page the site's card", async () => {
     const meta = await headOf(FrontRoute, {});
     expect(tag(meta, "og:url")).toBe(`${SITE_URL}/`);
-    expectCard(meta, `${SITE_URL}/og/image.png`);
+    expectCard(meta, `${SITE_URL}/og/appflare-launch.png`);
   });
 
   it("give a docs page its own card and address", async () => {

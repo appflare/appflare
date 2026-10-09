@@ -2,7 +2,7 @@ import { createFileRoute } from "@tanstack/react-router";
 import { LandingPage } from "../components/landing/landing-page.tsx";
 import { landingData } from "../lib/landing.ts";
 import { pageHead } from "../lib/meta.ts";
-import { ogImagePath, SITE_URL, siteDescription, siteName } from "../lib/shared.ts";
+import { SITE_URL, siteDescription, siteName, siteOgImagePath } from "../lib/shared.ts";
 import { siteStructuredData } from "../lib/structured-data.ts";
 
 /**
@@ -19,7 +19,7 @@ export const Route = createFileRoute("/")({
       title: `${siteName}: the app manager for your own Cloudflare account`,
       description: siteDescription,
       url: `${SITE_URL}/`,
-      image: `${SITE_URL}${ogImagePath([])}`,
+      image: `${SITE_URL}${siteOgImagePath}`,
       markdownUrl: "/llms.txt",
       structuredData: siteStructuredData(),
     }),
