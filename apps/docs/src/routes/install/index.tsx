@@ -10,7 +10,7 @@ import { useFlow } from "../../components/install/use-flow.ts";
 import { startInstall } from "../../install/flow.ts";
 import { catalogAppForRepo, repoRequestFromSearch } from "../../install/request.ts";
 import { noindexPageHead } from "../../lib/meta.ts";
-import { ogImagePath, SITE_URL, siteName } from "../../lib/shared.ts";
+import { SITE_URL, siteName, siteOgImagePath } from "../../lib/shared.ts";
 
 /**
  * `/install/?repo=<owner>/<repo>`: an Install button for a GitHub
@@ -30,7 +30,7 @@ export const Route = createFileRoute("/install/")({
       description: "Open a GitHub repository in your own Appflare, ready to build and install.",
       url: `${SITE_URL}${installRepoPath}`,
       // No card of its own: the site's card.
-      image: `${SITE_URL}${ogImagePath([])}`,
+      image: `${SITE_URL}${siteOgImagePath}`,
     }),
   component: InstallRepositoryPage,
 });

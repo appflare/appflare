@@ -5,7 +5,7 @@ import { InstallShell } from "../../components/install/install-shell.tsx";
 import { useFlow } from "../../components/install/use-flow.ts";
 import { startMy } from "../../install/flow.ts";
 import { noindexPageHead } from "../../lib/meta.ts";
-import { ogImagePath, SITE_URL, siteName } from "../../lib/shared.ts";
+import { SITE_URL, siteName, siteOgImagePath } from "../../lib/shared.ts";
 
 /**
  * `/my/`: which Appflare this site's Install buttons open. An Appflare
@@ -25,7 +25,7 @@ export const Route = createFileRoute("/my/")({
       description: "Choose the Appflare that Install buttons on this site open.",
       url: `${SITE_URL}${myPath}`,
       // No card of its own: the site's card.
-      image: `${SITE_URL}${ogImagePath([])}`,
+      image: `${SITE_URL}${siteOgImagePath}`,
     }),
   component: MyPage,
 });
