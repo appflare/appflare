@@ -2,6 +2,15 @@
 @import "@fumadocs/base-ui/css/neutral.css";
 @import "@fumadocs/base-ui/css/preset.css";
 
+/*
+ * Muted text in light mode, a shade darker than Fumadocs' neutral (45.1%), which
+ * falls short of WCAG AA (4.5:1) on the page and card backgrounds. 40% gives
+ * about 5:1 on both. Dark mode keeps Fumadocs' own, which already passes.
+ */
+@theme {
+  --color-fd-muted-foreground: hsl(0, 0%, 40%);
+}
+
 /* The scrollbar's space is always reserved, so pages do not shift sideways. */
 html {
   scrollbar-gutter: stable;

@@ -11,6 +11,12 @@ declare module "virtual:appflare-scope-examples" {
   export default examples;
 }
 
+declare module "virtual:appflare-icon-copies" {
+  /** The site's own copies of the app icons (`icon-copies.ts`), by the icon's catalog address. */
+  const copies: import("./icon-copies.ts").IconCopies;
+  export default copies;
+}
+
 declare module "virtual:appflare-catalog-og-icons" {
   /** Data URIs of app icons, by slug. */
   const icons: Record<string, string>;

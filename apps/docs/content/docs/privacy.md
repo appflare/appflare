@@ -4,7 +4,8 @@ description: What appflare.dev records about visits to its pages, and what Appfl
 ---
 
 appflare.dev uses PostHog analytics, including session recordings, heatmaps, error reports
-and what visitors search for, to learn how its pages are used, and keeps that data in PostHog's EU region. The
+and what visitors search for, to learn how its pages are used, and keeps that data in PostHog's EU region. Your browser
+sends it through the site's own address, `swgo.appflare.dev`, which passes it on to PostHog. The
 site has no accounts, and the address of your own Appflare stays in your browser: it is
 never recorded or sent.
 

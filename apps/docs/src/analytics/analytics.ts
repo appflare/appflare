@@ -31,8 +31,15 @@ import { SITE_URL } from "../lib/shared.ts";
 /** The PostHog project's key. It is public by design: every page that reports carries it. */
 export const POSTHOG_KEY = "phc_vvhuhY8yQFBuE5pGUe7rmrasqxaHb3MibmUNyQdSK8qW";
 
-/** PostHog's EU region. Its scripts load from the matching asset host, eu-assets.i.posthog.com. */
-export const POSTHOG_HOST = "https://eu.i.posthog.com";
+/**
+ * The site's own reverse proxy to PostHog's EU region. Events and PostHog's
+ * scripts both go through it, so content blockers that drop requests to
+ * posthog.com do not drop them.
+ */
+export const POSTHOG_HOST = "https://swgo.appflare.dev";
+
+/** PostHog's app for the EU region, where the toolbar's links lead. */
+export const POSTHOG_UI_HOST = "https://eu.posthog.com";
 
 /**
  * The class that keeps an element out of recordings (drawn as an empty box),
@@ -92,6 +99,7 @@ export type SiteEvent = keyof SiteEvents;
 /** How PostHog is set up here. Exported for the tests. */
 export const posthogOptions: Partial<PostHogConfig> = {
   api_host: POSTHOG_HOST,
+  ui_host: POSTHOG_UI_HOST,
   defaults: "2026-08-30",
   autocapture: true,
   // Page views come from the router (see `watchPageviews`), one per page.
@@ -101,6 +109,8 @@ export const posthogOptions: Partial<PostHogConfig> = {
   capture_heatmaps: true,
   capture_dead_clicks: true,
   capture_exceptions: true,
+  // The site runs no surveys, so their script (about 33 KB) is never loaded.
+  disable_surveys: true,
   disable_session_recording: false,
   session_recording: {
     // Nothing on the site is personal but the Appflare address, which is blocked by class.

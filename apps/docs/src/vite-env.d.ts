@@ -5,3 +5,9 @@ interface ImportMetaEnv {
   /** That client's callback, on the origin the page is served from. */
   readonly VITE_APPFLARE_OAUTH_CALLBACK_URL?: string;
 }
+
+/** A `srcset` of resized copies of an image, made by vite-imagetools during the build. */
+declare module "*&as=srcset" {
+  const srcset: string;
+  export default srcset;
+}

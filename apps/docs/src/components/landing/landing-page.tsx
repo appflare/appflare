@@ -1,9 +1,20 @@
 import { HomeLayout } from "@fumadocs/base-ui/layouts/home";
 import Link from "fumadocs-core/link";
 import type { ReactNode } from "react";
+import catalogAppSrcSet from "../../../public/screenshots/catalog-app.png?w=640;960;1280&format=webp&as=srcset";
+import catalogPhoneSrcSet from "../../../public/screenshots/catalog-phone.png?w=384;780&format=webp&as=srcset";
+import jobsLogSrcSet from "../../../public/screenshots/jobs-install-log.png?w=640;960;1280&format=webp&as=srcset";
+import landingHomeSrcSet from "../../../public/screenshots/landing-home.png?w=640;800;1024;1280;1920&format=webp&as=srcset";
+import appflareUpdatesSrcSet from "../../../public/screenshots/settings-appflare-updates.png?w=640;960;1280&format=webp&as=srcset";
 import { appPath, appsPath } from "../../catalog/urls.ts";
 import { catalogRepositoryUrl, type LandingData, landingLinks } from "../../lib/landing.ts";
-import { appsLink, baseOptions, DOCS_HOME, docsLink } from "../../lib/layout.shared.tsx";
+import {
+  appsLink,
+  baseOptions,
+  DOCS_HOME,
+  docsLink,
+  githubLink,
+} from "../../lib/layout.shared.tsx";
 import { repositoryUrl } from "../../lib/shared.ts";
 import { AppIcon } from "../catalog/tiles.tsx";
 import { ClickHere } from "./click-here.tsx";
@@ -18,7 +29,7 @@ const BUTTON_ROW = "flex w-full max-w-xs flex-col gap-3 sm:w-auto sm:max-w-none 
 /** The front page, `/`: the site's top bar over {@link LandingContent}. */
 export function LandingPage({ data }: { data: LandingData }) {
   return (
-    <HomeLayout {...baseOptions()} links={[docsLink, appsLink]}>
+    <HomeLayout {...baseOptions()} links={[docsLink, appsLink, githubLink]}>
       <LandingContent data={data} />
     </HomeLayout>
   );
@@ -122,6 +133,9 @@ function Hero({ data }: { data: LandingData }) {
       <div className="relative mx-auto mt-14 max-w-6xl px-4 md:mt-20 md:px-6 lg:pr-32">
         <Shot
           src="/screenshots/landing-home.png"
+          srcSet={landingHomeSrcSet}
+          // The column's width: 1000px once the page is 72rem wide, else the viewport less its padding.
+          sizes="(min-width: 1152px) 1000px, (min-width: 1024px) calc(100vw - 152px), (min-width: 768px) calc(100vw - 48px), calc(100vw - 32px)"
           alt="Appflare's Home: the sidebar with the apps installed, two updates that need attention, and six installed apps"
           width={2880}
           height={1800}
@@ -129,6 +143,8 @@ function Hero({ data }: { data: LandingData }) {
         />
         <img
           src="/screenshots/catalog-phone.png"
+          srcSet={catalogPhoneSrcSet}
+          sizes="192px"
           alt="The catalog on a phone"
           width={780}
           height={1540}
@@ -161,7 +177,8 @@ function SectionHeading({
 }) {
   return (
     <div className="grid max-w-2xl gap-3">
-      <p className="m-0 font-medium text-[#c75400] text-sm dark:text-[#ff8a3d]">{eyebrow}</p>
+      {/* A darker orange than the brand's, so the small label reads at 5:1 on the light backgrounds. */}
+      <p className="m-0 font-medium text-[#ad4900] text-sm dark:text-[#ff8a3d]">{eyebrow}</p>
       <h2 className="m-0 text-balance font-semibold text-3xl tracking-tight md:text-4xl">
         {title}
       </h2>
@@ -305,6 +322,8 @@ function Features() {
         </div>
         <Shot
           src="/screenshots/settings-appflare-updates.png"
+          srcSet={appflareUpdatesSrcSet}
+          sizes="(min-width: 1152px) 590px, (min-width: 768px) 55vw, calc(100vw - 80px)"
           alt="Settings, Updates: Automatically update apps, and Automatically update Appflare under Appflare version"
           width={2352}
           height={1700}
@@ -319,6 +338,7 @@ function Features() {
           text="Installs, updates and rollbacks run as durable Workflow jobs. The log shows each step and ends with a health check."
           href={landingLinks.health}
           shot="/screenshots/jobs-install-log.png"
+          srcSet={jobsLogSrcSet}
           alt="An install job that verified the signed release, created a KV namespace, uploaded the Worker, and passed its health check"
           height={1354}
         />
@@ -327,6 +347,7 @@ function Features() {
           text="Stars, plan, license, size, screenshots and what the app needs from your account, before you install it."
           href={landingLinks.installApps}
           shot="/screenshots/catalog-app.png"
+          srcSet={catalogAppSrcSet}
           alt="EmDash's catalog page with its stars, plan, license, version and screenshots"
           height={1580}
         />
@@ -364,6 +385,7 @@ function BigFeature({
   text,
   href,
   shot,
+  srcSet,
   alt,
   height,
 }: {
@@ -371,6 +393,7 @@ function BigFeature({
   text: string;
   href: string;
   shot: string;
+  srcSet: string;
   alt: string;
   height: number;
 }) {
@@ -385,6 +408,9 @@ function BigFeature({
       </div>
       <Shot
         src={shot}
+        srcSet={srcSet}
+        // Half the 72rem column on a wide screen, the whole width on a phone, less the card's padding.
+        sizes="(min-width: 1152px) 496px, (min-width: 768px) calc(50vw - 80px), calc(100vw - 80px)"
         alt={alt}
         width={2352}
         height={height}

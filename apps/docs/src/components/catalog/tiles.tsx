@@ -1,8 +1,10 @@
+import iconCopies from "virtual:appflare-icon-copies";
 import { formatCount, PLAN_WORDS } from "@appflare/schema/catalog-display";
 import { ScrollArea } from "@cloudflare/kumo/primitives/scroll-area";
 import { CaretLeftIcon, CaretRightIcon } from "@phosphor-icons/react";
 import Link from "fumadocs-core/link";
 import { type ReactNode, type RefObject, useEffect, useId, useRef, useState } from "react";
+import { iconImage } from "../../catalog/icon-copies.ts";
 import type { SiteApp, SiteCategory, SiteFeatured } from "../../catalog/site-catalog.ts";
 import type { StorefrontRow } from "../../catalog/storefront.ts";
 import { appPath, categoryPath } from "../../catalog/urls.ts";
@@ -10,9 +12,10 @@ import { appPath, categoryPath } from "../../catalog/urls.ts";
 /**
  * The pieces of the apps page, laid out as Appflare's own catalog page: apps
  * as vertical tiles (icon, name, pitch, plan and stars), in rows that page
- * sideways with arrows or in a grid, and the categories as cards. Images load from the
- * catalog's own site, lazily and at fixed sizes, so nothing moves as they
- * arrive.
+ * sideways with arrows or in a grid, and the categories as cards. Images load
+ * lazily and at fixed sizes, so nothing moves as they arrive: icons from the
+ * site's own copies when the build made them (`catalog/icon-copies.ts`), other
+ * images from the catalog's own site.
  */
 
 export function StarIcon({ className }: { className?: string }) {
@@ -56,7 +59,7 @@ export function AppIcon({
   }
   return (
     <img
-      src={src}
+      {...iconImage(src, size, iconCopies)}
       alt=""
       width={size}
       height={size}

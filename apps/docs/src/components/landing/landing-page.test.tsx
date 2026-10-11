@@ -52,6 +52,19 @@ describe("the front page", () => {
     );
   });
 
+  it("serves each screenshot as smaller WebP copies, the hero first of all", () => {
+    const shots = [...html.matchAll(/<img[^>]*src="\/screenshots\/[^"]+"[^>]*>/g)].map((m) => m[0]);
+    expect(shots.length).toBeGreaterThan(0);
+    for (const shot of shots) {
+      // Built, the copies are `/assets/<name>-<hash>.webp`; in a test, imagetools' own addresses.
+      expect(shot).toMatch(/srcSet="[^" ]+ \d+w, [^"]+"/);
+      expect(shot).toMatch(/sizes="[^"]+"/);
+    }
+    const hero = shots.find((shot) => shot.includes("landing-home.png"));
+    expect(hero).toMatch(/loading="eager"/);
+    expect(hero).toMatch(/fetchPriority="high"/);
+  });
+
   it("names automatic updates, for apps and for Appflare itself", () => {
     expect(html).toContain("Automatic updates");
     expect(html).toContain('href="/guides/updates/#automatic-updates"');

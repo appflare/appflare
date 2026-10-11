@@ -9,6 +9,7 @@ import {
   outsideDeployPages,
   POSTHOG_HOST,
   POSTHOG_KEY,
+  POSTHOG_UI_HOST,
   posthogOptions,
   resetAnalytics,
   SEARCH_SETTLE_MS,
@@ -105,6 +106,7 @@ describe("startAnalytics", () => {
     expect(key).toBe(POSTHOG_KEY);
     expect(options).toMatchObject({
       api_host: POSTHOG_HOST,
+      ui_host: POSTHOG_UI_HOST,
       autocapture: true,
       capture_pageview: false,
       capture_pageleave: true,
@@ -116,7 +118,9 @@ describe("startAnalytics", () => {
       person_profiles: "always",
       session_recording: { maskAllInputs: false, maskInputOptions: { password: true } },
     });
-    expect(POSTHOG_HOST).toBe("https://eu.i.posthog.com");
+    expect(POSTHOG_HOST).toBe("https://swgo.appflare.dev");
+    expect(POSTHOG_UI_HOST).toBe("https://eu.posthog.com");
+    expect(options).toMatchObject({ disable_surveys: true });
     expect(listeners).toHaveLength(1);
   });
 });

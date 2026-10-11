@@ -73,6 +73,8 @@ export function Shot({
   alt,
   width,
   height,
+  srcSet,
+  sizes,
   className = "",
   imgClassName = "h-auto",
   eager = false,
@@ -82,6 +84,9 @@ export function Shot({
   alt: string;
   width: number;
   height: number;
+  /** Smaller WebP copies of `src`, made during the build, and the width the image is shown at. */
+  srcSet?: string;
+  sizes?: string;
   className?: string;
   /** Sizing of the image itself, such as a fixed aspect ratio that crops the bottom. */
   imgClassName?: string;
@@ -102,10 +107,13 @@ export function Shot({
       )}
       <img
         src={src}
+        srcSet={srcSet}
+        sizes={sizes}
         alt={alt}
         width={width}
         height={height}
         loading={eager ? "eager" : "lazy"}
+        fetchPriority={eager ? "high" : undefined}
         decoding="async"
         className={`block w-full object-cover object-top ${imgClassName}`}
       />

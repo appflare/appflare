@@ -1,4 +1,5 @@
 import { fumadocsMdx } from "fumadocs-mdx/vite";
+import { imagetools } from "vite-imagetools";
 import { defineConfig } from "vitest/config";
 import { workspaceSourceResolution } from "../../vitest.shared.ts";
 import { catalogData, loadCatalog } from "./src/catalog/plugin.ts";
@@ -16,6 +17,7 @@ export default defineConfig(async () => ({
     docsScreenshots(),
     manifestReference(),
     fumadocsMdx(),
+    imagetools({ exclude: [] }),
   ],
   test: {
     environment: "node",

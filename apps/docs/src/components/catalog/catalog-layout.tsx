@@ -1,11 +1,11 @@
 import { HomeLayout } from "@fumadocs/base-ui/layouts/home";
 import type { ReactNode } from "react";
-import { appsLink, baseOptions, docsLink } from "../../lib/layout.shared.tsx";
+import { appsLink, baseOptions, docsLink, githubLink } from "../../lib/layout.shared.tsx";
 
 /** The catalog pages: the site's top bar over a centred column, without the docs sidebar. The layout is the page's `main`. */
 export function CatalogLayout({ children }: { children: ReactNode }) {
   return (
-    <HomeLayout {...baseOptions()} links={[docsLink, appsLink]}>
+    <HomeLayout {...baseOptions()} links={[docsLink, appsLink, githubLink]}>
       <div className="mx-auto grid w-full min-w-0 max-w-6xl grid-cols-1 gap-10 px-4 pt-8 pb-16 md:px-6 [&>*]:min-w-0">
         {children}
       </div>

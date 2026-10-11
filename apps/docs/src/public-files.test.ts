@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { AGENT_PROMPTS } from "./lib/agent-prompts.ts";
 import { markdownUrl, pageUrl } from "./lib/shared.ts";
@@ -59,6 +59,14 @@ describe("_headers", () => {
     const all = rules.get("/*");
     expect(all?.get("content-security-policy")).toBe("frame-ancestors 'none'");
     expect(all?.get("x-frame-options")).toBe("DENY");
+  });
+
+  it("keeps the build's own files for good, as each is named by its content", () => {
+    expect(rules.get("/assets/*")?.get("cache-control")).toBe(
+      "public, max-age=31536000, immutable",
+    );
+    // A file put there by hand would keep its address when it changes.
+    expect(existsSync(new URL("../public/assets", import.meta.url))).toBe(false);
   });
 
   it("lets other sites show the badge, cached for a day", () => {

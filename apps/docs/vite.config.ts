@@ -5,6 +5,7 @@ import react from "@vitejs/plugin-react";
 import { getSlugs } from "fumadocs-core/source";
 import { fumadocsMdx } from "fumadocs-mdx/vite";
 import { defaultClientConditions, defaultServerConditions, defineConfig } from "vite";
+import { imagetools } from "vite-imagetools";
 import { deployHeaders } from "./src/build/deploy-headers.ts";
 import { ogImages } from "./src/build/og-images.ts";
 import { catalogData, loadCatalog, snapshotMode } from "./src/catalog/plugin.ts";
@@ -61,6 +62,10 @@ export default defineConfig(async () => {
       docsScreenshots(),
       manifestReference(),
       fumadocsMdx(),
+      // Resized WebP copies of the front page's screenshots, for their `srcset`.
+      // The screenshots stay in `public/` (the docs link them by address), which
+      // the plugin skips unless told otherwise; a plain address is still served as is.
+      imagetools({ exclude: [] }),
       tailwindcss(),
       tanstackStart({
         prerender: {
