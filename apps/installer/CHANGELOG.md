@@ -1,5 +1,12 @@
 # @appflare/installer
 
+## 0.1.2
+
+### Patch Changes
+
+- Updated dependencies [0ce11ca]
+  - @appflare/schema@0.6.0
+
 ## 0.1.1
 
 ### Patch Changes
