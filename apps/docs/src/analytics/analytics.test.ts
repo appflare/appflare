@@ -430,6 +430,13 @@ describe("errors from other people's scripts", () => {
     // The page as the file says nothing about whose script it was.
     const inline = error("boom", [["hydrate", "https://appflare.dev/apps/glance/"]], SAFARI_IPHONE);
     expect(withoutForeignErrors(inline)).toBe(inline);
+    // A Home Screen web app reports a web view's user agent, without the app's name.
+    const homeScreen = error(
+      "boom",
+      [["hydrate", "https://appflare.dev/"]],
+      "Mozilla/5.0 (iPhone; CPU iPhone OS 27_0_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148",
+    );
+    expect(withoutForeignErrors(homeScreen)).toBe(homeScreen);
     const noAgent = error("boom", [["hydrate", "https://appflare.dev/"]], "");
     expect(withoutForeignErrors(noAgent)).toBe(noAgent);
     const otherSite = error("boom", [["f", "https://cdn.example.com/x.js"]], SAFARI_IPHONE);

@@ -283,9 +283,11 @@ export function withoutForeignErrors(event: CaptureResult | null): CaptureResult
   const files = stackFiles(event.properties.$exception_list);
   if (files.length === 0 || files.some((file) => file.startsWith(OWN_SCRIPTS))) return event;
   if (files.every((file) => originOf(file) !== SITE_ORIGIN)) return null;
+  // Only an app that names itself in its user agent: an unnamed web view looks
+  // like a web app opened from an iPhone's Home Screen, which is the site's own.
   const agent = event.properties.$raw_user_agent;
-  const inApp = typeof agent === "string" && detectBrowser(agent).kind === "in-app";
-  return inApp ? null : event;
+  const browser = typeof agent === "string" ? detectBrowser(agent) : null;
+  return browser?.kind === "in-app" && browser.app !== null ? null : event;
 }
 
 /** The part of the router this needs. */
