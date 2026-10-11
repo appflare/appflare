@@ -11,7 +11,8 @@
  *
  * Left and Right go to the previous and next screenshot and wrap around, so
  * browsing never dead-ends; Home and End jump to the first and last; Escape
- * closes. On a touch screen a sideways swipe does what the arrows do.
+ * closes. On a touch screen, and on this site only (Appflare's lightbox has
+ * no swipe), a sideways swipe does what the arrows do.
  */
 
 export interface LightboxState {
@@ -75,8 +76,11 @@ export function positionLabel(index: number, count: number): string {
   return `${index + 1} of ${count}`;
 }
 
-/** How far a finger must travel sideways, in CSS pixels, before it counts as a swipe. */
-export const SWIPE_MIN_PX = 48;
+/**
+ * How far a finger must travel sideways, in CSS pixels, before it counts as a
+ * swipe. Short: on a phone, people flick a screenshot aside by 30 to 60 pixels.
+ */
+export const SWIPE_MIN_PX = 30;
 
 /**
  * What a touch that moved by `dx`, `dy` does: a swipe to the left shows the

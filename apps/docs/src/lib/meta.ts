@@ -1,6 +1,14 @@
 import { siteName } from "./shared.ts";
 import type { StructuredData } from "./structured-data.ts";
 
+/**
+ * The `<head>` of the page for an address the site does not have. The build
+ * writes it once, as `404.html`; a docs page's, an app's or a category's
+ * route that finds nothing at its address gives the same, so the tab is still
+ * titled "Page not found" once the page runs in the browser.
+ */
+export const notFoundHead = { meta: [{ title: `Page not found | ${siteName}` }] };
+
 export interface PageMeta {
   /** The document title. */
   title: string;

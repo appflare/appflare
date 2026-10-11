@@ -48,6 +48,19 @@ export function pageUrl(slugs: readonly string[]): string {
   return slugs.length === 0 ? "/" : `/${slugs.join("/")}/`;
 }
 
+/**
+ * Whether the build prerenders `path`, a page it was given or a link it
+ * found on one. A link to a heading is the same page, and a query (an
+ * install link for a repository, `/install/?repo=`) is read by the page in
+ * the browser. A link to an image (a screenshot that opens larger) is a file
+ * already in place: the crawler would write it again, as text.
+ */
+export function isPrerendered(path: string): boolean {
+  return (
+    !path.includes("#") && !path.includes("?") && !/\.(png|jpe?g|webp|gif|svg|ico)$/i.test(path)
+  );
+}
+
 /** The URL of a page's Markdown source for agents: `/start/install.md`, `/index.md`. */
 export function markdownUrl(slugs: readonly string[]): string {
   return `/${slugs.length === 0 ? "index" : slugs.join("/")}.md`;

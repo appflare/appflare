@@ -1,10 +1,13 @@
 import Link from "fumadocs-core/link";
-import type { ReactNode } from "react";
+import { type ComponentProps, type ReactNode, useRef } from "react";
 import logoLight from "../../../../../docs/assets/logo_full.svg?url";
 import logoDark from "../../../../../docs/assets/logo_full_white.svg?url";
+import { track } from "../../analytics/analytics.ts";
 import { installLink } from "../../lib/install-links.ts";
-
+import { landingLinks } from "../../lib/landing.ts";
 import { siteName } from "../../lib/shared.ts";
+import { Lightbox, lightboxOpener, useLightbox } from "../catalog/lightbox.tsx";
+import { InstallLink } from "../in-app/open-in-browser.tsx";
 
 export { InstallButton, InstallShareLine } from "../install-appflare.tsx";
 
@@ -26,18 +29,25 @@ export function Wordmark({ className = "h-6" }: { className?: string }) {
   );
 }
 
-/** Cloudflare's Deploy button, the other way to install, as one quiet line. */
+/**
+ * Cloudflare's Deploy button, the other way to install, as one quiet line.
+ * It signs in to Cloudflare too, so in an app's own browser it asks the
+ * visitor to move to their browser first, as Install Appflare does, offering
+ * the page about the button.
+ */
 export function DeployButtonLine({ placement }: { placement: string }) {
   return (
     <p className="m-0 text-fd-muted-foreground text-sm">
       Or use{" "}
-      <a
+      <InstallLink
         href={installLink(placement, true)}
+        handoffPath={landingLinks.deployButton}
+        shareTitle="Deploy Appflare with Cloudflare's button"
         data-link-id={placement}
         className="font-medium text-fd-foreground underline underline-offset-4"
       >
         Cloudflare's Deploy button
-      </a>
+      </InstallLink>
       .
     </p>
   );
@@ -63,6 +73,8 @@ export function GhostButton({
     </Link>
   );
 }
+
+type ShotProps = ComponentProps<typeof Shot>;
 
 /**
  * A manager screenshot in a window frame. The screenshots are light, so in
@@ -118,5 +130,38 @@ export function Shot({
         className={`block w-full object-cover object-top ${imgClassName}`}
       />
     </figure>
+  );
+}
+
+/**
+ * A {@link Shot} that opens larger in the lightbox, as an app's screenshots
+ * do, where it can be zoomed. It is a link to the image, so it opens without
+ * JavaScript too.
+ */
+export function ZoomableShot({ title, ...shot }: ShotProps & { title: string }) {
+  const [box, dispatch] = useLightbox(1);
+  const link = useRef<HTMLAnchorElement>(null);
+  return (
+    <>
+      <a
+        ref={link}
+        href={shot.src}
+        {...lightboxOpener(() => {
+          dispatch({ type: "open", index: 0 });
+          track("screenshot_opened", { slug: null, index: 0 });
+        })}
+        className={`block cursor-zoom-in rounded-xl ${FOCUS_RING}`}
+      >
+        <Shot {...shot} />
+        <span className="sr-only">Opens it larger.</span>
+      </a>
+      <Lightbox
+        title={title}
+        images={[{ url: shot.src, alt: shot.alt }]}
+        state={box}
+        dispatch={dispatch}
+        returnFocus={() => link.current}
+      />
+    </>
   );
 }

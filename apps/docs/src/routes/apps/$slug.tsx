@@ -37,7 +37,7 @@ import { ScreenshotGallery } from "../../components/catalog/screenshot-gallery.t
 import { AppIcon } from "../../components/catalog/tiles.tsx";
 import { InstallLink } from "../../components/in-app/open-in-browser.tsx";
 import { ShareLinkLine } from "../../components/in-app/share-link.tsx";
-import { pageHead } from "../../lib/meta.ts";
+import { notFoundHead, pageHead } from "../../lib/meta.ts";
 import { ogImagePath, SITE_URL, siteName } from "../../lib/shared.ts";
 import { appStructuredData } from "../../lib/structured-data.ts";
 
@@ -67,7 +67,7 @@ export const Route = createFileRoute("/apps/$slug")({
           image: `${SITE_URL}${ogImagePath(["apps", loaderData.app.slug])}`,
           structuredData: appStructuredData(loaderData.app),
         })
-      : {},
+      : notFoundHead,
   component: AppPage,
 });
 
@@ -137,7 +137,7 @@ function AppPage() {
         <StatStrip stats={appStats(app, now)} />
       </div>
 
-      <ScreenshotGallery key={app.slug} images={images} appName={app.name} />
+      <ScreenshotGallery key={app.slug} images={images} appName={app.name} slug={app.slug} />
 
       <AppSection title="About">
         <div className="grid max-w-3xl gap-3 text-base leading-relaxed">

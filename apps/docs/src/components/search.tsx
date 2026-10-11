@@ -14,6 +14,9 @@ import { staticClient } from "fumadocs-core/search/client/orama-static";
 import { useEffect } from "react";
 import { trackWhenSettled } from "../analytics/analytics.ts";
 import { searchIndexPath } from "../lib/shared.ts";
+import { withoutKeywordLines } from "../lib/site-search.ts";
+
+const client = withoutKeywordLines(staticClient({ from: searchIndexPath }));
 
 /**
  * Search that runs in the browser. The build writes the whole index to
@@ -21,9 +24,7 @@ import { searchIndexPath } from "../lib/shared.ts";
  * use, so the site needs no server.
  */
 export default function StaticSearchDialog(props: SharedProps) {
-  const { search, setSearch, query } = useDocsSearch({
-    client: staticClient({ from: searchIndexPath }),
-  });
+  const { search, setSearch, query } = useDocsSearch({ client });
 
   // What was searched for and how many pages it found, once the field rests.
   const text = search.trim();

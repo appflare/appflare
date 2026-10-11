@@ -11,7 +11,7 @@ import { createFileRoute, notFound } from "@tanstack/react-router";
 import { Suspense, use } from "react";
 import { getMDXComponents } from "../components/mdx.tsx";
 import { baseOptions } from "../lib/layout.shared.tsx";
-import { pageHead } from "../lib/meta.ts";
+import { notFoundHead, pageHead } from "../lib/meta.ts";
 import {
   markdownUrl,
   ogImagePath,
@@ -46,7 +46,7 @@ export const Route = createFileRoute("/$")({
           image: `${SITE_URL}${loaderData.ogImage}`,
           markdownUrl: loaderData.markdownUrl,
         })
-      : {},
+      : notFoundHead,
   component: Page,
 });
 

@@ -1,4 +1,6 @@
 import type { BaseLayoutProps, LinkItemType } from "@fumadocs/base-ui/layouts/shared";
+import Link from "fumadocs-core/link";
+import type { ComponentProps, MouseEvent } from "react";
 import logoLight from "../../../../docs/assets/logo_full.svg?url";
 import logoDark from "../../../../docs/assets/logo_full_white.svg?url";
 import { repositoryUrl, siteName } from "./shared.ts";
@@ -33,21 +35,58 @@ export const githubLink: LinkItemType = {
 };
 
 /**
+ * Whether a click on the logo should take the front page back to its top
+ * rather than follow the link: on the front page itself, where the link
+ * would lead nowhere, and for a plain click (a modifier keeps the browser's
+ * own meaning, such as a new tab).
+ */
+export function logoScrollsToTop(
+  pathname: string,
+  click: Pick<
+    MouseEvent,
+    "button" | "metaKey" | "ctrlKey" | "shiftKey" | "altKey" | "defaultPrevented"
+  >,
+): boolean {
+  return (
+    pathname === "/" &&
+    click.button === 0 &&
+    !click.defaultPrevented &&
+    !click.metaKey &&
+    !click.ctrlKey &&
+    !click.shiftKey &&
+    !click.altKey
+  );
+}
+
+/** The logo in the navigation bar: a link to the front page, or back to its top when already there. */
+export function LogoLink({ onClick, ...props }: ComponentProps<"a">) {
+  function scrollOnFrontPage(event: MouseEvent<HTMLAnchorElement>) {
+    onClick?.(event);
+    if (!logoScrollsToTop(window.location.pathname, event)) return;
+    event.preventDefault();
+    const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    window.scrollTo({ top: 0, behavior: reduce ? "auto" : "smooth" });
+  }
+  return (
+    <Link {...props} onClick={scrollOnFrontPage}>
+      <img src={logoLight} alt={siteName} className="h-5 w-auto dark:hidden" />
+      <img src={logoDark} alt={siteName} className="hidden h-5 w-auto dark:block" />
+    </Link>
+  );
+}
+
+/**
  * Options every layout shares: the logo in the navigation bar, which leads
- * to the front page from every page, the link to the apps, the GitHub link,
- * and the theme switch.
+ * to the front page from every page (see {@link LogoLink}), the link to the
+ * apps, the GitHub link, and the theme switch.
  */
 export function baseOptions(): BaseLayoutProps {
   return {
     links: [appsLink, githubLink],
     nav: {
       url: "/",
-      title: (
-        <>
-          <img src={logoLight} alt={siteName} className="h-5 w-auto dark:hidden" />
-          <img src={logoDark} alt={siteName} className="hidden h-5 w-auto dark:block" />
-        </>
-      ),
+      // Fumadocs calls this with the link's address and classes.
+      title: (props) => <LogoLink {...props} />,
     },
     // Light, dark, and system rather than a two-way flip, so a reader can go back to following the system.
     themeSwitch: { mode: "light-dark-system" },

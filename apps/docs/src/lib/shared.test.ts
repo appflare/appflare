@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  isPrerendered,
   markdownUrl,
   ogImagePath,
   pageUrl,
@@ -55,5 +56,30 @@ describe("sourceFileUrl", () => {
     expect(sourceFileUrl("start/install.mdx")).toBe(
       "https://github.com/appflare/appflare/blob/main/apps/docs/content/docs/start/install.mdx",
     );
+  });
+});
+
+describe("isPrerendered", () => {
+  it("writes pages and the files the build makes", () => {
+    for (const path of [
+      "/",
+      "/apps/glance/",
+      "/start/install.md",
+      "/llms.txt",
+      "/api/search.json",
+    ]) {
+      expect(isPrerendered(path), path).toBe(true);
+    }
+  });
+
+  it("skips a link to a heading or with a query", () => {
+    expect(isPrerendered("/security/#access")).toBe(false);
+    expect(isPrerendered("/install/?repo=acme/app")).toBe(false);
+  });
+
+  it("leaves an image a page links to as it is, rather than writing it again as text", () => {
+    expect(isPrerendered("/screenshots/landing-home.png")).toBe(false);
+    expect(isPrerendered("/badge.svg")).toBe(false);
+    expect(isPrerendered("/screenshots/shot.WEBP")).toBe(false);
   });
 });

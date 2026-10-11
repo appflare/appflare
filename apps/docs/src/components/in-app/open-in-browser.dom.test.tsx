@@ -7,6 +7,7 @@ import { resetAnalytics, startAnalytics, track } from "../../analytics/analytics
 import type { FlowState } from "../../install/flow.ts";
 import { FlowPanel } from "../install/flow-panel.tsx";
 import { InstallButton } from "../install-appflare.tsx";
+import { DeployButtonLine } from "../landing/parts.tsx";
 import { InstallLink } from "./open-in-browser.tsx";
 import { resetShareLinkCount, ShareLinkLine } from "./share-link.tsx";
 
@@ -343,6 +344,33 @@ describe("counting clicks", () => {
     expect(posthog.capture.mock.calls.slice(1)).toEqual([
       ["outbound_click", { host: "github.com" }],
     ]);
+  });
+});
+
+describe("Cloudflare's Deploy button on the front page", () => {
+  it("asks an app's browser to move to the browser too, offering the button's page", async () => {
+    browse(UA.xIphone, "/");
+    await render(<DeployButtonLine placement="home-hero-cloudflare" />);
+    const deploy = link("Cloudflare's Deploy button");
+    expect(deploy.getAttribute("aria-haspopup")).toBe("dialog");
+    await tap(deploy);
+    expect(followed).toEqual([false]);
+    expect(text(dialog())).toContain("Open this in your browser");
+    await tap(button("Copy link"));
+    expect(writeText).toHaveBeenCalledWith("https://appflare.dev/start/deploy-button/");
+    await tap(link("Continue here anyway"));
+    expect(followed.at(-1)).toBe(true);
+    expect(link("Continue here anyway").getAttribute("href")).toContain(
+      "https://link.appflare.dev/deploy-1c?",
+    );
+  });
+
+  it("is the plain link to Cloudflare in a real browser", async () => {
+    browse(UA.safariIphone, "/");
+    await render(<DeployButtonLine placement="home-hero-cloudflare" />);
+    await tap(link("Cloudflare's Deploy button"));
+    expect(followed).toEqual([true]);
+    expect(dialog()).toBeNull();
   });
 });
 

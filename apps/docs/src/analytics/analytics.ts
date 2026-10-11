@@ -92,6 +92,17 @@ export interface SiteEvents {
   category_viewed: { category: string };
   /** A link to another site was clicked. */
   outbound_click: { host: string };
+  /**
+   * A screenshot was opened in the lightbox, from an app's page or the front
+   * page. Such a link leads to the image, but its click is not an
+   * {@link SiteEvents.outbound_click}: it opens a dialog.
+   */
+  screenshot_opened: {
+    /** The app whose screenshot it is; null for Appflare's own, on the front page. */
+    slug: string | null;
+    /** Which of the app's screenshots, the first being 0. */
+    index: number;
+  };
   theme_toggled: { theme: "light" | "dark" | "system" };
   /** A search in the documentation's search dialog, once the field rests: what was searched for and how many pages it found. */
   docs_search: { query: string; query_length: number; result_count: number };
@@ -166,7 +177,7 @@ export const posthogOptions: Partial<PostHogConfig> = {
   before_send: (event) =>
     withoutManagerReferrer(
       outsideDeployPages(
-        event,
+        withoutForeignErrors(event),
         typeof window === "undefined" ? null : (window.location?.href ?? null),
       ),
       browserMemory().manager(),
@@ -234,6 +245,39 @@ export function outsideDeployPages(
   if (event === null) return null;
   const paths = [pathOf(here), pathOf(event.properties.$current_url), event.properties.$pathname];
   return paths.some((path) => typeof path === "string" && isDeployPath(path)) ? null : event;
+}
+
+/** Where every script the site's build makes is served: `/assets/<name>-<hash>.js`. */
+const OWN_SCRIPTS = `${SITE_URL}/assets/`;
+
+/** As much of an entry of PostHog's `$exception_list` as this reads; anything may be missing. */
+type ExceptionEntry = { stacktrace?: { frames?: unknown } } | null | undefined;
+type StackFrame = { filename?: unknown; abs_path?: unknown } | null | undefined;
+
+/** The addresses of the scripts on an error's stack. */
+function stackFiles(exceptions: unknown): string[] {
+  if (!Array.isArray(exceptions)) return [];
+  return (exceptions as ExceptionEntry[]).flatMap((exception) => {
+    const frames = exception?.stacktrace?.frames;
+    if (!Array.isArray(frames)) return [];
+    return (frames as StackFrame[]).flatMap((frame) =>
+      [frame?.filename, frame?.abs_path].filter((file): file is string => typeof file === "string"),
+    );
+  });
+}
+
+/**
+ * `event`, or null when it is an error that only other people's scripts
+ * threw: an app's own browser adds scripts to every page it shows (on an
+ * iPhone, X's throws "Can't find variable: CONFIG"), and so do browser
+ * extensions. An error whose stack passes through one of the site's own
+ * scripts is kept, and so is one without a stack, which could be the site's.
+ */
+export function withoutForeignErrors(event: CaptureResult | null): CaptureResult | null {
+  if (event === null || event.event !== "$exception") return event;
+  const files = stackFiles(event.properties.$exception_list);
+  if (files.length === 0) return event;
+  return files.some((file) => file.startsWith(OWN_SCRIPTS)) ? event : null;
 }
 
 /** The part of the router this needs. */

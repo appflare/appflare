@@ -2,10 +2,12 @@ import { describe, expect, it } from "vitest";
 import { appPageDescription, appPageTitle } from "../catalog/app-page.ts";
 import { siteCatalog } from "../catalog/data.ts";
 import { Route as PageRoute } from "../routes/$.tsx";
+import { Route as NotFoundRoute } from "../routes/404.tsx";
 import { Route as AppRoute } from "../routes/apps/$slug.tsx";
+import { Route as CategoryRoute } from "../routes/categories/$id.tsx";
 import { Route as FrontRoute } from "../routes/index.tsx";
 import { Route as InstallRoute } from "../routes/install/$slug.tsx";
-import { pageHead } from "./meta.ts";
+import { notFoundHead, pageHead } from "./meta.ts";
 import { SITE_URL } from "./shared.ts";
 
 type Meta = Array<Record<string, string>>;
@@ -87,5 +89,26 @@ describe("the pages' OpenGraph tags", () => {
     const meta = await headOf(InstallRoute, { slug: app.slug });
     expect(tag(meta, "og:url")).toBe(`${SITE_URL}/install/${app.slug}/`);
     expectCard(meta, `${SITE_URL}/og/install/${app.slug}/image.png`);
+  });
+});
+
+describe("a docs page's, an app's, an install page's or a category's address with nothing there", () => {
+  it("has the head 404.html is built with, so the tab keeps its title once the page runs", async () => {
+    // biome-ignore lint/suspicious/noExplicitAny: each route's options have their own generic types
+    const routes: Array<{ options: any }> = [
+      NotFoundRoute,
+      AppRoute,
+      InstallRoute,
+      CategoryRoute,
+      PageRoute,
+    ];
+    for (const route of [routes[1], routes[2]]) {
+      // An app the catalog does not have.
+      await expect(route?.options.loader({ params: { slug: "tradingedge" } })).rejects.toThrow();
+    }
+    for (const route of routes) {
+      expect(route.options.head({ loaderData: undefined, params: {} })).toEqual(notFoundHead);
+    }
+    expect(notFoundHead.meta[0]?.title).toBe("Page not found | Appflare");
   });
 });

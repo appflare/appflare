@@ -6,7 +6,7 @@ import { InstallHeader, InstallShell } from "../../components/install/install-sh
 import { useFlow } from "../../components/install/use-flow.ts";
 import { type FlowPage, startInstall } from "../../install/flow.ts";
 import type { InstallRequest } from "../../install/request.ts";
-import { noindexPageHead } from "../../lib/meta.ts";
+import { noindexPageHead, notFoundHead } from "../../lib/meta.ts";
 import { ogImagePath, SITE_URL, siteName } from "../../lib/shared.ts";
 
 /**
@@ -30,7 +30,7 @@ export const Route = createFileRoute("/install/$slug")({
           url: `${SITE_URL}${installPath(loaderData.app.slug)}`,
           image: `${SITE_URL}${ogImagePath(["install", loaderData.app.slug])}`,
         })
-      : {},
+      : notFoundHead,
   component: InstallAppPage,
 });
 

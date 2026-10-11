@@ -25,6 +25,7 @@ import {
   InstallShareLine,
   Shot,
   Wordmark,
+  ZoomableShot,
 } from "./parts.tsx";
 
 const notAffiliated =
@@ -141,7 +142,8 @@ function Hero({ data }: { data: LandingData }) {
         </div>
       </div>
       <div className="relative mx-auto mt-14 max-w-6xl px-4 md:mt-20 md:px-6 lg:pr-32">
-        <Shot
+        <ZoomableShot
+          title="Appflare's Home"
           src="/screenshots/landing-home.png"
           srcSet={landingHomeSrcSet}
           // The column's width: 1000px once the page is 72rem wide, else the viewport less its padding.
@@ -229,9 +231,15 @@ function HowItWorks({ data }: { data: LandingData }) {
         >
           <div className="flex flex-wrap gap-2">
             {data.showcase.slice(0, 6).map((app) => (
-              <span key={app.slug} className="flex" title={app.name}>
+              <Link
+                key={app.slug}
+                href={appPath(app.slug)}
+                title={app.name}
+                aria-label={app.name}
+                className="flex rounded-xl transition-transform hover:scale-105 focus-visible:outline-2 focus-visible:outline-fd-ring focus-visible:outline-offset-2 motion-reduce:transition-none"
+              >
                 <AppIcon src={app.icon} name={app.name} size={36} />
-              </span>
+              </Link>
             ))}
           </div>
         </Step>

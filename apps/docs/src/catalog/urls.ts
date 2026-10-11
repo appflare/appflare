@@ -26,8 +26,53 @@ export function catalogMediaUrl(
   }
 }
 
+/** The catalog's repository, where apps are added. */
+export const catalogRepositoryUrl = "https://github.com/appflare/catalog";
+
+/**
+ * Where a visitor asks for an app the catalog does not have: a new issue on
+ * the catalog's repository, titled with the app's name when it is known.
+ */
+export function suggestAppUrl(name = ""): string {
+  const url = new URL(`${catalogRepositoryUrl}/issues/new`);
+  url.searchParams.set("title", `App request: ${name.trim()}`);
+  url.searchParams.set("body", "The app's repository:\n\nWhat it does:\n");
+  return url.href;
+}
+
 export function appPath(slug: string): string {
   return `/apps/${slug}/`;
+}
+
+/** The longest search a missing app's address is turned into. */
+const MAX_MISSING_WORDS = 60;
+
+/**
+ * For the address of an app's page that does not exist (`/apps/trading-edge/`,
+ * from a link elsewhere), the words to search the catalog for
+ * (`trading edge`); null for any other address.
+ */
+export function missingAppWords(pathname: string): string | null {
+  const segment = /^\/apps\/([^/]+)\/?$/.exec(pathname)?.[1];
+  if (segment === undefined) return null;
+  let slug: string;
+  try {
+    slug = decodeURIComponent(segment);
+  } catch {
+    return null;
+  }
+  const words = slug
+    .split(/[-_\s]+/)
+    .filter((word) => word !== "")
+    .join(" ")
+    .slice(0, MAX_MISSING_WORDS)
+    .trim();
+  return words === "" ? null : words;
+}
+
+/** The apps page with `words` in its search field. */
+export function appsSearchPath(words: string): string {
+  return `${appsPath}?q=${encodeURIComponent(words)}`;
 }
 
 export function categoryPath(id: string): string {

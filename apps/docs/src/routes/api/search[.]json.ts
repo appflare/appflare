@@ -1,23 +1,12 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { type AdvancedIndex, createSearchAPI } from "fumadocs-core/search/server";
+import { createSearchAPI } from "fumadocs-core/search/server";
 import { siteCatalog } from "../../catalog/data.ts";
-import { appPath } from "../../catalog/urls.ts";
 import { docsSearchIndexes } from "../../lib/search-index.ts";
-
-/** Each app page, found by its name, what it does, and its summary. */
-function appIndexes(): AdvancedIndex[] {
-  return siteCatalog.apps.map((app) => ({
-    id: appPath(app.slug),
-    url: appPath(app.slug),
-    title: app.name,
-    description: app.pitch,
-    breadcrumbs: ["Apps"],
-    structuredData: { headings: [], contents: [{ heading: undefined, content: app.summary }] },
-  }));
-}
+import { appSearchIndexes, SEARCH_INDEX_OPTIONS } from "../../lib/site-search.ts";
 
 const search = createSearchAPI("advanced", {
-  indexes: async () => [...(await docsSearchIndexes()), ...appIndexes()],
+  ...SEARCH_INDEX_OPTIONS,
+  indexes: async () => [...(await docsSearchIndexes()), ...appSearchIndexes(siteCatalog.apps)],
 });
 
 /**

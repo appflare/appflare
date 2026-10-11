@@ -12,7 +12,13 @@ import { catalogData, loadCatalog, snapshotMode } from "./src/catalog/plugin.ts"
 import { catalogPagePaths, handoffPagePaths } from "./src/catalog/urls.ts";
 import { CALLBACK_PATH, DEPLOY_PATH } from "./src/deploy/paths.ts";
 import { AGENT_SKILLS, agentSkillPath, agentSkillsIndexPath } from "./src/lib/agent-skills.ts";
-import { markdownUrl, pageUrl, SITE_URL, searchIndexPath } from "./src/lib/shared.ts";
+import {
+  isPrerendered,
+  markdownUrl,
+  pageUrl,
+  SITE_URL,
+  searchIndexPath,
+} from "./src/lib/shared.ts";
 import { docsScreenshots } from "./src/og/plugin.ts";
 import { manifestReference, referencePage } from "./src/reference/integration.ts";
 
@@ -73,9 +79,7 @@ export default defineConfig(async () => {
           // Also follows every link the pages contain, so a page reachable only
           // through a link is still written.
           crawlLinks: true,
-          // A link to a heading is the same page, and a query (an install link
-          // for a repository, `/install/?repo=`) is read by the page in the browser.
-          filter: ({ path }) => !path.includes("#") && !path.includes("?"),
+          filter: ({ path }) => isPrerendered(path),
           failOnError: true,
         },
         pages: [

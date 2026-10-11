@@ -65,6 +65,22 @@ describe("the front page", () => {
     expect(hero).toMatch(/fetchPriority="high"/);
   });
 
+  it("opens the hero larger, in the lightbox, rather than leaving it a dead click", () => {
+    const link = /<a[^>]*href="\/screenshots\/landing-home.png"[^>]*>([\s\S]*?)<\/a>/.exec(html);
+    expect(link?.[0]).toMatch(/aria-haspopup="dialog"/);
+    expect(link?.[1]).toMatch(/<img[^>]*src="\/screenshots\/landing-home.png"[^>]*alt="Appflare/);
+    expect(link?.[1]).toContain("Opens it larger.");
+  });
+
+  it("links each app icon under How it works to the app's page", () => {
+    const step = html.slice(html.indexOf("Install an app"), html.indexOf("Keep it updated"));
+    const icons = [...step.matchAll(/<a[^>]*href="(\/apps\/[^"]+)"[^>]*aria-label="([^"]+)"/g)];
+    expect(icons.map((m) => m[1])).toEqual(
+      data.showcase.slice(0, 6).map((app) => `/apps/${app.slug}/`),
+    );
+    expect(icons.map((m) => m[2])).toEqual(data.showcase.slice(0, 6).map((app) => app.name));
+  });
+
   it("names automatic updates, for apps and for Appflare itself", () => {
     expect(html).toContain("Automatic updates");
     expect(html).toContain('href="/guides/updates/#automatic-updates"');

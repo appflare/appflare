@@ -7,7 +7,7 @@ import { appsInCategory } from "../../catalog/storefront.ts";
 import { appsPath, categoryPath } from "../../catalog/urls.ts";
 import { CatalogHeader, CatalogLayout } from "../../components/catalog/catalog-layout.tsx";
 import { AppGrid, CategoryCards } from "../../components/catalog/tiles.tsx";
-import { pageHead } from "../../lib/meta.ts";
+import { notFoundHead, pageHead } from "../../lib/meta.ts";
 import { ogImagePath, SITE_URL, siteName } from "../../lib/shared.ts";
 
 /** `/categories/<id>/`: every app in one category, most popular first. */
@@ -30,7 +30,7 @@ export const Route = createFileRoute("/categories/$id")({
           url: `${SITE_URL}${categoryPath(loaderData.category.id)}`,
           image: `${SITE_URL}${ogImagePath(["categories", loaderData.category.id])}`,
         })
-      : {},
+      : notFoundHead,
   component: CategoryPage,
 });
 

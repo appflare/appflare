@@ -144,16 +144,34 @@ export function CatalogSection({
 }
 
 /**
- * Apps in a grid, as many columns as fit. With `phoneLimit`, a phone shows
- * only that many; the rest stay in the page, hidden on small screens.
+ * The browser skips laying out and drawing a tile while it is far from view
+ * (`content-visibility: auto`), reserving a tile's height for it (12rem, then
+ * the height it was last drawn at). On a phone that takes about a third off
+ * a tap that redraws a long list, such as Show all. The tiles stay in the
+ * page, for links, find in page and screen readers.
  */
-export function AppGrid({ apps, phoneLimit }: { apps: readonly SiteApp[]; phoneLimit?: number }) {
+const DRAWN_WHEN_NEAR = "[content-visibility:auto] [contain-intrinsic-block-size:auto_12rem]";
+
+/**
+ * Apps in a grid, as many columns as fit. With `phoneLimit`, a phone shows
+ * only that many; the rest stay in the page, hidden on small screens. A
+ * `long` list (the apps page's) draws only the tiles near the screen.
+ */
+export function AppGrid({
+  apps,
+  phoneLimit,
+  long = false,
+}: {
+  apps: readonly SiteApp[];
+  phoneLimit?: number;
+  long?: boolean;
+}) {
   return (
     <ul className="m-0 grid list-none grid-cols-[repeat(auto-fill,minmax(10rem,1fr))] sm:grid-cols-[repeat(auto-fill,minmax(12rem,1fr))] gap-1 p-0">
       {apps.map((app, i) => (
         <li
           key={app.slug}
-          className={`min-w-0 ${phoneLimit !== undefined && i >= phoneLimit ? "max-sm:hidden" : ""}`}
+          className={`min-w-0 ${long ? DRAWN_WHEN_NEAR : ""} ${phoneLimit !== undefined && i >= phoneLimit ? "max-sm:hidden" : ""}`}
         >
           <AppTile app={app} />
         </li>

@@ -1,5 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
+import { siteCatalog } from "./catalog/data.ts";
+import { catalogPagePaths, handoffPagePaths } from "./catalog/urls.ts";
 import { AGENT_PROMPTS } from "./lib/agent-prompts.ts";
 import { markdownUrl, pageUrl } from "./lib/shared.ts";
 import { source } from "./lib/source.ts";
@@ -94,8 +96,9 @@ describe("_redirects", () => {
   const pageUrls = new Set(docsPages.map((page) => pageUrl(page.slugs)));
   const markdownUrls = new Set(docsPages.map((page) => markdownUrl(page.slugs)));
   const agentFiles = new Set<string>(Object.values(AGENT_PROMPTS).map((prompt) => prompt.path));
+  const appPages = new Set([...catalogPagePaths(siteCatalog), ...handoffPagePaths(siteCatalog)]);
   const served = (path: string) =>
-    pageUrls.has(path) || markdownUrls.has(path) || agentFiles.has(path);
+    pageUrls.has(path) || markdownUrls.has(path) || agentFiles.has(path) || appPages.has(path);
 
   it("sends the former agent prompt pages to the pages that hold their prompts now", () => {
     const to = new Map(rules.map((rule) => [rule.from, rule.to]));
@@ -105,6 +108,22 @@ describe("_redirects", () => {
     expect(to.get("/catalog/submit-with-an-agent")).toBe(AGENT_PROMPTS.submit.page);
     expect(to.get("/start/install-with-an-agent.md")).toBe(AGENT_PROMPTS.install.path);
     expect(to.get("/catalog/submit-with-an-agent.md")).toBe(AGENT_PROMPTS.submit.path);
+  });
+
+  it("send the addresses people guess to the apps and to their own Appflare", () => {
+    const to = new Map(rules.map((rule) => [rule.from, rule.to]));
+    expect(to.get("/catalog")).toBe("/apps/");
+    expect(to.get("/catalog/")).toBe("/apps/");
+    expect(to.get("/dashboard")).toBe("/my/");
+    expect(to.get("/dashboard/")).toBe("/my/");
+    // Only the bare section: its pages about the catalog stay where released Appflares link.
+    expect(
+      [...to.keys()].filter((from) => from.startsWith("/catalog/") && from !== "/catalog/"),
+    ).toEqual([
+      "/catalog/submit-with-an-agent/",
+      "/catalog/submit-with-an-agent",
+      "/catalog/submit-with-an-agent.md",
+    ]);
   });
 
   it("are permanent, lead to something the site serves, and never hide a page", () => {

@@ -69,4 +69,4 @@ export const landingLinks = {
   privacy: "/privacy/",
 } as const;
 
-export const catalogRepositoryUrl = "https://github.com/appflare/catalog";
+export { catalogRepositoryUrl } from "../catalog/urls.ts";

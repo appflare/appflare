@@ -12,3 +12,8 @@
 /catalog/submit-with-an-agent.md /agent/submit.md 301
 # The documentation's index moved to the overview; `/` is the front page.
 /index.md /start/overview.md 301
+# Addresses people try for the apps and for their own Appflare.
+/catalog /apps/ 301
+/catalog/ /apps/ 301
+/dashboard /my/ 301
+/dashboard/ /my/ 301
