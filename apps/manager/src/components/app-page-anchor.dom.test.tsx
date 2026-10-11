@@ -176,6 +176,7 @@ beforeEach(() => {
       publicPaths: [],
       pendingPublicPaths: [],
       syncFailedAt: null,
+      takenAddresses: [],
       usesAccessValues: false,
       users: 2,
       repair: null,

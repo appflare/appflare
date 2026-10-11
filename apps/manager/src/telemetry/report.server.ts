@@ -11,6 +11,7 @@ import { DEFAULT_CATALOG_INDEX_URL } from "../catalog/index.server";
 import { managerUpdateView, readManagerLatest } from "../catalog/manager-releases.server";
 import { catalogLookup } from "../catalog/merged.server";
 import { installAppKey, OFFICIAL_CATALOG_ID } from "../catalog/sources";
+import { plainMessage } from "../components/message-links";
 import { createDb } from "../db/client";
 import { SCHEMA_VERSION_KEY } from "../db/migrate";
 import { readSettings, SETTING, type SettingKey, writeSettings } from "../db/settings";
@@ -19,6 +20,7 @@ import { channelCounts } from "../notifications/channels.server";
 import { sandboxBinding } from "../sandbox/binding";
 import { runningVersion } from "../server/build-version";
 import { hasAnyUser } from "../server/users.server";
+import { readAccountNames } from "./account-names.server";
 import {
   EVENT,
   type HeartbeatInput,
@@ -29,6 +31,7 @@ import {
   utcDay,
   uuidV5,
 } from "./events";
+import { type AccountNames, NO_ACCOUNT_NAMES } from "./redact";
 import { lockOf, newInstallId, type TelemetryEnv, usageDataWithheld } from "./state.server";
 
 /**
@@ -95,6 +98,8 @@ const REPORT_KEYS = [
   SETTING.cfTokenVerifiedAt,
   SETTING.autoUpdateApps,
   SETTING.autoUpdateManager,
+  SETTING.accountSubdomain,
+  SETTING.workerName,
 ] as const;
 
 type ReportSettings = Partial<Record<(typeof REPORT_KEYS)[number], string>>;
@@ -289,7 +294,8 @@ function jobRows(result: D1Result | undefined): JobRow[] {
     kind: String(r.kind),
     status: String(r.status),
     inputJson: typeof r.input_json === "string" ? r.input_json : null,
-    error: typeof r.error === "string" ? r.error : null,
+    // Links to manager pages reduced to their labels, as in a failure report.
+    error: typeof r.error === "string" ? plainMessage(r.error) : null,
     startedAt: r.started_at == null ? null : num(r.started_at),
     finishedAt: r.finished_at == null ? null : num(r.finished_at),
     // The app key: a custom catalog's app is never reported under its slug.
@@ -402,13 +408,29 @@ async function report(env: ReportEnv, opts: ReportOptions): Promise<ReportOutcom
 
   const base = managerBase(runningVersion(env));
   const official = isOfficialCatalog(env);
+  const rows = jobRows(jobs);
+  // A failure's Cloudflare message is cleaned of the account's names, read
+  // only when one failed. Without them the message is left out, the rest of
+  // the report sent.
+  let names: AccountNames | null = NO_ACCOUNT_NAMES;
+  if (rows.some((r) => r.status === "failed")) {
+    try {
+      names = await readAccountNames(env.DB, settings);
+    } catch (error) {
+      console.warn("telemetry: could not read the account's names; Cloudflare messages left out", {
+        error: error instanceof Error ? error.message : String(error),
+      });
+      names = null;
+    }
+  }
   const events = await jobEvents(
-    jobRows(jobs),
+    rows,
     { from: cursor, to: now },
     base,
     installId,
     official,
     versions,
+    names,
   );
   if (heartbeatDue) {
     events.push(

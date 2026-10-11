@@ -171,8 +171,13 @@ describe("protecting an install with public paths", () => {
     expect(result.bypass?.outcome).toBe("none");
     expect(bypassApps(cf)).toHaveLength(0);
     const before = cf.calls.length;
-    expect(await syncInstallAccessDestinations(deps, INSTALL_ID)).toBe("unchanged");
-    expect(cf.calls.slice(before)).toEqual([]);
+    expect(await syncInstallAccessDestinations(deps, INSTALL_ID)).toEqual({
+      outcome: "unchanged",
+      taken: [],
+      warnings: [],
+    });
+    // The listing the install's own application is planned against, and nothing for public paths.
+    expect(cf.keys().slice(before)).toEqual(["GET /access/apps"]);
   });
 
   it("protecting again does not take its own public paths for another application's", async () => {
@@ -228,8 +233,16 @@ describe("keeping public paths in step", () => {
     await env.DB.prepare("UPDATE installs SET workers_dev_enabled = 0 WHERE id = ?1")
       .bind(INSTALL_ID)
       .run();
-    // The install's own application covers the domain by its Worker: unchanged.
-    expect(await syncInstallAccessDestinations(deps, INSTALL_ID)).toBe("unchanged");
+    // The install's own application names the new domain too; its workers.dev
+    // hostnames stay, as nothing else can serve them.
+    expect(await syncInstallAccessDestinations(deps, INSTALL_ID)).toEqual({
+      outcome: "updated",
+      taken: [],
+      warnings: [],
+    });
+    const own = [...cf.apps.values()].find((a) => !bypassApps(cf).includes(a));
+    expect(own?.destinations).toContainEqual({ type: "public", uri: "new.example.com" });
+    expect(own?.destinations).toContainEqual({ type: "public", uri: HOST });
     expect(bypassApps(cf)[0]?.destinations).toEqual([
       { type: "public", uri: "new.example.com/s/*" },
     ]);
@@ -384,8 +397,11 @@ describe("public paths from a revision of the release", () => {
     await protectInstall(deps, { installId: INSTALL_ID });
     expect(bypassApps(cf)[0]?.destinations).toEqual([{ type: "public", uri: `${HOST}/s/*` }]);
     await recordFixtureRevision(f, NOW);
-    // Marked for the cron, which brings the public paths in step.
-    expect((await readInstallProtection(env.DB, INSTALL_ID))?.syncFailedAt).toEqual(NOW);
+    // Marked due for the cron, which brings the public paths in step; nothing failed.
+    expect(await readInstallProtection(env.DB, INSTALL_ID)).toMatchObject({
+      resyncDueAt: NOW,
+      syncFailedAt: null,
+    });
     await resyncInstallAccessIfFailed({ db: env.DB, client: async () => cf.client });
     return { f, cf, deps };
   }
@@ -470,16 +486,21 @@ describe("a failed sync outside a job", () => {
     )(INSTALL_ID);
     expect((await readInstallProtection(env.DB, INSTALL_ID))?.syncFailedAt).toEqual(NOW);
 
-    // The cron, while Cloudflare still refuses: still recorded.
+    // The cron, while Cloudflare still refuses: still recorded, at the run's time.
+    const later = new Date(NOW.getTime() + 30 * 60_000);
     expect(
-      await resyncInstallAccessIfFailed({ db: env.DB, client: async () => cf.client }),
+      await resyncInstallAccessIfFailed({
+        db: env.DB,
+        client: async () => cf.client,
+        now: () => later,
+      }),
     ).toEqual([expect.objectContaining({ installId: INSTALL_ID, outcome: "failed" })]);
-    expect((await readInstallProtection(env.DB, INSTALL_ID))?.syncFailedAt).toEqual(NOW);
+    expect((await readInstallProtection(env.DB, INSTALL_ID))?.syncFailedAt).toEqual(later);
 
     cf.forbidden.clear();
     expect(
       await resyncInstallAccessIfFailed({ db: env.DB, client: async () => cf.client }),
-    ).toEqual([{ installId: INSTALL_ID, outcome: "unchanged" }]);
+    ).toEqual([{ installId: INSTALL_ID, outcome: "updated" }]);
     expect((await readInstallProtection(env.DB, INSTALL_ID))?.syncFailedAt).toBeNull();
     expect(bypassApps(cf)[0]?.destinations).toContainEqual({
       type: "public",

@@ -250,6 +250,7 @@ describe("jobEvents", () => {
       failed_phase: null,
       cf_status: null,
       cf_code: null,
+      cf_message: null,
     });
     expect(JSON.stringify(events)).not.toContain("my-links");
   });
@@ -283,9 +284,9 @@ describe("jobEvents", () => {
     expect(events.map((e) => e.event)).toEqual(["job finished", "job started"]);
   });
 
-  it("classifies a failure and never sends its text", async () => {
+  it("classifies a failure and sends none of its text but Cloudflare's own, cleaned", async () => {
     const error =
-      "set secret STRIPE_KEY: Cloudflare API request failed: PUT /accounts/acc-1/workers/scripts/my-links/secrets -> 403: [10000] Authentication error";
+      "set secret STRIPE_KEY: Cloudflare API request failed: PUT /accounts/acc-1/workers/scripts/my-links/secrets -> 403: [10000] Authentication error for my-links";
     const [, finished] = await jobEvents(
       [
         job({
@@ -300,6 +301,7 @@ describe("jobEvents", () => {
       "id",
       true,
       versions,
+      { subdomain: null, hostnames: [], workers: ["my-links"] },
     );
     expect(finished?.properties).toMatchObject({
       kind: "update",
@@ -310,9 +312,10 @@ describe("jobEvents", () => {
       failed_phase: "secrets",
       cf_status: 403,
       cf_code: 10000,
+      cf_message: "Authentication error for [worker]",
     });
     const text = JSON.stringify(finished);
-    for (const secret of ["STRIPE_KEY", "acc-1", "my-links", "Authentication"]) {
+    for (const secret of ["STRIPE_KEY", "acc-1", "my-links", "/accounts/", "PUT"]) {
       expect(text).not.toContain(secret);
     }
   });

@@ -1,11 +1,11 @@
-import type { CloudflareClient, FetchLike } from "@appflare/cf-api";
+import type { AccessApp, CloudflareClient, FetchLike } from "@appflare/cf-api";
 import type { AppManifestOptions } from "../catalog/app-manifest.server";
 import { type CfClientEnv, getCfClient } from "../cloudflare/client.server";
 import { createDb } from "../db/client";
 import { install_access } from "../db/schema";
 import { readSettings, SETTING } from "../db/settings";
 import { renewInstallServiceTokens, resyncAppAccessUsersIfFailed } from "./install-access.server";
-import { resyncInstallAccessIfFailed } from "./protect.server";
+import { PROTECT_MESSAGES, resyncInstallAccessIfFailed, takenByApp } from "./protect.server";
 import { refreshProtectedRevisions } from "./revision-refresh.server";
 import { checkProtectedAppsExist } from "./upkeep.server";
 
@@ -24,13 +24,19 @@ import { checkProtectedAppsExist } from "./upkeep.server";
  *    then "Appflare users" after a failed update (an update, or a list of at
  *    most two pages and a create when it was deleted): 14.
  * 3. `resyncAccessApps`: first the check that protected apps' applications
- *    still exist: a list of at most two pages, `DELETION_CHECKS_PER_RUN` (8)
- *    reads, the users policy read and up to four calls to make it again: 15;
- *    then Access applications whose sync failed or is due,
- *    `ACCESS_RESYNCS_PER_RUN` (3) at most 9 calls each (the script list, the
- *    application read and write, the account subdomain, and the public paths'
- *    application: read, list of at most two pages, write, make again): 27.
- *    Together 42.
+ *    still exist: a list of at most two pages, the account's script list
+ *    and its Workers custom domains for the version previews and wildcard
+ *    domains check, `DELETION_CHECKS_PER_RUN` (8) reads, the users policy
+ *    read and up to four calls to make it again: 17; then Access
+ *    applications whose sync failed or is due, against that same list of
+ *    applications, `ACCESS_RESYNCS_PER_RUN` (3) at most 11 calls each (the
+ *    script list, the Workers custom domains, the account subdomain, the
+ *    application read and write, a list of at most two pages and a second
+ *    write when an application made since names one of the app's
+ *    addresses, and the public paths' application: read, write, make
+ *    again): 33. Together 50. When the check could not list the
+ *    applications it spends at most 7, and each resync lists them itself,
+ *    two more calls each: 46.
  *
  * Each part never throws: what it did, and what failed, comes back as log
  * lines, which the cron writes to its own log.
@@ -188,8 +194,10 @@ export async function resyncAccessApps(
   // Access applications the resyncs can run out of this invocation's
   // subrequests, and noticing an application deleted in the dashboard (an app
   // left open) matters more than bringing one in step.
+  let apps: AccessApp[] | null = null;
   try {
     const upkeep = await checkProtectedAppsExist({ db: env.DB, client, ...now });
+    apps = upkeep.apps;
     for (const id of upkeep.missing) {
       lines.push({
         level: "warn",
@@ -200,6 +208,26 @@ export async function resyncAccessApps(
       lines.push({
         level: "log",
         message: `access: the Access application of install ${id} is there again`,
+      });
+    }
+    for (const { installId, uris } of upkeep.freed) {
+      lines.push({
+        level: "log",
+        message: `access: install ${installId}: no other Access application names ${uris.join(", ")} any more; brought in step on the resync`,
+      });
+    }
+    for (const id of upkeep.patterns) {
+      lines.push({
+        level: "log",
+        message: `access: install ${id}: what its Access application names of its version previews, its wildcard domains or the hostnames Cloudflare's limit left out is out of step with the account's other applications and Workers; brought in step on the resync`,
+      });
+    }
+    if (upkeep.workersError !== null) {
+      lines.push({
+        level: "error",
+        message:
+          "access: could not list Workers or their custom domains to check protected apps' version previews and wildcard domains",
+        error: upkeep.workersError,
       });
     }
     if (upkeep.listError !== null) {
@@ -232,13 +260,35 @@ export async function resyncAccessApps(
   }
   // Apart from the check above, so a failure there never skips it.
   try {
-    for (const r of await resyncInstallAccessIfFailed({ db: env.DB, client, ...now })) {
+    const resyncs = await resyncInstallAccessIfFailed({
+      db: env.DB,
+      client,
+      ...now,
+      ...(apps === null ? {} : { apps }),
+    });
+    for (const r of resyncs) {
+      if (r.outcome === "busy") {
+        lines.push({
+          level: "log",
+          message: `access: another Access change is in progress; install ${r.installId} and the rest are brought in step on the next run`,
+        });
+        continue;
+      }
       const message = `access: applications of install ${r.installId} brought in step again: ${r.outcome}`;
       lines.push(
         r.outcome === "failed"
           ? { level: "error", message, ...(r.detail === undefined ? {} : { error: r.detail }) }
           : { level: "log", message },
       );
+      for (const { app, uris } of takenByApp(r.taken ?? [])) {
+        lines.push({
+          level: "warn",
+          message: `access: install ${r.installId}: ${PROTECT_MESSAGES.taken(app, uris)}`,
+        });
+      }
+      for (const warning of r.warnings ?? []) {
+        lines.push({ level: "warn", message: `access: install ${r.installId}: ${warning}` });
+      }
     }
   } catch (error) {
     lines.push({

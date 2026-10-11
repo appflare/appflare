@@ -9,7 +9,12 @@ import {
 } from "@appflare/schema";
 import { beforeEach, describe, expect, it } from "vitest";
 import { readAcceptedBypass } from "../access/accepted-paths.server";
-import { protectInstall, resyncInstallAccessIfFailed } from "../access/protect.server";
+import {
+  PROTECT_MESSAGES,
+  protectInstall,
+  readInstallProtection,
+  resyncInstallAccessIfFailed,
+} from "../access/protect.server";
 import { readCatalogRevision } from "../catalog/revisions.server";
 import { createDb } from "../db/client";
 import { createMigrator } from "../db/migrate";
@@ -3403,6 +3408,60 @@ describe("update job, an app protected with Cloudflare Access", () => {
     ]);
     // Before the new version served, only the path both versions share was public.
     expect(seen).toContainEqual(["cut.appflare-dev.workers.dev/s/*"]);
+  });
+
+  it("leaves an address another Access application names itself to it, and says so in the log", async () => {
+    const access = fakeAccessAccount();
+    access.scripts.push({ id: "cut", tag: "tag-cut" });
+    const host = "cut.appflare-dev.workers.dev";
+    const worker = { type: "worker", worker_id: "tag-cut" };
+    const r = await update(
+      NEW_APP,
+      {},
+      {},
+      {},
+      "self",
+      async () => {
+        await env.DB.prepare(
+          "INSERT INTO user (id, name, email, role) VALUES ('u1', 'Owner', 'owner@example.com', 'admin')",
+        ).run();
+        await protectInstall(
+          { db: env.DB, client: access.client, authSecret: "a".repeat(32) },
+          { installId: INSTALL_ID },
+        );
+        // Protected by an earlier version (the Worker alone), then an
+        // application made by hand for the app's workers.dev address.
+        for (const app of access.apps.values()) app.destinations = [worker];
+        await env.DB.prepare("UPDATE install_access SET access_destinations_json = ?1")
+          .bind(JSON.stringify({ destinations: [worker], workerTags: { cut: "tag-cut" } }))
+          .run();
+        access.apps.set("mine", {
+          id: "mine",
+          aud: "aud-mine",
+          name: "My cut",
+          destinations: [{ type: "public", uri: host }],
+          policies: [],
+        });
+      },
+      (fake) => async (input, init) => {
+        const path = new URL(String(input)).pathname;
+        if (path.includes("/access/") || path.endsWith("/workers/scripts")) {
+          return access.fetch(String(input), init);
+        }
+        return fake.fetch(String(input), init);
+      },
+    );
+    expect(r.error).toBeNull();
+    expect(r.job?.status).toBe("succeeded");
+    expect(r.logs).toContainEqual(
+      expect.objectContaining({
+        level: "warn",
+        message: PROTECT_MESSAGES.taken("My cut", [host]),
+      }),
+    );
+    const ours = [...access.apps.values()].find((a) => a.id !== "mine");
+    expect(ours?.destinations).toEqual([worker]);
+    expect((await readInstallProtection(env.DB, INSTALL_ID))?.syncFailedAt).toBeNull();
   });
 
   it("reads both versions' public paths from the revisions recorded for their releases", async () => {

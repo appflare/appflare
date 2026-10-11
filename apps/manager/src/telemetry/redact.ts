@@ -2,7 +2,8 @@
  * Removes private values from text an admin is about to send to the Appflare
  * team in a failure report: tokens, keys and passwords, email addresses,
  * Cloudflare account ids and other ids, and this account's own names (its
- * workers.dev subdomain, its hostnames and its Worker names).
+ * workers.dev subdomain, its hostnames, its Worker names and the other
+ * names Appflare recorded).
  *
  * Job log lines are written without secret values (steps log names, never
  * values, and Cloudflare API calls as `METHOD path -> status` only), but
@@ -20,6 +21,8 @@ export const REDACTED_ACCOUNT = "[account id]";
 export const REDACTED_ID = "[id]";
 export const REDACTED_DOMAIN = "[domain]";
 export const REDACTED_WORKER = "[worker]";
+export const REDACTED_NAME = "[name]";
+export const REDACTED_IP = "[ip]";
 
 /** This account's own names, taken out of a report wherever they appear. */
 export interface AccountNames {
@@ -29,6 +32,12 @@ export interface AccountNames {
   hostnames: readonly string[];
   /** Every Worker name: the manager's, the apps', and their other Workers. */
   workers: readonly string[];
+  /**
+   * Every other name Appflare recorded: the apps' databases, namespaces,
+   * buckets, queues and Access applications, and the names admins gave
+   * the apps.
+   */
+  names?: readonly string[];
 }
 
 export const NO_ACCOUNT_NAMES: AccountNames = { subdomain: null, hostnames: [], workers: [] };
@@ -133,7 +142,10 @@ function wholeName(names: readonly string[], flags: string): RegExp | null {
   );
 }
 
-/** The rules that take this account's own names out, hostnames first (they contain Worker names). */
+/**
+ * The rules that take this account's own names out, hostnames and other
+ * names first (they contain Worker names).
+ */
 function accountRules(names: AccountNames): Rule[] {
   const rules: Rule[] = [];
   const hosts = wholeName(
@@ -141,6 +153,9 @@ function accountRules(names: AccountNames): Rule[] {
     "gi",
   );
   if (hosts !== null) rules.push([hosts, REDACTED_DOMAIN]);
+  // Before Worker names: an Access application's name carries its Worker's.
+  const others = wholeName(names.names ?? [], "gi");
+  if (others !== null) rules.push([others, REDACTED_NAME]);
   if (names.subdomain !== null && names.subdomain.length > 0) {
     const sub = escapeRegExp(names.subdomain);
     rules.push([

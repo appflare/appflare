@@ -66,7 +66,11 @@ import { AccessToggleError } from "./toggle.server";
  * name, which carries the install id. Callers hold the Access lock.
  */
 
-/** Cloudflare's limit of destinations per Access application. */
+/**
+ * Cloudflare's limit of destinations per Access application (verified live
+ * 2026-10-11: 50 accepted, 51 refused with 400 [12130] "too many
+ * destinations for one app").
+ */
 export const MAX_ACCESS_APP_DESTINATIONS = 50;
 
 export const BYPASS_MESSAGES = {

@@ -229,14 +229,18 @@ describe("a stored release's revision", () => {
     await recordProtectedInstall({ installId: INSTALL_ID, authSecret: AUTH, secret: "s" });
     const due = async () =>
       (
-        await env.DB.prepare("SELECT access_sync_failed_at AS at FROM install_access").first<{
+        await env.DB.prepare("SELECT access_resync_due_at AS at FROM install_access").first<{
           at: number | null;
         }>()
       )?.at ?? null;
     await recordFixtureRevision(f, new Date(5_000));
     expect(await due()).toBe(5_000);
+    // Nothing failed, so the app's page shows nothing for it.
+    expect(
+      await env.DB.prepare("SELECT access_sync_failed_at AS at FROM install_access").first(),
+    ).toEqual({ at: null });
     // A later revision with the same public paths leaves the mark alone.
-    await env.DB.prepare("UPDATE install_access SET access_sync_failed_at = NULL").run();
+    await env.DB.prepare("UPDATE install_access SET access_resync_due_at = NULL").run();
     const same = { ...f.revised?.catalog, revision: 3 } as CatalogManifest;
     const text = JSON.stringify(same);
     const file = {

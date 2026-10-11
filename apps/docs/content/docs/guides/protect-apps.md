@@ -148,20 +148,46 @@ the app's application is listed by its name.
 ## Addresses it covers
 
 The Access application covers the app's Workers by their script tag, so it follows
-them wherever they answer:
+them wherever they answer. It also names each of the app's hostnames: Access picks a
+named hostname over a Worker or a wildcard, so the app's application decides there even
+when another Access application you made covers them too. It covers:
 
 - the `workers.dev` address,
-- every version preview, later ones included,
-- [custom domains](/guides/custom-domains/), and the base and every name of a
-  [wildcard domain](/guides/custom-domains/#wildcard-domains),
+- every version preview, later ones included, through the Worker. Their addresses
+  are named too (`*-<worker>.<your-subdomain>.workers.dev`), but only while another
+  Access application you made covers them, as that pattern also matches the address
+  of any Worker whose name ends in `-<worker>`. With such a Worker in the account,
+  the previews stay under your other application, and the job's log says which
+  Worker keeps them there,
+- [custom domains](/guides/custom-domains/),
+- the base and every name of a
+  [wildcard domain](/guides/custom-domains/#wildcard-domains), through the Worker.
+  They are named too (`<base>` and `*.<base>`), but only while another Access
+  application you made covers them. `*.<base>` also matches the custom domains and
+  routes of other Workers under the base, such as `api.<base>` of an unrelated
+  Worker, and `<base>` matches another Worker's route on one of its paths. With such
+  an address in the account, that part of the wildcard domain stays under your other
+  application, and the job's log names the Worker and its address,
 - [external domains](/guides/external-domains/), which reach the app through the
   gateway Worker and are therefore added to the application by name. A new external
   domain is covered before it is set up, and a removed one is taken off after it is
   gone.
 
+Cloudflare allows 50 destinations on one Access application. For an app with more
+domains than fit, Appflare leaves out hostnames its Workers already cover, and the
+log names them. If an Access application made later covers one of those, Appflare
+names it within 30 minutes. It refuses to protect an app that needs more than 50
+named, counting one per Worker, one per external domain, and one per address another
+Access application covers more broadly. An address another Access application names
+exactly is left to that application and does not count.
+
 Adding a domain later needs nothing from you. If Appflare cannot bring the Access
 applications in step with a change outside a job, the app's page says so. Appflare
 tries again every 30 minutes, and the app's addresses stay protected meanwhile.
+
+An app protected by an earlier version of Appflare has an Access application that
+covers its Workers alone. Once Appflare is updated, the 30-minute check adds the app's
+hostnames to it, a few apps at a time. The app stays protected as before until then.
 
 ## Health checks
 
@@ -232,6 +258,33 @@ with **Protect again**, which points it at the new policy.
 
 ### Another Access application covers the app
 
+An Access application you made for a broader pattern, such as
+`*.<your-subdomain>.workers.dev` or `*.example.com`, does not stop Appflare: the app's
+own application names each of the app's addresses exactly, which Access picks over the
+pattern. The job's log names the other application with a warning, and your
+application keeps protecting everything else it covers. There are two exceptions,
+both described [above](#addresses-it-covers): the app's version previews next to a
+Worker whose name ends like the app's, and a wildcard domain with another Worker's
+custom domain or route under it. Appflare checks every 30 minutes whether the
+previews and wildcard domains still need naming, so it follows such an application,
+Worker, custom domain or route made or deleted later.
+
 Appflare refuses to protect an app when an Access application you made covers one of
-its addresses, and names it. Delete that application in the Zero Trust dashboard, or
-keep using it and leave Appflare's protection off for the app.
+its addresses as narrowly as Appflare's would: the same Worker, the same hostname, a
+path on one of its hostnames, or a single version preview. The message names that
+application. Delete it in the Zero Trust dashboard, or keep using it and leave
+Appflare's protection off for the app.
+
+Cloudflare lets only one Access application name each hostname or pattern, so once
+the app's application names an address, no other application can name exactly that
+address. An application you made before it keeps the address: one for exactly the
+app's `workers.dev` address or a custom domain, made while an earlier version of
+Appflare protected the app by its Workers alone, or one that already names a domain
+you add to the app later. Appflare then leaves that hostname to yours instead of
+failing, and so does **Protect again**: the app's application keeps its Workers and
+every other address, the job's log names your application in a warning, and the
+app's page says so. On that hostname your application decides who gets in, and it
+may refuse Appflare's health checks. Delete it, and within 30 minutes Appflare's
+application covers that hostname again. A new external domain that another
+application already names is refused instead, so it is never added without
+Appflare's protection.

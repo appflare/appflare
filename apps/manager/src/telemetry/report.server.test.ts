@@ -91,7 +91,7 @@ async function seed() {
     env.DB.prepare(
       `INSERT INTO jobs (id, install_id, kind, status, input_json, error, started_at, finished_at)
        VALUES ('j1', 'i1', 'update', 'failed', '{"installId":"i1","fromVersion":"1.0.0","version":"1.1.0","secrets":["STRIPE_KEY"]}',
-         'set secret STRIPE_KEY: Cloudflare API request failed: PUT /accounts/acc-123/workers/scripts/my-links/secrets -> 403: [10000] Authentication error',
+         'set secret STRIPE_KEY: Cloudflare API request failed: PUT /accounts/acc-123/workers/scripts/my-links/secrets -> 403: [10000] Authentication error for my-links on links.ada.example',
          ?1, ?2)`,
     ).bind(NOW - 20 * MIN, NOW - 15 * MIN),
   ]);
@@ -349,6 +349,8 @@ describe("the report", () => {
       failed_phase: "secrets",
       cf_status: 403,
       cf_code: 10000,
+      // Cloudflare's own words, without the account's names.
+      cf_message: "Authentication error for [worker] on [domain]",
     });
     expect(byName["manager heartbeat"]).toMatchObject({
       users: 2,
@@ -378,7 +380,6 @@ describe("the report", () => {
       "cf-zone-1",
       "STRIPE_KEY",
       "secret-home",
-      "Authentication error",
       "/accounts/",
       "i1",
       "j1",
@@ -394,6 +395,26 @@ describe("the report", () => {
     const next = await reportTelemetry(e, { fetch: ph.fetch, now: () => NOW + 30 * MIN });
     expect(next).toEqual({ status: "sent", events: 0 });
     expect(ph.sent).toHaveLength(1);
+  });
+
+  it("leaves Cloudflare's message out, and sends the rest, when the account's names cannot be read", async () => {
+    await finishSetup();
+    // A table the names are read from, gone.
+    await env.DB.prepare("DROP TABLE passkey_host").run();
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const ph = posthog();
+    const out = await reportTelemetry(managerEnv(), { fetch: ph.fetch, now: () => NOW });
+    expect(out.status).toBe("sent");
+    const finished = ph.sent[0]?.body.batch.find((ev) => ev.event === "job finished");
+    expect(finished?.properties).toMatchObject({
+      error_category: "cloudflare_permission",
+      cf_code: 10000,
+      cf_message: null,
+    });
+    expect(warn).toHaveBeenCalledWith(
+      "telemetry: could not read the account's names; Cloudflare messages left out",
+      expect.anything(),
+    );
   });
 
   it("keeps everything for the next run when PostHog refuses the batch", async () => {

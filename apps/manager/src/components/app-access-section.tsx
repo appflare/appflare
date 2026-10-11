@@ -21,6 +21,7 @@ import {
   whoGetsIn,
   zeroTrustUsersNote,
 } from "../access/app-access";
+import { INSTALL_ACCESS_MESSAGES } from "../access/messages";
 import { dashboardLinks } from "../cloudflare/dashboard-links";
 import {
   checkAppAccess,
@@ -47,7 +48,8 @@ function people(users: number): string {
  * Appflare protects the app with Cloudflare Access, so that every address
  * it has asks for a sign-in and only Appflare's users get in. Shows who
  * gets in, what stays public, the Access application in the Zero Trust
- * dashboard, and a sync that failed (the cron tries again). Admins turn it
+ * dashboard, a sync that failed (the cron tries again), and addresses
+ * another Access application names itself, which it then decides on. Admins turn it
  * on or off with a confirmation that says what happens; when Appflare's
  * records show something to repair (`InstallAccessView.repair`), "Protect
  * again" is offered with a line saying what. Each starts the settings change
@@ -102,7 +104,8 @@ export function AppAccessSection({
             }
           />
         )}
-        {access.syncFailedAt !== null && (
+        {/* A deleted application leaves the addresses open: its own banner says so. */}
+        {access.syncFailedAt !== null && access.repair !== "app-deleted" && (
           <Banner
             variant="alert"
             icon={BANNER_ICON.alert}
@@ -110,6 +113,15 @@ export function AppAccessSection({
             description="The last update of its Access applications failed. Appflare tries again every 30 minutes; the app's addresses stay protected meanwhile."
           />
         )}
+        {access.takenAddresses.map(({ app, uris }) => (
+          <Banner
+            key={app}
+            variant="alert"
+            icon={BANNER_ICON.alert}
+            title="Another Access application covers part of this app"
+            description={INSTALL_ACCESS_MESSAGES.addressTaken(app, uris)}
+          />
+        ))}
         {access.protected ? (
           <DescriptionList>
             <DescriptionItem label="Who gets in">

@@ -49,6 +49,7 @@ const PROTECTED: InstallAccessView = {
   publicPaths: [],
   pendingPublicPaths: [],
   syncFailedAt: null,
+  takenAddresses: [],
   usesAccessValues: false,
   users: 3,
   repair: null,
@@ -140,10 +141,36 @@ describe("AppAccessSection", () => {
       syncFailedAt: "2026-10-01T10:00:00.000Z",
       repair: "sync-failed",
     });
+    expect(text).toContain("The last update of its Access applications failed.");
     expect(text).toContain("Appflare tries again every 30 minutes");
     expect(text).toContain("the app's addresses stay protected meanwhile");
     expect(text).toContain("Protecting it again brings its Access applications in step now.");
     expect(button("Protect again")).toBeDefined();
+  });
+
+  it("never says a deleted Access application's addresses stay protected, whatever failed before", async () => {
+    const text = await show({
+      ...PROTECTED,
+      syncFailedAt: "2026-10-01T10:00:00.000Z",
+      repair: "app-deleted",
+    });
+    expect(text).toContain("no longer ask for a sign-in");
+    expect(text).not.toContain("stay protected meanwhile");
+    expect(text).not.toContain("The last update of its Access applications failed.");
+  });
+
+  it("names another Access application that keeps an address of the app, and how to get it back", async () => {
+    const text = await show({
+      ...PROTECTED,
+      takenAddresses: [{ app: "Links admin", uris: ["links.example.com"] }],
+    });
+    expect(text).toContain("Another Access application covers part of this app");
+    expect(text).toContain(
+      'The Cloudflare Access application "Links admin" covers links.example.com itself, so it decides who reaches this app there',
+    );
+    expect(text).toContain("Appflare covers that address again within 30 minutes.");
+    // Nothing for Appflare to repair: no Protect again.
+    expect(button("Protect again")).toBeUndefined();
   });
 
   it("says why a replaced users policy keeps everyone out, next to Protect again", async () => {

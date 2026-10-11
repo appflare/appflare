@@ -1,9 +1,11 @@
 import type { CloudflareClient } from "@appflare/cf-api";
 import type { BypassChange } from "./bypass.server";
 import {
+  PROTECT_MESSAGES,
   readInstallProtection,
   recordAccessSyncFailure,
   syncInstallAccessDestinations,
+  takenByApp,
 } from "./protect.server";
 
 /**
@@ -23,7 +25,9 @@ import {
  * caller removing a domain stops when the sync ahead of it fails, so the
  * hostname is never released with a public path left on it; after an
  * address was added, a failure only means it asks for a sign-in on the
- * public paths too until the retry.
+ * public paths too until the retry. An address left to another Access
+ * application that names it itself is no failure: it is logged, and the
+ * app's page names it from the install's record.
  */
 export type AccessAddressSync = (
   installId: string,
@@ -38,11 +42,15 @@ export function accessAddressSync(
   return async (installId, change) => {
     try {
       if ((await readInstallProtection(db, installId)) === null) return null;
-      await syncInstallAccessDestinations(
+      const { taken, warnings } = await syncInstallAccessDestinations(
         { db, client: await client(), ...(now === undefined ? {} : { now }) },
         installId,
         change === undefined ? {} : { change },
       );
+      for (const { app, uris } of takenByApp(taken)) {
+        console.warn(`access: ${PROTECT_MESSAGES.taken(app, uris)}`, { installId });
+      }
+      for (const warning of warnings) console.warn(`access: ${warning}`, { installId });
       return null;
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);

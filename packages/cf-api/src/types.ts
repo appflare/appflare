@@ -89,6 +89,12 @@ export interface WorkerScript {
    * what an Access `worker` destination names the Worker by.
    */
   tag?: string;
+  /**
+   * The zone routes that send requests to the Worker, in every zone of the
+   * account; null when it has none. Verified live 2026-10-11: a route made
+   * on a zone was listed on its Worker at once, and gone once deleted.
+   */
+  routes?: Array<{ id: string; pattern: string; script?: string }> | null;
 }
 
 export interface ScriptUploadResult {

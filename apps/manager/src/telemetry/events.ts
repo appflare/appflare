@@ -7,12 +7,17 @@ import {
 import { isUpdateAvailable } from "../catalog/versions";
 import type { ChannelKind } from "../notifications/schema";
 import { classifyJobError } from "./classify";
+import { type AccountNames, NO_ACCOUNT_NAMES } from "./redact";
 
 /**
  * Builds the manager's usage-data events from rows already read. Pure: the
  * cron (report.server.ts) does the reading and sending. Everything here
  * turns records into enums, counts, booleans, versions and durations; names,
- * ids, hostnames and messages never make it into a property.
+ * ids, hostnames and Appflare's messages never make it into a property. The
+ * one text is a failed Cloudflare API request's own message, cut short and
+ * cleaned of this account's names, anything quoted or shaped like a
+ * hostname, and anything private-looking (`classifyJobError`), because
+ * Cloudflare's numeric code alone often does not say what it refused.
  */
 
 export const EVENT = {
@@ -348,6 +353,8 @@ export function jobProperties(
 /**
  * The job events whose moment falls in `(from, to]`: `job started` at the
  * job's start and `job finished` at its end, each at the job's own time.
+ * `names` are this account's own, which a Cloudflare message is cleaned of;
+ * null when they could not be read, which leaves the message out.
  */
 export async function jobEvents(
   rows: readonly JobRow[],
@@ -356,6 +363,7 @@ export async function jobEvents(
   installId: string,
   officialCatalog: boolean,
   catalogVersions: ReadonlyMap<string, string> | null,
+  names: AccountNames | null = NO_ACCOUNT_NAMES,
 ): Promise<TelemetryEvent[]> {
   const inWindow = (t: number | null): t is number =>
     t !== null && t > window.from && t <= window.to;
@@ -373,7 +381,7 @@ export async function jobEvents(
     const ended = row.status === "succeeded" || row.status === "failed";
     if (ended && inWindow(row.finishedAt)) {
       const failed = row.status === "failed";
-      const failure = failed ? classifyJobError(row.error) : null;
+      const failure = failed ? classifyJobError(row.error, names) : null;
       events.push({
         event: EVENT.jobFinished,
         timestamp: new Date(row.finishedAt).toISOString(),
@@ -389,6 +397,7 @@ export async function jobEvents(
           failed_phase: failure?.failedPhase ?? null,
           cf_status: failure?.cfStatus ?? null,
           cf_code: failure?.cfCode ?? null,
+          cf_message: failure?.cfMessage ?? null,
         },
       });
     }

@@ -6,10 +6,13 @@ import {
   releaseAppAccessForRemoval,
 } from "../../access/install-access.server";
 import {
+  PROTECT_MESSAGES,
   type ProtectOutcome,
   protectInstall,
   type SyncOutcome,
   syncInstallAccessDestinations,
+  type TakenAddress,
+  takenByApp,
   unprotectInstall,
 } from "../../access/protect.server";
 import { ACCESS_MESSAGES, AccessToggleError } from "../../access/toggle.server";
@@ -25,7 +28,10 @@ import { runUnit, type UnitDeps, type UnitEnv, type UnitResult } from "./result"
  *   subdomain (from settings), the organization, the list of Access
  *   applications, "Appflare users" (a write, and a list when it must be
  *   found), the install's token (a list, and a create), then the
- *   application's create or rewrite: about 7 requests, 10 at most.
+ *   application's create or rewrite: about 7 requests, 10 at most, and two
+ *   more (the account's script list and Workers custom domains) when
+ *   another application covers a version previews' pattern or names
+ *   something under a wildcard domain of the app.
  * - `syncInstallAccess`: nothing when the destinations did not change, else
  *   a read and a rewrite of the application (and a script list when a
  *   Worker's tag is not recorded); then, for an app with public paths, a
@@ -41,7 +47,14 @@ import { runUnit, type UnitDeps, type UnitEnv, type UnitResult } from "./result"
  * They read the manager's D1 and `BETTER_AUTH_SECRET` from the Worker's own
  * environment. A refusal (a missing permission, no Zero Trust organization,
  * another application on the app's address) ends the step without retries;
- * another Access change holding the lock is retried.
+ * another Access change holding the lock is retried. Another application
+ * whose broader pattern also covers the app's addresses is only a warning
+ * in the job's log: the app's own application takes precedence there. One
+ * that names an address of an app already protected itself keeps it: the
+ * sync, and protecting the app again, leave that address to it, and the
+ * job's log says so in a warning, as it does for version previews and
+ * wildcard domains left to a broader application and hostnames left out to
+ * stay within Cloudflare's limit of destinations.
  */
 
 /** Installs one `releaseAppAccess` call releases: 3 requests each, well inside a unit's 50. */
@@ -72,6 +85,19 @@ export interface ProtectInstallUnitResult {
   teamDomain: string;
   /** What the application covers, for the job's log. */
   covers: string[];
+  /**
+   * Other Access applications whose broader patterns also cover the app's
+   * addresses, which the app's application takes precedence over; absent
+   * from a unit of an earlier version.
+   */
+  overridden?: Array<{ name: string; patterns: string[] }>;
+  /**
+   * Addresses of an app already protected that another application names
+   * itself, left to it; absent from a unit of an earlier version.
+   */
+  taken?: TakenAddress[];
+  /** What the application leaves out besides; absent from a unit of an earlier version. */
+  warnings?: string[];
   /** What happened to the app's public paths; absent from a unit of an earlier version. */
   bypass?: { outcome: BypassOutcome; uris: string[] } | null;
   /** Why the public paths could not be brought in step (they stay protected). */
@@ -104,6 +130,10 @@ export type SyncInstallAccessInput = z.infer<typeof syncInstallAccessInputSchema
 
 export interface SyncInstallAccessResult {
   outcome: SyncOutcome;
+  /** Addresses left to another application that names them itself; absent from a unit of an earlier version. */
+  taken?: TakenAddress[];
+  /** What the application leaves out besides; absent from a unit of an earlier version. */
+  warnings?: string[];
 }
 
 export const releaseAppAccessInputSchema = z.object({
@@ -165,6 +195,13 @@ export function runProtectInstall(
       log.info(
         `${what} the Cloudflare Access application "${result.appName}"; it covers ${covers.join(", ")}, and lets in Appflare's users and Appflare's own health checks of this app.`,
       );
+      for (const other of result.overridden) {
+        log.warn(PROTECT_MESSAGES.overridden(other.name, other.patterns));
+      }
+      for (const { app, uris } of takenByApp(result.taken)) {
+        log.warn(PROTECT_MESSAGES.taken(app, uris));
+      }
+      for (const warning of result.warnings) log.warn(warning);
       if (result.bypass !== null && result.bypass.uris.length > 0) {
         log.info(`These paths stay public without a sign-in: ${result.bypass.uris.join(", ")}.`);
       } else if (result.bypass?.outcome === "removed") {
@@ -182,6 +219,9 @@ export function runProtectInstall(
         aud: result.aud,
         teamDomain: result.teamDomain,
         covers,
+        overridden: result.overridden,
+        taken: result.taken,
+        warnings: result.warnings,
         bypass: result.bypass,
         bypassProblem: result.bypassProblem,
       };
@@ -198,7 +238,7 @@ export function runSyncInstallAccess(
 ): Promise<UnitResult<SyncInstallAccessResult>> {
   return runUnit(env, deps, input.accountId, async ({ log, cf }) => {
     try {
-      const outcome = await syncInstallAccessDestinations(
+      const { outcome, taken, warnings } = await syncInstallAccessDestinations(
         accessDeps(env, deps, cf),
         input.installId,
         {
@@ -211,7 +251,9 @@ export function runSyncInstallAccess(
       if (outcome === "updated") {
         log.info("Updated what the app's Cloudflare Access application covers.");
       }
-      return { outcome };
+      for (const { app, uris } of takenByApp(taken)) log.warn(PROTECT_MESSAGES.taken(app, uris));
+      for (const warning of warnings) log.warn(warning);
+      return { outcome, taken, warnings };
     } catch (error) {
       throw asStepError(error);
     }

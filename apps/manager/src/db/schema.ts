@@ -622,18 +622,29 @@ export const install_access = sqliteTable("install_access", {
   /** The Zero Trust team domain (`<team>.cloudflareaccess.com`) its JWTs come from. */
   access_team_domain: text("access_team_domain"),
   /**
-   * What the application covers, as last written: `{ destinations, workerTags }`
-   * (access/protect.server.ts), so a change of the install's addresses is
-   * written only when it changes something.
+   * What the application covers, as last written: `{ destinations, workerTags,
+   * taken }`, `taken` being the addresses left to another application that
+   * names them itself (access/protect.server.ts), so a change of the
+   * install's addresses is written only when it changes something.
    */
   access_destinations_json: text("access_destinations_json"),
   /**
    * When bringing the install's Access applications in step with its
-   * addresses or public paths last failed outside a job, or when a catalog
-   * revision of its release changed its public paths; null when the last
-   * sync succeeded. The cron tries again while it is set.
+   * addresses or public paths last failed outside a job; null when the last
+   * sync succeeded. The cron tries again while it is set, and the app's page
+   * says so.
    */
   access_sync_failed_at: timestamp("access_sync_failed_at"),
+  /**
+   * When the install's Access applications became due to be brought in step
+   * with its records, nothing having failed: a catalog revision of its
+   * release changed its public paths, an address left to another application
+   * is free again, or Appflare was updated to name each hostname of a
+   * protected app (migration 0008). The cron's resync clears it, and sets
+   * `access_sync_failed_at` when it fails; the app's page shows nothing for
+   * it. Null when none is due.
+   */
+  access_resync_due_at: timestamp("access_resync_due_at"),
   /**
    * The "Appflare users" policy the application references, as last
    * protected. When "Appflare users" is made again (it was deleted in the

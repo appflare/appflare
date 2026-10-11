@@ -4,9 +4,9 @@ import { createClient, type FetchLike } from "@appflare/cf-api";
  * Test-only: the Access objects protected apps use (service tokens, reusable
  * policies, applications with their own policies), kept in memory and
  * answered the way the Cloudflare API answers them, plus the account's zone
- * list, its Zero Trust organization, its Workers (name and script tag) and
- * its workers.dev subdomain. Tests delete things "in the dashboard" by
- * editing the maps.
+ * list, its Zero Trust organization, its Workers (name, script tag and
+ * zone routes), their custom domains and its workers.dev subdomain. Tests
+ * delete things "in the dashboard" by editing the maps.
  */
 
 /** The team domain the fake organization answers with. */
@@ -51,8 +51,15 @@ export function fakeAccessAccount(opts: { now?: () => Date } = {}) {
   const appPolicies = new Map<string, FakePolicy & { appId: string }>();
   const apps = new Map<string, FakeApp>();
   const zones: Array<{ id: string; name: string; status: string; account: { id: string } }> = [];
-  /** The account's Workers, as `GET /workers/scripts` lists them. */
-  const scripts: Array<{ id: string; tag: string }> = [];
+  /** The account's Workers, as `GET /workers/scripts` lists them (with their zone routes). */
+  const scripts: Array<{
+    id: string;
+    tag: string;
+    routes?: Array<{ id: string; pattern: string; script: string }> | null;
+  }> = [];
+  /** The account's Workers custom domains, as `GET /workers/domains` lists them. */
+  const workerDomains: Array<{ id: string; hostname: string; service: string; zone_id: string }> =
+    [];
   /** The Zero Trust organization; null answers 404 (the account has none). */
   const organization: { current: { auth_domain: string; name: string } | null } = {
     current: { auth_domain: FAKE_TEAM_DOMAIN, name: "Appflare test" },
@@ -102,6 +109,51 @@ export function fakeAccessAccount(opts: { now?: () => Date } = {}) {
         message: "access.api.error.invalid_request: domain not included in destinations",
       },
     ]);
+  /**
+   * Cloudflare refuses an application a destination another one has
+   * (verified live 2026-10-11): the same hostname with 409 [11010], the same
+   * pattern (`*-<host>`) or Worker with 409 [12132]. A path, or a broader
+   * pattern, is no conflict.
+   */
+  const destinationConflict = (appId: string | null, b: Record<string, unknown>) => {
+    const keyOf = (d: { type?: string; uri?: unknown; worker_id?: unknown }) =>
+      d.type === "public" && typeof d.uri === "string"
+        ? `public:${d.uri.toLowerCase()}`
+        : d.type === "worker"
+          ? `worker:${String(d.worker_id)}`
+          : null;
+    const mine = new Set(
+      ((b.destinations ?? []) as Array<{ type?: string }>).map(keyOf).filter((k) => k !== null),
+    );
+    for (const other of apps.values()) {
+      if (other.id === appId) continue;
+      for (const d of (other.destinations ?? []) as Array<{ type?: string }>) {
+        const key = keyOf(d);
+        if (key === null || !mine.has(key)) continue;
+        return key.startsWith("public:") && !key.startsWith("public:*")
+          ? json(409, null, [
+              { code: 11010, message: "access.api.error.conflict: domain already in use" },
+            ])
+          : json(409, null, [
+              {
+                code: 12132,
+                message: "access.api.error.conflict: destination belongs to another application",
+              },
+            ]);
+      }
+    }
+    return null;
+  };
+  /** More than 50 destinations on one application (verified live 2026-10-11: 50 accepted, 51 refused). */
+  const tooMany = (b: Record<string, unknown>) =>
+    Array.isArray(b.destinations) && b.destinations.length > 50
+      ? json(400, null, [
+          {
+            code: 12130,
+            message: "access.api.error.invalid_request: too many destinations for one app",
+          },
+        ])
+      : null;
   const publicToken = ({ client_secret: _secret, ...rest }: FakeToken) => rest;
   const appCount = (id: string) =>
     [...apps.values()].filter((a) => a.policies.some((p) => p.id === id)).length;
@@ -155,6 +207,7 @@ export function fakeAccessAccount(opts: { now?: () => Date } = {}) {
     }
     if (key === `GET ${A}/access/apps`) return json(200, [...apps.values()], [], one);
     if (key === `GET ${A}/workers/scripts`) return json(200, scripts);
+    if (key === `GET ${A}/workers/domains`) return json(200, workerDomains);
     if (key === `GET ${A}/workers/subdomain`) return json(200, { subdomain: "appflare-dev" });
     if (key === `GET ${A}/access/service_tokens`) {
       return json(200, [...tokens.values()].map(publicToken), [], one);
@@ -236,6 +289,10 @@ export function fakeAccessAccount(opts: { now?: () => Date } = {}) {
       const b = body as Record<string, unknown> & { policies?: unknown[] };
       const domains = appDomains(b);
       if (domains === "mismatch") return domainMismatch();
+      const refused = tooMany(b);
+      if (refused !== null) return refused;
+      const conflict = destinationConflict(null, b);
+      if (conflict !== null) return conflict;
       const app: FakeApp = { ...b, ...domains, id: `app-${n}`, aud: `aud-${n}`, policies: [] };
       app.policies = policyLinks(app.id, b.policies ?? []);
       apps.set(app.id, app);
@@ -261,6 +318,10 @@ export function fakeAccessAccount(opts: { now?: () => Date } = {}) {
         const kept = app.policies;
         const domains = appDomains(b);
         if (domains === "mismatch") return domainMismatch();
+        const refused = tooMany(b);
+        if (refused !== null) return refused;
+        const conflict = destinationConflict(id, b);
+        if (conflict !== null) return conflict;
         const next: FakeApp = { ...b, ...domains, id, aud: app.aud, policies: kept };
         if (b.policies !== undefined) {
           next.policies = policyLinks(id, b.policies);
@@ -294,6 +355,7 @@ export function fakeAccessAccount(opts: { now?: () => Date } = {}) {
     apps,
     zones,
     scripts,
+    workerDomains,
     organization,
     calls,
     forbidden,

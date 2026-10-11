@@ -3657,9 +3657,12 @@ describe("install job, an app of several Workers", () => {
     expect(cover).toBeLessThan(at('enable workers.dev route (Worker "cut-jobs")'));
     expect(cover).toBeLessThan(at("enable workers.dev route"));
     const [app] = [...access.cf.apps.values()];
+    // Every Worker's hostnames, the primary one first, then each Worker by its tag.
     expect(app?.destinations).toEqual([
-      { type: "worker", worker_id: "tag-cut-jobs" },
+      { type: "public", uri: "cut.appflare-dev.workers.dev" },
+      { type: "public", uri: "cut-jobs.appflare-dev.workers.dev" },
       { type: "worker", worker_id: "tag-cut" },
+      { type: "worker", worker_id: "tag-cut-jobs" },
     ]);
     expect(r.fake.state.others["cut-jobs"]?.subdomain).toEqual({
       enabled: true,
@@ -3877,10 +3880,13 @@ describe("install job, an app protected with Cloudflare Access", () => {
     expect(at("cover the app's Workers with Cloudflare Access")).toBeLessThan(
       at("enable workers.dev route"),
     );
-    // One application, now covering the Worker by its tag; the same audience tag throughout.
+    // One application, now covering the Worker by its tag too; the same audience tag throughout.
     expect(access.cf.apps.size).toBe(1);
     const [app] = [...access.cf.apps.values()];
-    expect(app?.destinations).toEqual([{ type: "worker", worker_id: "tag-cut" }]);
+    expect(app?.destinations).toEqual([
+      { type: "public", uri: "cut.appflare-dev.workers.dev" },
+      { type: "worker", worker_id: "tag-cut" },
+    ]);
     const row = await env.DB.prepare(
       "SELECT access_app_id, access_aud, access_team_domain FROM install_access",
     ).first<{ access_app_id: string; access_aud: string; access_team_domain: string }>();
@@ -3912,7 +3918,7 @@ describe("install job, an app protected with Cloudflare Access", () => {
     expect(r.step.names).not.toContain("enable workers.dev route");
     expect(r.step.names).not.toContain("set cron triggers");
     expect(r.fake.state.subdomainEnabled).toEqual({ enabled: false, previews_enabled: false });
-    // The application from before the upload still guards the workers.dev address.
+    // The application from before the upload still guards the workers.dev addresses.
     expect([...access.cf.apps.values()][0]?.destinations).toEqual([
       { type: "public", uri: "cut.appflare-dev.workers.dev" },
     ]);
@@ -3924,8 +3930,8 @@ describe("install job, an app protected with Cloudflare Access", () => {
     access.cf.apps.set("other", {
       id: "other",
       aud: "aud-other",
-      name: "Everything on workers.dev",
-      destinations: [{ type: "public", uri: "*.appflare-dev.workers.dev" }],
+      name: "Cut by hand",
+      destinations: [{ type: "public", uri: "cut.appflare-dev.workers.dev" }],
       policies: [],
     });
     const r = await install(
@@ -3939,11 +3945,38 @@ describe("install job, an app protected with Cloudflare Access", () => {
     );
     expect(r.job?.status).toBe("failed");
     expect(r.job?.error).toContain("protect with Cloudflare Access");
-    expect(r.job?.error).toContain('"Everything on workers.dev" already covers');
+    expect(r.job?.error).toContain(
+      '"Cut by hand" already covers cut.appflare-dev.workers.dev, an address of this app.',
+    );
     expect(r.fake.state.kv).toEqual([]);
     expect(r.step.names).not.toContain("upload Worker script");
     expect(access.cf.tokens.size + access.cf.policies.size).toBe(0);
     expect(access.cf.apps.size).toBe(1);
+  });
+
+  it("installs next to an Access application for every workers.dev address, which its own takes precedence over", async () => {
+    const access = protectedWorld();
+    const everything = { type: "public", uri: "*.appflare-dev.workers.dev" };
+    access.cf.apps.set("other", {
+      id: "other",
+      aud: "aud-other",
+      name: "Workers",
+      destinations: [everything],
+      policies: [],
+    });
+    const r = await install({}, access.world, { access: true }, {}, undefined, "self", addUser);
+    expect(r.job?.status).toBe("succeeded");
+    const warning =
+      "The Cloudflare Access application \"Workers\" also covers *.appflare-dev.workers.dev; Appflare's application takes precedence on this app's addresses.";
+    // Once before the upload and once after: each protect step says so.
+    expect(r.logs.filter((l) => l.level === "warn" && l.message === warning)).toHaveLength(2);
+    expect(access.cf.apps.get("other")?.destinations).toEqual([everything]);
+    const ours = [...access.cf.apps.values()].find((a) => a.id !== "other");
+    expect(ours?.destinations).toEqual([
+      { type: "public", uri: "cut.appflare-dev.workers.dev" },
+      { type: "public", uri: "*-cut.appflare-dev.workers.dev" },
+      { type: "worker", worker_id: "tag-cut" },
+    ]);
   });
 
   it("uploads the Worker with the Access values from the first upload on, and makes its public paths public", async () => {
@@ -4047,7 +4080,10 @@ describe("install job, an app protected with Cloudflare Access", () => {
       { type: "public", uri: "go.customer.net" },
     ]);
     const [app] = [...access.cf.apps.values()];
-    expect(app?.destinations).toEqual([{ type: "worker", worker_id: "tag-cut" }]);
+    expect(app?.destinations).toEqual([
+      { type: "public", uri: "cut.appflare-dev.workers.dev" },
+      { type: "worker", worker_id: "tag-cut" },
+    ]);
   });
 });
 
@@ -4309,6 +4345,7 @@ describe("install again", () => {
     expect(access.cf.apps.size).toBe(1);
     expect(access.cf.tokens.size).toBe(1);
     expect([...access.cf.apps.values()][0]?.destinations).toEqual([
+      { type: "public", uri: "cut.appflare-dev.workers.dev" },
       { type: "worker", worker_id: "tag-cut" },
     ]);
     expect(failed.fake.state.kv.map((n) => n.title)).toEqual(["cut-cut-kv"]);

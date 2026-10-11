@@ -34,7 +34,8 @@ Turning it off changes nothing about how Appflare works for you.
 
 Every event carries the Appflare version, whether it came from the manager or the
 installer, and the random id described [below](#how-it-is-sent). Everything else is
-a count, a yes or no, a version, a duration, or a value from a fixed list.
+a count, a yes or no, a version, a duration, or a value from a fixed list, apart from
+the filtered Cloudflare error message a failed job can carry ([below](#jobs-manager)).
 
 ### Daily report (manager)
 
@@ -77,10 +78,31 @@ manager rollback, one event when it starts and one when it ends, with:
   carries its kind only, never the versions it moves between. Nothing about a
   repository is sent: not its address, owner, name, branch or commit;
 - when it ends: whether it succeeded, how long it took, and for a failure, its
-  error category (such as `cloudflare_permission`, `plan_limit` or `d1_migration`),
-  the phase it failed in (such as `resources`, `upload` or `health`), and, for a
-  failed Cloudflare API request, the HTTP status and Cloudflare's numeric error
-  code. The error text itself is never sent.
+  error category (such as `cloudflare_permission`, `plan_limit`, `d1_migration` or
+  `access_conflict`), the phase it failed in (such as `resources`, `upload`,
+  `health` or `access`), and, for a failed Cloudflare API request, the HTTP status
+  and Cloudflare's numeric error code. When the failure is in the Cloudflare
+  categories (`cloudflare_permission`, `cloudflare_rate_limited`,
+  `cloudflare_unavailable`, `cloudflare_rejected`), it also carries an excerpt of
+  Cloudflare's own error message (`cf_message`, at most 200 characters, such as
+  `incomplete input: SQLITE_ERROR`). The excerpt starts after Cloudflare's error
+  code, so it never holds the request's method or path. It ends at the closing
+  bracket when Appflare put Cloudflare's message in brackets, and otherwise at the
+  first semicolon that does not start another of Cloudflare's errors, or at a line
+  break. Before it is sent, anything in quotes, anything shaped like a hostname and
+  every IP address is replaced (Cloudflare's own hostnames, such as
+  `dash.cloudflare.com`, and its error keys, such as `access.api.error.conflict`,
+  are kept), and so is everything the [failure report](#failure-reports) filter
+  takes out: your account id, other ids, email addresses, anything that looks like a
+  token or password, your workers.dev subdomain, and every hostname, Worker name and
+  other name Appflare recorded. Then every other word of three characters or more
+  with a hyphen, an underscore or a digit in it, such as `acme-payroll-api`, is
+  replaced (`[name]`), except error constants in capitals such as `SQLITE_ERROR`,
+  error codes in brackets, numbers of up to six digits (HTTP statuses, error codes
+  and limits), versions and dates. A name made only of letters, such as
+  `Intranet Portal`, cannot be told apart from Cloudflare's own words, so it stays
+  in the excerpt unless Appflare recorded it. If Appflare cannot read the names it
+  recorded when it reports, the excerpt is left out.
 
 ### Setup and use (manager)
 
@@ -108,7 +130,8 @@ The installer sends one event per run, when the install ends:
 Your Cloudflare account id or name, email addresses, user names, Worker or instance
 names, domains or URLs, secret or variable names or values, tokens, resource ids,
 logs, error messages, or anything from a custom catalog, its app names and versions
-included. The one exception to logs and error messages is a
+included. The exceptions to logs and error messages are the filtered excerpt of a
+Cloudflare API error message described [above](#jobs-manager), and a
 [failure report](#failure-reports), which only an admin sends, by hand.
 
 ## How it is sent
@@ -155,8 +178,10 @@ more through a filter that takes out anything that looks private: tokens, keys a
 passwords, including every value of a `NAME=value` environment line and of flags
 such as `--password` (shown as `[redacted]`); email addresses (`[email]`); your
 Cloudflare account id (`[account id]`); other Cloudflare ids and UUIDs (`[id]`);
-your workers.dev subdomain and your custom hostnames (`[domain]`); and the names of
-your Workers (`[worker]`). What stays readable is what a fix needs: Cloudflare's
+your workers.dev subdomain and your custom hostnames (`[domain]`); the names of
+your Workers (`[worker]`); and the other names Appflare recorded: the apps'
+databases, namespaces, buckets, queues and Access applications, and the names you
+gave apps (`[name]`). What stays readable is what a fix needs: Cloudflare's
 error codes and HTTP statuses, step names, versions, and the app's catalog slug.
 The dialog's **See exactly what is sent** shows the report exactly as it will leave,
 after that filter.

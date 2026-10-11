@@ -12,6 +12,7 @@ import { plainMessage } from "../components/message-links";
 import { createDb } from "../db/client";
 import { readSettings, SETTING, type SettingKey, writeSettings } from "../db/settings";
 import { runningVersion } from "../server/build-version";
+import { accountNames, accountNamesStatements, namesOf } from "./account-names.server";
 import { classifyJobError, cloudflareErrorCodes, splitJobError } from "./classify";
 import { type JobRow, jobKind, jobProperties, managerBase, uuidV5 } from "./events";
 import {
@@ -80,23 +81,16 @@ interface FailedJob {
    */
   hostnames: string[];
   workers: string[];
+  /** Every other resource's name, and the names admins gave the apps. */
+  names: string[];
 }
-
-/** Resource kinds whose name is (or starts with) a hostname. */
-const HOSTNAME_KINDS = [
-  "domain",
-  "custom_hostname",
-  "wildcard_domain",
-  "dns_record",
-  "worker_route",
-] as const;
 
 function num(value: unknown): number {
   return typeof value === "number" ? value : Number(value ?? 0) || 0;
 }
 
 async function readFailedJob(db: D1Database, jobId: string): Promise<FailedJob | null> {
-  const [jobs, logs, hostnames, workers] = await db.batch([
+  const [jobs, logs, hostnames, workers, names] = await db.batch([
     db
       .prepare(
         `SELECT j.id, j.kind, j.status, j.input_json, j.error, j.started_at, j.finished_at,
@@ -114,27 +108,8 @@ async function readFailedJob(db: D1Database, jobId: string): Promise<FailedJob |
     db
       .prepare("SELECT ts, level, message, data_json FROM job_logs WHERE job_id = ?1 ORDER BY id")
       .bind(jobId),
-    // D1 allows at most five terms in a compound SELECT; the moves' hostnames share one.
-    db.prepare(
-      `SELECT name FROM resources WHERE kind IN (${HOSTNAME_KINDS.map((k) => `'${k}'`).join(", ")})
-       UNION SELECT served_domain FROM installs WHERE served_domain IS NOT NULL
-       UNION SELECT value FROM settings
-         WHERE key IN ('manager_hostname', 'manager_previous_hostname')
-           AND value NOT LIKE '%.workers.dev'
-       UNION SELECT hostname FROM passkey_host WHERE hostname NOT LIKE '%.workers.dev'
-       UNION SELECT h.value FROM jobs j,
-           json_each(json_array(json_extract(j.input_json, '$.hostname'), json_extract(j.input_json, '$.from'))) h
-         WHERE j.kind = 'move_address' AND json_valid(j.input_json)`,
-    ),
-    db.prepare(
-      `SELECT worker_name AS name FROM installs
-       UNION SELECT name FROM resources WHERE kind = 'worker'`,
-    ),
+    ...accountNamesStatements(db),
   ]);
-  const names = (result: D1Result | undefined) =>
-    ((result?.results ?? []) as Record<string, unknown>[])
-      .map((row) => row.name)
-      .filter((name): name is string => typeof name === "string" && name.length > 0);
   const r = (jobs?.results ?? [])[0] as Record<string, unknown> | undefined;
   if (r === undefined) return null;
   return {
@@ -169,8 +144,9 @@ async function readFailedJob(db: D1Database, jobId: string): Promise<FailedJob |
       message: plainMessage(String(l.message)),
       dataJson: typeof l.data_json === "string" ? l.data_json : null,
     })),
-    hostnames: names(hostnames),
-    workers: names(workers),
+    hostnames: namesOf(hostnames),
+    workers: namesOf(workers),
+    names: namesOf(names),
   };
 }
 
@@ -191,15 +167,6 @@ function reportedPlan(settings: ReportSettings): "free" | "paid" | "unset" {
 /** Usage data is off for this manager: by the switch, or by a Worker variable. */
 function usageDataOff(env: FailureReportEnv, settings: ReportSettings): boolean {
   return lockOf(env) !== null || settings.telemetry === "off";
-}
-
-/** This account's names, which every text of the report has taken out. */
-function accountNamesOf(settings: ReportSettings, job: FailedJob): AccountNames {
-  return {
-    subdomain: settings.account_subdomain || null,
-    hostnames: job.hostnames,
-    workers: settings.worker_name ? [...job.workers, settings.worker_name] : job.workers,
-  };
 }
 
 /**
@@ -283,7 +250,8 @@ async function buildPreview(
 ): Promise<FailureReportPreview> {
   const off = usageDataOff(env, settings);
   const plan = reportedPlan(settings);
-  const names = accountNamesOf(settings, job);
+  // This account's names, which every text of the report has taken out.
+  const names = accountNames(settings, job.hostnames, job.workers, job.names);
   const properties = failureReportProperties({
     job,
     names,

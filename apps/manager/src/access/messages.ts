@@ -27,6 +27,13 @@ export const ACCESS_PERMISSIONS = {
   serviceTokens: nameOf("access_service_token", "Access: Service Tokens: Edit"),
 } as const;
 
+/** `a`, `a and b`, `a, b and c`. */
+export function listOf(items: readonly string[]): string {
+  return items.length === 1
+    ? (items[0] ?? "")
+    : `${items.slice(0, -1).join(", ")} and ${items.at(-1)}`;
+}
+
 /** The reusable Access policy every protected app references: every Appflare user who is not banned. */
 export const USERS_POLICY_NAME = "Appflare users";
 
@@ -63,4 +70,6 @@ export const INSTALL_ACCESS_MESSAGES = {
     "This app's Cloudflare Access service token no longer exists. Protecting the app again makes a new one.",
   tokenInUse:
     "This app's Cloudflare Access service token is still named in an Access policy. Remove the app's Access application (or the token from its policy) first, then try again.",
+  addressTaken: (other: string, uris: readonly string[]) =>
+    `The Cloudflare Access application "${other}" covers ${listOf(uris)} itself, so it decides who reaches this app there and may refuse Appflare's health checks; Appflare's application covers the app's other addresses. Delete "${other}" under Zero Trust, Access, Applications, and Appflare covers ${uris.length === 1 ? "that address" : "those addresses"} again within 30 minutes.`,
 } as const;

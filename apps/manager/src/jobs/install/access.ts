@@ -18,16 +18,18 @@ import { settleUnit } from "../units/result";
  * 1. Before anything of the app exists in the account: the install's Access
  *    application, covering the future workers.dev hostname of each of its
  *    Workers (and an external domain the form asked for) with `public`
- *    destinations. Access accepts a hostname nothing serves yet and guards
- *    it from the first request, and the application's audience tag and team
- *    domain are known from here on.
+ *    destinations, and their version previews' pattern only where another
+ *    Access application covers those more broadly (step 2's `worker`
+ *    destinations cover them otherwise). Access accepts a hostname nothing
+ *    serves yet and guards it from the first request, and the
+ *    application's audience tag and team domain are known from here on.
  * 2. After the last upload, before any route, domain or preview is turned
- *    on: the switch to one `worker` destination per Worker, which also
- *    covers its preview URLs, custom domains and routes. The audience tag
- *    stays. If the job fails between the first upload and the end of this
- *    switch, every Worker of the app is taken off workers.dev with its
- *    previews before the job fails (`keepWorkersUnreachablePhase`), so
- *    nothing of the app is reachable without Access.
+ *    on: one `worker` destination per Worker next to those hostnames, which
+ *    also covers its custom domains and routes. The audience tag stays. If
+ *    the job fails between the first upload and the end of this step,
+ *    every Worker of the app is taken off workers.dev with its previews
+ *    before the job fails (`keepWorkersUnreachablePhase`), so nothing of
+ *    the app is reachable without Access.
  * 3. Once the install is recorded: the destinations brought in step with
  *    the domains the install really has, and its public paths made public.
  *    Never fails the job: the domain was covered from step 1 on, and a
@@ -75,9 +77,9 @@ export async function protectBeforeUploadPhase(
 }
 
 /**
- * Step 2: the switch to `worker` destinations, once every Worker is
- * uploaded. A Worker whose upload did not report its tag is looked up in
- * the account's script list by the unit.
+ * Step 2: the `worker` destinations added, once every Worker is uploaded.
+ * A Worker whose upload did not report its tag is looked up in the
+ * account's script list by the unit.
  */
 export async function coverWorkersPhase(
   steps: JobSteps,
@@ -110,10 +112,10 @@ export async function coverWorkersPhase(
 /**
  * Turning protection on for an installed app (the settings change job with
  * `access: "on"`): the application covering the app's recorded Workers by
- * their tags (looked up in the account's script list), its external domains
- * (`public` destinations), and its public paths. The unit takes the Access
- * lock and reads the app's addresses under it, so an external domain
- * claimed meanwhile is covered too.
+ * their tags (looked up in the account's script list) and their hostnames,
+ * its domains (`public` destinations), and its public paths. The unit
+ * takes the Access lock and reads the app's addresses under it, so an
+ * external domain claimed meanwhile is covered too.
  */
 export async function protectInstalledPhase(
   steps: JobSteps,

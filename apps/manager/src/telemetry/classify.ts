@@ -1,7 +1,19 @@
+import {
+  type AccountNames,
+  NO_ACCOUNT_NAMES,
+  REDACTED,
+  REDACTED_DOMAIN,
+  REDACTED_IP,
+  REDACTED_NAME,
+  redactReportText,
+} from "./redact";
+
 /**
  * Reduces a failed job's `jobs.error` to what usage data may carry: an error
- * category, the phase it failed in, and the HTTP status and error code of a
- * Cloudflare API failure. The text itself never leaves the manager: step
+ * category, the phase it failed in, the HTTP status and error code of a
+ * Cloudflare API failure, and for such a failure a short excerpt of
+ * Cloudflare's own message, filtered harder than a failure report
+ * (`cloudflareMessage`). Appflare's text never leaves the manager: step
  * names contain binding, resource and migration file names, and messages
  * contain paths, hostnames and ids.
  *
@@ -25,6 +37,7 @@ export const ERROR_CATEGORIES = [
   "sandbox_build",
   "installer",
   "canary",
+  "access_conflict",
   "timeout",
   "cancelled",
   "unknown",
@@ -45,6 +58,7 @@ export const FAILED_PHASES = [
   "promote",
   "snapshot",
   "health",
+  "access",
   "sandbox",
   "installer",
   "delete",
@@ -58,7 +72,17 @@ export interface JobFailure {
   failedPhase: FailedPhase;
   cfStatus: number | null;
   cfCode: number | null;
+  /**
+   * For a `cloudflare_*` category, Cloudflare's message after its `[code]`
+   * (never the request's method, path or account id, nor Appflare's text
+   * around it), filtered (`cloudflareMessage`) and at most
+   * {@link CF_MESSAGE_MAX} characters. Null without this account's names.
+   */
+  cfMessage: string | null;
 }
+
+/** How much of Cloudflare's message a failure carries. */
+export const CF_MESSAGE_MAX = 200;
 
 /**
  * Step name patterns, first match wins. Ordered so the specific ones (a
@@ -66,6 +90,12 @@ export interface JobFailure {
  * record).
  */
 const PHASE_PATTERNS: readonly [RegExp, FailedPhase][] = [
+  // First: "keep Worker <name> unreachable" carries a Worker name, which may
+  // contain any word a later pattern looks for.
+  [
+    /Cloudflare Access|^keep Worker \S+ unreachable$|^Worker \S+ may be reachable$|^public paths back /,
+    "access",
+  ],
   [/^D1 .*: (apply |seed$)|migration/i, "d1_migrations"],
   [/^canary (check|wait)|^skip canary$|version previews/i, "canary"],
   [/^health check|^skip health check$/i, "health"],
@@ -88,7 +118,7 @@ const PHASE_PATTERNS: readonly [RegExp, FailedPhase][] = [
   [/^upload Worker|^read current bindings$|^record (new|Worker) version$/i, "upload"],
   [/^(delete|empty) |^remove consumer|resources deleted$/i, "delete"],
   [
-    /^(start|preflight checks|plan update|verify .*|load .* manifest|check (Worker names?|release shape|R2 is enabled|cron trigger limit|Workflow .*)|read current deployment)$/i,
+    /^(start|preflight checks|plan update|catalog keys|verify .*|load .* manifest|check (Worker names?|release shape|R2 is enabled|cron trigger limit|Workflow .*)|read current deployment)$/i,
     "preflight",
   ],
   [
@@ -106,7 +136,8 @@ export function failedPhase(step: string): FailedPhase {
   return "other";
 }
 
-const CLOUDFLARE_FAILURE = /Cloudflare API request failed: \S+ \S+ -> (\d{3})(?:: \[(\d+)\])?/;
+const CLOUDFLARE_FAILURE =
+  /Cloudflare API request failed: \S+ \S+ -> (\d{3})(?:: \[(\d+)\] ?([\s\S]*))?/;
 
 /** Workers Free's cron trigger limit and Cloudflare's script size refusal. */
 const PLAN_LIMIT_CODES = new Set([10072, 10027]);
@@ -128,6 +159,19 @@ function categoryFromMessage(
     return "plan_limit";
   }
   if (/already exists in this account/i.test(message)) return "name_conflict";
+  if (/^The Cloudflare Access application ".*" already covers /.test(message)) {
+    return "access_conflict";
+  }
+  // Access refusals Appflare words itself, without Cloudflare's status: the
+  // token lacks an Access permission, or the account has no Zero Trust.
+  if (/^The Cloudflare token cannot (manage|read) /.test(message)) return "cloudflare_permission";
+  if (
+    /^This Cloudflare account has no Zero Trust organization|^This account has no workers\.dev subdomain|^The Zero Trust organization's team domain /.test(
+      message,
+    )
+  ) {
+    return "preflight";
+  }
   if (
     /signature|digest [0-9a-f]+ does not match|sha256 [0-9a-f]+ does not match|not a valid artifact manifest|^the artifact is (for|version)|got \d+ bytes, expected/i.test(
       message,
@@ -155,23 +199,20 @@ const CATEGORY_BY_PHASE: Partial<Record<FailedPhase, ErrorCategory>> = {
 
 /**
  * Splits a failed job's error text into the step it failed in and the
- * message. A step name may itself contain ": " (`D1 DB: apply migrations`),
- * so the first prefix that names a known phase is the step.
+ * message: the text before the first ": ". A D1 step names its binding
+ * first and so has one more (`D1 DB: apply migrations`). The message itself
+ * is never searched for a step: it may well mention a word a phase is known
+ * by (a workers.dev hostname).
  */
 export function splitJobError(error: string | null): { step: string; message: string } {
   const text = error ?? "";
-  let step = "";
-  let message = text;
-  for (let at = text.indexOf(": "), tries = 0; at !== -1 && tries < 3; tries++) {
-    const candidate = text.slice(0, at);
-    if (tries === 0 || failedPhase(candidate) !== "other") {
-      step = candidate;
-      message = text.slice(at + 2);
-      if (failedPhase(candidate) !== "other") break;
-    }
-    at = text.indexOf(": ", at + 2);
+  const first = text.indexOf(": ");
+  if (first === -1) return { step: "", message: text };
+  if (/^D1 \S+$/.test(text.slice(0, first))) {
+    const second = text.indexOf(": ", first + 2);
+    if (second !== -1) return { step: text.slice(0, second), message: text.slice(second + 2) };
   }
-  return { step, message };
+  return { step: text.slice(0, first), message: text.slice(first + 2) };
 }
 
 /**
@@ -191,8 +232,99 @@ export function cloudflareErrorCodes(texts: readonly string[]): number[] {
   return codes;
 }
 
-/** Classifies a failed job's error text. */
-export function classifyJobError(error: string | null): JobFailure {
+/**
+ * Where Cloudflare's own text ends in `rest`, what followed its first
+ * `[code] `: at the `)` closing the bracket Appflare opened before
+ * "Cloudflare API request failed" (`… (${error.message}). …`), else at a
+ * line break or a `; ` Appflare added after it (Cloudflare joins its own
+ * errors with `; [code] `).
+ */
+function cloudflareDetail(text: string, match: RegExpExecArray): string {
+  const rest = match[3] ?? "";
+  if (text[match.index - 1] === "(") {
+    let depth = 1;
+    for (let i = 0; i < rest.length; i++) {
+      if (rest[i] === "(") depth += 1;
+      else if (rest[i] === ")") {
+        depth -= 1;
+        if (depth === 0) return rest.slice(0, i);
+      }
+    }
+    return rest;
+  }
+  const end = rest.search(/\n|; (?!\[\d+\] )/);
+  return end === -1 ? rest : rest.slice(0, end);
+}
+
+/** Quoted text: whatever Cloudflare echoes of a request (a name, a statement). */
+const QUOTED = /(?<![A-Za-z0-9])(?:"[^"\n]*"|'[^'\n]*'|`[^`\n]*`)(?![A-Za-z0-9])/g;
+/** Anything shaped like a hostname, a leading `*.` or `*-` included. */
+const HOSTNAME_SHAPED =
+  /(?<![A-Za-z0-9_.-])(?:\*[.-])?(?:[A-Za-z0-9_](?:[A-Za-z0-9_-]*[A-Za-z0-9_])?\.)+[A-Za-z]{2,63}(?!\.?[A-Za-z0-9_-])/g;
+/** Kept as written: Cloudflare's own error keys (`access.api.error.conflict`) and its own hostnames. */
+const PUBLIC_DOTTED = /^(?:[a-z_]+\.api\.error\.[a-z_.]+|(?:[a-z]+\.)?cloudflare\.com)$/;
+/** An IPv4 address (a port or prefix length after it stays). */
+const IPV4 = /(?<![\w.])\d{1,3}(?:\.\d{1,3}){3}(?!\.?\w)/g;
+/** An IPv6 address: eight groups, or fewer around a `::`, with a zone or not. */
+const IPV6 =
+  /(?<![\w:.])(?:(?:[0-9a-f]{1,4}:){7}[0-9a-f]{1,4}|(?:[0-9a-f]{1,4}(?::[0-9a-f]{1,4})*)?::(?:[0-9a-f]{1,4}(?::[0-9a-f]{1,4})*)?)(?:%\w+)?(?![\w:])/gi;
+/** A word, with the hyphens, underscores and dots inside it. */
+const WORD = /(?<![\w.-])[\w-](?:[\w.-]*[\w-])?(?![\w-])/g;
+/**
+ * Kept although shaped like a name: an error constant in capitals
+ * (`SQLITE_ERROR`, `D1_ERROR`, `UTF-8`), a number of up to six digits (an
+ * HTTP status, an error code, a limit), with a size unit or not, a version
+ * and a date.
+ */
+const PUBLIC_WORD =
+  /^(?:[A-Z][A-Z0-9_-]*|\d{1,6}(?:\.\d{1,3})?(?:[KMGT]i?B|ms)?|v?\d{1,4}(?:\.\d{1,4}){1,2}|\d{4}-\d{2}-\d{2})$/;
+
+/**
+ * Masks every word shaped like a name someone chose (`acme-payroll-api`,
+ * `acme_corp_prod`, `backups2026`): one of three characters or more with a
+ * hyphen, an underscore or a digit, unless it is {@link PUBLIC_WORD}, one of
+ * Cloudflare's error keys or a code in brackets (`[7500]`). A name written
+ * as plain words (`Intranet Portal`) cannot be told from Cloudflare's own
+ * words, and stays.
+ */
+function maskNameShaped(text: string): string {
+  return text.replace(WORD, (word, at: number) => {
+    if (word.length < 3 || !/[-_\d]/.test(word)) return word;
+    if (PUBLIC_WORD.test(word) || PUBLIC_DOTTED.test(word)) return word;
+    if (text[at - 1] === "[" && text[at + word.length] === "]") return word;
+    return REDACTED_NAME;
+  });
+}
+
+/**
+ * Cloudflare's message (`cloudflareDetail`) with ids, email addresses and
+ * secrets taken out, then every quoted text, everything shaped like a
+ * hostname (a workers.dev address whole, its Worker's name included) and
+ * every IP address, then this account's names wherever else they appear
+ * (`redactReportText`), then every other word shaped like a name
+ * (`maskNameShaped`), cut to {@link CF_MESSAGE_MAX} characters; null when
+ * empty.
+ */
+function cloudflareMessage(detail: string, names: AccountNames): string | null {
+  const masked = redactReportText(detail)
+    .replace(QUOTED, (quoted) => `${quoted[0]}${REDACTED}${quoted[0]}`)
+    .replace(HOSTNAME_SHAPED, (host) => (PUBLIC_DOTTED.test(host) ? host : REDACTED_DOMAIN))
+    .replace(IPV4, REDACTED_IP)
+    .replace(IPV6, REDACTED_IP);
+  const clean = maskNameShaped(redactReportText(masked, names)).replace(/\s+/g, " ").trim();
+  if (clean.length === 0) return null;
+  return clean.length > CF_MESSAGE_MAX ? `${clean.slice(0, CF_MESSAGE_MAX - 1)}…` : clean;
+}
+
+/**
+ * Classifies a failed job's error text. `names` are this account's own
+ * names, which Cloudflare's message excerpt has taken out; null when they
+ * could not be read, and then the excerpt is left out.
+ */
+export function classifyJobError(
+  error: string | null,
+  names: AccountNames | null = NO_ACCOUNT_NAMES,
+): JobFailure {
   const text = error ?? "";
   const { step, message } = splitJobError(text);
   const cf = CLOUDFLARE_FAILURE.exec(text);
@@ -201,5 +333,9 @@ export function classifyJobError(error: string | null): JobFailure {
   const phase = failedPhase(step);
   const errorCategory =
     categoryFromMessage(message, cfStatus, cfCode) ?? CATEGORY_BY_PHASE[phase] ?? "unknown";
-  return { errorCategory, failedPhase: phase, cfStatus, cfCode };
+  const cfMessage =
+    cf !== null && names !== null && errorCategory.startsWith("cloudflare_")
+      ? cloudflareMessage(cloudflareDetail(text, cf), names)
+      : null;
+  return { errorCategory, failedPhase: phase, cfStatus, cfCode, cfMessage };
 }

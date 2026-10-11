@@ -217,10 +217,11 @@ function samePaths(a: readonly string[], b: readonly string[]): boolean {
 }
 
 /**
- * Marks the protected installs of the release with `artifactDigest` for the
- * cron's Access resync (`resyncInstallAccessIfFailed`), which brings their
- * public paths in step with the revision now recorded; until it runs, their
- * pages offer "Protect again". Installs already marked keep their mark.
+ * Marks the protected installs of the release with `artifactDigest` due for
+ * the cron's Access resync (`resyncInstallAccessIfFailed`), which brings
+ * their public paths in step with the revision now recorded. Nothing failed,
+ * so their pages show nothing for it until then. Installs already marked
+ * keep their mark.
  */
 export async function markPublicPathsResync(
   orm: Database,
@@ -229,11 +230,11 @@ export async function markPublicPathsResync(
 ): Promise<void> {
   await orm
     .update(install_access)
-    .set({ access_sync_failed_at: now })
+    .set({ access_resync_due_at: now })
     .where(
       and(
         isNotNull(install_access.access_app_id),
-        isNull(install_access.access_sync_failed_at),
+        isNull(install_access.access_resync_due_at),
         inArray(
           install_access.install_id,
           orm

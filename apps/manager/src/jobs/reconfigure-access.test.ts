@@ -216,8 +216,30 @@ describe("turning protection on", () => {
       TEAM: "appflare-test.cloudflareaccess.com",
     });
     const [app] = [...w.access.apps.values()];
-    expect(app?.destinations).toEqual([{ type: "worker", worker_id: "tag-cut" }]);
+    expect(app?.destinations).toEqual([
+      { type: "public", uri: "cut.appflare-dev.workers.dev" },
+      { type: "worker", worker_id: "tag-cut" },
+    ]);
     expect(r.status?.status).toBe("installed");
+  });
+
+  it("protects the app next to a broader Access application, and says which one decides", async () => {
+    const w = await world(PLAIN);
+    w.access.apps.set("team", {
+      id: "team",
+      aud: "aud-team",
+      name: "Workers",
+      destinations: [{ type: "public", uri: "*.appflare-dev.workers.dev" }],
+      policies: [],
+    });
+    const r = await change(w, "on");
+    expect(r.job?.status).toBe("succeeded");
+    expect(r.logs).toContainEqual({
+      level: "warn",
+      message:
+        "The Cloudflare Access application \"Workers\" also covers *.appflare-dev.workers.dev; Appflare's application takes precedence on this app's addresses.",
+    });
+    expect(await readInstallProtection(env.DB, INSTALL_ID)).not.toBeNull();
   });
 
   it("deploys nothing when no setting uses the Access values, and still checks the app", async () => {
@@ -282,8 +304,9 @@ describe("turning protection on", () => {
     const r = await change(w, "on");
     expect(r.job?.status).toBe("succeeded");
     expect([...w.access.apps.values()][0]?.destinations).toEqual([
-      { type: "worker", worker_id: "tag-cut" },
+      { type: "public", uri: "cut.appflare-dev.workers.dev" },
       { type: "public", uri: "go.customer.net" },
+      { type: "worker", worker_id: "tag-cut" },
     ]);
   });
 

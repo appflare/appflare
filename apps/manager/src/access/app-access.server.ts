@@ -13,7 +13,7 @@ import { type AppAccessCheck, accessRepairOf, type InstallAccessView } from "./a
 import { bypassPathsOfManifest } from "./bypass.server";
 import { accessAppResourceId, listUserEmails } from "./install-access.server";
 import { accessCapabilityCheck } from "./preflight.server";
-import { readInstallProtection } from "./protect.server";
+import { readInstallProtection, takenByApp } from "./protect.server";
 import { loginMethodName } from "./toggle.server";
 
 /**
@@ -99,6 +99,7 @@ export async function readInstallAccessView(
     publicPaths: protection === null ? [...listed] : acceptedOf(listed, accepted),
     pendingPublicPaths: protection === null ? [] : pendingOf(listed, accepted),
     syncFailedAt: protection?.syncFailedAt?.toISOString() ?? null,
+    takenAddresses: takenByApp(protection?.coverage?.taken ?? []),
     usesAccessValues:
       signed !== null &&
       entryWorkers({ ...signed, catalog: revised ?? signed.catalog }, install.workerName).some(

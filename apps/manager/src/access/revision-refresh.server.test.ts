@@ -78,9 +78,13 @@ describe("refreshProtectedRevisions", () => {
       { installId: INSTALL_ID, outcome: "recorded" },
     ]);
     expect((await readCatalogRevision(createDb(env.DB), f.digest))?.revision).toBe(2);
-    expect((await readInstallProtection(env.DB, INSTALL_ID))?.syncFailedAt).not.toBeNull();
+    expect(await readInstallProtection(env.DB, INSTALL_ID)).toMatchObject({
+      resyncDueAt: expect.any(Date),
+      syncFailedAt: null,
+    });
     await resyncInstallAccessIfFailed({ db: env.DB, client: async () => access.client });
     expect(bypassUris(access)).toEqual([`${HOST}/s/*`]);
+    expect((await readInstallProtection(env.DB, INSTALL_ID))?.resyncDueAt).toBeNull();
 
     // Nothing newer: no fetch at all.
     hits.length = 0;
@@ -100,7 +104,7 @@ describe("refreshProtectedRevisions", () => {
     );
     expect(check).toMatchObject({ installId: INSTALL_ID, outcome: "failed" });
     expect(await readCatalogRevision(createDb(env.DB), f.digest)).toBeNull();
-    expect((await readInstallProtection(env.DB, INSTALL_ID))?.syncFailedAt).toBeNull();
+    expect((await readInstallProtection(env.DB, INSTALL_ID))?.resyncDueAt).toBeNull();
   });
 
   it("checks only protected installs, a few a run, going on from where the last run stopped", async () => {

@@ -107,13 +107,14 @@ describe("readInstallAccessView", () => {
       publicPaths: ["/s/*", "/api/webhook"],
       pendingPublicPaths: [],
       syncFailedAt: null,
+      takenAddresses: [],
       usesAccessValues: false,
       users: 2,
       repair: null,
     });
   });
 
-  it("shows a protected app: its Access application, team, a failed sync, and the Access values in use", async () => {
+  it("shows a protected app: its Access application, team, a failed sync, addresses another application keeps, and the Access values in use", async () => {
     await useManifest(
       await buildArtifactFixture({
         catalog: {
@@ -126,10 +127,23 @@ describe("readInstallAccessView", () => {
     await recordProtectedInstall({ installId: INSTALL_ID, authSecret: AUTH, secret: "s" });
     await env.DB.prepare(
       `UPDATE install_access SET access_team_domain = 'team.cloudflareaccess.com',
-         access_aud = 'aud-1', access_sync_failed_at = ?2, users_policy_id = 'users-1'
+         access_aud = 'aud-1', access_sync_failed_at = ?2, users_policy_id = 'users-1',
+         access_destinations_json = ?3
        WHERE install_id = ?1`,
     )
-      .bind(INSTALL_ID, Date.parse("2026-10-01T10:00:00.000Z"))
+      .bind(
+        INSTALL_ID,
+        Date.parse("2026-10-01T10:00:00.000Z"),
+        JSON.stringify({
+          destinations: [{ type: "worker", worker_id: "tag-cut" }],
+          workerTags: { cut: "tag-cut" },
+          taken: [
+            { uri: "links.example.com", app: "Links admin" },
+            { uri: "t.example.com", app: "Team" },
+            { uri: "*.t.example.com", app: "Links admin" },
+          ],
+        }),
+      )
       .run();
     await setUsersPolicy("users-1");
     await env.DB.prepare(
@@ -146,9 +160,30 @@ describe("readInstallAccessView", () => {
       publicPaths: [],
       pendingPublicPaths: [],
       syncFailedAt: "2026-10-01T10:00:00.000Z",
+      takenAddresses: [
+        { app: "Links admin", uris: ["links.example.com", "*.t.example.com"] },
+        { app: "Team", uris: ["t.example.com"] },
+      ],
       usesAccessValues: true,
       users: 2,
       repair: "sync-failed",
+    });
+  });
+
+  it("shows nothing for a resync that is only due, since nothing failed", async () => {
+    await recordProtectedInstall({ installId: INSTALL_ID, authSecret: AUTH, secret: "s" });
+    await env.DB.prepare(
+      `UPDATE install_access SET access_team_domain = 'team.cloudflareaccess.com',
+         access_aud = 'aud-1', users_policy_id = 'users-1', access_resync_due_at = 5
+       WHERE install_id = ?1`,
+    )
+      .bind(INSTALL_ID)
+      .run();
+    await setUsersPolicy("users-1");
+    expect(await readInstallAccessView(env.DB, INSTALL_ID)).toMatchObject({
+      protected: true,
+      syncFailedAt: null,
+      repair: null,
     });
   });
 

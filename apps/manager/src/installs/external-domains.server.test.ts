@@ -631,9 +631,9 @@ describe("external domains of an app protected with Cloudflare Access", () => {
     // The public paths come off first, the hostname's own destination after.
     expect(w.order.indexOf(`PUT /access/apps/${bypass()?.id}`)).toBeLessThan(removed);
     expect(w.order.lastIndexOf(`PUT /access/apps/${main?.id}`)).toBeGreaterThan(removed);
-    expect(main?.id === undefined ? undefined : w.access.apps.get(main.id)?.destinations).toEqual([
-      { type: "worker", worker_id: "tag-cut" },
-    ]);
+    expect(
+      main?.id === undefined ? undefined : w.access.apps.get(main.id)?.destinations,
+    ).not.toContainEqual({ type: "public", uri: "go.customer.test" });
     expect(bypass()?.destinations).not.toContainEqual({
       type: "public",
       uri: "go.customer.test/s/*",

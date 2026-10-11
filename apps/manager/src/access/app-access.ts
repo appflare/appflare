@@ -65,6 +65,12 @@ export interface InstallAccessView {
   pendingPublicPaths: string[];
   /** ISO 8601: when bringing the Access applications in step last failed; null when it did not. */
   syncFailedAt: string | null;
+  /**
+   * Each other Access application that names addresses of the app itself,
+   * with those addresses, which Appflare's application leaves to it. Empty
+   * when none, or while not protected.
+   */
+  takenAddresses: Array<{ app: string; uris: string[] }>;
   /** The app's settings use the Access values, so a change of protection deploys it again. */
   usesAccessValues: boolean;
   /** Appflare users who are not banned. */

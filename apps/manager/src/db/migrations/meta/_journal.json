@@ -57,6 +57,13 @@
       "when": 1791283528254,
       "tag": "0007_cloudflare_grant",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "6",
+      "when": 1791718868489,
+      "tag": "0008_access_hostnames_resync",
+      "breakpoints": true
     }
   ]
 }
