@@ -23,7 +23,8 @@ page Cloudflare sends you back to after you connect do not load PostHog. No page
 clicks, recordings or heatmaps are taken there.
 
 To learn how far installs get and where they stop, those pages send PostHog one short
-message for each step an install reaches, once per step. Each message holds only:
+message for each step an install reaches, once per step, through the same
+`swgo.appflare.dev` address. Each message holds only:
 
 - the step: the first screen, leaving for Cloudflare to connect, back from Cloudflare,
   deploying, deployed, or an error;

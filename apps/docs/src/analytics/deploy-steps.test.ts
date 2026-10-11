@@ -189,8 +189,8 @@ describe("captureBody", () => {
     });
   });
 
-  it("goes to PostHog's EU endpoint for single events", () => {
-    expect(CAPTURE_URL).toBe("https://eu.i.posthog.com/i/v0/e/");
+  it("goes to PostHog's single-event endpoint through the site's own address", () => {
+    expect(CAPTURE_URL).toBe("https://swgo.appflare.dev/i/v0/e/");
   });
 });
 
