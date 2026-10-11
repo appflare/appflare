@@ -19,8 +19,27 @@ their UTM source and placement before redirecting to the deploy page.
 ## Installing Appflare from this site
 
 The page that installs Appflare from your browser, [appflare.dev/deploy](https://link.appflare.dev/deploy?utm_source=appflare-docs&utm_medium=website&utm_campaign=appflare&utm_content=privacy-install-1), and the
-page Cloudflare sends you back to after you connect run no analytics at all. No page views,
+page Cloudflare sends you back to after you connect do not load PostHog. No page views,
 clicks, recordings or heatmaps are taken there.
+
+To learn how far installs get and where they stop, those pages send PostHog one short
+message for each step an install reaches, once per step. Each message holds only:
+
+- the step: the first screen, leaving for Cloudflare to connect, back from Cloudflare,
+  deploying, deployed, or an error;
+- for an error, its kind from a fixed list, such as `deploy-failed:worker` or `declined`,
+  never the error's text;
+- a random id made for one install and kept in that browser tab until it closes, so the
+  steps of one install are counted together. Trying again after an error, or starting
+  over, keeps the same id, and a step already sent is not sent again. The tab makes a new
+  id only for an install after one that was deployed, or, if the browser refuses to keep
+  it, each time the page loads. It is not the id PostHog gives you on the rest of this
+  site, so the steps cannot be tied to your visit.
+
+Nothing else: no Cloudflare account, no name or address you chose, no token, no page
+address, no cookie. Each message asks PostHog not to make a profile and not to look up a
+location, and gives `0.0.0.0` as the IP address, which replaces the one PostHog would
+otherwise store.
 
 The deploying is done by Appflare's installer, an open-source service behind that page. For
 each installation that is not finished yet, it keeps a record so you can continue or remove

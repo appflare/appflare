@@ -1,7 +1,7 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import type { FlowPage, FlowState, FlowView } from "../../install/flow.ts";
-import { DEPLOY_BUTTON_URL, FlowPanel } from "./flow-panel.tsx";
+import { DEPLOY_BUTTON_URL, FlowPanel, keepLine } from "./flow-panel.tsx";
 
 const origin = "https://appflare.example.com";
 const apps = [{ slug: "2fa", name: "2FA" }];
@@ -112,6 +112,20 @@ describe("FlowPanel", () => {
     expect(html).toContain("install-get-appflare-cloudflare");
     expect(html).toContain("Your account › Use this Appflare on appflare.dev");
     expect(html).toContain("keeps 2FA for 7 days");
+  });
+
+  it("promises 7 days only in the browser that keeps the app", () => {
+    const x = { kind: "in-app", app: "X", platform: "ios" } as const;
+    expect(keepLine(true, "2FA", null)).toBe(
+      "This browser keeps 2FA for 7 days, so you can continue installing it here then. Anywhere else, open this page's link again.",
+    );
+    expect(keepLine(true, "2FA", x)).toBe(
+      "X's in-app browser keeps 2FA to itself, so open this link in your browser to continue there.",
+    );
+    expect(keepLine(true, "2FA", { ...x, app: null })).toMatch(/^This in-app browser keeps 2FA/);
+    expect(keepLine(false, "2FA", x)).toBe(
+      "This browser does not let this site keep 2FA, so come back to this link then.",
+    );
   });
 
   it("shows an address error next to the field", () => {

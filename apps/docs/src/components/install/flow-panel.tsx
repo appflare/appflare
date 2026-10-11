@@ -3,11 +3,14 @@ import { type FormEvent, type ReactNode, useId } from "react";
 import { PRIVATE_CLASS } from "../../analytics/analytics.ts";
 import { appsPath, installPath } from "../../catalog/urls.ts";
 import { deployPathFor } from "../../deploy/app.ts";
+import { inAppBrowserName } from "../../in-app/browser.ts";
+import { useBrowser } from "../../in-app/use-browser.ts";
 import { EXAMPLE_ADDRESS } from "../../install/address.ts";
 import type { FlowAction, FlowState } from "../../install/flow.ts";
 import { type InstallApp, installPagePath, requestLabel } from "../../install/request.ts";
 import { CLOUDFLARE_DEPLOY_URL, installLink } from "../../lib/install-links.ts";
-import { InstallButton } from "../install-appflare.tsx";
+import type { InAppBrowser } from "../in-app/open-in-browser.tsx";
+import { InstallButton, InstallShareLine } from "../install-appflare.tsx";
 
 /**
  * One step of an install page or of `/my/`, drawn from the state in
@@ -68,8 +71,27 @@ export interface FlowPanelProps {
   forwarding?: boolean;
 }
 
+/**
+ * What the "get" step says about the app it keeps for the visitor. Only the
+ * browser it was kept in has it, so the line says another browser or device
+ * needs this page's link (which names the app) again. In an app's own
+ * browser (`inApp`), where installing often cannot finish, the 7 days would
+ * send them nowhere, so the line sends them to their browser instead.
+ */
+export function keepLine(intentSaved: boolean, what: string, inApp: InAppBrowser | null): string {
+  if (!intentSaved) {
+    return `This browser does not let this site keep ${what}, so come back to this link then.`;
+  }
+  if (inApp !== null) {
+    return `${inAppBrowserName(inApp.app)} keeps ${what} to itself, so open this link in your browser to continue there.`;
+  }
+  return `This browser keeps ${what} for 7 days, so you can continue installing it here then. Anywhere else, open this page's link again.`;
+}
+
 export function FlowPanel({ state, dispatch, apps, forwarding = true }: FlowPanelProps) {
   const { context, view, canRemember } = state;
+  const browser = useBrowser();
+  const inApp = browser?.kind === "in-app" ? browser : null;
   const onInstall = context.page === "install";
   const request = context.page === "install" ? context.request : null;
   const what = request === null ? "this app" : requestLabel(request, apps);
@@ -214,6 +236,9 @@ export function FlowPanel({ state, dispatch, apps, forwarding = true }: FlowPane
       // A repository does not: building one needs Workers Paid and sandbox
       // builds turned on, which a brand-new Appflare does not have yet.
       const deployPath = request?.kind === "app" ? deployPathFor(request.slug) : null;
+      // Moved to another browser or device, the visitor comes back to this
+      // page, which still knows what they came to install.
+      const handoffPath = request === null ? undefined : installPagePath(request);
       return (
         <div className="grid gap-4">
           <Title>Get Appflare</Title>
@@ -229,10 +254,16 @@ export function FlowPanel({ state, dispatch, apps, forwarding = true }: FlowPane
                 placement={`${state.context.page}-get-appflare-install`}
                 className="justify-self-start"
                 {...(deployPath === null ? {} : { href: deployPath })}
+                {...(handoffPath === undefined ? {} : { handoffPath })}
               />
               <span className="text-fd-muted-foreground text-sm">
                 Sign in to Cloudflare and choose where it goes. Nothing to install on your computer.
               </span>
+              {/* Drawn only after the page runs, so there is nothing to keep room for. */}
+              <InstallShareLine
+                reserve={false}
+                {...(handoffPath === undefined ? {} : { handoffPath })}
+              />
             </li>
             <li className="grid gap-2">
               <a
@@ -259,9 +290,7 @@ export function FlowPanel({ state, dispatch, apps, forwarding = true }: FlowPane
           <p className="leading-relaxed">
             {deployPath === null ? "When it is ready" : "Installed another way? When it is ready"},
             open <strong>Your account › Use this Appflare on appflare.dev</strong> in your Appflare.{" "}
-            {view.intentSaved
-              ? `This browser keeps ${what} for 7 days, so you can continue installing it then.`
-              : `This browser does not let this site keep ${what}, so come back to this link then.`}
+            {keepLine(view.intentSaved, what, inApp)}
           </p>
           <Actions>
             <button

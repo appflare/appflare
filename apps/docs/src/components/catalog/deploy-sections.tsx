@@ -14,6 +14,7 @@ import {
   type WithAppflareItem,
 } from "../../catalog/app-guide.ts";
 import type { AskedField } from "../../catalog/install-form.ts";
+import { InstallLink } from "../in-app/open-in-browser.tsx";
 import { LINK } from "./app-sections.tsx";
 
 /**
@@ -116,12 +117,15 @@ export function DeploySteps({ guide, appName }: { guide: DeployGuide; appName: s
           .
         </p>
         <div className="flex flex-wrap items-center gap-x-4 gap-y-2 pt-1">
-          <a
+          {/* Starts installing Appflare: in an app's own browser it asks to move to the app's install page first. */}
+          <InstallLink
             href={setup.href}
+            handoffPath={setup.installHref}
+            shareTitle={`Install ${appName}`}
             className={buttonVariants({ variant: "primary", className: "px-4" })}
           >
             {setup.action}
-          </a>
+          </InstallLink>
           <span className="text-fd-muted-foreground text-sm">
             {setup.installQuestion}{" "}
             <a href={setup.installHref} className={LINK}>

@@ -10,7 +10,9 @@ import type { KeyValueStore } from "../install/memory.ts";
  *   refresh token). The callback page reads them after Cloudflare sends the
  *   tab back, and a reload during a deploy does not lose them. Also the app
  *   the visitor is installing Appflare for (`?app=`), which the callback's
- *   return to the plain deploy page would otherwise lose.
+ *   return to the plain deploy page would otherwise lose. And the random id
+ *   this attempt's steps are counted under, with the steps already counted
+ *   (see `analytics/deploy-steps.ts`).
  * - localStorage: the unfinished installation, `{ installationId, key,
  *   handoffSecret, accountId }`, so a later visit can continue or remove it.
  *   Never a token.
@@ -25,6 +27,7 @@ export const AUTHORIZATION_KEY = "appflare.deploy.authorization";
 export const GRANT_KEY = "appflare.deploy.grant";
 export const INSTALLATION_KEY = "appflare.deploy.installation";
 export const APP_KEY = "appflare.deploy.app";
+export const STEPS_KEY = "appflare.deploy.steps";
 
 const base64url = z.string().regex(/^[A-Za-z0-9_-]+$/);
 
@@ -60,6 +63,16 @@ export type LocalInstallation = z.infer<typeof localInstallationSchema>;
 
 /** The catalog app to open in the new Appflare once it is set up: its slug. */
 export const appSlugSchema = z.string().regex(CATALOG_SLUG_PATTERN);
+
+/**
+ * The install attempt this tab counts steps for: a random id made for it
+ * alone, and the steps already counted, so each is counted once.
+ */
+export const countedAttemptSchema = z.strictObject({
+  id: z.string().regex(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/),
+  sent: z.array(z.string().regex(/^[a-z][a-z0-9:-]{0,63}$/)).max(32),
+});
+export type CountedAttempt = z.infer<typeof countedAttemptSchema>;
 
 export interface Slot<T> {
   read(): T | null;
@@ -112,6 +125,8 @@ export interface DeployStorage {
   grant: Slot<Grant>;
   /** sessionStorage */
   app: Slot<string>;
+  /** sessionStorage */
+  steps: Slot<CountedAttempt>;
   /** localStorage */
   installation: Slot<LocalInstallation>;
 }
@@ -125,6 +140,7 @@ export function deployStorage(
     authorization: slot(session, AUTHORIZATION_KEY, pendingAuthorizationSchema),
     grant: slot(session, GRANT_KEY, grantSchema),
     app: slot(session, APP_KEY, appSlugSchema),
+    steps: slot(session, STEPS_KEY, countedAttemptSchema),
     installation: slot(local, INSTALLATION_KEY, localInstallationSchema),
   };
 }

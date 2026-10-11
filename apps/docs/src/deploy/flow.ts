@@ -286,6 +286,14 @@ export interface FlowDeps {
 
 const GENERIC_ERROR = "Something went wrong. Try again.";
 
+/** Why Connect Cloudflare stopped: the browser keeps nothing, not even for this tab. */
+export const STORAGE_REFUSED_ERROR =
+  "This browser does not let the page keep anything, not even for this tab, so it cannot sign in. Allow site data for this site (private windows often block it), or install Appflare from the command line instead.";
+
+/** Why the journey stopped after the sign-in: the login reaches no account. */
+export const NO_ACCOUNT_ERROR =
+  "This Cloudflare login has no account Appflare can be installed in. Connect with a login that has one.";
+
 function messageOf(error: unknown): string {
   return error instanceof InstallerApiError ? error.message : GENERIC_ERROR;
 }
@@ -501,10 +509,7 @@ export class DeployFlow {
       this.set({
         ...welcome,
         busy: false,
-        error:
-          error instanceof StorageRefused
-            ? "This browser does not let the page keep anything, not even for this tab, so it cannot sign in. Allow site data for this site (private windows often block it), or install Appflare from the command line instead."
-            : GENERIC_ERROR,
+        error: error instanceof StorageRefused ? STORAGE_REFUSED_ERROR : GENERIC_ERROR,
       });
     }
   }
@@ -550,12 +555,7 @@ export class DeployFlow {
     if (!this.current(generation)) return;
     this.accounts = accounts;
     if (accounts.length === 0) {
-      this.set({
-        step: "error",
-        message:
-          "This Cloudflare login has no account Appflare can be installed in. Connect with a login that has one.",
-        retry: null,
-      });
+      this.set({ step: "error", message: NO_ACCOUNT_ERROR, retry: null });
       return;
     }
     const local = this.deps.storage.installation.read();

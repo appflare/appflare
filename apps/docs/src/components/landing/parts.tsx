@@ -6,7 +6,7 @@ import { installLink } from "../../lib/install-links.ts";
 
 import { siteName } from "../../lib/shared.ts";
 
-export { InstallButton } from "../install-appflare.tsx";
+export { InstallButton, InstallShareLine } from "../install-appflare.tsx";
 
 /**
  * The small pieces of the front page: the logo, the buttons, the line for

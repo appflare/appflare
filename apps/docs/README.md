@@ -61,8 +61,13 @@ is in `src/deploy/`, the steps' drawing in `src/components/deploy/`.
   else; the installer gets the access token. `localStorage` keeps the unfinished
   installation (`{ installationId, key, handoffSecret, accountId }`) and, after
   a journey with an app, the new Appflare's address; never a token.
-- **No analytics.** PostHog never loads in a page opened at `/deploy/…`, and the
-  router reloads the page rather than moving there from another page.
+- **Analytics.** PostHog's library never loads in a page opened at `/deploy/…`,
+  and the router reloads the page rather than moving there from another page.
+  The page and its callback send one event of their own, `deploy_step`: a
+  plain `fetch` to PostHog's capture endpoint per step an install reaches, with
+  the step, an error's kind from a fixed list, and a random id kept in
+  `sessionStorage` for that install, without cookies or a referrer
+  (`src/analytics/deploy-steps.ts`; the privacy page lists what it holds).
 - **Headers.** After prerendering, the build hashes each deploy page's inline
   scripts into a strict Content-Security-Policy for its exact path (`/deploy/`,
   `/deploy/callback`) and appends it to `dist/client/_headers`, with

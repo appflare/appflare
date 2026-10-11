@@ -35,6 +35,8 @@ import {
 } from "../../components/catalog/deploy-sections.tsx";
 import { ScreenshotGallery } from "../../components/catalog/screenshot-gallery.tsx";
 import { AppIcon } from "../../components/catalog/tiles.tsx";
+import { InstallLink } from "../../components/in-app/open-in-browser.tsx";
+import { ShareLinkLine } from "../../components/in-app/share-link.tsx";
 import { pageHead } from "../../lib/meta.ts";
 import { ogImagePath, SITE_URL, siteName } from "../../lib/shared.ts";
 import { appStructuredData } from "../../lib/structured-data.ts";
@@ -45,8 +47,9 @@ import { appStructuredData } from "../../lib/structured-data.ts";
  * deploy it on Cloudflare with Appflare, what it needs on a Cloudflare
  * account, the questions people ask first, its links and who made it.
  * "Install" leads to the install page, which opens the app in the visitor's
- * own Appflare. The page is titled for the search it answers: "Deploy
- * <Name> on Cloudflare".
+ * own Appflare; in an app's own browser it asks the visitor to open that page
+ * in their browser first (see `components/in-app/`). The page is titled for
+ * the search it answers: "Deploy <Name> on Cloudflare".
  */
 export const Route = createFileRoute("/apps/$slug")({
   loader: async ({ params }) => {
@@ -119,13 +122,16 @@ function AppPage() {
             )}
           </div>
           <div className="grid justify-items-start gap-1.5 sm:justify-items-end">
-            <a
+            <InstallLink
               href={installPath(app.slug)}
+              handoffPath={installPath(app.slug)}
+              shareTitle={`Install ${app.name}`}
               className={buttonVariants({ variant: "primary", className: "px-6 py-2.5 text-base" })}
             >
               Install
-            </a>
+            </InstallLink>
             <span className="text-fd-muted-foreground text-xs">Opens in your own Appflare</span>
+            <ShareLinkLine path={installPath(app.slug)} title={`Install ${app.name}`} />
           </div>
         </header>
         <StatStrip stats={appStats(app, now)} />

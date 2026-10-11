@@ -18,7 +18,14 @@ import {
 import { repositoryUrl } from "../../lib/shared.ts";
 import { AppIcon } from "../catalog/tiles.tsx";
 import { ClickHere } from "./click-here.tsx";
-import { DeployButtonLine, GhostButton, InstallButton, Shot, Wordmark } from "./parts.tsx";
+import {
+  DeployButtonLine,
+  GhostButton,
+  InstallButton,
+  InstallShareLine,
+  Shot,
+  Wordmark,
+} from "./parts.tsx";
 
 const notAffiliated =
   "Appflare is an independent open-source project, not affiliated with, endorsed by, or sponsored by Cloudflare, Inc.";
@@ -76,6 +83,8 @@ export function LandingContent({ data }: { data: LandingData }) {
               Read the docs
             </GhostButton>
           </div>
+          {/* Far below the first screen: by the time it is seen, the line is there. */}
+          <InstallShareLine reserve={false} className="-my-3 justify-items-center" />
           <DeployButtonLine placement="home-closing-cloudflare" />
         </div>
       </section>
@@ -118,6 +127,7 @@ function Hero({ data }: { data: LandingData }) {
           </GhostButton>
         </div>
         <div className="grid justify-items-center gap-2">
+          <InstallShareLine className="justify-items-center" />
           <DeployButtonLine placement="home-hero-cloudflare" />
           <p className="m-0 text-fd-muted-foreground text-sm">
             Runs on the Workers free plan.{" "}

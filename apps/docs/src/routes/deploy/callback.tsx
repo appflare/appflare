@@ -1,5 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
+import { browserStepCounter, callbackStepOf } from "../../analytics/deploy-steps.ts";
 import { CallbackPanel } from "../../components/deploy/callback-panel.tsx";
 import { useFocusOnStepChange } from "../../components/deploy/deploy-panel.tsx";
 import { DeployLayout } from "../../components/deploy/deploy-shell.tsx";
@@ -43,11 +44,16 @@ function callbackOnce(): Promise<CallbackView> {
     const params = arrivedCallbackParams();
     forgetCallbackParams();
     const storage = browserDeployStorage();
+    const count = browserStepCounter(storage.steps);
     running = runCallback({
       params,
       storage,
       tokens: new TokenKeeper({ slot: storage.grant }),
       navigate: (url) => window.location.replace(url),
+    }).then((view) => {
+      // A sign-in from the deploy page that stops here counts as a step of its attempt.
+      count(callbackStepOf(view));
+      return view;
     });
   }
   return running;

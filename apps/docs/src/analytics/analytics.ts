@@ -21,11 +21,13 @@ import { SITE_URL } from "../lib/shared.ts";
  * {@link SiteEvents.outbound_click}. URL fragments (where `/my/` receives
  * that address) are stripped from everything sent.
  *
- * The deploy page and its OAuth callback (`/deploy/…`) are never measured:
- * PostHog is not even loaded in a page opened there (no page views,
- * recordings, heatmaps or clicks), the router reloads the page when it moves
- * to one from elsewhere (see the deploy routes), and anything still sent
- * from such a path is dropped before it leaves.
+ * The deploy page and its OAuth callback (`/deploy/…`) are not measured
+ * with PostHog's library: it is not even loaded in a page opened there (no
+ * page views, recordings, heatmaps or clicks), the router reloads the page
+ * when it moves to one from elsewhere (see the deploy routes), and anything
+ * still sent from such a path is dropped before it leaves. Those pages send
+ * one event of their own, {@link SiteEvents.deploy_step}, straight to
+ * PostHog with nothing else in it (see `deploy-steps.ts`).
  */
 
 /** The PostHog project's key. It is public by design: every page that reports carries it. */
@@ -92,7 +94,46 @@ export interface SiteEvents {
   theme_toggled: { theme: "light" | "dark" | "system" };
   /** A search in the documentation's search dialog, once the field rests: what was searched for and how many pages it found. */
   docs_search: { query: string; query_length: number; result_count: number };
+  /**
+   * The site offered to move the visitor to another browser or device.
+   * `in_app_browser`: Install Appflare or an app's Install was pressed in an
+   * app's own browser (X's, Instagram's), which often cannot finish the
+   * Cloudflare sign-in, so the page asked them to open it in their browser
+   * instead. That press is not an {@link SiteEvents.install_button_clicked}.
+   * `mobile`: the "share this link" line appeared under an install button on
+   * a phone, once per page.
+   */
+  handoff_shown: {
+    reason: "in_app_browser" | "mobile";
+    /** The app whose browser it is, when its user agent says (`X`, `Instagram`); null otherwise. */
+    app: string | null;
+    /** The page's path. */
+    page: string;
+  };
+  /**
+   * What the visitor did with that offer: opened the page in Chrome (Android),
+   * copied the link, sent it from the share sheet, or went on installing in
+   * the app's browser anyway (`continue`).
+   */
+  handoff_action: {
+    action: "open" | "copy" | "share" | "continue";
+    reason: "in_app_browser" | "mobile";
+    page: string;
+  };
+  /**
+   * How far an install of Appflare from the deploy page got, one event per
+   * step and attempt: `intro` (the first screen), `consent` (off to
+   * Cloudflare to connect), `account` (back with access), `deploying`,
+   * `deployed` (Appflare is up and holds the connection) or `error`, with a
+   * fixed `error_kind`. Sent by the deploy page and its callback themselves,
+   * without PostHog's library, under a random id made for that one attempt:
+   * see `deploy-steps.ts`.
+   */
+  deploy_step: { step: DeployStep; error_kind?: string };
 }
+
+/** The steps {@link SiteEvents.deploy_step} reports. */
+export type DeployStep = "intro" | "consent" | "account" | "deploying" | "deployed" | "error";
 
 export type SiteEvent = keyof SiteEvents;
 
@@ -327,7 +368,7 @@ export function linkEvents(href: string, here: Here): EventCall[] {
   }
   if (url.protocol !== "https:" && url.protocol !== "http:") return [];
   if (url.host === here.host) {
-    // The deploy page sends no analytics of its own, so the click that leads there counts.
+    // The deploy page counts nothing but its steps, so the click that leads there counts.
     return isDeployPath(url.pathname) && !isDeployPath(here.pathname)
       ? [["install_button_clicked", { path: here.pathname }]]
       : [];
@@ -377,6 +418,17 @@ function isPrivate(element: Element): boolean {
   return element.closest(`.${PRIVATE_CLASS}`) !== null;
 }
 
+/**
+ * Whether a click on `link` opens a dialog rather than following it: the
+ * sheet an install link opens in an app's own browser, a screenshot's
+ * lightbox. Such a link says so with `aria-haspopup="dialog"`, and goes
+ * nowhere, so its click counts no visit to its address. Read from the
+ * markup because this listener hears the click before the link's own handler.
+ */
+function opensDialog(link: Element): boolean {
+  return link.getAttribute("aria-haspopup") === "dialog";
+}
+
 /** Links, the theme switch and the badge snippets, heard once for the whole document. */
 function listenToClicks(document: Document): () => void {
   const onClick = (event: MouseEvent) => {
@@ -386,6 +438,7 @@ function listenToClicks(document: Document): () => void {
 
     const link = target.closest("a[href]");
     if (link instanceof HTMLAnchorElement) {
+      if (opensDialog(link)) return;
       for (const [name, properties] of linkEvents(link.href, here)) capture(name, properties);
       return;
     }

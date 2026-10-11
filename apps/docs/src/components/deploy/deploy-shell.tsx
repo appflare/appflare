@@ -226,7 +226,8 @@ export function InstallerTerms() {
         password. The record goes once the owner account is created or the installation is removed.
       </Text>
       <Text variant="secondary">
-        This page runs no analytics. <Link href="/privacy/">Privacy</Link>
+        This page runs no analytics beyond counting how far installs get, with nothing about you or
+        your account. <Link href="/privacy/">Privacy</Link>
       </Text>
     </More>
   );
