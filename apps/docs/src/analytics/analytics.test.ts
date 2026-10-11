@@ -366,12 +366,22 @@ describe("the referrer guard", () => {
 });
 
 describe("errors from other people's scripts", () => {
+  const X_IPHONE =
+    "Mozilla/5.0 (iPhone; CPU iPhone OS 27_0_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/24A446 Twitter for iPhone/12.31.2";
+  const SAFARI_IPHONE =
+    "Mozilla/5.0 (iPhone; CPU iPhone OS 27_0_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/27.0 Mobile/15E148 Safari/604.1";
+
   /** An `$exception` event as PostHog builds it, with one frame per `[function, file]`. */
-  function error(value: string, frames: Array<[string, string]> | null): CaptureResult {
+  function error(
+    value: string,
+    frames: Array<[string, string]> | null,
+    userAgent: string = X_IPHONE,
+  ): CaptureResult {
     return {
       uuid: "0",
       event: "$exception",
       properties: {
+        $raw_user_agent: userAgent,
         $exception_list: [
           {
             type: "ReferenceError",
@@ -414,6 +424,16 @@ describe("errors from other people's scripts", () => {
       ["inject", "chrome-extension://abcdefghijklmnop/content.js"],
     ]);
     expect(withoutForeignErrors(extension)).toBeNull();
+  });
+
+  it("keeps an error from an inline script of the page outside an app's own browser", () => {
+    // The page as the file says nothing about whose script it was.
+    const inline = error("boom", [["hydrate", "https://appflare.dev/apps/glance/"]], SAFARI_IPHONE);
+    expect(withoutForeignErrors(inline)).toBe(inline);
+    const noAgent = error("boom", [["hydrate", "https://appflare.dev/"]], "");
+    expect(withoutForeignErrors(noAgent)).toBe(noAgent);
+    const otherSite = error("boom", [["f", "https://cdn.example.com/x.js"]], SAFARI_IPHONE);
+    expect(withoutForeignErrors(otherSite)).toBeNull();
   });
 
   it("keeps the site's own errors, even when another script called in", () => {

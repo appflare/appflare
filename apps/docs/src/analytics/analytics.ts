@@ -2,6 +2,7 @@ import type { CaptureResult, PostHog, PostHogConfig } from "posthog-js";
 import { opensLightbox } from "../components/catalog/gallery-navigation.ts";
 import { openedAt } from "../deploy/arrival.ts";
 import { isDeployPath } from "../deploy/paths.ts";
+import { detectBrowser } from "../in-app/browser.ts";
 import { browserMemory } from "../install/memory.ts";
 import { SITE_URL } from "../lib/shared.ts";
 
@@ -249,6 +250,7 @@ export function outsideDeployPages(
 
 /** Where every script the site's build makes is served: `/assets/<name>-<hash>.js`. */
 const OWN_SCRIPTS = `${SITE_URL}/assets/`;
+const SITE_ORIGIN = new URL(SITE_URL).origin;
 
 /** As much of an entry of PostHog's `$exception_list` as this reads; anything may be missing. */
 type ExceptionEntry = { stacktrace?: { frames?: unknown } } | null | undefined;
@@ -268,16 +270,22 @@ function stackFiles(exceptions: unknown): string[] {
 
 /**
  * `event`, or null when it is an error that only other people's scripts
- * threw: an app's own browser adds scripts to every page it shows (on an
- * iPhone, X's throws "Can't find variable: CONFIG"), and so do browser
- * extensions. An error whose stack passes through one of the site's own
- * scripts is kept, and so is one without a stack, which could be the site's.
+ * threw. A frame from another origin or a browser extension is foreign. A
+ * frame whose file is one of the site's pages (an inline or evaluated
+ * script) says nothing about whose script it was, so such an error is only
+ * dropped in an app's own browser, which adds scripts to every page it shows
+ * (on an iPhone, X's throws "Can't find variable: CONFIG"). An error whose
+ * stack passes through one of the site's own scripts is kept, and so is one
+ * without a stack, which could be the site's.
  */
 export function withoutForeignErrors(event: CaptureResult | null): CaptureResult | null {
   if (event === null || event.event !== "$exception") return event;
   const files = stackFiles(event.properties.$exception_list);
-  if (files.length === 0) return event;
-  return files.some((file) => file.startsWith(OWN_SCRIPTS)) ? event : null;
+  if (files.length === 0 || files.some((file) => file.startsWith(OWN_SCRIPTS))) return event;
+  if (files.every((file) => originOf(file) !== SITE_ORIGIN)) return null;
+  const agent = event.properties.$raw_user_agent;
+  const inApp = typeof agent === "string" && detectBrowser(agent).kind === "in-app";
+  return inApp ? null : event;
 }
 
 /** The part of the router this needs. */
