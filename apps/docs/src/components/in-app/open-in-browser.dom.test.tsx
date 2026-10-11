@@ -304,6 +304,21 @@ describe("counting clicks", () => {
     expect(posthog.capture).toHaveBeenLastCalledWith("install_button_clicked", { path: "/" });
   });
 
+  it("leaves a modified click to the browser, and counts it as an install", async () => {
+    browse(UA.xIphone, "/");
+    startAnalytics(router);
+    await render(<InstallButton placement="home-hero-install" />);
+    const install = link("Install Appflare");
+    act(() => {
+      install.dispatchEvent(
+        new MouseEvent("click", { bubbles: true, cancelable: true, button: 0, metaKey: true }),
+      );
+    });
+    await flush();
+    expect(dialog()).toBeNull();
+    expect(names()).toEqual(["$pageview", "outbound_click", "install_button_clicked"]);
+  });
+
   it("counts the same link as an install where it is followed", async () => {
     browse(UA.safariIphone, "/");
     startAnalytics(router);

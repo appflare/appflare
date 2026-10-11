@@ -18,6 +18,7 @@ import { track } from "../../analytics/analytics.ts";
 import { type BrowserKind, chromeIntentUrl, inAppBrowserName } from "../../in-app/browser.ts";
 import { pageUrl } from "../../in-app/share.ts";
 import { useBrowser } from "../../in-app/use-browser.ts";
+import { opensLightbox } from "../catalog/gallery-navigation.ts";
 import { LinkToCopy, useLinkActions } from "./link-actions.tsx";
 
 export type InAppBrowser = Extract<BrowserKind, { kind: "in-app" }>;
@@ -244,7 +245,8 @@ export function InstallLink({
   const [open, setOpen] = useState(false);
 
   function onClick(event: MouseEvent<HTMLAnchorElement>) {
-    if (inApp === null || event.defaultPrevented || event.button !== 0) return;
+    // A modified or middle click opens the link as the browser would (a new tab, a download).
+    if (inApp === null || event.defaultPrevented || !opensLightbox(event)) return;
     event.preventDefault();
     setOpen(true);
     track("handoff_shown", {

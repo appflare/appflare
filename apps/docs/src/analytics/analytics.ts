@@ -1,4 +1,5 @@
 import type { CaptureResult, PostHog, PostHogConfig } from "posthog-js";
+import { opensLightbox } from "../components/catalog/gallery-navigation.ts";
 import { openedAt } from "../deploy/arrival.ts";
 import { isDeployPath } from "../deploy/paths.ts";
 import { browserMemory } from "../install/memory.ts";
@@ -422,11 +423,12 @@ function isPrivate(element: Element): boolean {
  * Whether a click on `link` opens a dialog rather than following it: the
  * sheet an install link opens in an app's own browser, a screenshot's
  * lightbox. Such a link says so with `aria-haspopup="dialog"`, and goes
- * nowhere, so its click counts no visit to its address. Read from the
- * markup because this listener hears the click before the link's own handler.
+ * nowhere, so its click counts no visit to its address. A modified or middle
+ * click still follows it (a new tab), so that one counts. Read from the markup
+ * because this listener hears the click before the link's own handler.
  */
-function opensDialog(link: Element): boolean {
-  return link.getAttribute("aria-haspopup") === "dialog";
+function opensDialog(link: Element, click: MouseEvent): boolean {
+  return link.getAttribute("aria-haspopup") === "dialog" && opensLightbox(click);
 }
 
 /** Links, the theme switch and the badge snippets, heard once for the whole document. */
@@ -438,7 +440,7 @@ function listenToClicks(document: Document): () => void {
 
     const link = target.closest("a[href]");
     if (link instanceof HTMLAnchorElement) {
-      if (opensDialog(link)) return;
+      if (opensDialog(link, event)) return;
       for (const [name, properties] of linkEvents(link.href, here)) capture(name, properties);
       return;
     }
