@@ -10,6 +10,7 @@ import {
   catalogVarProblems,
   combinedWorkerFacts,
   type D1MigrationFile,
+  d1QueryProblems,
   hyperdriveDeclarationProblems,
   hyperdriveDeclarations,
   isVectorizeBinding,
@@ -164,7 +165,8 @@ function resolveZipPath(dir: string, manifest: ArtifactManifest): string {
  * the zip for every recorded worker module, asset, and D1 SQL file and checks
  * its size and sha256 — never by unzipping. D1 schema files, which run on
  * every install and update, must still pass the packer's check that they
- * create only what is missing (`schemaFileProblems` from `@appflare/schema`). Also checks that each Vectorize
+ * create only what is missing (`schemaFileProblems` from `@appflare/schema`),
+ * baselines `baselineFileProblems`, and migrations `d1QueryProblems`. Also checks that each Vectorize
  * binding records the index shape the embedded catalog manifest declares, and
  * that no service binding points anywhere but the app's own Worker. With
  * `checkUpload`, also fails an artifact whose Worker Appflare could not upload.
@@ -263,6 +265,9 @@ export async function verify(options: VerifyOptions): Promise<VerifyResult> {
   const baselineFiles = new Set(
     Object.values(manifest.d1).flatMap((d1) => (d1.baseline === undefined ? [] : [d1.baseline])),
   );
+  const migrationFiles = new Set(
+    Object.values(manifest.d1).flatMap((d1) => [...d1.migrations, ...d1.postDeploy]),
+  );
   const entries: Addressable[] = [
     ...workers.flatMap((w) => [...w.worker.modules, ...w.assets.files]),
     ...artifactD1Files(manifest),
@@ -290,6 +295,14 @@ export async function verify(options: VerifyOptions): Promise<VerifyResult> {
         if (problems.length > 0) {
           throw new Error(
             `the D1 schema file ${entry.path} cannot run on every install and update: ${problems.join("; ")}`,
+          );
+        }
+      }
+      if (migrationFiles.has(entry as D1MigrationFile)) {
+        const problems = d1QueryProblems(buf.toString("utf8"));
+        if (problems.length > 0) {
+          throw new Error(
+            `the D1 migration ${entry.path} cannot run in D1: ${problems.join("; ")}`,
           );
         }
       }

@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   buildBaselineQuery,
   buildMigrationQuery,
+  buildSchemaQuery,
   CREATE_MIGRATIONS_TABLE_SQL,
   D1_MIGRATIONS_STEP_BYTES,
   D1_MIGRATIONS_STEP_SUBREQUESTS,
@@ -43,6 +44,29 @@ describe("buildBaselineQuery", () => {
 
   it("is the baseline alone when there is nothing to record", () => {
     expect(buildBaselineQuery("CREATE TABLE a (x)", [])).toBe("CREATE TABLE a (x)");
+  });
+});
+
+/** A trigger D1's query endpoint ends at its CASE's END; unless that gets a space. */
+const CASE_TRIGGER =
+  "CREATE TRIGGER t BEFORE INSERT ON a BEGIN\n  SELECT CASE WHEN NEW.x IS NULL THEN RAISE(ABORT, 'x') END;\nEND;";
+const CASE_TRIGGER_FOR_D1 =
+  "CREATE TRIGGER t BEFORE INSERT ON a BEGIN\n  SELECT CASE WHEN NEW.x IS NULL THEN RAISE(ABORT, 'x') END ;\nEND;";
+
+describe("the app's SQL in a query", () => {
+  it("is written so D1 ends each trigger where SQLite does, in migrations, baselines and schema files", () => {
+    expect(buildMigrationQuery(CASE_TRIGGER, "0001_t.sql")).toBe(
+      `${CASE_TRIGGER_FOR_D1}\nINSERT INTO "d1_migrations" (name)\nvalues ('0001_t.sql');`,
+    );
+    expect(buildBaselineQuery(`CREATE TABLE a (x);\n${CASE_TRIGGER}`, ["0001_t.sql"])).toBe(
+      `CREATE TABLE a (x);\n${CASE_TRIGGER_FOR_D1}\nINSERT OR IGNORE INTO "d1_migrations" (name)\nvalues ('0001_t.sql');`,
+    );
+    expect(buildSchemaQuery(CASE_TRIGGER)).toBe(CASE_TRIGGER_FOR_D1);
+  });
+
+  it("is the file as it is when it has no such trigger", () => {
+    const sql = "CREATE TABLE IF NOT EXISTS a (x);\nSELECT CASE WHEN 1 THEN 2 END;";
+    expect(buildSchemaQuery(sql)).toBe(sql);
   });
 });
 

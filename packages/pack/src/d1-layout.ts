@@ -4,6 +4,7 @@ import {
   baselineFileProblems,
   type CatalogD1,
   compareMigrationNames,
+  d1QueryProblems,
   migrationsGlobBase,
   schemaFileProblems,
 } from "@appflare/schema";
@@ -153,12 +154,27 @@ export function expandMigrationsGlob(
   return found;
 }
 
-function read(files: Array<{ name: string; abs: string }>, dir: string, binding: string): D1File[] {
-  return files.map((f) => ({
-    name: f.name,
-    path: `${dir}/${binding}/${f.name}`,
-    bytes: readFileSync(f.abs),
-  }));
+/**
+ * Reads migration files (`what` names them in messages), refusing one D1's
+ * query endpoint, which applies each, cannot run (`d1QueryProblems` from
+ * `@appflare/schema`).
+ */
+function read(
+  files: Array<{ name: string; abs: string }>,
+  dir: string,
+  binding: string,
+  what: string,
+): D1File[] {
+  return files.map((f) => {
+    const bytes = readFileSync(f.abs);
+    const problems = d1QueryProblems(bytes.toString("utf8"));
+    if (problems.length > 0) {
+      throw new Error(
+        `the ${what} ${f.name} of ${binding} cannot run in D1: ${problems.join("; ")}`,
+      );
+    }
+    return { name: f.name, path: `${dir}/${binding}/${f.name}`, bytes };
+  });
 }
 
 /** The catalog manifest's layout for `binding`, if it declares one. */
@@ -201,7 +217,8 @@ export function wranglerMigrationsLayout(d1: {
  * order. A binding the catalog manifest gives a `migrationsGlob` or a
  * `migrationsDir` takes its files from there (the folder must exist);
  * any other reads the wrangler config's `migrations_dir` and
- * `migrations_pattern`, and has none when the folder is missing.
+ * `migrations_pattern`, and has none when the folder is missing. A file
+ * D1's query endpoint cannot run (`d1QueryProblems`) is refused.
  *
  * `configDirs` are the folders `migrations_dir` may be relative to, first
  * match wins: the declared config's folder, then the folder of the config
@@ -241,7 +258,7 @@ export function collectD1Migrations(
           : insideCheckout(checkoutDir, path.relative(checkoutDir, found), "migrations_dir");
       files = dir === undefined ? [] : listMigrationFiles(dir, pattern);
     }
-    result[d1.binding] = read(files, D1_ZIP_DIRS.migrations, d1.binding);
+    result[d1.binding] = read(files, D1_ZIP_DIRS.migrations, d1.binding, "migration");
   }
   return result;
 }
@@ -259,9 +276,10 @@ export interface D1Extras {
  * `resources.d1`. Refuses a declaration for a name no Worker binds as D1, a
  * schema file that is not safe to run on every install and update
  * (`schemaFileProblems` from `@appflare/schema`), a baseline that may not
- * run at install (`baselineFileProblems`), and a post-deploy migration named
- * like one of the binding's migrations: both are recorded in `d1_migrations`
- * by name, so one of the two would never run.
+ * run at install (`baselineFileProblems`), a post-deploy migration D1's
+ * query endpoint cannot run (`d1QueryProblems`), and one named like one of
+ * the binding's migrations: both are recorded in `d1_migrations` by name, so
+ * one of the two would never run.
  */
 export function collectD1Extras(
   checkoutDir: string,
@@ -304,7 +322,12 @@ export function collectD1Extras(
           `resources.d1 postDeployMigrationsDir ${layout.postDeployMigrationsDir} is not a folder`,
         );
       }
-      const files = read(listMigrationFiles(dir), D1_ZIP_DIRS.postDeploy, binding);
+      const files = read(
+        listMigrationFiles(dir),
+        D1_ZIP_DIRS.postDeploy,
+        binding,
+        "post-deploy migration",
+      );
       const tracked = new Set((migrations[binding] ?? []).map((f) => f.name));
       const clash = files.find((f) => tracked.has(f.name));
       if (clash !== undefined) {

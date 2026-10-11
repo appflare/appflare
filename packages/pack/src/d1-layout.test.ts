@@ -197,6 +197,26 @@ describe("collectD1Migrations", () => {
     ).toThrow(/resources\.d1 migrationsDir nowhere does not exist/);
   });
 
+  it("refuses a migration whose trigger holds END; in a string or quoted name", () => {
+    files({
+      "migrations/0002_guard.sql":
+        'CREATE TRIGGER t AFTER INSERT ON a BEGIN UPDATE a SET "x END;" = 1; END;',
+    });
+    expect(() => collectD1Migrations(config(), [checkout], checkout, undefined)).toThrow(
+      /^the migration 0002_guard\.sql of DB cannot run in D1: line 1: the name "x END;" in the trigger t holds END;\./,
+    );
+  });
+
+  it("refuses a migration whose trigger body never closes, hiding what follows it", () => {
+    files({
+      "migrations/0002_guard.sql":
+        "CREATE TRIGGER t AFTER INSERT ON a BEGIN SELECT 1 END;\nDROP TABLE b;",
+    });
+    expect(() => collectD1Migrations(config(), [checkout], checkout, undefined)).toThrow(
+      /^the migration 0002_guard\.sql of DB cannot run in D1: line 1: the trigger t has no END directly after a ; to close its body/,
+    );
+  });
+
   it("takes a glob's files under wrangler's names", () => {
     files({ "prisma/migrations/20240101_init/migration.sql": "CREATE TABLE p (id);" });
     const d1 = collectD1Migrations(config(), [checkout], checkout, {
@@ -289,6 +309,36 @@ describe("collectD1Extras", () => {
     ).toThrow(
       /the post-deploy migration 0001_init\.sql of DB has the name of one of its migrations/,
     );
+  });
+
+  it("refuses SQL whose trigger holds END; in a string, which D1 would cut there", () => {
+    const trigger =
+      "CREATE TRIGGER IF NOT EXISTS t AFTER INSERT ON a BEGIN\n  SELECT RAISE(ABORT, 'no END; here');\nEND;";
+    const why =
+      /line 3: a string in the trigger t holds END;\. D1 ends a trigger's body at the first END; in its text/;
+    files({
+      "schema.sql": `CREATE TABLE IF NOT EXISTS a (id);\n${trigger}`,
+      "baseline.sql": `CREATE TABLE a (id);\n${trigger}`,
+      "after/0002_guard.sql": `CREATE TABLE b (id);\n${trigger}`,
+    });
+    expect(() =>
+      collectD1Extras(checkout, { DB: { schema: ["schema.sql"] } }, bound, migrations),
+    ).toThrow(why);
+    expect(() =>
+      collectD1Extras(checkout, { DB: { baseline: "baseline.sql" } }, bound, migrations),
+    ).toThrow(why);
+    expect(() =>
+      collectD1Extras(checkout, { DB: { postDeployMigrationsDir: "after" } }, bound, migrations),
+    ).toThrow(/the post-deploy migration 0002_guard\.sql of DB cannot run in D1: line 3: a string/);
+    // A CASE's END; is fine: the manager writes it so D1 reads it right.
+    files({
+      "after/0002_guard.sql":
+        "CREATE TRIGGER t AFTER INSERT ON a BEGIN SELECT CASE WHEN NEW.id IS NULL THEN RAISE(ABORT, 'x') END; END;",
+    });
+    expect(
+      collectD1Extras(checkout, { DB: { postDeployMigrationsDir: "after" } }, bound, migrations)
+        .postDeploy.DB,
+    ).toHaveLength(1);
   });
 
   it("refuses a schema file that links outside the checkout", () => {

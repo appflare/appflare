@@ -623,3 +623,72 @@ describe("applyD1Schema", () => {
     expect(d.account.state.queries).toEqual([d.files[0]?.content]);
   });
 });
+
+describe("D1 SQL with a trigger D1's query endpoint would end too early", () => {
+  /** D1 ended this trigger at the CASE's END; and refused the whole query. */
+  const TRIGGER =
+    "CREATE TRIGGER IF NOT EXISTS t BEFORE INSERT ON a BEGIN\n  SELECT CASE WHEN NEW.x IS NULL THEN RAISE(ABORT, 'x') END;\nEND;";
+  const FOR_D1 = TRIGGER.replace("END;\nEND;", "END ;\nEND;");
+
+  it("reaches D1 with the space that makes it end the trigger where SQLite does, from every unit", async () => {
+    const fixture = await buildArtifactFixture({
+      bindings: [
+        { type: "d1", name: "DB" },
+        { type: "d1", name: "NEW" },
+      ],
+      d1: { DB: [{ name: "0001_t.sql", content: `CREATE TABLE a (x);\n${TRIGGER}` }] },
+      d1Schema: {
+        DB: [{ name: "schema.sql", content: `CREATE TABLE IF NOT EXISTS a (x);\n${TRIGGER}` }],
+      },
+      d1Baseline: { NEW: { name: "baseline.sql", content: `CREATE TABLE a (x);\n${TRIGGER}` } },
+    });
+    const account = fakeAccount(fixture, {
+      d1: [
+        { uuid: "d1-1", name: "cut-db" },
+        { uuid: "d1-2", name: "new-db" },
+      ],
+    });
+    const host = redirectingArtifactHost(fixture);
+    const fetch = async (input: string, init?: RequestInit) =>
+      host.serve(input, init) ?? account.fetch(input, init);
+    const units = createJobUnits({ CF_API_TOKEN: TOKEN }, { fetch });
+    const sql = fixture.manifest.d1.DB;
+    const file = fixture.manifest.d1.NEW?.baseline;
+    if (sql === undefined || file === undefined) throw new Error("the fixture has no D1 SQL");
+    const common = {
+      accountId: ACC,
+      artifact: { zipUrl: ZIP_URL, host: { kind: "catalog" as const } },
+    };
+
+    // The artifact's bytes are checked against their digests as published.
+    const migrations = await units.applyD1Migrations({
+      ...common,
+      databaseId: "d1-1",
+      databaseName: "cut-db",
+      files: sql.migrations,
+    } satisfies D1MigrationsInput);
+    const schema = await units.applyD1Schema({
+      ...common,
+      databaseId: "d1-1",
+      databaseName: "cut-db",
+      files: sql.schema,
+    } satisfies D1SchemaInput);
+    const baseline = await units.applyD1Baseline({
+      ...common,
+      databaseId: "d1-2",
+      databaseName: "new-db",
+      file,
+      migrations: ["0001_t.sql"],
+    } satisfies D1BaselineInput);
+    expect(migrations).toMatchObject({ ok: true, value: { applied: 1, failed: null } });
+    expect(schema).toMatchObject({ ok: true, value: { applied: 1, failed: null } });
+    expect(baseline).toMatchObject({ ok: true, value: { ran: true, recorded: 1 } });
+
+    const carrying = account.state.queries.filter((q) => q.includes("CREATE TRIGGER"));
+    expect(carrying).toEqual([
+      `CREATE TABLE a (x);\n${FOR_D1}\nINSERT INTO "d1_migrations" (name)\nvalues ('0001_t.sql');`,
+      `CREATE TABLE IF NOT EXISTS a (x);\n${FOR_D1}`,
+      `CREATE TABLE a (x);\n${FOR_D1}\nINSERT OR IGNORE INTO "d1_migrations" (name)\nvalues ('0001_t.sql');`,
+    ]);
+  });
+});

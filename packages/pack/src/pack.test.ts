@@ -771,6 +771,23 @@ describe("pack with resources.d1", () => {
       await expect(verify({ dir: outDir })).rejects.toThrow(
         /the D1 schema file d1-schema\/DB\/src\/db\/schema\.sql cannot run on every install and update: line 2: CREATE TABLE settings has no IF NOT EXISTS/,
       );
+
+      // And a migration to what D1's query endpoint can run. Checked before
+      // the schema file; verify reads each file's range, so new bytes can go
+      // after the archive.
+      const migration = edited.d1.DB?.migrations[0];
+      if (migration === undefined) throw new Error("no migration recorded");
+      const cut = Buffer.from(
+        "CREATE TRIGGER t AFTER INSERT ON a BEGIN SELECT RAISE(ABORT, 'END;'); END;",
+      );
+      migration.offset = zip.length;
+      migration.size = cut.length;
+      migration.sha256 = createHash("sha256").update(cut).digest("hex");
+      writeFileSync(res.zipPath, Buffer.concat([zip, cut]));
+      writeFileSync(manifestPath, JSON.stringify(edited));
+      await expect(verify({ dir: outDir })).rejects.toThrow(
+        /the D1 migration d1\/DB\/20240101000000_init\/migration\.sql cannot run in D1: line 1: a string in the trigger t holds END;/,
+      );
     } finally {
       rmSync(parent, { recursive: true, force: true });
     }

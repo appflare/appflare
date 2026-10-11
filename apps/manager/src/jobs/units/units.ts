@@ -33,6 +33,7 @@ import {
   BASELINE_STATE_SQL,
   buildBaselineQuery,
   buildMigrationQuery,
+  buildSchemaQuery,
   CREATE_MIGRATIONS_TABLE_SQL,
   D1_SCHEMA_LIMITS,
   LIST_APPLIED_MIGRATIONS_SQL,
@@ -594,10 +595,10 @@ export function createJobUnits(env: UnitEnv, deps: UnitDeps = {}): JobUnitsServe
           let failed: UnitFailure | null = null;
           for (const [i, file] of batch.entries()) {
             const sql = new TextDecoder().decode(contents[i] ?? new Uint8Array(0));
-            // The file as it is, recorded nowhere: it creates only what is
-            // missing, so running it on every install and update is safe.
+            // The file, recorded nowhere: it creates only what is missing,
+            // so running it on every install and update is safe.
             try {
-              await api.d1.query(target.databaseId, sql);
+              await api.d1.query(target.databaseId, buildSchemaQuery(sql));
             } catch (error) {
               failed = describeFailure(new UnitItemError(file.name, error));
               break;

@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
   baselineFileProblems,
+  d1QueryProblems,
   endsInsideStatement,
+  normalizeForD1Query,
   schemaFileProblems,
   splitSqlStatements,
 } from "./sql-guard";
@@ -189,6 +191,22 @@ describe("schemaFileProblems", () => {
     expect(schemaFileProblems(sql)).toEqual([`line 5: DROP TABLE b drops ${CHANGE_WHY}`]);
   });
 
+  it("reads end and begin as names where SQLite does, keeping each trigger in one statement", () => {
+    // Neither word is reserved, so a column, a table or a trigger may take either name.
+    const sql = `CREATE TRIGGER IF NOT EXISTS t AFTER INSERT ON events BEGIN
+      UPDATE stats SET last = NEW.end;
+      UPDATE stats SET n = n + 1;
+    END;
+    CREATE TRIGGER IF NOT EXISTS begin AFTER UPDATE OF begin, end ON begin
+    WHEN EXISTS (SELECT 1 FROM b WHERE begin = NEW.x) begin
+      UPDATE b SET end = OLD.end WHERE begin = NEW.x;
+      SELECT 1;
+    end;
+    DROP TABLE b;`;
+    expect(splitSqlStatements(sql).map((s) => s.line)).toEqual([1, 5, 10]);
+    expect(schemaFileProblems(sql)).toEqual([`line 10: DROP TABLE b drops ${CHANGE_WHY}`]);
+  });
+
   it("refuses a file with no statements", () => {
     expect(schemaFileProblems("-- nothing yet\n")).toEqual(["it has no SQL statements"]);
   });
@@ -298,5 +316,246 @@ PRAGMA user_version(3);`;
       ["it creates no table; a baseline holds the app's whole schema"],
     );
     expect(baselineFileProblems("-- empty\n")).toEqual(["it has no SQL statements"]);
+  });
+});
+
+/**
+ * Shaped like a schema file whose trigger checks a row with SELECT CASE ...
+ * END; and RAISE: D1's query endpoint used to end the trigger at the CASE's
+ * END; and refuse the whole file.
+ */
+const CASE_TRIGGER = `CREATE TABLE IF NOT EXISTS invite_uses (invite_id INTEGER, user_id INTEGER);
+CREATE TRIGGER IF NOT EXISTS validate_invite_use
+BEFORE INSERT ON invite_uses
+BEGIN
+  SELECT CASE
+    WHEN NEW.user_id IS NULL THEN RAISE(ABORT, 'USER_REQUIRED')
+    WHEN NOT EXISTS (SELECT 1 FROM invites WHERE id = NEW.invite_id) THEN RAISE(ABORT, 'UNAVAILABLE')
+  END;
+END;
+CREATE INDEX IF NOT EXISTS idx_invite_uses ON invite_uses(invite_id);
+`;
+
+/** The words, strings and punctuation of `sql`, upper-cased: what SQLite reads, whitespace and comments aside. */
+function readAs(sql: string): string[][] {
+  return splitSqlStatements(sql).map((s) => s.tokens.map((t) => t.value));
+}
+
+describe("normalizeForD1Query", () => {
+  it("puts a space before the ; of a CASE's END; in a trigger body, and nothing else changes", () => {
+    const normalized = normalizeForD1Query(CASE_TRIGGER);
+    expect(normalized).toBe(CASE_TRIGGER.replace("  END;\nEND;", "  END ;\nEND;"));
+    expect(readAs(normalized)).toEqual(readAs(CASE_TRIGGER));
+    expect(normalized.split("\n")).toHaveLength(CASE_TRIGGER.split("\n").length);
+  });
+
+  it("fixes each END; D1 would end the body at, wherever it stands in the body", () => {
+    const cases: Array<[string, string]> = [
+      // The CASE's END; as the last statement, and in a statement before another.
+      [
+        "CREATE TRIGGER t AFTER INSERT ON a BEGIN SELECT CASE WHEN NEW.x THEN 1 END; END;",
+        "CREATE TRIGGER t AFTER INSERT ON a BEGIN SELECT CASE WHEN NEW.x THEN 1 END ; END;",
+      ],
+      [
+        "CREATE TRIGGER t AFTER INSERT ON a BEGIN\n  DELETE FROM b WHERE id = CASE WHEN NEW.x THEN 1 ELSE 2 END;\n  SELECT 1;\nEND;",
+        "CREATE TRIGGER t AFTER INSERT ON a BEGIN\n  DELETE FROM b WHERE id = CASE WHEN NEW.x THEN 1 ELSE 2 END ;\n  SELECT 1;\nEND;",
+      ],
+      // A name that ends in END.
+      [
+        "CREATE TRIGGER t AFTER INSERT ON a BEGIN UPDATE a SET x = 1 WHERE id = NEW.WEEKEND; END;",
+        "CREATE TRIGGER t AFTER INSERT ON a BEGIN UPDATE a SET x = 1 WHERE id = NEW.WEEKEND ; END;",
+      ],
+      // Comments: a space in a comment changes nothing.
+      [
+        "CREATE TRIGGER t AFTER INSERT ON a BEGIN\n  -- the END; of it\n  SELECT 1;\nEND;",
+        "CREATE TRIGGER t AFTER INSERT ON a BEGIN\n  -- the END ; of it\n  SELECT 1;\nEND;",
+      ],
+      [
+        "CREATE TRIGGER t AFTER INSERT ON a BEGIN /* END; */ SELECT 1; END;",
+        "CREATE TRIGGER t AFTER INSERT ON a BEGIN /* END ; */ SELECT 1; END;",
+      ],
+      // Nested CASEs: only the outer END can meet the ;.
+      [
+        "CREATE TRIGGER t AFTER INSERT ON a BEGIN SELECT CASE WHEN NEW.x THEN CASE WHEN NEW.y THEN 1 END END; END;",
+        "CREATE TRIGGER t AFTER INSERT ON a BEGIN SELECT CASE WHEN NEW.x THEN CASE WHEN NEW.y THEN 1 END END ; END;",
+      ],
+      [
+        "CREATE TRIGGER t AFTER INSERT ON a BEGIN SELECT CASE WHEN NEW.x THEN (CASE NEW.y WHEN 1 THEN 2 END) END; END;",
+        "CREATE TRIGGER t AFTER INSERT ON a BEGIN SELECT CASE WHEN NEW.x THEN (CASE NEW.y WHEN 1 THEN 2 END) END ; END;",
+      ],
+    ];
+    for (const [sql, want] of cases) {
+      expect(normalizeForD1Query(sql)).toBe(want);
+      expect(readAs(want)).toEqual(readAs(sql));
+    }
+  });
+
+  it("leaves what D1 already reads correctly as it is", () => {
+    const same = [
+      "CREATE TRIGGER t AFTER INSERT ON a BEGIN SELECT CASE WHEN 1 THEN 2 END ; END;",
+      "CREATE TRIGGER t AFTER INSERT ON a BEGIN SELECT CASE WHEN 1 THEN 2 END\n; END;",
+      "CREATE TRIGGER t AFTER INSERT ON a BEGIN SELECT CASE WHEN 1 THEN 2 END\t; END;",
+      "CREATE TRIGGER t AFTER INSERT ON a BEGIN SELECT CASE WHEN 1 THEN 2 end; END;",
+      "CREATE TRIGGER t AFTER INSERT ON a BEGIN SELECT CASE WHEN 1 THEN 2 End; END;",
+      "CREATE TRIGGER t AFTER UPDATE ON a BEGIN UPDATE a SET x = CASE WHEN 1 THEN 2 END WHERE id = 1; END;",
+      // Outside a trigger D1 reads END; correctly, in code, comments and strings.
+      "SELECT CASE WHEN 1 THEN 2 END;\n-- END;\nINSERT INTO a VALUES ('END;');",
+      // Before BEGIN D1 does not look for END;.
+      "CREATE TRIGGER t AFTER INSERT ON a WHEN NEW.x <> 'END;' BEGIN SELECT 1; END;",
+      // A trigger whose text never ends.
+      "CREATE TRIGGER t AFTER INSERT ON a BEGIN SELECT CASE WHEN 1 THEN 2 END",
+      "",
+    ];
+    for (const sql of same) expect(normalizeForD1Query(sql)).toBe(sql);
+    expect(normalizeForD1Query(IDEMPOTENT)).toBe(IDEMPOTENT);
+    expect(normalizeForD1Query(BASELINE)).toBe(BASELINE);
+  });
+
+  it("writes the body's own BEGIN and END in upper case, which is how D1 finds them", () => {
+    expect(
+      normalizeForD1Query(
+        "create trigger if not exists t after insert on a begin select case when 1 then 2 END; end;",
+      ),
+    ).toBe(
+      "create trigger if not exists t after insert on a BEGIN select case when 1 then 2 END ; END;",
+    );
+    expect(
+      normalizeForD1Query("Create Temp Trigger t After Insert On a Begin Select 1; End;"),
+    ).toBe("Create Temp Trigger t After Insert On a BEGIN Select 1; END;");
+  });
+
+  it("leaves end after a . as the name it is", () => {
+    // `end` is not reserved, so it may name a column; D1 does not end a body at `end;`.
+    const same = [
+      "CREATE TRIGGER t AFTER INSERT ON events BEGIN UPDATE stats SET last = NEW.end; UPDATE stats SET n = n + 1; END;",
+      "CREATE TRIGGER t AFTER DELETE ON events BEGIN UPDATE stats SET last = OLD.end WHERE n >= 0; END;",
+    ];
+    for (const sql of same) expect(normalizeForD1Query(sql)).toBe(sql);
+    // The body's END is the one after a `;`, so the scan reaches what follows NEW.end.
+    const sql =
+      "CREATE TRIGGER t AFTER INSERT ON events BEGIN UPDATE b SET x = NEW.end WHERE y = 2; SELECT CASE WHEN NEW.x THEN 1 END; end;";
+    const want =
+      "CREATE TRIGGER t AFTER INSERT ON events BEGIN UPDATE b SET x = NEW.end WHERE y = 2; SELECT CASE WHEN NEW.x THEN 1 END ; END;";
+    expect(normalizeForD1Query(sql)).toBe(want);
+    expect(readAs(want)).toEqual(readAs(sql));
+  });
+
+  it("upper-cases the body's BEGIN, not a trigger, table or column named begin", () => {
+    const cases: Array<[string, string]> = [
+      [
+        "create trigger t after update of begin, x on ev begin select 1; select 2; end;",
+        "create trigger t after update of begin, x on ev BEGIN select 1; select 2; END;",
+      ],
+      [
+        "create trigger t after insert on begin begin select 1; select 2; end;",
+        "create trigger t after insert on begin BEGIN select 1; select 2; END;",
+      ],
+      [
+        "create trigger begin after insert on main.begin for each row when exists (select 1 from b where begin = new.x) begin select 1; select 2; end;",
+        "create trigger begin after insert on main.begin for each row when exists (select 1 from b where begin = new.x) BEGIN select 1; select 2; END;",
+      ],
+    ];
+    for (const [sql, want] of cases) {
+      expect(normalizeForD1Query(sql)).toBe(want);
+      expect(readAs(want)).toEqual(readAs(sql));
+    }
+  });
+
+  it("fixes every trigger of a file, and is idempotent", () => {
+    const sql = [
+      "CREATE TABLE IF NOT EXISTS a (x INTEGER, y TEXT);",
+      "CREATE TRIGGER IF NOT EXISTS t1 AFTER INSERT ON a BEGIN SELECT CASE WHEN NEW.x < 0 THEN RAISE(ABORT, 'x') END; END;",
+      "SELECT CASE WHEN 1 THEN 2 END;",
+      "CREATE TRIGGER IF NOT EXISTS t2 AFTER UPDATE ON a BEGIN",
+      "  UPDATE a SET y = CASE WHEN NEW.x > 0 THEN 'up' ELSE 'down' END;",
+      "  SELECT CASE WHEN NEW.y IS NULL THEN RAISE(ABORT, 'y') END;",
+      "END;",
+    ].join("\n");
+    const normalized = normalizeForD1Query(sql);
+    expect(normalized.match(/END ;/g)).toHaveLength(3);
+    expect(normalized).toContain("SELECT CASE WHEN 1 THEN 2 END;\n");
+    expect(normalized.endsWith("RAISE(ABORT, 'y') END ;\nEND;")).toBe(true);
+    expect(normalizeForD1Query(normalized)).toBe(normalized);
+    expect(readAs(normalized)).toEqual(readAs(sql));
+  });
+
+  it("leaves an END; in a string or quoted name, which d1QueryProblems reports", () => {
+    const sql =
+      "CREATE TRIGGER t AFTER INSERT ON a BEGIN SELECT CASE WHEN NEW.x THEN RAISE(ABORT, 'the END; of x') END; END;";
+    expect(normalizeForD1Query(sql)).toBe(
+      "CREATE TRIGGER t AFTER INSERT ON a BEGIN SELECT CASE WHEN NEW.x THEN RAISE(ABORT, 'the END; of x') END ; END;",
+    );
+  });
+});
+
+const TRIGGER_END_WHY =
+  "D1 ends a trigger's body at the first END; in its text, even there, so the trigger would be cut short and D1 would refuse the file";
+const STRING_ADVICE =
+  "split the string between END and ; ('END' || ';' is the same value; inside RAISE(), 'END ;' always works)";
+
+describe("d1QueryProblems", () => {
+  it("names each string or quoted name in a trigger body that holds END;", () => {
+    const sql = `CREATE TABLE IF NOT EXISTS a (x INTEGER);
+CREATE TRIGGER IF NOT EXISTS main.guard AFTER INSERT ON a
+BEGIN
+  SELECT RAISE(ABORT, 'no END; here');
+  UPDATE a SET "x END;" = 1;
+END;
+`;
+    expect(d1QueryProblems(sql)).toEqual([
+      `line 4: a string in the trigger main.guard holds END;. ${TRIGGER_END_WHY}; ${STRING_ADVICE}`,
+      `line 5: the name "x END;" in the trigger main.guard holds END;. ${TRIGGER_END_WHY}; rename it`,
+    ]);
+  });
+
+  it("reads the whole body, past a column named end", () => {
+    expect(
+      d1QueryProblems(
+        "CREATE TRIGGER t AFTER INSERT ON a BEGIN UPDATE b SET x = NEW.end;\n  SELECT RAISE(ABORT, 'END;');\nEND;",
+      ),
+    ).toEqual([
+      `line 2: a string in the trigger t holds END;. ${TRIGGER_END_WHY}; ${STRING_ADVICE}`,
+    ]);
+  });
+
+  it("has nothing to say about what normalizeForD1Query fixes, or END; outside a body", () => {
+    expect(d1QueryProblems(CASE_TRIGGER)).toEqual([]);
+    expect(
+      d1QueryProblems(
+        "-- END;\nINSERT INTO a VALUES ('END;');\nCREATE TRIGGER t AFTER INSERT ON a WHEN NEW.x <> 'END;' BEGIN SELECT 'end;', 'END'; END;",
+      ),
+    ).toEqual([]);
+  });
+
+  it("is part of the schema file and baseline checks", () => {
+    const body = "BEGIN SELECT RAISE(ABORT, 'END;'); END;";
+    expect(schemaFileProblems(`CREATE TRIGGER IF NOT EXISTS t AFTER INSERT ON a ${body}`)).toEqual([
+      `line 1: a string in the trigger t holds END;. ${TRIGGER_END_WHY}; ${STRING_ADVICE}`,
+    ]);
+    expect(
+      baselineFileProblems(`CREATE TABLE a (x);\nCREATE TRIGGER t AFTER INSERT ON a ${body}`),
+    ).toEqual([
+      `line 2: a string in the trigger t holds END;. ${TRIGGER_END_WHY}; ${STRING_ADVICE}`,
+    ]);
+    expect(schemaFileProblems(CASE_TRIGGER)).toEqual([]);
+  });
+
+  it("names a trigger whose body never closes, which would hide the statements after it", () => {
+    // `SELECT 1 END;` reads END as the column's alias, so trigger a's body runs on to the end.
+    const rest = [
+      "CREATE TRIGGER IF NOT EXISTS a AFTER INSERT ON x BEGIN SELECT 1 END;",
+      "DROP TABLE y;",
+      "CREATE TRIGGER IF NOT EXISTS b AFTER INSERT ON x BEGIN END;",
+      "DELETE FROM z;",
+    ].join("\n");
+    const unclosed = (line: number) =>
+      `line ${line}: the trigger a has no END directly after a ; to close its body, so SQLite reads the rest of the file as part of the trigger; end the body's last statement with ; and close the body with END`;
+    expect(splitSqlStatements(rest)).toHaveLength(1);
+    expect(schemaFileProblems(rest)).toEqual([unclosed(1)]);
+    expect(baselineFileProblems(`CREATE TABLE x (id);\n${rest}`)).toEqual([unclosed(2)]);
+    expect(d1QueryProblems(`CREATE TABLE w (id);\n${rest}`)).toEqual([unclosed(2)]);
+    expect(d1QueryProblems("CREATE TRIGGER a AFTER INSERT ON x BEGIN SELECT 1;")).toEqual([
+      unclosed(1),
+    ]);
   });
 });

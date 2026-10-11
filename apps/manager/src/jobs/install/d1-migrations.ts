@@ -1,6 +1,7 @@
 import {
   compareMigrationNames,
   endsInsideStatement,
+  normalizeForD1Query,
   planSpans,
   SPAN_LIMITS,
 } from "@appflare/schema";
@@ -13,6 +14,12 @@ import { ARTIFACT_FETCH_COST } from "./budget";
  * (`src/d1/migrations/helpers.ts`: `getCreateMigrationsTableQuery`,
  * `getListAppliedMigrationsQuery`, `buildMigrationQuery`), so a database set up
  * by Appflare and one set up by wrangler are interchangeable.
+ *
+ * Every query that carries an app's SQL passes it through
+ * `normalizeForD1Query` first: D1's `/query` endpoint can end a trigger too
+ * early (an upper-case `END;` inside its body), and the whitespace and case
+ * that function changes make D1 read the trigger as SQLite does. The artifact
+ * is checked against its digest before that, byte for byte as published.
  */
 
 export const CREATE_MIGRATIONS_TABLE_SQL = `CREATE TABLE IF NOT EXISTS "d1_migrations"(
@@ -27,7 +34,7 @@ export const LIST_APPLIED_MIGRATIONS_SQL = `SELECT *
 
 /** One `/query` call: the file's SQL, then the row that records it. */
 export function buildMigrationQuery(fileSql: string, fileName: string): string {
-  return `${fileSql}
+  return `${normalizeForD1Query(fileSql)}
 INSERT INTO "d1_migrations" (name)
 values ('${fileName.replace(/'/g, "''")}');`;
 }
@@ -68,12 +75,18 @@ values ${rows};`;
 
 /** One `/query` call: the baseline's SQL, then the rows that record `names` as applied. */
 export function buildBaselineQuery(fileSql: string, names: readonly string[]): string {
+  const sql = normalizeForD1Query(fileSql);
   const record = recordMigrationsQuery(names);
-  if (record === "") return fileSql;
+  if (record === "") return sql;
   // A last statement without its `;` would run into the insert, and a `;`
   // after one that has it is an empty statement, which D1 refuses.
-  const closed = endsInsideStatement(fileSql) ? `${fileSql}\n;` : fileSql;
+  const closed = endsInsideStatement(sql) ? `${sql}\n;` : sql;
   return `${closed}\n${record}`;
+}
+
+/** One `/query` call: a schema file's SQL, recorded nowhere. */
+export function buildSchemaQuery(fileSql: string): string {
+  return normalizeForD1Query(fileSql);
 }
 
 /** Recorded names this version does not ship, in the order they were recorded. */

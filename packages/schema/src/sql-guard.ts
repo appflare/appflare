@@ -18,6 +18,11 @@
  * it need not be safe to run again; it may only keep to the app's own
  * database and leave how D1 runs it alone.
  *
+ * D1's `/query` endpoint can end a trigger too early; the manager sends SQL
+ * through {@link normalizeForD1Query} so it does not, and
+ * {@link d1QueryProblems} names what that cannot fix (part of the schema
+ * file and baseline checks).
+ *
  * The checks read SQLite's syntax only as far as they must: comments are
  * stripped, strings and quoted identifiers are skipped whole, and statements
  * end at `;`, except inside a trigger's `BEGIN ... END` body.
@@ -31,6 +36,9 @@ interface Token {
   value: string;
   /** Source text, for messages. */
   text: string;
+  /** Where the token starts in the source, and where it ends (exclusive). */
+  start: number;
+  end: number;
 }
 
 /** One SQL statement, as the check reads it. */
@@ -109,38 +117,18 @@ export function splitSqlStatements(sql: string): SqlStatement[] {
   let tokens: Token[] = [];
   let startLine = 1;
   let line = 1;
-  // Inside a CREATE TRIGGER's body: BEGIN opens it, CASE ... END nests.
-  let depth = 0;
-  let sawBegin = false;
-  // The statement's first three words, which say whether it creates a trigger.
-  let head: string[] = [];
+  // A `;` inside a CREATE TRIGGER's body does not end the statement.
+  let body = triggerBodyReader();
 
-  const isTrigger = () => {
-    if (head[0] !== "CREATE") return false;
-    const kind = head[1] === "TEMP" || head[1] === "TEMPORARY" ? head[2] : head[1];
-    return kind === "TRIGGER";
-  };
   const push = (token: Token) => {
     if (tokens.length === 0) startLine = line;
     tokens.push(token);
-    if (token.kind !== "word") return;
-    if (head.length < 3) head.push(token.value);
-    if (!isTrigger()) return;
-    if (token.value === "BEGIN" && !sawBegin) {
-      sawBegin = true;
-      depth = 1;
-    } else if (sawBegin && token.value === "CASE") {
-      depth += 1;
-    } else if (sawBegin && token.value === "END" && depth > 0) {
-      depth -= 1;
-    }
+    body.read(token);
   };
   const end = () => {
     if (tokens.length > 0) statements.push({ line: startLine, tokens });
     tokens = [];
-    head = [];
-    depth = 0;
-    sawBegin = false;
+    body = triggerBodyReader();
   };
 
   let i = 0;
@@ -160,30 +148,30 @@ export function splitSqlStatements(sql: string): SqlStatement[] {
     } else if (c === "'" || c === '"' || c === "`" || c === "[") {
       const stop = quotedEnd(sql, i, c === "[" ? "]" : c);
       const text = sql.slice(i, stop);
-      push({ kind: c === "'" ? "string" : "quoted", value: text, text });
+      push({ kind: c === "'" ? "string" : "quoted", value: text, text, start: i, end: stop });
       line += (text.match(/\n/g) ?? []).length;
       i = stop;
     } else if (WORD_START.test(c)) {
       let j = i + 1;
       while (j < sql.length && WORD_PART.test(sql[j] as string)) j += 1;
       const text = sql.slice(i, j);
-      push({ kind: "word", value: text.toUpperCase(), text });
+      push({ kind: "word", value: text.toUpperCase(), text, start: i, end: j });
       i = j;
     } else if (c === "?") {
       // A parameter: `?` alone, or numbered (`?1`), kept as one token.
       let j = i + 1;
       while (j < sql.length && /[0-9]/.test(sql[j] as string)) j += 1;
       const text = sql.slice(i, j);
-      push({ kind: "punct", value: text, text });
+      push({ kind: "punct", value: text, text, start: i, end: j });
       i = j;
     } else if (c === ";") {
-      if (depth === 0) end();
-      else push({ kind: "punct", value: c, text: c });
+      if (body.inBody()) push({ kind: "punct", value: c, text: c, start: i, end: i + 1 });
+      else end();
       i += 1;
     } else if (/\s/.test(c)) {
       i += 1;
     } else {
-      push({ kind: "punct", value: c, text: c });
+      push({ kind: "punct", value: c, text: c, start: i, end: i + 1 });
       i += 1;
     }
   }
@@ -191,11 +179,86 @@ export function splitSqlStatements(sql: string): SqlStatement[] {
   return statements;
 }
 
+/** Whether a statement's first words (upper-cased) create a trigger. */
+function createsTrigger(words: readonly string[]): boolean {
+  if (words[0] !== "CREATE") return false;
+  const kind = words[1] === "TEMP" || words[1] === "TEMPORARY" ? words[2] : words[1];
+  return kind === "TRIGGER";
+}
+
+/** Where a CREATE TRIGGER's body is among its tokens: the indexes of its BEGIN and of the END that closes it, once read. */
+interface BodyPlace {
+  begin: number;
+  end: number | undefined;
+}
+
+/**
+ * Reads a statement token by token to find a CREATE TRIGGER's body where
+ * SQLite's grammar puts it. BEGIN and END are not reserved words, so either
+ * may name the trigger, its table or a column (`UPDATE OF begin`,
+ * `NEW.end`); a word after a `.` is always a name. The body's BEGIN is the
+ * first after the name of the table the trigger is ON, outside the WHEN
+ * expression's parentheses and not after a `.`. Its END is the first
+ * directly after a `;`: each statement in the body ends with one and none
+ * holds one, which is also how SQLite's `sqlite3_complete()` finds where a
+ * trigger ends. Any other END in the body closes a CASE or is a name.
+ */
+function triggerBodyReader(): {
+  /** Reads the statement's next token. */
+  read(token: Token): void;
+  /** Whether the tokens read so far end inside the body, where a `;` does not end the statement. */
+  inBody(): boolean;
+  /** Where the body is, once its BEGIN is read; null before that and for any other statement. */
+  place(): BodyPlace | null;
+} {
+  // The statement's first three words, which say whether it creates a trigger.
+  const head: string[] = [];
+  // Before ON; at the name of the table; after it (FOR EACH ROW, WHEN); in the body; after it.
+  let phase: "head" | "table" | "clauses" | "body" | "after" = "head";
+  let parens = 0;
+  let previous: Token | undefined;
+  let count = 0;
+  let begin: number | undefined;
+  let end: number | undefined;
+  return {
+    read(token) {
+      const at = count;
+      const before = previous;
+      count += 1;
+      previous = token;
+      if (token.kind === "word" && head.length < 3) head.push(token.value);
+      if (!createsTrigger(head)) return;
+      if (phase === "head") {
+        if (isWord(token, "ON")) phase = "table";
+      } else if (phase === "table") {
+        // A table in another schema goes on after a `.`, which the next phase skips.
+        phase = "clauses";
+      } else if (phase === "clauses") {
+        if (isPunct(token, "(")) parens += 1;
+        else if (isPunct(token, ")")) parens -= 1;
+        else if (parens === 0 && isWord(token, "BEGIN") && !isPunct(before, ".")) {
+          begin = at;
+          phase = "body";
+        }
+      } else if (phase === "body" && isWord(token, "END") && isPunct(before, ";")) {
+        end = at;
+        phase = "after";
+      }
+    },
+    inBody: () => phase === "body",
+    place: () => (begin === undefined ? null : { begin, end }),
+  };
+}
+
 const CREATED_KINDS = new Set(["TABLE", "INDEX", "TRIGGER", "VIEW"]);
 const CREATE_MODIFIERS = new Set(["TEMP", "TEMPORARY", "UNIQUE", "VIRTUAL"]);
 
 function isWord(token: Token | undefined, value: string): boolean {
   return token?.kind === "word" && token.value === value;
+}
+
+function isPunct(token: Token | undefined, value: string): boolean {
+  return token?.kind === "punct" && token.value === value;
 }
 
 const DATA_VERBS = new Set(["SELECT", "INSERT", "UPDATE", "DELETE", "REPLACE"]);
@@ -287,7 +350,10 @@ function statementProblem(statement: SqlStatement): string | null {
 export function schemaFileProblems(sql: string): string[] {
   const statements = splitSqlStatements(sql);
   if (statements.length === 0) return ["it has no SQL statements"];
-  return statements.map(statementProblem).filter((p): p is string => p !== null);
+  return [
+    ...statements.map(statementProblem).filter((p): p is string => p !== null),
+    ...triggerEndProblems(sql, statements),
+  ];
 }
 
 /**
@@ -385,6 +451,7 @@ export function baselineFileProblems(sql: string): string[] {
   const statements = splitSqlStatements(sql);
   if (statements.length === 0) return ["it has no SQL statements"];
   const problems = statements.map(baselineStatementProblem).filter((p): p is string => p !== null);
+  problems.push(...triggerEndProblems(sql, statements));
   const unclosed = unclosedAtEndProblem(sql);
   if (unclosed !== null) problems.push(unclosed);
   if (!statements.some(createsTable)) {
@@ -405,6 +472,156 @@ export function endsInsideStatement(sql: string): boolean {
   // A closed file gains a statement from the probe; an open one absorbs it.
   const probe = `${sql}\nSELECT 1`;
   return splitSqlStatements(probe).length === splitSqlStatements(sql).length;
+}
+
+/*
+ * D1's `/query` endpoint, which Appflare sends every migration, schema file
+ * and baseline to, finds where a trigger ends with a reader of its own that
+ * is less careful than SQLite's (verified against the D1 REST API,
+ * 2026-10-11):
+ *
+ * - it sees a trigger's body only when the body's BEGIN is written in upper
+ *   case; after `begin` it ends the statement at the body's first `;`;
+ * - it ends the body at the first upper-case `END;` in its text, whatever
+ *   that is part of: the END of a CASE, a name (`NEW.WEEKEND;`), a comment
+ *   or a string. `END ;`, `END` and a newline before the `;`, and `end;` are
+ *   read correctly.
+ *
+ * Cut short, the trigger fails with "incomplete input" and nothing in the
+ * query applies. `wrangler d1 execute --file` goes through D1's import,
+ * which reads such SQL correctly, so a project can ship it without noticing.
+ */
+
+/** A CREATE TRIGGER's body: its BEGIN, the END that closes it (when the text has one), and the tokens between. */
+interface TriggerBody {
+  begin: Token;
+  end: Token | undefined;
+  tokens: Token[];
+}
+
+/** The body of a statement that creates a trigger, or null for any other statement. */
+function triggerBody(statement: SqlStatement): TriggerBody | null {
+  const { tokens } = statement;
+  const reader = triggerBodyReader();
+  for (const token of tokens) reader.read(token);
+  const place = reader.place();
+  if (place === null) return null;
+  return {
+    begin: tokens[place.begin] as Token,
+    end: place.end === undefined ? undefined : tokens[place.end],
+    tokens: tokens.slice(place.begin + 1, place.end),
+  };
+}
+
+const D1_BODY_END = "END;";
+
+/**
+ * Each `END;` in a trigger's body that D1 would end the body at before its
+ * own END: where it starts in `sql`, and the string or quoted name it is
+ * part of, if any. One is never partly inside a string or name, whose
+ * quotes are not among its characters.
+ */
+function earlyBodyEnds(
+  sql: string,
+  body: TriggerBody,
+): Array<{ at: number; inside: Token | undefined }> {
+  const stop = body.end?.start ?? body.tokens.at(-1)?.end ?? body.begin.end;
+  const found: Array<{ at: number; inside: Token | undefined }> = [];
+  for (
+    let at = sql.indexOf(D1_BODY_END, body.begin.end);
+    at !== -1 && at + D1_BODY_END.length <= stop;
+    at = sql.indexOf(D1_BODY_END, at + 1)
+  ) {
+    const inside = body.tokens.find(
+      (t) => (t.kind === "string" || t.kind === "quoted") && t.start < at && at < t.end,
+    );
+    found.push({ at, inside });
+  }
+  return found;
+}
+
+/**
+ * `sql` as D1's `/query` endpoint reads it the way SQLite does: in every
+ * CREATE TRIGGER, the body's own BEGIN and END are written in upper case,
+ * and every other `END;` in the body outside a string or quoted name gets a
+ * space before its `;` (`CASE ... END ;`). Only the case of those two words
+ * and that whitespace change, so the SQL means the same, every line keeps
+ * its number, and SQL without such a trigger comes back as it is. An `END;`
+ * inside a string or quoted name cannot change without changing the data;
+ * {@link d1QueryProblems} reports it.
+ */
+export function normalizeForD1Query(sql: string): string {
+  const edits: Array<{ start: number; end: number; text: string }> = [];
+  for (const statement of splitSqlStatements(sql)) {
+    const body = triggerBody(statement);
+    if (body === null) continue;
+    const { begin, end } = body;
+    if (begin.text !== "BEGIN") edits.push({ start: begin.start, end: begin.end, text: "BEGIN" });
+    for (const { at, inside } of earlyBodyEnds(sql, body)) {
+      const space = at + D1_BODY_END.length - 1;
+      if (inside === undefined) edits.push({ start: space, end: space, text: " " });
+    }
+    if (end !== undefined && end.text !== "END") {
+      edits.push({ start: end.start, end: end.end, text: "END" });
+    }
+  }
+  if (edits.length === 0) return sql;
+  let normalized = "";
+  let from = 0;
+  for (const edit of edits) {
+    normalized += sql.slice(from, edit.start) + edit.text;
+    from = edit.end;
+  }
+  return normalized + sql.slice(from);
+}
+
+/** The name a CREATE TRIGGER gives, as written. */
+function triggerName(tokens: readonly Token[]): string {
+  let i = tokens.findIndex((t) => isWord(t, "TRIGGER")) + 1;
+  if (isWord(tokens[i], "IF") && isWord(tokens[i + 1], "NOT") && isWord(tokens[i + 2], "EXISTS")) {
+    i += 3;
+  }
+  const name = tokens[i]?.text ?? "";
+  return isPunct(tokens[i + 1], ".") ? `${name}.${tokens[i + 2]?.text ?? ""}` : name;
+}
+
+/** {@link d1QueryProblems} for `sql` already split into `statements`. */
+function triggerEndProblems(sql: string, statements: readonly SqlStatement[]): string[] {
+  const problems: string[] = [];
+  for (const statement of statements) {
+    const body = triggerBody(statement);
+    if (body === null) continue;
+    const trigger = triggerName(statement.tokens);
+    if (body.end === undefined) {
+      problems.push(
+        `line ${statement.line}: the trigger ${trigger} has no END directly after a ; to close its body, so SQLite reads the rest of the file as part of the trigger; end the body's last statement with ; and close the body with END`,
+      );
+    }
+    for (const { at, inside } of earlyBodyEnds(sql, body)) {
+      if (inside === undefined) continue;
+      const line = sql.slice(0, at).split("\n").length;
+      const why = `D1 ends a trigger's body at the first END; in its text, even there, so the trigger would be cut short and D1 would refuse the file`;
+      problems.push(
+        inside.kind === "string"
+          ? `line ${line}: a string in the trigger ${trigger} holds END;. ${why}; split the string between END and ; ('END' || ';' is the same value; inside RAISE(), 'END ;' always works)`
+          : `line ${line}: the name ${inside.text} in the trigger ${trigger} holds END;. ${why}; rename it`,
+      );
+    }
+  }
+  return problems;
+}
+
+/**
+ * Why D1's `/query` endpoint cannot run `sql` even after
+ * {@link normalizeForD1Query}, as sentences naming the line of each place at
+ * fault; empty when it can. That is a trigger whose body holds `END;` in a
+ * string or quoted name: D1 ends the body there, and the text cannot change
+ * without changing the data. It is also a trigger whose body is never closed
+ * (no END directly after a `;`): SQLite refuses it, and the statements after
+ * it would be read as part of the trigger, hidden from every other check.
+ */
+export function d1QueryProblems(sql: string): string[] {
+  return triggerEndProblems(sql, splitSqlStatements(sql));
 }
 
 /** Most statements one D1 binding's seed runs. */
