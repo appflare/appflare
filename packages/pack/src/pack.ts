@@ -25,6 +25,7 @@ import {
   assetsOnlyWorkerProblems,
   boundToWorker,
   buildCommandList,
+  buildWranglerConfig,
   type CatalogManifest,
   catalogVarProblems,
   catalogWorkerName,
@@ -654,7 +655,7 @@ export async function pack(options: PackOptions): Promise<PackResult> {
   // entry's config, and each Worker's of an app of several Workers.
   const declaredConfigs = [
     ...new Set([
-      catalog.install.wranglerConfig,
+      buildWranglerConfig(catalog.install),
       ...(catalog.install.workers ?? []).map((w) => w.wranglerConfig),
     ]),
   ];

@@ -3,6 +3,7 @@ import {
   probeAccountCapabilities,
   probeAnalyticsEngine,
   probeDomainCapabilities,
+  probeWorkersForPlatforms,
 } from "./capabilities";
 import { createClient } from "./client";
 import { type DevContext, hasDevContext, loadDevContext } from "./dev";
@@ -88,6 +89,20 @@ describe.skipIf(dev === null)("cf-api integration (dev account, read-only)", () 
     // A SHOW statement: the SQL API takes it as a POST body but changes nothing.
     expect(calls).toEqual([`POST /accounts/${context.accountId}/analytics_engine/sql`]);
     expect(JSON.stringify(analyticsEngine)).not.toContain(context.token);
+  });
+
+  it("reads whether the account has Workers for Platforms with one read", async () => {
+    const calls: string[] = [];
+    const client = createClient({
+      ...context,
+      onRequest: ({ method, path }) => calls.push(`${method} ${path}`),
+    });
+
+    const workersForPlatforms = await probeWorkersForPlatforms(client);
+    // The dev account has no Workers for Platforms; the probe must say so, not "unknown".
+    expect(["available", "not-available"]).toContain(workersForPlatforms.state);
+    expect(calls).toEqual([`GET /accounts/${context.accountId}/workers/dispatch/namespaces`]);
+    expect(JSON.stringify(workersForPlatforms)).not.toContain(context.token);
   });
 });
 

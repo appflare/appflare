@@ -5,6 +5,7 @@ import {
   type Availability,
   primitiveStatus,
   requirementPrimitive,
+  WORKERS_FOR_PLATFORMS_FIX,
   workersPaidStatus,
 } from "./primitives";
 import { requirementLabel } from "./requirements";
@@ -97,4 +98,23 @@ export function analyticsEngineRefusal(
 ): string | null {
   if (view?.analyticsEngine?.state !== "not-enabled" || !usesAnalyticsEngine(app)) return null;
   return `${appName} writes to Analytics Engine, which is not turned on for this account. ${ANALYTICS_ENGINE_FIX}`;
+}
+
+/**
+ * Why an app cannot be installed while the account lacks Workers for
+ * Platforms, or null. An app that lists it (the Void Platform) deploys
+ * Workers into a dispatch namespace, and its installer does not check for
+ * it before it starts creating resources, so a detected "not purchased"
+ * stops the install before anything runs. When the probe could not tell,
+ * the requirement stays for the admin to confirm like any other.
+ */
+export function workersForPlatformsRefusal(
+  appName: string,
+  requires: readonly string[],
+  // The view, or the stored probe row (where a row from before the probe has none).
+  view: { workersForPlatforms?: CapabilitiesView["workersForPlatforms"] | undefined } | null,
+): string | null {
+  if (view?.workersForPlatforms?.state !== "not-available") return null;
+  if (!requires.includes("workers-for-platforms")) return null;
+  return `${appName} needs Workers for Platforms, which this account does not have. ${WORKERS_FOR_PLATFORMS_FIX}`;
 }

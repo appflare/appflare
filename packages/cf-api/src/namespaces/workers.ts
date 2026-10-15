@@ -2,6 +2,7 @@ import type { HttpApi } from "../http";
 import { buildUploadFormData, type WorkerModule } from "../modules";
 import type {
   AccountSubdomain,
+  DispatchNamespace,
   DurableObjectNamespace,
   ScriptMetadata,
   ScriptSettings,
@@ -179,6 +180,15 @@ export function createWorkers(http: HttpApi) {
     /** `GET /workers/subdomain` — the account's workers.dev subdomain. */
     getAccountSubdomain(): Promise<AccountSubdomain> {
       return http.result("GET", http.acct("/workers/subdomain"));
+    },
+
+    /**
+     * `GET /workers/dispatch/namespaces` — the account's Workers for Platforms
+     * dispatch namespaces, in one answer (the endpoint is not paginated).
+     * Without Workers for Platforms Cloudflare refuses it with code 10121.
+     */
+    listDispatchNamespaces(): Promise<DispatchNamespace[]> {
+      return http.result("GET", http.acct("/workers/dispatch/namespaces"));
     },
   };
 }

@@ -23,6 +23,8 @@ export const SERVICE_NAMES: Record<ServiceId, string> = {
   "browser-rendering": "Browser Rendering",
   images: "Cloudflare Images",
   containers: "Containers",
+  "workers-for-platforms": "Workers for Platforms",
+  "ai-gateway": "AI Gateway",
   "email-routing": "Email Routing",
   zone: "A domain",
   access: "Cloudflare Access",

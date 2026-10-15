@@ -11,10 +11,11 @@ import {
   type IndexBuild,
   isSeedOnly,
   needsWildcardHostname,
+  renderWorkerTemplate,
   STAGE_PLACEHOLDER,
   secretKey,
 } from "@appflare/schema";
-import { Banner, Collapsible, cn, Input, Link, Text } from "@cloudflare/kumo";
+import { Banner, ClipboardText, Collapsible, cn, Input, Link, Text } from "@cloudflare/kumo";
 import { CaretDownIcon, CheckCircleIcon, DownloadSimpleIcon } from "@phosphor-icons/react";
 import { type FormEvent, type ReactNode, useCallback, useId, useState } from "react";
 import { storedAccessProblem } from "../access/app-access";
@@ -32,6 +33,7 @@ import {
   missingRequiredVar,
   varValueProblem,
 } from "../installs/install-vars";
+import { installerAddresses, installerHelp, installerTextValues } from "../installs/installer-text";
 import { startInstall } from "../installs/installs.functions";
 import { workersDevUrl } from "../installs/post-install";
 import { installSourceBuild } from "../installs/source-builds.functions";
@@ -162,6 +164,7 @@ export function InstallForm({
   sandboxBuild = null,
   sandboxFirst = false,
   installer = null,
+  installId = null,
   cronTriggers = 0,
   accountPlan = "free",
   planDetected = false,
@@ -201,6 +204,13 @@ export function InstallForm({
    * the Workers, so the form has no Worker name.
    */
   installer?: IndexBuild | null;
+  /**
+   * For a self-deploying app, the id its install gets (made when the page
+   * loaded): the form shows the install's stage, and the addresses the
+   * entry's help names after it, so the admin can register one before
+   * installing; the install takes this id. Null for other apps.
+   */
+  installId?: string | null;
   /** Distinct cron triggers the artifact declares (0 when none or not known before a build). */
   cronTriggers?: number;
   /** The account's Workers plan in force: detected, else as Settings records it. */
@@ -232,6 +242,10 @@ export function InstallForm({
   planAskedAbove?: boolean;
 }) {
   const jobStarted = useJobStarted();
+  // Kept from the first render: the stage shown must be the stage installed,
+  // even when the page's data is read again.
+  const [shownInstallId] = useState(installer === null ? null : installId);
+  const installerText = installerTextValues(shownInstallId, subdomain);
   const [workerName, setWorkerName] = useState(prefill?.workerName ?? defaultWorkerName);
   /** Empty: no display name, so the install goes by the app's name. */
   const [displayName, setDisplayName] = useState(prefill?.displayName ?? "");
@@ -377,6 +391,8 @@ export function InstallForm({
         ...(installer === null && domain.value !== null ? { domain: domain.value } : {}),
         ...(offersAccess ? { access: accessOn } : {}),
       };
+      // The id whose stage the form showed; the install takes it.
+      const ids = shownInstallId === null ? {} : { installId: shownInstallId };
       const { jobId } =
         reviewedBuildId !== null
           ? await installSourceBuild({
@@ -392,6 +408,7 @@ export function InstallForm({
                 slug: appKey,
                 ...(confirmsCost === null ? {} : { buildConfirmed }),
                 ...(installer === null ? {} : { appToken: appToken.trim() }),
+                ...ids,
                 ...(prefill === null ? {} : { replaces: prefill.replaces }),
               },
             });
@@ -444,16 +461,34 @@ export function InstallForm({
   const otherWorkers = Object.values(entryWorkers ?? {})
     .map((w) => w.workerName)
     .filter((name) => name !== workerName);
-  const fieldExtras =
-    tokenSecret === null
-      ? {}
-      : {
-          [tokenSecret]: <AppTokenHelp appName={catalog.name} permissions={tokenPermissions} />,
-        };
+  // A self-deploying entry's help may name the install's stage: shown filled
+  // in, with each address it names offered to copy under the field.
+  const shownSecrets =
+    installer === null
+      ? catalog.secrets
+      : catalog.secrets.map((s) => ({ ...s, help: installerHelp(s.help, installerText) }));
+  const copyOf = (help: string | undefined): ReactNode => {
+    if (installer === null) return null;
+    const addresses = installerAddresses(help, installerText);
+    return addresses.length === 0 ? null : <InstallerAddresses addresses={addresses} />;
+  };
+  const fieldExtras: Record<string, ReactNode> = {};
+  for (const secret of catalog.secrets) {
+    const copy = copyOf(secret.help);
+    if (copy !== null) fieldExtras[secretKey(secret)] = copy;
+  }
+  if (tokenSecret !== null) {
+    fieldExtras[tokenSecret] = (
+      <>
+        {fieldExtras[tokenSecret]}
+        <AppTokenHelp appName={catalog.name} permissions={tokenPermissions} />
+      </>
+    );
+  }
   const secretFields = (only: readonly CatalogManifest["secrets"][number][]) =>
     only.length === 0 ? null : (
       <SecretFields
-        secrets={catalog.secrets}
+        secrets={shownSecrets}
         only={only.map(secretKey)}
         vars={catalog.vars}
         values={secrets}
@@ -463,15 +498,30 @@ export function InstallForm({
       />
     );
   const varFieldsOf = (fields: readonly InstallVarField[]) =>
-    fields.map((field) => (
-      <VarField
-        key={field.name}
-        field={field}
-        value={shownVar(field)}
-        chips={chips}
-        onChange={(value) => setEditedVars((s) => ({ ...s, [field.name]: value }))}
-      />
-    ));
+    fields.map((field) => {
+      const copy = copyOf(field.help);
+      const input = (
+        <VarField
+          key={field.name}
+          field={
+            installer === null
+              ? field
+              : { ...field, help: installerHelp(field.help, installerText) }
+          }
+          value={shownVar(field)}
+          chips={chips}
+          onChange={(value) => setEditedVars((s) => ({ ...s, [field.name]: value }))}
+        />
+      );
+      return copy === null ? (
+        input
+      ) : (
+        <div key={field.name} className="grid gap-3">
+          {input}
+          {copy}
+        </div>
+      );
+    });
   // What the "needs" group asks, and how many are still empty.
   const neededEntries: { label: string; filled: boolean }[] = [
     ...(installer === null
@@ -555,12 +605,21 @@ export function InstallForm({
 
               {installer !== null ? (
                 <Text variant="secondary" size="sm">
-                  {catalog.name}'s installer names its Workers after this install (
+                  {catalog.name}'s installer names its Workers after this install's stage
+                  {installerText.stage === null ? null : (
+                    <>
+                      , <span className="font-mono text-[0.9em]">{installerText.stage}</span>
+                    </>
+                  )}{" "}
+                  (
                   <span className="font-mono text-[0.9em]">
-                    {catalog.install.selfDeploying?.workerNames[0]?.replace(
-                      STAGE_PLACEHOLDER,
-                      "appflare-…",
-                    ) ?? catalogWorkerName(catalog)}
+                    {(() => {
+                      const first = catalog.install.selfDeploying?.workerNames[0];
+                      if (first === undefined) return catalogWorkerName(catalog);
+                      return installerText.stage === null
+                        ? first.replace(STAGE_PLACEHOLDER, "appflare-…")
+                        : renderWorkerTemplate(first, installerText.stage);
+                    })()}
                   </span>
                   ), so several installs never share one.
                 </Text>
@@ -839,6 +898,29 @@ export function filledByAppflare(
 function listWords(words: readonly string[]): string {
   if (words.length <= 1) return words.join("");
   return `${words.slice(0, -1).join(", ")} and ${words.at(-1)}`;
+}
+
+/**
+ * The addresses a self-deploying entry's help names after the install's
+ * stage, filled in, each with a copy button: what the admin registers
+ * elsewhere (an OAuth app's callback, say) before installing.
+ */
+function InstallerAddresses({ addresses }: { addresses: readonly string[] }) {
+  return (
+    <div className="grid min-w-0 gap-1.5" data-installer-addresses="">
+      <Text variant="secondary" size="sm">
+        {addresses.length === 1 ? "This address" : "These addresses"}, filled in for this install:
+      </Text>
+      {addresses.map((address) => (
+        <ClipboardText
+          key={address}
+          text={address}
+          className="max-w-full"
+          tooltip={{ text: "Copy", copiedText: "Copied" }}
+        />
+      ))}
+    </div>
+  );
 }
 
 /**

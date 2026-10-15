@@ -27,7 +27,10 @@ const CARD = '[class*="bg-kumo-elevated text-base ring ring-kumo-hairline"]';
 const SURFACE = '[class*="bg-kumo-base shadow-xs ring ring-kumo-line"]';
 const CHECKED = "2026-09-24T10:00:00.000Z";
 
-/** Workers Free, R2 off, no Zero Trust, and Analytics Engine could not be checked. */
+/**
+ * Workers Free, R2 off, no Zero Trust, no Workers for Platforms, and
+ * Analytics Engine could not be checked.
+ */
 const FREE: StoredCapabilities = {
   checkedAt: CHECKED,
   r2: { state: "not-enabled" },
@@ -38,6 +41,7 @@ const FREE: StoredCapabilities = {
   workersDev: { state: "registered", subdomain: "acme" },
   zeroTrust: { state: "none" },
   analyticsEngine: { state: "unknown", reason: "error", detail: "HTTP 503 from Cloudflare" },
+  workersForPlatforms: { state: "not-available" },
 };
 
 function data(stored: StoredCapabilities | null = FREE, manual: string | null = null) {
@@ -122,6 +126,7 @@ describe("What this account can run on Your account", () => {
       "capability-zone",
       "capability-email-routing",
       "capability-analytics-engine",
+      "capability-workers-for-platforms",
       "capability-zero-trust",
       "capability-sandbox",
       "capability-token-permissions",
@@ -132,6 +137,7 @@ describe("What this account can run on Your account", () => {
     expect(byId["capability-zero-trust"]).toContain("Not set up");
     expect(byId["capability-zero-trust"]).not.toContain("Needs action");
     expect(byId["capability-sandbox"]).toContain("Paid plan only");
+    expect(byId["capability-workers-for-platforms"]).toContain("Paid plan only");
     expect(byId["capability-analytics-engine"]).toContain("Could not check");
     // Each row says why apps need it.
     expect(byId["capability-r2"]).toContain("Apps keep files and uploads in R2.");
@@ -144,6 +150,13 @@ describe("What this account can run on Your account", () => {
       {
         text: "Turn on in Cloudflare",
         href: `https://dash.cloudflare.com/?to=/${ACC}/r2/overview`,
+        target: "_blank",
+      },
+    ]);
+    expect(byId["capability-workers-for-platforms"]?.links).toEqual([
+      {
+        text: "Buy in Cloudflare",
+        href: `https://dash.cloudflare.com/?to=/${ACC}/workers-for-platforms`,
         target: "_blank",
       },
     ]);
@@ -185,7 +198,7 @@ describe("What this account can run on Your account", () => {
     const section = container.querySelector("section#capabilities");
     expect(section?.textContent).toContain("Not checked yet.");
     expect(section?.querySelector('[role="meter"]')?.getAttribute("aria-valuetext")).toBe(
-      "0 of 8 ready",
+      "0 of 9 ready",
     );
   });
 
@@ -219,7 +232,7 @@ describe("What this account can run on Your account", () => {
     const labels = [...container.querySelectorAll("button")].map((b) => b.textContent);
     expect(labels).not.toContain("Check again");
     expect(labels).not.toContain("Choose plan");
-    expect(rowsShown()).toHaveLength(9);
+    expect(rowsShown()).toHaveLength(10);
   });
 });
 

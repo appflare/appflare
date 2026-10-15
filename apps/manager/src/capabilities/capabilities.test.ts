@@ -75,6 +75,7 @@ describe("capabilitiesStaleness", () => {
     zeroTrust: { state: "none" },
     analyticsEngine: { state: "enabled" },
     accessServiceTokens: { state: "readable" },
+    workersForPlatforms: { state: "not-available" },
   });
   const sameDay = new Date("2026-09-24T23:00:00.000Z");
 
@@ -99,6 +100,11 @@ describe("capabilitiesStaleness", () => {
       "missing-probe",
     );
     expect(capabilitiesStaleness(withoutTokens, { now: sameDay })).toBe("missing-probe");
+    // A row from before the Workers for Platforms probe: checked again after the update.
+    const { workersForPlatforms: _platforms, ...withoutPlatforms } = complete;
+    expect(capabilitiesStaleness(withoutPlatforms, { now: sameDay, version: "0.2.0" })).toBe(
+      "missing-probe",
+    );
     expect(
       capabilitiesStaleness(complete, {
         now: new Date("2026-09-25T00:10:00.000Z"),
@@ -153,6 +159,23 @@ describe("the Workers plan in force", () => {
 });
 
 describe("requirement badges", () => {
+  it("reads Workers for Platforms from its probe", () => {
+    const badge = (workersForPlatforms: StoredCapabilities["workersForPlatforms"]) =>
+      requirementBadge(
+        "workers-for-platforms",
+        capabilitiesView(
+          null,
+          stored(workersForPlatforms === undefined ? {} : { workersForPlatforms }),
+        ),
+      );
+    expect(badge({ state: "available" })).toEqual({ met: true, label: "Detected: available" });
+    expect(badge({ state: "not-available" })).toEqual({
+      met: false,
+      label: "Detected: not purchased",
+    });
+    expect(badge(undefined)).toBeNull();
+  });
+
   it("say what the probes found about R2", () => {
     expect(requirementBadge("r2", capabilitiesView(null, stored()))).toEqual({
       met: true,
@@ -267,6 +290,7 @@ describe("capabilitiesView", () => {
       zeroTrust: null,
       analyticsEngine: null,
       accessServiceTokens: null,
+      workersForPlatforms: null,
       plan: { plan: "paid", source: "detected" },
       manualPlan: "free",
       accountId: "acc1",

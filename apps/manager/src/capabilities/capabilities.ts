@@ -10,6 +10,7 @@ import {
   type EmailRoutingCapability,
   type R2Capability,
   type WorkersDevCapability,
+  type WorkersForPlatformsCapability,
   type WorkersPlanCapability,
   type ZeroTrustCapability,
   type ZoneCapability,
@@ -23,7 +24,7 @@ import type { ConnectionKind } from "../cloudflare/connection-view";
  * Account capabilities as the manager keeps them: what the probes in
  * `@appflare/cf-api/capabilities` last found (R2 enabled, Containers
  * available, Workers plan, a zone the token can see, Email Routing on it,
- * Analytics Engine turned on),
+ * Analytics Engine turned on, Workers for Platforms),
  * when, and the Workers plan every confirmation reads: the detected one
  * first, then the one an admin set. Client-safe: the Settings card and the
  * catalog page use the same words.
@@ -78,6 +79,10 @@ export const storedCapabilitiesSchema = z.object({
   accessServiceTokens: z
     .union([z.object({ state: z.literal("readable") }), unknownSchema])
     .optional(),
+  // Absent in rows written before the Workers for Platforms probe existed.
+  workersForPlatforms: z
+    .union([z.object({ state: z.enum(["available", "not-available"]) }), unknownSchema])
+    .optional(),
 });
 export type StoredCapabilities = AccountCapabilities &
   Partial<DomainCapabilities> &
@@ -98,6 +103,7 @@ const PROBES: Record<Exclude<keyof StoredCapabilities, "checkedAt" | "version">,
   zeroTrust: true,
   analyticsEngine: true,
   accessServiceTokens: true,
+  workersForPlatforms: true,
 };
 
 /**
@@ -190,6 +196,8 @@ export interface CapabilitiesView {
   analyticsEngine: AnalyticsEngineCapability | null;
   /** Whether the token can read Access service tokens (Read, not Edit); null until probed once. */
   accessServiceTokens: AccessServiceTokensCapability | null;
+  /** Null until the Workers for Platforms probe has run once. */
+  workersForPlatforms: WorkersForPlatformsCapability | null;
   /** The plan in force and where it comes from. */
   plan: ResolvedAccountPlan;
   /** The plan an admin set in Settings, used when none is detected. */
@@ -220,6 +228,7 @@ export function capabilitiesView(
     zeroTrust: stored?.zeroTrust ?? null,
     analyticsEngine: stored?.analyticsEngine ?? null,
     accessServiceTokens: stored?.accessServiceTokens ?? null,
+    workersForPlatforms: stored?.workersForPlatforms ?? null,
     plan: resolveAccountPlan(manual, stored),
     manualPlan: manual === "free" || manual === "paid" ? manual : null,
     accountId: accountId || null,
@@ -293,7 +302,8 @@ export function unknownSentence(
     | "email-routing"
     | "workers-dev"
     | "zero-trust"
-    | "analytics-engine",
+    | "analytics-engine"
+    | "workers-for-platforms",
   /** How Appflare connects: a token is edited in the dashboard, a sign-in is done again. */
   connection: ConnectionKind = "api_token",
 ): string {
@@ -319,6 +329,8 @@ export function unknownSentence(
         'The token cannot read Email Routing on the account\'s domain. Add the optional "Zone Settings" permission.',
       "analytics-engine":
         "Cloudflare refused the token's Analytics Engine query, so Appflare cannot tell whether it is on.",
+      "workers-for-platforms":
+        "The token cannot list the account's dispatch namespaces (Workers Scripts permission), so Appflare cannot tell whether it has Workers for Platforms.",
     }[what];
   }
   if (value.reason === "unrecognised") {
@@ -382,6 +394,12 @@ export function requirementBadge(
     const state = view.analyticsEngine?.state;
     if (state === "enabled") return { met: true, label: "Detected: turned on" };
     if (state === "not-enabled") return { met: false, label: "Detected: not turned on" };
+    return null;
+  }
+  if (requirement === "workers-for-platforms") {
+    const state = view.workersForPlatforms?.state;
+    if (state === "available") return { met: true, label: "Detected: available" };
+    if (state === "not-available") return { met: false, label: "Detected: not purchased" };
     return null;
   }
   return null;

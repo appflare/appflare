@@ -29,6 +29,7 @@ const NEED_OF: Record<CapabilityId, keyof CatalogNeeds | null> = {
   zone: "zone",
   "email-routing": "emailRouting",
   "analytics-engine": "analyticsEngine",
+  "workers-for-platforms": "workersForPlatforms",
   "zero-trust": "access",
   sandbox: "sandbox",
   "token-permissions": null,

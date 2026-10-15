@@ -114,7 +114,7 @@ export const APP_TOKEN_PERMISSION_GROUPS = [
   // The container platform under Workers Containers, which some installers
   // call directly.
   { scope: "account", group: "Cloudchamber", templateKey: "cloudchamber", service: "containers" },
-  { scope: "account", group: "AI Gateway", templateKey: "aig" },
+  { scope: "account", group: "AI Gateway", templateKey: "aig", service: "ai-gateway" },
   { scope: "account", group: "D1", templateKey: "d1", service: "d1" },
   { scope: "account", group: "Queues", templateKey: "queues", service: "queues" },
   { scope: "account", group: "Vectorize", templateKey: "vectorize", service: "vectorize" },

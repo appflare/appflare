@@ -20,7 +20,7 @@ import { ulid } from "ulidx";
 import { type AccessPreflightProblem, accessInstallRefusal } from "../access/preflight.server";
 import { readAccountPlan, writeAccountPlan } from "../account/plan.server";
 import { parseStoredCapabilities } from "../capabilities/capabilities";
-import { analyticsEngineRefusal } from "../catalog/requirement-checks";
+import { analyticsEngineRefusal, workersForPlatformsRefusal } from "../catalog/requirement-checks";
 import { requirementLabel, requirementsToConfirm } from "../catalog/requirements";
 import { OFFICIAL_CATALOG_ID, unsignedTierRefusal } from "../catalog/sources";
 import { createDb } from "../db/client";
@@ -359,6 +359,28 @@ export function seedParams(seed: SeedOnlyValues): { seed?: SeedOnlyValues } {
   return Object.keys(seed.secrets).length + Object.keys(seed.vars).length === 0 ? {} : { seed };
 }
 
+/**
+ * Why a self-deploying install cannot take `installId`, which the form made
+ * when it loaded: an install has it already (the form was sent twice), or an
+ * install has the same stage (`selfDeployingStage`: its last 8 characters),
+ * whose Workers the installer would share. Null when it is free.
+ */
+export async function installIdInUse(
+  db: ReturnType<typeof createDb>,
+  installId: string,
+): Promise<string | null> {
+  const tail = installId.slice(-8).toLowerCase();
+  const [taken] = await db
+    .select({ id: installs.id })
+    .from(installs)
+    .where(or(eq(installs.id, installId), sql`lower(substr(${installs.id}, -8)) = ${tail}`))
+    .limit(1);
+  if (taken === undefined) return null;
+  return taken.id === installId
+    ? "This install was started already. Reload the page to install the app again."
+    : "Another install already has the stage this form showed. Reload the page for a new one, and register its addresses again.";
+}
+
 export async function startInstallCore(
   deps: StartInstallDeps,
   input: StartInstallInput,
@@ -371,6 +393,7 @@ export async function startInstallCore(
   if (unsigned !== null) throw new StartInstallError(unsigned);
   // Cloudflare refuses the deploy while Analytics Engine is off; say so before anything is created.
   const settings = await readSettings(createDb(deps.db), [SETTING.accountCapabilities]);
+  const stored = parseStoredCapabilities(settings.account_capabilities);
   const analyticsEngine = analyticsEngineRefusal(
     manifest.catalog.name,
     {
@@ -378,9 +401,17 @@ export async function startInstallCore(
       services: app.services,
       bindings: manifest.worker.bindings,
     },
-    parseStoredCapabilities(settings.account_capabilities),
+    stored,
   );
   if (analyticsEngine !== null) throw new StartInstallError(analyticsEngine);
+  // An installer that deploys into a dispatch namespace fails part way without
+  // Workers for Platforms, and does not check for it first; refuse it here.
+  const workersForPlatforms = workersForPlatformsRefusal(
+    manifest.catalog.name,
+    [...app.requires, ...manifest.catalog.requires],
+    stored,
+  );
+  if (workersForPlatforms !== null) throw new StartInstallError(workersForPlatforms);
   // An account recorded as on Workers Paid needs no confirmation per install.
   const accountPlan = await readAccountPlan(createDb(deps.db));
   const paidConfirmed = input.paidConfirmed || accountPlan === "paid";
@@ -439,6 +470,11 @@ export async function startInstallCore(
   if (installer === null && input.appToken !== undefined) {
     throw new StartInstallError(`${manifest.catalog.name} takes no app token.`);
   }
+  if (installer === null && input.installId !== undefined) {
+    throw new StartInstallError(
+      `${manifest.catalog.name} takes no install id; only an app that deploys itself does.`,
+    );
+  }
   if (installer !== null && resolved.access === true) {
     throw new StartInstallError(
       `${manifest.catalog.name}'s own installer decides its Workers and addresses, so Appflare cannot protect it with Cloudflare Access yet. Install it without, then add an Access application for it under Zero Trust, Access, Applications.`,
@@ -491,8 +527,13 @@ export async function startInstallCore(
   const newId = deps.newId ?? (() => ulid());
   const db = createDb(deps.db);
   // A self-deploying app needs its install id now, for its Workers' names;
-  // other apps get their ids once the checks below passed.
-  const earlyIds = installer === null ? null : ([newId(), newId()] as const);
+  // other apps get their ids once the checks below passed. The form sends
+  // the one it showed the stage of, which must still be unused.
+  if (installer !== null && input.installId !== undefined) {
+    const used = await installIdInUse(db, input.installId);
+    if (used !== null) throw new StartInstallError(used);
+  }
+  const earlyIds = installer === null ? null : ([input.installId ?? newId(), newId()] as const);
   // A self-deploying app's Workers are named by its installer, after the
   // install's stage; the first one serves the app and is the install's name.
   const installerWorkers = earlyIds === null ? [] : expectedWorkers(manifest.catalog, earlyIds[0]);

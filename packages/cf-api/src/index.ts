@@ -22,6 +22,7 @@ export type {
   EmailRoutingCapability,
   R2Capability,
   WorkersDevCapability,
+  WorkersForPlatformsCapability,
   WorkersPlanCapability,
   ZeroTrustCapability,
   ZoneCapability,
@@ -42,10 +43,12 @@ export {
   probeEmailRouting,
   probeR2,
   probeWorkersDev,
+  probeWorkersForPlatforms,
   probeWorkersPlan,
   probeZeroTrust,
   R2_NOT_ENABLED_CODE,
   WORKERS_DEV_NOT_REGISTERED_CODE,
+  WORKERS_FOR_PLATFORMS_NOT_AVAILABLE_CODE,
 } from "./capabilities";
 export type { CloudflareClient } from "./client";
 export { createClient } from "./client";

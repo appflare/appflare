@@ -103,6 +103,44 @@ describe("renderSchemaReference", () => {
     );
   });
 
+  it("gives each member of a union of objects a table of its own, linked from the field", () => {
+    const union = renderSchemaReference({
+      type: "object",
+      properties: {
+        runner: {
+          description: "How it runs.",
+          oneOf: [
+            {
+              type: "object",
+              properties: {
+                tool: { type: "string", const: "a" },
+                deploy: { type: "array", items: { type: "string" } },
+              },
+              required: ["tool", "deploy"],
+            },
+            {
+              type: "object",
+              properties: {
+                tool: { type: "string", const: "b" },
+                install: { type: "array", items: { type: "string" } },
+              },
+              required: ["tool"],
+            },
+          ],
+        },
+      },
+    });
+    expect(union).toContain(
+      '| `runner` | object, by `tool`: [`"a"`](#runner-with-tool-a) or [`"b"`](#runner-with-tool-b) | no | How it runs. |',
+    );
+    expect(union).toContain('## `runner` with `tool: "a"`');
+    expect(union).toContain('Fields of `runner` when `tool` is `"b"`.');
+    expect(union).toContain('| `tool` | `"a"` | yes |');
+    expect(union).toContain("| `deploy` | array of strings | yes |");
+    expect(union).toContain("| `install` | array of strings | no |");
+    expect(slugify('`runner` with `tool: "a"`')).toBe("runner-with-tool-a");
+  });
+
   it("escapes pipes so they do not split table cells", () => {
     expect(page).toContain("Each must match `a\\|b`.");
   });
@@ -116,6 +154,21 @@ describe("the catalog manifest reference", () => {
       const name = path.split(".").at(-1)?.replace("[]", "") ?? path;
       expect(page, path).toContain(`| ${code(name)} |`);
     }
+  });
+
+  it("shows install.selfDeploying by its tool, not as any", () => {
+    expect(page).not.toContain("| `selfDeploying` | any |");
+    expect(page).toMatch(
+      /\| `selfDeploying` \| object, by `tool`: \[`"alchemy"`\]\(#[^)]+\) or \[`"void"`\]\(#[^)]+\) \|/,
+    );
+    expect(page).toContain('## `install.selfDeploying` with `tool: "alchemy"`');
+    expect(page).toContain('## `install.selfDeploying` with `tool: "void"`');
+    expect(page).toContain("| `deployCommand` |");
+    expect(page).toContain("| `resumeCommand` |");
+  });
+
+  it("lists workers-for-platforms among the requirement values", () => {
+    expect(page).toContain('`"workers-for-platforms"`');
   });
 
   it("has notes only for fields that exist", () => {
@@ -151,7 +204,15 @@ function hasSchemaDescription(path: string): boolean {
       continue;
     }
     const isItems = segment.endsWith("[]");
-    const property: JsonSchemaNode | undefined = node.properties?.[segment.replace("[]", "")];
+    const key = segment.replace("[]", "");
+    // A union of objects: the member that has the field.
+    const owner: JsonSchemaNode | undefined =
+      node.properties?.[key] !== undefined
+        ? node
+        : (node.oneOf as readonly JsonSchemaNode[] | undefined)?.find(
+            (member) => member.properties?.[key] !== undefined,
+          );
+    const property: JsonSchemaNode | undefined = owner?.properties?.[key];
     node = isItems ? property?.items : property;
   }
   return node?.description !== undefined;

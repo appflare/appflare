@@ -16,6 +16,7 @@ import {
   freshStats,
 } from "@appflare/schema/catalog-display";
 import { asc, ne } from "drizzle-orm";
+import { ulid } from "ulidx";
 import type { AccountPlan } from "../account/plan";
 import type { AuthSession } from "../auth/guards";
 import { hasRole } from "../auth/roles";
@@ -163,6 +164,14 @@ export interface CatalogDetail {
    */
   subdomain: string | null;
   /**
+   * For a self-deploying app, the id its install gets, made when the page
+   * loads: the form shows the install's stage (`selfDeployingStage` of it),
+   * and the addresses the entry names after it, before the install starts,
+   * so the admin can register one elsewhere first. The install takes it
+   * when the form sends it back unused. Null for any other app.
+   */
+  installId: string | null;
+  /**
    * False for a sandbox tier app: its bindings come from the wrangler config
    * at the pinned commit, known only once it is built.
    */
@@ -304,6 +313,7 @@ export async function readCatalogEntry(
     fixedWorkerName: false,
     varFields: [],
     subdomain: null,
+    installId: null,
     createsKnown: true,
     sandboxConnected: bound,
     sandbox,
@@ -412,5 +422,6 @@ export async function readCatalogEntry(
       manifest.manifest ?? { catalog: manifest.catalog, worker: { bindings: [] } },
     ),
     subdomain,
+    installId: app.tier === "self-deploying" ? ulid() : null,
   };
 }

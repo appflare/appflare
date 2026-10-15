@@ -126,6 +126,9 @@ export const MANAGER_OAUTH_SCOPES_BY_PROBE = {
   zeroTrust: ["access-acct.read"],
   analyticsEngine: [],
   accessServiceTokens: ["access-service-token.write"],
+  // Cloudflare's API reference files the dispatch namespace list under
+  // Workers Scripts (Read or Write); not recorded live with a sign-in.
+  workersForPlatforms: ["workers-scripts.write"],
 } as const satisfies Record<CapabilityProbe, readonly string[] | null>;
 
 /**

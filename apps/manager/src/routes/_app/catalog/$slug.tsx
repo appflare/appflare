@@ -8,7 +8,10 @@ import { PlusIcon, StorefrontIcon, WarningCircleIcon } from "@phosphor-icons/rea
 import { createFileRoute, useLocation } from "@tanstack/react-router";
 import { useEffect, useRef, useState } from "react";
 import { z } from "zod";
-import { ANALYTICS_ENGINE_CAPABILITY_LINK } from "../../../capabilities/capability-rows";
+import {
+  ANALYTICS_ENGINE_CAPABILITY_LINK,
+  WORKERS_FOR_PLATFORMS_CAPABILITY_LINK,
+} from "../../../capabilities/capability-rows";
 import {
   type AppNeedsOf,
   accountNeeds,
@@ -29,6 +32,7 @@ import {
   analyticsEngineRefusal,
   type RequirementChecks,
   requirementChecks,
+  workersForPlatformsRefusal,
 } from "../../../catalog/requirement-checks";
 import { requirementSentence } from "../../../catalog/requirements";
 import { AppPageHeader } from "../../../components/app-page-header";
@@ -377,6 +381,11 @@ function InstallPanel({
     { requires: [...app.requires, ...catalog.requires], services: detail.primitives.ids },
     detail.capabilities,
   );
+  const workersForPlatformsMissing = workersForPlatformsRefusal(
+    app.name,
+    [...app.requires, ...catalog.requires],
+    detail.capabilities,
+  );
   const blocked: { reason: string; link: { href: string; label: string } | null } | null =
     detail.fixedWorkerName && others[0] !== undefined
       ? {
@@ -390,7 +399,9 @@ function InstallPanel({
           }
         : analyticsEngineOff !== null
           ? { reason: analyticsEngineOff, link: ANALYTICS_ENGINE_CAPABILITY_LINK }
-          : null;
+          : workersForPlatformsMissing !== null
+            ? { reason: workersForPlatformsMissing, link: WORKERS_FOR_PLATFORMS_CAPABILITY_LINK }
+            : null;
   const blockedReason = blocked?.reason ?? null;
   // Nothing left to confirm when the account is known to offer everything.
   const confirmed = requirementsConfirmed || checks.pending.length === 0;
@@ -444,6 +455,7 @@ function InstallPanel({
         sandboxBuild={sandboxBuild}
         sandboxFirst={needsSandbox && detail.sandbox.state === "ready-auto"}
         installer={installer}
+        installId={detail.installId}
         cronTriggers={detail.cronTriggers}
         accountPlan={detail.accountPlan}
         planDetected={detail.capabilities.plan.source === "detected"}

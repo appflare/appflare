@@ -132,8 +132,20 @@ export const PLACEHOLDERS = [
     perWorker: false,
     meaning:
       "The install's stage, in the Worker names a self-deploying entry lists " +
-      "(`install.selfDeploying.workerNames`) and in the commands of a `void` entry, " +
-      "and nowhere else.",
+      "(`install.selfDeploying.workerNames`), in the commands of a `void` entry, and in a " +
+      "self-deploying entry's field help and post-install notes, for example in an address " +
+      "the admin registers before installing: " +
+      "`https://void-{{stage}}-api.{{workersDevSubdomain}}.workers.dev/auth/callback`. The " +
+      "install form knows it before the install starts.",
+  },
+  {
+    name: "workersDevSubdomain",
+    perWorker: false,
+    meaning:
+      "The account's workers.dev subdomain, the `<subdomain>` of " +
+      "`<worker name>.<subdomain>.workers.dev`, in a self-deploying entry's field help and " +
+      "post-install notes, where its installer's Workers are named after {{stage}}. Kept as " +
+      "written while the manager does not know the subdomain.",
   },
 ] as const satisfies readonly PlaceholderInfo[];
 
@@ -200,6 +212,19 @@ export const INSTALL_PLACEHOLDERS = [
 export type InstallPlaceholder = (typeof INSTALL_PLACEHOLDERS)[number];
 
 /**
+ * The placeholders of a self-deploying entry's text that people read (its
+ * fields' help and its post-install notes): the install's stage and the
+ * account's workers.dev subdomain, so a note can spell out an address of one
+ * of the installer's Workers before it exists. Refused in other entries,
+ * which have no stage.
+ */
+export const SELF_DEPLOYING_TEXT_PLACEHOLDERS = [
+  "stage",
+  "workersDevSubdomain",
+] as const satisfies readonly PlaceholderName[];
+export type SelfDeployingTextPlaceholder = (typeof SELF_DEPLOYING_TEXT_PLACEHOLDERS)[number];
+
+/**
  * The placeholder that names the install's stage in a self-deploying entry's
  * Worker names and in a `void` entry's commands.
  */
@@ -213,7 +238,10 @@ export const ACCOUNT_ID_PLACEHOLDER = "{{accountId}}";
  * ones each takes:
  *
  * - `postInstall`: `postInstall[].content`, without the Access ones (a note
- *   people read has no use for a JWT audience tag);
+ *   people read has no use for a JWT audience tag), and in a self-deploying
+ *   entry {@link SELF_DEPLOYING_TEXT_PLACEHOLDERS} too;
+ * - `fieldHelp`: `secrets[].help` and `vars[].help`, only in a
+ *   self-deploying entry, which the install form shows filled in;
  * - `varDefault`: `vars[].default`, and (for the packer) the string values
  *   of the wrangler config's `vars`, which the manager renders the same way;
  * - `selfDeployingWorkerName`: `install.selfDeploying.workerNames[]`;
@@ -224,7 +252,8 @@ export const ACCOUNT_ID_PLACEHOLDER = "{{accountId}}";
  * Secrets take none: their values are entered or generated, never filled in.
  */
 export const PLACEHOLDER_FIELDS = {
-  postInstall: POST_INSTALL_PLACEHOLDERS,
+  postInstall: [...POST_INSTALL_PLACEHOLDERS, ...SELF_DEPLOYING_TEXT_PLACEHOLDERS],
+  fieldHelp: SELF_DEPLOYING_TEXT_PLACEHOLDERS,
   varDefault: INSTALL_PLACEHOLDERS,
   selfDeployingWorkerName: ["stage"],
   selfDeployingCommand: ["stage", "accountId"],
@@ -267,6 +296,39 @@ export function hasPlaceholder(text: string): boolean {
 
 /** The regular expression source of an {@link EMAIL_PLACEHOLDERS} entry as written in a value. */
 export const EMAIL_PLACEHOLDER_SOURCE = `\\{\\{\\s*(?:${EMAIL_PLACEHOLDERS.join("|")})\\s*\\}\\}`;
+
+/** What {@link renderSelfDeployingPlaceholders} fills in; null keeps a placeholder as written. */
+export interface SelfDeployingTextValues {
+  /** The install's stage (`selfDeployingStage` of its id). */
+  stage: string | null;
+  /** The account's workers.dev subdomain, without `.workers.dev`. */
+  workersDevSubdomain: string | null;
+}
+
+const SELF_DEPLOYING_TEXT_PATTERN = new RegExp(
+  `\\{\\{\\s*(${SELF_DEPLOYING_TEXT_PLACEHOLDERS.join("|")})\\s*\\}\\}`,
+  "g",
+);
+
+/**
+ * `text` with `{{stage}}` and `{{workersDevSubdomain}}` filled in; one whose
+ * value is null is kept as written. Whitespace inside the braces is allowed.
+ */
+export function renderSelfDeployingPlaceholders(
+  text: string,
+  values: SelfDeployingTextValues,
+): string {
+  return text.replace(
+    SELF_DEPLOYING_TEXT_PATTERN,
+    (match, key: SelfDeployingTextPlaceholder) =>
+      (key === "stage" ? values.stage : values.workersDevSubdomain) ?? match,
+  );
+}
+
+/** Whether `text` holds `{{stage}}` or `{{workersDevSubdomain}}`. */
+export function hasSelfDeployingPlaceholder(text: string): boolean {
+  return new RegExp(SELF_DEPLOYING_TEXT_PATTERN.source).test(text);
+}
 
 /** Whether `text` holds `{{emailDomain}}` or `{{emailZoneId}}`. */
 export function usesEmailPlaceholders(text: string): boolean {
@@ -515,6 +577,11 @@ export interface PlaceholderWorkers {
    * `{{emailDomain}}` and `{{emailZoneId}}` are refused.
    */
   emailRouting?: boolean | undefined;
+  /**
+   * Whether the entry is of the self-deploying tier; without it, `{{stage}}`
+   * and `{{workersDevSubdomain}}` are refused in its notes and field help.
+   */
+  selfDeploying?: boolean | undefined;
 }
 
 const ADDRESS_KINDS: ReadonlySet<string> = new Set([
@@ -560,6 +627,16 @@ export function placeholderProblems(
     if (!allowed.includes(info.name)) {
       problems.push(
         `${written} is not filled in here; this field takes ${allowed.map((n) => `{{${n}}}`).join(", ")}`,
+      );
+      continue;
+    }
+    if (
+      entry.selfDeploying !== true &&
+      (field === "postInstall" || field === "fieldHelp") &&
+      (SELF_DEPLOYING_TEXT_PLACEHOLDERS as readonly string[]).includes(info.name)
+    ) {
+      problems.push(
+        `${written} is filled in only for a self-deploying entry, whose installer names its Workers after the install's stage`,
       );
       continue;
     }

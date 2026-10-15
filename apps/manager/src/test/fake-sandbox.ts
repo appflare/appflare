@@ -6,6 +6,7 @@ import {
   buildCommandText,
   buildKeys,
   buildRequestSchema,
+  buildWranglerConfig,
   type CatalogManifest,
   githubFetchRequestSchema,
   type IndexApp,
@@ -335,7 +336,7 @@ export function fakeSandbox(
         committedAt: "2026-09-20T10:00:00+00:00",
         detected: {
           packageManager: fixture.manifest.catalog.install.packageManager,
-          wranglerConfig: fixture.manifest.catalog.install.wranglerConfig,
+          wranglerConfig: buildWranglerConfig(fixture.manifest.catalog.install),
           buildCommand:
             fixture.manifest.catalog.install.buildCommand === undefined
               ? null

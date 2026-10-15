@@ -241,7 +241,7 @@
         "wranglerConfig": {
           "type": "string",
           "minLength": 1,
-          "description": "The wrangler config to build from, relative to the repository root, for example `wrangler.jsonc`. A config the repository keeps only as a template (`wrangler.toml.example`, `wrangler.jsonc.template`) is copied to its real name (`wrangler.toml`) before it is read."
+          "description": "The wrangler config to build from, relative to the repository root, for example `wrangler.jsonc`. A config the repository keeps only as a template (`wrangler.toml.example`, `wrangler.jsonc.template`) is copied to its real name (`wrangler.toml`) before it is read. Required, except on the self-deploying tier, whose own installer deploys the app without one being read."
         },
         "workerName": {
           "type": "string",
@@ -2634,11 +2634,29 @@
         }
       },
       "required": [
-        "packageManager",
-        "wranglerConfig"
+        "packageManager"
       ],
       "additionalProperties": false,
       "allOf": [
+        {
+          "anyOf": [
+            {
+              "required": [
+                "wranglerConfig"
+              ]
+            },
+            {
+              "required": [
+                "tier"
+              ],
+              "properties": {
+                "tier": {
+                  "const": "self-deploying"
+                }
+              }
+            }
+          ]
+        },
         {
           "anyOf": [
             {
@@ -2954,7 +2972,7 @@
           },
           "help": {
             "type": "string",
-            "description": "A sentence or two shown under the field: what the value is for, or where to find it."
+            "description": "A sentence or two shown under the field: what the value is for, or where to find it. In a self-deploying entry it may hold `{{stage}}` and `{{workersDevSubdomain}}`, which the install form fills in before the install starts, for example in an address the admin registers elsewhere first: `https://app-{{stage}}.{{workersDevSubdomain}}.workers.dev/callback`; the form offers each such address to copy."
           },
           "link": {
             "type": "object",
@@ -3207,7 +3225,7 @@
           },
           "help": {
             "type": "string",
-            "description": "A sentence or two shown under the field: what the setting changes, or which values work."
+            "description": "A sentence or two shown under the field: what the setting changes, or which values work. In a self-deploying entry it may hold `{{stage}}` and `{{workersDevSubdomain}}`, which the install form fills in before the install starts, for example in an address the admin registers elsewhere first: `https://app-{{stage}}.{{workersDevSubdomain}}.workers.dev/callback`; the form offers each such address to copy."
           },
           "link": {
             "type": "object",
@@ -3413,7 +3431,7 @@
           "content": {
             "type": "string",
             "minLength": 1,
-            "description": "Markdown the manager shows once the app is installed, such as how to sign in the first time. These placeholders are filled in: `{{appUrl}}`, `{{appHostname}}`, `{{workerUrl}}`, `{{workerHostname}}`, `{{workerName}}`, `{{accountId}}`, `{{emailDomain}}`, `{{emailZoneId}}`, `{{wildcardHostname}}`. For the address people open, use `{{appUrl}}`, which follows a custom domain. An entry of several Workers names one of them with `{{appUrl:<name>}}` and the like."
+            "description": "Markdown the manager shows once the app is installed, such as how to sign in the first time. These placeholders are filled in: `{{appUrl}}`, `{{appHostname}}`, `{{workerUrl}}`, `{{workerHostname}}`, `{{workerName}}`, `{{accountId}}`, `{{emailDomain}}`, `{{emailZoneId}}`, `{{wildcardHostname}}`, and in a self-deploying entry `{{stage}}` and `{{workersDevSubdomain}}`. For the address people open, use `{{appUrl}}`, which follows a custom domain. An entry of several Workers names one of them with `{{appUrl:<name>}}` and the like."
           }
         },
         "required": [

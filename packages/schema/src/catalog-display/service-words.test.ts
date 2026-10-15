@@ -27,6 +27,8 @@ const SAMPLES: ReadonlyArray<readonly [ServiceId, string, string]> = [
   ["browser-rendering", "Browser Rendering", "Browser Rendering"],
   ["images", "Images", "Images"],
   ["containers", "Containers", "Containers"],
+  ["workers-for-platforms", "Workers for Platforms", "Workers for Platforms"],
+  ["ai-gateway", "AI Gateway", "AI Gateway"],
   ["email-routing", "Email Routing", "Email Routing"],
   ["zone", "a domain", "two domains"],
   ["access", "Cloudflare Access", "Cloudflare Access"],

@@ -5,8 +5,10 @@
  * the reference always matches the schema the catalog validates against. It
  * understands the subset of JSON Schema that `z.toJSONSchema` emits for the
  * manifest: objects, arrays, string enums, patterns, lengths, integer ranges,
- * defaults, unions of scalar types, and records (objects keyed by a free-form
- * name).
+ * defaults, unions of scalar types, records (objects keyed by a free-form
+ * name), and unions of objects told apart by a constant field (`oneOf` with a
+ * `const` discriminator, such as `install.selfDeploying` by its `tool`), each
+ * member of which gets a table of its own.
  */
 
 /** The JSON Schema keywords this renderer reads. Anything else is ignored. */
@@ -24,6 +26,12 @@ export interface JsonSchemaNode {
    * typed: the manifest also uses `anyOf` for rules whose members are not fields.
    */
   anyOf?: readonly unknown[];
+  /**
+   * Objects of which exactly one applies, told apart by a constant field.
+   * Loosely typed, as `anyOf` is: read as nodes only once each is an object.
+   */
+  oneOf?: readonly unknown[];
+  const?: unknown;
   enum?: readonly (string | number | boolean)[];
   pattern?: string;
   format?: string;
@@ -50,6 +58,17 @@ interface ObjectSection {
   /** Heading text for the section. */
   heading: string;
   node: JsonSchemaNode;
+  /**
+   * For one member of a union of objects: the field that tells the members
+   * apart and this member's value of it. Several sections then share a path.
+   */
+  variant?: Variant;
+}
+
+/** Which member of a union of objects a section is. */
+interface Variant {
+  field: string;
+  value: unknown;
 }
 
 export interface RenderOptions {
@@ -69,14 +88,20 @@ export function fieldPaths(schema: JsonSchemaNode): string[] {
       paths.push(joinPath(section.path, name));
     }
   }
-  return paths;
+  // The members of a union share a path, and some of their fields.
+  return [...new Set(paths)];
 }
 
 /** Renders the whole reference page, front matter included. */
 export function renderSchemaReference(schema: JsonSchemaNode, options: RenderOptions = {}): string {
   const notes = options.notes ?? {};
   const sections = collectSections(schema);
-  const anchors = new Map(sections.map((section) => [section.path, slugify(section.heading)]));
+  const anchors = new Map(
+    sections.map((section) => [
+      sectionKey(section.path, section.variant),
+      slugify(section.heading),
+    ]),
+  );
 
   const lines: string[] = [
     "---",
@@ -91,7 +116,7 @@ export function renderSchemaReference(schema: JsonSchemaNode, options: RenderOpt
 
   for (const section of sections) {
     lines.push(`## ${section.heading}`, "");
-    if (section.path !== "") lines.push(sectionLead(section.path), "");
+    if (section.path !== "") lines.push(sectionLead(section.path, section.variant), "");
     lines.push("| Field | Type | Required | Details |", "| --- | --- | --- | --- |");
     const required = new Set(section.node.required ?? []);
     for (const [name, field] of Object.entries(section.node.properties ?? {})) {
@@ -119,11 +144,59 @@ function collectSections(schema: JsonSchemaNode): ObjectSection[] {
     if (!section) break;
     sections.push(section);
     for (const [name, field] of Object.entries(section.node.properties ?? {})) {
-      const child = nestedObject(field, joinPath(section.path, name));
+      const path = joinPath(section.path, name);
+      const members = unionMembers(field);
+      if (members !== undefined) {
+        for (const member of members) {
+          queue.push({
+            path,
+            node: member.node,
+            variant: member.variant,
+            heading: `${code(path)} with ${code(variantText(member.variant))}`,
+          });
+        }
+        continue;
+      }
+      const child = nestedObject(field, path);
       if (child) queue.push({ ...child, heading: code(child.path) });
     }
   }
   return sections;
+}
+
+/**
+ * The members of a union of objects (`oneOf`), each with the constant field
+ * that picks it, or undefined when `field` is not one: every member must be
+ * an object with properties, and one field must hold a different constant in
+ * each.
+ */
+function unionMembers(
+  field: JsonSchemaNode,
+): Array<{ node: JsonSchemaNode; variant: Variant }> | undefined {
+  const members = field.oneOf as readonly JsonSchemaNode[] | undefined;
+  if (members === undefined || members.length < 2 || !members.every(hasProperties)) {
+    return undefined;
+  }
+  const first = members[0]?.properties ?? {};
+  for (const name of Object.keys(first)) {
+    const values = members.map((m) => m.properties?.[name]?.const);
+    if (values.some((v) => v === undefined) || new Set(values).size !== values.length) continue;
+    return members.map((node, i) => ({
+      node,
+      variant: { field: name, value: values[i] },
+    }));
+  }
+  return undefined;
+}
+
+/** `tool: "alchemy"`. */
+function variantText(variant: Variant): string {
+  return `${variant.field}: ${JSON.stringify(variant.value)}`;
+}
+
+/** The key a section's anchor is kept under: its path, and which member of a union it is. */
+function sectionKey(path: string, variant: Variant | undefined): string {
+  return variant === undefined ? path : `${path}#${variantText(variant)}`;
 }
 
 /** The object a field leads to (directly, as array items, or as record values). */
@@ -150,7 +223,10 @@ function recordValues(node: JsonSchemaNode): JsonSchemaNode | undefined {
   return typeof node.additionalProperties === "object" ? node.additionalProperties : undefined;
 }
 
-function sectionLead(path: string): string {
+function sectionLead(path: string, variant?: Variant): string {
+  if (variant !== undefined) {
+    return `Fields of ${code(path)} when ${code(variant.field)} is ${code(JSON.stringify(variant.value))}.`;
+  }
   if (path.endsWith("[]")) return `Each entry of ${code(path.slice(0, -2))} has these fields.`;
   if (path.endsWith(".<name>")) {
     return `Each value of ${code(path.slice(0, -".<name>".length))}, keyed by name, has these fields.`;
@@ -168,6 +244,14 @@ function describeType(field: JsonSchemaNode, path: string, anchors: Map<string, 
     if (hasProperties(items)) return `array of ${link(`${path}[]`, "objects")}`;
     return pluralType(items);
   }
+  const members = unionMembers(field);
+  if (members !== undefined) {
+    const first = members[0]?.variant.field ?? "";
+    const choices = members.map((m) =>
+      link(sectionKey(path, m.variant), code(JSON.stringify(m.variant.value))),
+    );
+    return `object, by ${code(first)}: ${choices.length === 2 ? choices.join(" or ") : `one of ${choices.join(", ")}`}`;
+  }
   if (hasProperties(field)) return link(path, "object");
   const values = recordValues(field);
   if (values) {
@@ -181,6 +265,7 @@ function scalarType(field: JsonSchemaNode): string {
   if (field.type === undefined && field.anyOf !== undefined && field.anyOf.length > 0) {
     return field.anyOf.map((member) => scalarType(member as JsonSchemaNode)).join(", or ");
   }
+  if (field.const !== undefined) return code(JSON.stringify(field.const));
   if (field.enum) {
     const values = enumValues(field.enum);
     if (values.length === 1) return values.join("");

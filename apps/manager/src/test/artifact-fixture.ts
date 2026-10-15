@@ -1,6 +1,7 @@
 import { assetHash } from "@appflare/cf-api";
 import {
   type ArtifactManifest,
+  buildWranglerConfig,
   type CatalogManifest,
   type CatalogSecret,
   type CatalogVar,
@@ -316,7 +317,7 @@ export async function buildArtifactFixture(
     catalogInput.install = {
       ...catalogInput.install,
       workers: [
-        { name: "app", wranglerConfig: catalogInput.install.wranglerConfig, primary: true },
+        { name: "app", wranglerConfig: buildWranglerConfig(catalogInput.install), primary: true },
         ...(opts.otherWorkers ?? []).map((w) => ({
           name: w.name,
           wranglerConfig: `${w.name}/wrangler.jsonc`,

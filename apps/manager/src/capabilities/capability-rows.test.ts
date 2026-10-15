@@ -21,6 +21,7 @@ import {
   onlyUsageScopesMissing,
   progressLabel,
   rowsNeedingAction,
+  WORKERS_FOR_PLATFORMS_CAPABILITY_LINK,
 } from "./capability-rows";
 
 const ACC = "acc0000000000000000000000000000a";
@@ -40,6 +41,7 @@ const EVERYTHING: StoredCapabilities = {
   workersDev: { state: "registered", subdomain: "acme" },
   zeroTrust: { state: "exists", teamDomain: "acme.cloudflareaccess.com" },
   analyticsEngine: { state: "enabled" },
+  workersForPlatforms: { state: "available" },
 };
 
 /** A Workers Free account with R2 off and no Zero Trust organization. */
@@ -49,6 +51,7 @@ const FREE: StoredCapabilities = {
   containers: { state: "needs-workers-paid" },
   workersPlan: { state: "free" },
   zeroTrust: { state: "none" },
+  workersForPlatforms: { state: "not-available" },
 };
 
 const NEEDS: CatalogNeeds = {
@@ -56,6 +59,7 @@ const NEEDS: CatalogNeeds = {
   workersPaid: 3,
   r2: 4,
   analyticsEngine: 2,
+  workersForPlatforms: 2,
   zone: 2,
   emailRouting: 1,
   access: 0,
@@ -67,6 +71,7 @@ const NOTHING_IN_USE: CatalogNeeds = {
   workersPaid: 0,
   r2: 0,
   analyticsEngine: 0,
+  workersForPlatforms: 0,
   zone: 0,
   emailRouting: 0,
   access: 0,
@@ -79,6 +84,7 @@ const ALL_IN_USE: CatalogNeeds = {
   workersPaid: 1,
   r2: 1,
   analyticsEngine: 1,
+  workersForPlatforms: 1,
   zone: 1,
   emailRouting: 1,
   access: 1,
@@ -124,6 +130,7 @@ describe("capabilityRows", () => {
       "zone",
       "email-routing",
       "analytics-engine",
+      "workers-for-platforms",
       "zero-trust",
       "sandbox",
       "token-permissions",
@@ -135,6 +142,7 @@ describe("capabilityRows", () => {
       "A domain",
       "Email Routing",
       "Analytics Engine",
+      "Workers for Platforms",
       "Zero Trust",
       "Sandbox builds",
       "Token permissions",
@@ -176,6 +184,8 @@ describe("capabilityRows", () => {
       zone: "ready",
       "email-routing": "ready",
       "analytics-engine": "ready",
+      // A paid add-on nothing needs: not counted against the account.
+      "workers-for-platforms": "paid-only",
       "zero-trust": "not-set-up",
       sandbox: "paid-only",
       "token-permissions": "ready",
@@ -726,7 +736,7 @@ describe("capabilityRows", () => {
       expect(href).toContain("/?to=/:account/");
   });
 
-  it("offers only the five actions, and none on a ready row but a stated plan", () => {
+  it("offers only the six actions, and none on a ready row but a stated plan", () => {
     const labels = new Set<string>();
     const refused = { ...FREE, workersDev: NO_PERMISSION };
     const noDomain = {
@@ -742,6 +752,7 @@ describe("capabilityRows", () => {
     }
     expect([...labels].sort()).toEqual([
       "Add a domain in Cloudflare",
+      "Buy in Cloudflare",
       "Choose plan",
       "Edit token in Cloudflare",
       "Set up",
@@ -750,14 +761,67 @@ describe("capabilityRows", () => {
   });
 });
 
+describe("the Workers for Platforms row", () => {
+  it("is ready once the account has it", () => {
+    expect(rows(EVERYTHING)["workers-for-platforms"]).toMatchObject({
+      state: "ready",
+      action: null,
+      details: { found: "Available", source: "detected" },
+    });
+  });
+
+  it("is paid plan only, with a link to buy it, while nothing here needs it", () => {
+    const row = rows(
+      { ...EVERYTHING, workersForPlatforms: { state: "not-available" } },
+      {
+        inUse: NOTHING_IN_USE,
+      },
+    )["workers-for-platforms"];
+    expect(row.state).toBe("paid-only");
+    expect(row.action).toEqual({
+      kind: "buy",
+      label: "Buy in Cloudflare",
+      href: `${DASH}/workers-for-platforms`,
+    });
+    expect(row.details.found).toBe("Not purchased");
+    expect(row.details.problem).toContain("paid add-on");
+  });
+
+  it("needs action when an app in the account needs it", () => {
+    const row = rows(
+      { ...EVERYTHING, workersForPlatforms: { state: "not-available" } },
+      {
+        inUse: { ...NOTHING_IN_USE, total: 1, workersForPlatforms: 1 },
+      },
+    )["workers-for-platforms"];
+    expect(row.state).toBe("needs-action");
+    expect(rowsNeedingAction([row])).toEqual([row]);
+  });
+
+  it("could not check without a probe answer, and says why when refused", () => {
+    expect(
+      rows({ ...EVERYTHING, workersForPlatforms: undefined })["workers-for-platforms"],
+    ).toMatchObject({
+      state: "could-not-check",
+      details: { problem: "Not checked yet." },
+    });
+    const refused = rows({ ...EVERYTHING, workersForPlatforms: NO_PERMISSION })[
+      "workers-for-platforms"
+    ];
+    expect(refused.state).toBe("could-not-check");
+    expect(refused.details.problem).toContain("dispatch namespaces");
+  });
+});
+
 describe("capabilityProgress", () => {
   it("counts ready rows over the rows that can be ready on this plan", () => {
     const free = capabilityRows({ view: view(FREE), sandbox: "off", needs: null });
-    // Nine rows; sandbox builds are paid only; R2 and Zero Trust are not set up.
+    // Ten rows; sandbox builds and Workers for Platforms are paid only; R2
+    // and Zero Trust are not set up.
     expect(capabilityProgress(free)).toEqual({ ready: 6, total: 8 });
     expect(progressLabel(capabilityProgress(free))).toBe("6 of 8 ready");
     const all = capabilityRows({ view: view(EVERYTHING), sandbox: "enabled", needs: null });
-    expect(capabilityProgress(all)).toEqual({ ready: 9, total: 9 });
+    expect(capabilityProgress(all)).toEqual({ ready: 10, total: 10 });
   });
 });
 
@@ -767,6 +831,10 @@ describe("anchors", () => {
     expect(ANALYTICS_ENGINE_CAPABILITY_LINK).toEqual({
       href: "/settings/account#capability-analytics-engine",
       label: "Analytics Engine in Your account",
+    });
+    expect(WORKERS_FOR_PLATFORMS_CAPABILITY_LINK).toEqual({
+      href: "/settings/account#capability-workers-for-platforms",
+      label: "Workers for Platforms in Your account",
     });
   });
 });
@@ -826,7 +894,7 @@ describe("catalogNeeds", () => {
           tier: "sandbox",
         },
         {
-          services: ["r2", "zone", "analytics-engine"],
+          services: ["r2", "zone", "analytics-engine", "workers-for-platforms"],
           requires: [],
           plan: "paid",
           tier: "self-deploying",
@@ -837,6 +905,7 @@ describe("catalogNeeds", () => {
       workersPaid: 2,
       r2: 2,
       analyticsEngine: 2,
+      workersForPlatforms: 1,
       zone: 2,
       emailRouting: 1,
       access: 1,

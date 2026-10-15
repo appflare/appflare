@@ -46,6 +46,29 @@ describe("deriveServices", () => {
     expect(requirementService("analytics-engine")).toBe("analytics-engine");
   });
 
+  it("names Workers for Platforms for the requirement, and AI Gateway for its token group", () => {
+    expect(requirementService("workers-for-platforms")).toBe("workers-for-platforms");
+    // The Void Platform's entry: its requirements and the groups its installer's token needs.
+    expect(
+      deriveServices({
+        requires: ["r2", "containers", "analytics-engine", "workers-for-platforms"],
+        tokenPermissions: [
+          { group: "Workers Scripts", scope: "account" },
+          { group: "Hyperdrive", scope: "account" },
+          { group: "AI Gateway", scope: "account" },
+          { group: "Cloudchamber", scope: "account" },
+        ],
+      }).ids,
+    ).toEqual([
+      "r2",
+      "hyperdrive",
+      "analytics-engine",
+      "containers",
+      "workers-for-platforms",
+      "ai-gateway",
+    ]);
+  });
+
   it("reads what a token may touch: zone-scoped groups, DNS, Access, storage", () => {
     // unifi-ddns: no bindings, a token that edits DNS.
     expect(deriveServices({ tokenPermissions: [{ group: "DNS", scope: "zone" }] }).ids).toEqual([

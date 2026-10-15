@@ -38,17 +38,17 @@ import {
  * version's (an update that added a probe, an Access permission say, must
  * not leave it unknown until the next day), and from the cron once a UTC
  * day or whenever the stored answer is stale that way. Each run is one
- * read call per probe, nine in all: R2, Containers, the Workers plan, one zone
+ * read call per probe, ten in all: R2, Containers, the Workers plan, one zone
  * of the account, Email Routing on that zone (skipped when there is no
  * zone), the workers.dev subdomain, the Zero
- * Trust organization, an Analytics Engine `SHOW TABLES` and the Access
- * service token list. The plan probe reads further subscription pages, up to 4, only on
+ * Trust organization, an Analytics Engine `SHOW TABLES`, the Access
+ * service token list and the Workers for Platforms dispatch namespace list. The plan probe reads further subscription pages, up to 4, only on
  * accounts with more than 50 subscriptions and no Workers entry on the
  * first. A probe that cannot tell for lack of permission is stored as
  * such, so the manual plan applies; one that failed outright (network, 5xx)
  * keeps the last answer it gave. A Cloudflare sign-in has no permission for
  * the plan (Cloudflare's OAuth scopes include no Billing one), so with one
- * the plan probe is not asked and is stored as refused: eight calls.
+ * the plan probe is not asked and is stored as refused: nine calls.
  */
 
 export async function readCapabilitiesView(db: Database): Promise<CapabilitiesView> {
@@ -133,6 +133,7 @@ export async function refreshCapabilities(
     zeroTrust: keepOnFailure(setup.zeroTrust, previous?.zeroTrust),
     analyticsEngine: keepOnFailure(setup.analyticsEngine, previous?.analyticsEngine),
     accessServiceTokens: keepOnFailure(setup.accessServiceTokens, previous?.accessServiceTokens),
+    workersForPlatforms: keepOnFailure(setup.workersForPlatforms, previous?.workersForPlatforms),
   };
   await writeSettings(db, { [SETTING.accountCapabilities]: JSON.stringify(stored) }, now);
   return stored;

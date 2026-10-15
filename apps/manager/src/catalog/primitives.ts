@@ -44,6 +44,8 @@ export const PRIMITIVE_LABELS: Record<PrimitiveId, string> = {
   "browser-rendering": "Browser Rendering",
   images: "Images",
   containers: "Containers",
+  "workers-for-platforms": "Workers for Platforms",
+  "ai-gateway": "AI Gateway",
   "email-routing": "Email Routing",
   zone: "Domain and DNS",
   access: "Cloudflare Access",
@@ -109,6 +111,7 @@ const INCLUDED: Partial<Record<PrimitiveId, string>> = {
   "workers-ai": "Included on every Workers plan, with a daily free allocation.",
   "browser-rendering": "Included on every Workers plan, with limited browser time on Workers Free.",
   images: "Included on every Cloudflare plan, with a monthly free allocation.",
+  "ai-gateway": "Included on every Cloudflare plan, with a limit on stored logs on Workers Free.",
 };
 
 /** Primitives the admin provides, with what they bring. */
@@ -244,6 +247,41 @@ function analyticsEngineStatus(view: CapabilitiesView | null): PrimitiveStatus {
 }
 
 /**
+ * What an admin does about Workers for Platforms missing: it is bought once
+ * per account in the dashboard, and the probe reads it again on Check again.
+ */
+export const WORKERS_FOR_PLATFORMS_FIX =
+  "Buy Workers for Platforms in the Cloudflare dashboard, then choose Check again on Your account.";
+
+/**
+ * Workers for Platforms, as its probe found it: a paid add-on whose
+ * dispatch namespaces hold the Workers an app deploys for its own users.
+ */
+function workersForPlatformsStatus(view: CapabilitiesView | null): PrimitiveStatus {
+  const id = "workers-for-platforms";
+  const state = view?.workersForPlatforms?.state;
+  if (state === "available") {
+    return {
+      id,
+      availability: "available",
+      reason: "Detected: this account has Workers for Platforms.",
+    };
+  }
+  if (state === "not-available") {
+    return {
+      id,
+      availability: "unavailable",
+      reason: `Detected: this account does not have Workers for Platforms, a paid add-on. ${WORKERS_FOR_PLATFORMS_FIX}`,
+    };
+  }
+  return {
+    id,
+    availability: "unknown",
+    reason: "Needs Workers for Platforms on this account; Appflare could not check.",
+  };
+}
+
+/**
  * Whether the account is on Workers Paid, as far as the plan in force says:
  * detected, set by an admin, or not known. An admin's "Free" is only the
  * fallback they chose, so it leaves the answer unknown.
@@ -275,8 +313,8 @@ function paidPlanStatus(id: PrimitiveId, view: CapabilitiesView | null): Primiti
 
 /**
  * Whether this account offers `id`. Primitives every plan includes are
- * available; R2, Containers, domains, Email Routing and Analytics Engine
- * follow the capability probes; key-value Durable Objects and Containers without a probe result
+ * available; R2, Containers, domains, Email Routing, Analytics Engine and
+ * Workers for Platforms follow the capability probes; key-value Durable Objects and Containers without a probe result
  * follow the plan; Access follows the Zero Trust probe.
  */
 export function primitiveStatus(
@@ -294,6 +332,7 @@ export function primitiveStatus(
   if (id === "access") return accessStatus(view);
   if (id === "email-routing") return emailRoutingStatus(view);
   if (id === "analytics-engine") return analyticsEngineStatus(view);
+  if (id === "workers-for-platforms") return workersForPlatformsStatus(view);
   // Pipelines is in open beta for Workers Paid accounts only.
   if (id === "pipelines") return paidPlanStatus(id, view);
   if (id === "durable-objects") {

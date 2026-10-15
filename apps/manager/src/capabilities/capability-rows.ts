@@ -28,7 +28,8 @@ import {
 /**
  * "What this account can run": one row per thing apps rely on in the
  * Cloudflare account (the Workers plan, a workers.dev address, R2, a
- * domain, Email Routing, Analytics Engine, Zero Trust, sandbox builds and
+ * domain, Email Routing, Analytics Engine, Workers for Platforms, Zero
+ * Trust, sandbox builds and
  * the permissions of Appflare's token or Cloudflare sign-in), read from the
  * stored capability probes. Each row
  * has a name, one sentence on why apps need it, a state (Ready, Needs
@@ -46,6 +47,7 @@ export type CapabilityId =
   | "zone"
   | "email-routing"
   | "analytics-engine"
+  | "workers-for-platforms"
   | "zero-trust"
   | "sandbox"
   | "token-permissions";
@@ -72,13 +74,14 @@ export const CAPABILITY_STATE_LABELS: Record<CapabilityState, string> = {
 
 /**
  * The row's one action: a page of the Cloudflare dashboard where it is
- * turned on, where a domain is added, or where the token is edited; the
+ * turned on or bought, where a domain is added, or where the token is edited; the
  * Workers plan an admin states while Appflare cannot detect it; the
  * Building apps settings for sandbox builds; or Reconnect Cloudflare, for a
  * Cloudflare sign-in that is missing permissions.
  */
 export type CapabilityAction =
   | { kind: "turn-on"; label: "Turn on in Cloudflare"; href: string }
+  | { kind: "buy"; label: "Buy in Cloudflare"; href: string }
   | { kind: "add-domain"; label: "Add a domain in Cloudflare"; href: string }
   | { kind: "edit-token"; label: "Edit token in Cloudflare"; href: string }
   | { kind: "choose-plan"; label: "Choose plan" }
@@ -126,6 +129,7 @@ export interface CatalogNeeds {
   workersPaid: number;
   r2: number;
   analyticsEngine: number;
+  workersForPlatforms: number;
   zone: number;
   emailRouting: number;
   access: number;
@@ -205,6 +209,7 @@ export function catalogNeeds(
     workersPaid: 0,
     r2: 0,
     analyticsEngine: 0,
+    workersForPlatforms: 0,
     zone: 0,
     emailRouting: 0,
     access: 0,
@@ -215,6 +220,7 @@ export function catalogNeeds(
     if (app.plan === "paid") needs.workersPaid++;
     if (services.has("r2")) needs.r2++;
     if (services.has("analytics-engine")) needs.analyticsEngine++;
+    if (services.has("workers-for-platforms")) needs.workersForPlatforms++;
     if (services.has("zone") || services.has("email-routing")) needs.zone++;
     if (services.has("email-routing")) needs.emailRouting++;
     if (services.has("access") && !indexAccessNeededOnlyIfProtected(app)) needs.access++;
@@ -302,6 +308,11 @@ function inUse(input: CapabilityRowsInput, pick: (n: CatalogNeeds) => number): b
 
 function turnOn(href: string): CapabilityAction {
   return { kind: "turn-on", label: "Turn on in Cloudflare", href };
+}
+
+/** A paid add-on is bought, not turned on: the dashboard page that sells it. */
+function buy(href: string): CapabilityAction {
+  return { kind: "buy", label: "Buy in Cloudflare", href };
 }
 
 /** A domain is added, not turned on: the dashboard page where one is added. */
@@ -564,6 +575,37 @@ function analyticsEngineRow(input: CapabilityRowsInput): CapabilityRow {
     turnOn(dashboardLinks(input.view.accountId).analyticsEngine),
     (probe) => unknownSentence(probe, "analytics-engine", connectionKind(input)),
   );
+}
+
+/**
+ * Workers for Platforms, a paid add-on with a plan of its own: bought, it
+ * is ready; not bought, it needs action only when an app in the account
+ * needs it, and is otherwise "Paid plan only", which the meter leaves out.
+ */
+function workersForPlatformsRow(input: CapabilityRowsInput): CapabilityRow {
+  const row = probeRow(
+    input,
+    {
+      id: "workers-for-platforms",
+      name: "Workers for Platforms",
+      why: "Lets an app deploy Workers for the people who use it, as an app platform does. It is a paid add-on.",
+      usedBy: usedBy(input.needs, (n) => n.workersForPlatforms),
+      needed: inUse(input, (n) => n.workersForPlatforms),
+    },
+    input.view.workersForPlatforms,
+    (probe) =>
+      probe.state === "available"
+        ? { ready: true, found: "Available" }
+        : {
+            ready: false,
+            found: "Not purchased",
+            problem:
+              "It is a paid add-on to Workers Paid, bought in the Cloudflare dashboard. Apps that need it cannot be installed until then.",
+          },
+    buy(dashboardLinks(input.view.accountId).workersForPlatforms),
+    (probe) => unknownSentence(probe, "workers-for-platforms", connectionKind(input)),
+  );
+  return row.state === "not-set-up" ? { ...row, state: "paid-only" } : row;
 }
 
 function zeroTrustRow(input: CapabilityRowsInput): CapabilityRow {
@@ -832,6 +874,7 @@ export function capabilityRows(input: CapabilityRowsInput): CapabilityRow[] {
     zoneRow(input),
     emailRoutingRow(input),
     analyticsEngineRow(input),
+    workersForPlatformsRow(input),
     zeroTrustRow(input),
     sandboxRow(input),
     tokenPermissionsRow(input),
@@ -872,4 +915,10 @@ export function capabilityAnchor(id: CapabilityId): `capability-${CapabilityId}`
 export const ANALYTICS_ENGINE_CAPABILITY_LINK = {
   href: settingsLink("account", capabilityAnchor("analytics-engine")),
   label: "Analytics Engine in Your account",
+} as const;
+
+/** The Workers for Platforms row, where a refused install points. */
+export const WORKERS_FOR_PLATFORMS_CAPABILITY_LINK = {
+  href: settingsLink("account", capabilityAnchor("workers-for-platforms")),
+  label: "Workers for Platforms in Your account",
 } as const;

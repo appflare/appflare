@@ -421,3 +421,31 @@ describe("what the install adds", () => {
     });
   });
 });
+
+describe("Workers for Platforms on an app's page", () => {
+  it("is its row on Your account: needed by this app, with the dashboard page that sells it", () => {
+    const missing = view({
+      checkedAt: CHECKED_AT,
+      plan: { plan: "paid", source: "detected" },
+      workersForPlatforms: { state: "not-available" },
+    });
+    const row = accountRows(missing).get("workers-for-platforms");
+    const need = (v: CapabilitiesView) =>
+      byKey(
+        accountNeeds(app("paid", ["workers-for-platforms"]), uses("workers-for-platforms"), v),
+        "workers-for-platforms",
+      );
+    expect(need(missing)).toEqual({
+      key: "workers-for-platforms",
+      name: "Workers for Platforms",
+      state: "Needs action",
+      tone: "missing",
+      reason: `This app needs it. ${row?.why}`,
+      fix: { label: "Buy in Cloudflare", href: `${DASH}/workers-for-platforms` },
+      more: SEE("workers-for-platforms"),
+    });
+    expect(need(view({ ...missing, workersForPlatforms: { state: "available" } })).state).toBe(
+      "Ready",
+    );
+  });
+});

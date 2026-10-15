@@ -12,6 +12,7 @@ import {
   probeEmailRouting,
   probeR2,
   probeWorkersDev,
+  probeWorkersForPlatforms,
   probeWorkersPlan,
   probeZeroTrust,
 } from "./capabilities";
@@ -449,8 +450,60 @@ describe("probeZeroTrust", () => {
   });
 });
 
+/** Cloudflare's answer on an account without Workers for Platforms, as recorded live. */
+const NO_DISPATCH_NAMESPACES: FakeResponseSpec = {
+  status: 403,
+  errors: [
+    {
+      code: 10121,
+      message:
+        "You do not have access to dispatch namespaces. You can purchase it within the Cloudflare dashboard here: https://dash.cloudflare.com?to=/:account/workers-for-platforms - if you are an Enterprise customer please contact your account team.",
+    },
+  ],
+};
+
+describe("probeWorkersForPlatforms", () => {
+  it("lists the dispatch namespaces and says available on any answer, an empty list too", async () => {
+    for (const result of [[], [{ namespace_id: "n1", namespace_name: "void-x-users" }]]) {
+      const { fake, client } = make(() => ({ result }));
+      expect(await probeWorkersForPlatforms(client)).toEqual({ state: "available" });
+      expect(fake.calls.map((c) => `${c.method} ${c.url}`)).toEqual([
+        `GET ${A}/workers/dispatch/namespaces`,
+      ]);
+    }
+  });
+
+  it("says not available on code 10121", async () => {
+    expect(await probeWorkersForPlatforms(make(() => NO_DISPATCH_NAMESPACES).client)).toEqual({
+      state: "not-available",
+    });
+  });
+
+  it("says no permission on another refusal, and an error otherwise", async () => {
+    expect(await probeWorkersForPlatforms(make(() => AUTH_ERROR).client)).toEqual({
+      state: "unknown",
+      reason: "no-permission",
+      detail: "HTTP 403, Cloudflare code 10000",
+    });
+    // An invalid token, as Cloudflare answers it on this endpoint.
+    const invalid = make(() => ({
+      status: 400,
+      errors: [{ code: 9106, message: "Authentication failed (status: 400)" }],
+    }));
+    expect(await probeWorkersForPlatforms(invalid.client)).toEqual({
+      state: "unknown",
+      reason: "error",
+      detail: "HTTP 400, Cloudflare code 9106",
+    });
+    expect(await probeWorkersForPlatforms(make(() => ({ status: 500 })).client)).toMatchObject({
+      state: "unknown",
+      reason: "error",
+    });
+  });
+});
+
 describe("probeAccountSetup", () => {
-  it("runs the four probes and never names the token or the account", async () => {
+  it("runs the five probes and never names the token or the account", async () => {
     const { fake, client } = make((req) =>
       req.path.endsWith("/workers/subdomain") ? { result: { subdomain: "acme" } } : AUTH_ERROR,
     );
@@ -472,8 +525,13 @@ describe("probeAccountSetup", () => {
         reason: "no-permission",
         detail: "HTTP 403, Cloudflare code 10000",
       },
+      workersForPlatforms: {
+        state: "unknown",
+        reason: "no-permission",
+        detail: "HTTP 403, Cloudflare code 10000",
+      },
     });
-    expect(fake.calls).toHaveLength(4);
+    expect(fake.calls).toHaveLength(5);
     expect(JSON.stringify(result)).not.toContain(TOKEN);
     expect(JSON.stringify(result)).not.toContain(ACCOUNT);
   });

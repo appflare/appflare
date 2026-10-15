@@ -44,6 +44,7 @@ import {
   sourceOfRow,
   subdomain,
 } from "./install-rows.server";
+import { installerHelp, installerTextValues } from "./installer-text";
 import { type OtherWorkerView, otherWorkerViews } from "./other-workers";
 import { type PostInstallValues, renderPostInstall, workersDevUrl } from "./post-install";
 import { type InstallSettings, readInstallSettingsCore } from "./reconfigure.server";
@@ -336,8 +337,10 @@ export async function readInstallDetail(installId: string): Promise<InstallDetai
     // A self-deploying install records its catalog manifest, not an artifact's.
     name = installerCatalog.name;
     openPath = installerCatalog.openPath;
-    postInstall = installerCatalog.postInstall.map((p) =>
-      renderPostInstall(p.content, placeholders),
+    // Its notes may name the install's stage and the account's subdomain too.
+    const installerText = installerTextValues(row.id, sub ?? null);
+    postInstall = installerCatalog.postInstall.map(
+      (p) => installerHelp(renderPostInstall(p.content, placeholders), installerText) ?? "",
     );
     tokenPermissions = installerCatalog.tokenPermissions;
   } else if (row.manifest_json !== null) {

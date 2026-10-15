@@ -26,6 +26,8 @@ export const SERVICE_IDS = [
   "browser-rendering",
   "images",
   "containers",
+  "workers-for-platforms",
+  "ai-gateway",
   "email-routing",
   "zone",
   "access",
@@ -68,6 +70,7 @@ const REQUIREMENT_SERVICES: Readonly<Record<string, ServiceId>> = {
   containers: "containers",
   "analytics-engine": "analytics-engine",
   access: "access",
+  "workers-for-platforms": "workers-for-platforms",
 };
 
 /** The service a catalog `requires` value is, or null for one this version does not know. */

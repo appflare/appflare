@@ -14,7 +14,8 @@ import type { AccountSubscription } from "./types";
  * What an account can do, read with a token: whether R2 is enabled, whether
  * Containers can be used, which Workers plan the account is on, whether the
  * token can see a zone (a domain on Cloudflare), whether it can read that
- * zone's Email Routing, and whether Analytics Engine is on. Each probe is one
+ * zone's Email Routing, whether Analytics Engine is on, and whether the account
+ * has Workers for Platforms. Each probe is one
  * read call and never changes anything. Shared by the manager (with its stored token) and the CLI (with
  * wrangler's credential), so both read the answers the same way.
  *
@@ -73,6 +74,17 @@ import type { AccountSubscription } from "./types";
  *   fails with code 10089, `workers.api.error.no_access_to_analytics_engine`
  *   (cloudflare/workers-sdk#5940); the fix is the dashboard's Analytics
  *   Engine page, once per account.
+ *
+ * Recorded live (2026-10-15), Workers for Platforms, on a Workers Free and a
+ * Workers Paid account, neither with Workers for Platforms:
+ * - `GET /workers/dispatch/namespaces` answers 403 with code 10121, "You do
+ *   not have access to dispatch namespaces. You can purchase it within the
+ *   Cloudflare dashboard here: https://dash.cloudflare.com?to=/:account/workers-for-platforms
+ *   ...". An invalid token gets code 9106 or 10000 instead, so the code, not
+ *   the status, says the account lacks it. Cloudflare's API reference files
+ *   the list under "Workers Scripts" (Read or Write); on an account with
+ *   Workers for Platforms it answers with the namespaces, an empty list when
+ *   there are none.
  */
 
 /** Why a probe could not tell. */
@@ -108,6 +120,15 @@ export type WorkersPlanCapability = { state: "paid" } | { state: "free" } | Capa
 export type AnalyticsEngineCapability =
   | { state: "enabled" }
   | { state: "not-enabled" }
+  | CapabilityUnknown;
+
+/**
+ * Whether the account has Workers for Platforms, a paid add-on whose
+ * dispatch namespaces hold Workers an app deploys for its own users.
+ */
+export type WorkersForPlatformsCapability =
+  | { state: "available" }
+  | { state: "not-available" }
   | CapabilityUnknown;
 
 export interface AccountCapabilities {
@@ -164,13 +185,14 @@ export type AccessServiceTokensCapability = { state: "readable" } | CapabilityUn
 
 /**
  * The account-wide setup read besides the capabilities: workers.dev, Zero
- * Trust, Analytics Engine, Access service tokens.
+ * Trust, Analytics Engine, Access service tokens, Workers for Platforms.
  */
 export interface AccountSetupCapabilities {
   workersDev: WorkersDevCapability;
   zeroTrust: ZeroTrustCapability;
   analyticsEngine: AnalyticsEngineCapability;
   accessServiceTokens: AccessServiceTokensCapability;
+  workersForPlatforms: WorkersForPlatformsCapability;
 }
 
 /** What the token can do with the account's domains. */
@@ -198,6 +220,12 @@ export const R2_NOT_ENABLED_CODE = 10042;
  */
 export const ANALYTICS_ENGINE_NOT_ENABLED_CODE = 10089;
 
+/**
+ * Cloudflare's code for "You do not have access to dispatch namespaces" on
+ * `GET /workers/dispatch/namespaces`: the account has no Workers for Platforms.
+ */
+export const WORKERS_FOR_PLATFORMS_NOT_AVAILABLE_CODE = 10121;
+
 /** The statement the Analytics Engine probe runs: lists datasets, changes nothing. */
 export const ANALYTICS_ENGINE_PROBE_QUERY = "SHOW TABLES";
 
@@ -221,7 +249,7 @@ export interface CapabilityClient {
   billing: Pick<ReturnType<typeof createBilling>, "listSubscriptionsPage">;
   zones: Pick<ReturnType<typeof createZones>, "listAccountZonesPage">;
   emailRouting: Pick<ReturnType<typeof createEmailRouting>, "getSettings">;
-  workers: Pick<ReturnType<typeof createWorkers>, "getAccountSubdomain">;
+  workers: Pick<ReturnType<typeof createWorkers>, "getAccountSubdomain" | "listDispatchNamespaces">;
   access: Pick<ReturnType<typeof createAccess>, "getOrganization" | "listServiceTokens">;
   analyticsEngine: Pick<ReturnType<typeof createAnalyticsEngine>, "sql">;
 }
@@ -483,19 +511,43 @@ export async function probeAnalyticsEngine(
 }
 
 /**
- * The workers.dev, Zero Trust, Analytics Engine and Access service token
- * probes, concurrently; one read call each. Never throws.
+ * Workers for Platforms: the account's dispatch namespaces, read only. An
+ * answer, even an empty list, means the account has it; code 10121 means it
+ * does not; any other refusal is the token's permissions.
+ */
+export async function probeWorkersForPlatforms(
+  client: Pick<CapabilityClient, "workers">,
+): Promise<WorkersForPlatformsCapability> {
+  try {
+    await client.workers.listDispatchNamespaces();
+    return { state: "available" };
+  } catch (error) {
+    if (
+      error instanceof CloudflareApiError &&
+      hasCode(error, WORKERS_FOR_PLATFORMS_NOT_AVAILABLE_CODE)
+    ) {
+      return { state: "not-available" };
+    }
+    return unknown(isRefusal(error) ? "no-permission" : "error", error);
+  }
+}
+
+/**
+ * The workers.dev, Zero Trust, Analytics Engine, Access service token and
+ * Workers for Platforms probes, concurrently; one read call each. Never throws.
  */
 export async function probeAccountSetup(
   client: Pick<CapabilityClient, "workers" | "access" | "analyticsEngine">,
 ): Promise<AccountSetupCapabilities> {
-  const [workersDev, zeroTrust, analyticsEngine, accessServiceTokens] = await Promise.all([
-    probeWorkersDev(client),
-    probeZeroTrust(client),
-    probeAnalyticsEngine(client),
-    probeAccessServiceTokens(client),
-  ]);
-  return { workersDev, zeroTrust, analyticsEngine, accessServiceTokens };
+  const [workersDev, zeroTrust, analyticsEngine, accessServiceTokens, workersForPlatforms] =
+    await Promise.all([
+      probeWorkersDev(client),
+      probeZeroTrust(client),
+      probeAnalyticsEngine(client),
+      probeAccessServiceTokens(client),
+      probeWorkersForPlatforms(client),
+    ]);
+  return { workersDev, zeroTrust, analyticsEngine, accessServiceTokens, workersForPlatforms };
 }
 
 /**

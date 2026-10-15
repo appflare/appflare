@@ -1,6 +1,7 @@
 import { existsSync, lstatSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import {
+  buildWranglerConfig,
   type CatalogInstall,
   CONFIG_PATCH_KEYS,
   type ConfigPatch,
@@ -59,13 +60,14 @@ export function workerSpecs(
   install: Pick<
     CatalogInstall,
     "wranglerConfig" | "workers" | "configPatch" | "wranglerConfigInline"
-  >,
+  > &
+    Partial<Pick<CatalogInstall, "tier">>,
 ): WorkerSpec[] {
   if (install.workers === undefined) {
     return [
       {
         name: null,
-        wranglerConfig: install.wranglerConfig,
+        wranglerConfig: buildWranglerConfig(install),
         primary: true,
         configPatch: install.configPatch,
         wranglerConfigInline: install.wranglerConfigInline,

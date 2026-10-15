@@ -10,6 +10,7 @@ const NONE: CatalogNeeds = {
   workersPaid: 0,
   r2: 0,
   analyticsEngine: 0,
+  workersForPlatforms: 0,
   zone: 0,
   emailRouting: 0,
   access: 0,

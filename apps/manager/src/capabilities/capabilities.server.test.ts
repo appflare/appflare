@@ -60,6 +60,11 @@ const FREE_ACCOUNT: Record<string, FakeRoute> = {
   [`POST ${A}/analytics_engine/sql`]: { status: 403, text: "Authorization error" },
   // A token without "Access: Service Tokens".
   [`GET ${A}/access/service_tokens`]: FORBIDDEN,
+  // No Workers for Platforms, as Cloudflare refused it live on 2026-10-15.
+  [`GET ${A}/workers/dispatch/namespaces`]: {
+    status: 403,
+    errors: [{ code: 10121, message: "You do not have access to dispatch namespaces." }],
+  },
 };
 
 /** The same account seen with a token that has no "Billing: Read" and no Containers permission. */
@@ -84,6 +89,7 @@ const PAID_ACCOUNT: Record<string, FakeRoute> = {
   },
   [`POST ${A}/analytics_engine/sql`]: { result: null },
   [`GET ${A}/access/service_tokens`]: { result: [], result_info: { page: 1, total_pages: 1 } },
+  [`GET ${A}/workers/dispatch/namespaces`]: { result: [] },
 };
 
 async function configured() {
@@ -111,6 +117,7 @@ describe("capabilities after a token save", () => {
       `GET ${A}/containers/applications`,
       `GET ${A}/r2/buckets`,
       `GET ${A}/subscriptions`,
+      `GET ${A}/workers/dispatch/namespaces`,
       `GET ${A}/workers/subdomain`,
       "GET /zones",
       "GET /zones/zone1/email/routing",
@@ -129,6 +136,7 @@ describe("capabilities after a token save", () => {
       zeroTrust: { state: "none" },
       analyticsEngine: { state: "not-enabled" },
       accessServiceTokens: { state: "unknown", reason: "no-permission" },
+      workersForPlatforms: { state: "not-available" },
       plan: { plan: "free", source: "detected" },
     });
     expect(api.calls.find((c) => c.key.endsWith("/analytics_engine/sql"))?.body).toBe(
@@ -230,14 +238,16 @@ describe("the cron's check", () => {
       "fresh",
     );
     // Three account probes, the zone list, workers.dev, Zero Trust,
-    // Analytics Engine and service tokens; no zone, so no Email Routing read.
-    expect(api.calls).toHaveLength(8);
+    // Analytics Engine, service tokens and dispatch namespaces; no zone, so
+    // no Email Routing read.
+    expect(api.calls).toHaveLength(9);
     expect(await refreshCapabilitiesIfStale(cf, db, { now: NEXT_DAY, fetch: api.fetch })).toBe(
       "checked",
     );
-    expect(api.calls).toHaveLength(16);
+    expect(api.calls).toHaveLength(18);
     const view = await readCapabilitiesView(db);
     expect(view.plan).toEqual({ plan: "paid", source: "detected" });
+    expect(view.workersForPlatforms).toEqual({ state: "available" });
     expect(view.accessServiceTokens).toEqual({ state: "readable" });
     expect(view.analyticsEngine).toEqual({ state: "enabled" });
   });
@@ -269,8 +279,8 @@ describe("on a manager connected with Cloudflare sign-in", () => {
       await refreshCapabilitiesIfStale(await signedIn(), db, { now: MORNING, fetch: api.fetch }),
     ).toBe("checked");
     expect(api.calls.map((c) => c.key)).not.toContain(`GET ${A}/subscriptions`);
-    // Eight reads less the plan's: no zone, so no Email Routing read either.
-    expect(api.calls).toHaveLength(7);
+    // Nine reads less the plan's: no zone, so no Email Routing read either.
+    expect(api.calls).toHaveLength(8);
     expect(new Set(api.calls.map((c) => c.authorization))).toEqual(new Set([`Bearer ${ACCESS}`]));
     const view = await readCapabilitiesView(db);
     expect(view.connection).toBe("oauth");
@@ -355,7 +365,7 @@ describe("after an update of Appflare", () => {
     const cf = await configured();
     const api = fakeCloudflare(PAID_ACCOUNT);
     await refreshCapabilitiesIfStale(cf, db, { now: MORNING, version: "0.2.0", fetch: api.fetch });
-    expect(api.calls).toHaveLength(8);
+    expect(api.calls).toHaveLength(9);
     // Same version, same day: nothing to do, from a request or from the cron.
     const same = { now: EVENING, version: "0.2.0", fetch: api.fetch };
     expect(await refreshCapabilitiesAfterVersionChange(cf, db, same)).toBe("fresh");
@@ -365,7 +375,7 @@ describe("after an update of Appflare", () => {
     expect(await refreshCapabilitiesAfterVersionChange(cf, db, newer)).toBe("checked");
     expect(await refreshCapabilitiesAfterVersionChange(cf, db, newer)).toBe("fresh");
     expect(await refreshCapabilitiesIfStale(cf, db, newer)).toBe("fresh");
-    expect(api.calls).toHaveLength(16);
+    expect(api.calls).toHaveLength(18);
   });
 
   it("leaves a newer version's answer to the next day", async () => {
@@ -377,7 +387,7 @@ describe("after an update of Appflare", () => {
     const older = { now: EVENING, version: "0.2.0", fetch: api.fetch };
     expect(await refreshCapabilitiesAfterVersionChange(cf, db, older)).toBe("fresh");
     expect(await refreshCapabilitiesIfStale(cf, db, older)).toBe("fresh");
-    expect(api.calls).toHaveLength(8);
+    expect(api.calls).toHaveLength(9);
   });
 
   it("leaves never-run and earlier-day answers to setup and the cron", async () => {

@@ -22,6 +22,9 @@ export const workerNameSchema = z
   .string()
   .regex(WORKER_NAME_PATTERN, `The Worker name must be ${WORKER_NAME_HINT}`);
 
+/** An install id: a ULID, 26 characters of Crockford's base32, as `ulidx` makes them. */
+export const INSTALL_ID_PATTERN = /^[0-9A-HJKMNP-TV-Z]{26}$/;
+
 /** Values are bounded so a pasted blob cannot bloat the Workflow payload. */
 const MAX_VALUE_LENGTH = 4096;
 
@@ -115,6 +118,17 @@ export const startInstallInput = z.object({
    * Appflare's users get in. Refused for an app deployed by its own installer.
    */
   access: z.boolean().optional(),
+  /**
+   * A self-deploying tier app's install id, made when the form loaded
+   * (`CatalogDetail.installId`): its stage, and the addresses named after
+   * it, were shown before the install started, so the install must take it.
+   * Checked to be a ULID no install has used; refused for any other app.
+   * Missing for a client that predates the field: the install makes one.
+   */
+  installId: z
+    .string()
+    .regex(INSTALL_ID_PATTERN, "The install id must be a ULID. Reload the page and try again.")
+    .optional(),
   /**
    * "Install again": the failed install of the same app this one replaces.
    * What it left in the account is removed first (nothing is kept), and its

@@ -7,6 +7,7 @@ import {
   ENTRY_WORKER_PLACEHOLDER_SOURCE,
   hasEntryWorkerPlaceholder,
   hasPlaceholder,
+  hasSelfDeployingPlaceholder,
   INSTALL_PLACEHOLDER_SOURCE,
   INSTALL_PLACEHOLDERS,
   PER_WORKER_PLACEHOLDER_NAMES,
@@ -18,6 +19,8 @@ import {
   renderEntryWorkerPlaceholders,
   renderJsonPlaceholders,
   renderPlaceholders,
+  renderSelfDeployingPlaceholders,
+  SELF_DEPLOYING_TEXT_PLACEHOLDERS,
   STAGE_PLACEHOLDER,
   urlHostname,
   usesEmailPlaceholders,
@@ -46,6 +49,7 @@ describe("the placeholder list", () => {
       "accessAud",
       "accessCertsUrl",
       "stage",
+      "workersDevSubdomain",
     ]);
     for (const p of PLACEHOLDERS) expect(p.meaning.length).toBeGreaterThan(20);
     expect(PER_WORKER_PLACEHOLDER_NAMES).toEqual([
@@ -64,8 +68,15 @@ describe("the placeholder list", () => {
   });
 
   it("says which fields take which", () => {
-    expect(PLACEHOLDER_FIELDS.postInstall).toEqual(POST_INSTALL_PLACEHOLDERS);
+    expect(PLACEHOLDER_FIELDS.postInstall).toEqual([
+      ...POST_INSTALL_PLACEHOLDERS,
+      "stage",
+      "workersDevSubdomain",
+    ]);
+    expect(PLACEHOLDER_FIELDS.fieldHelp).toEqual(SELF_DEPLOYING_TEXT_PLACEHOLDERS);
     expect(PLACEHOLDER_FIELDS.varDefault).toEqual(INSTALL_PLACEHOLDERS);
+    // A setting's value never takes them: the stage is no value a Worker gets.
+    expect(INSTALL_PLACEHOLDERS).not.toContain("workersDevSubdomain");
     // The Access values go to a var only, never to a note people read.
     for (const name of ACCESS_PLACEHOLDERS) {
       expect(PLACEHOLDER_FIELDS.varDefault).toContain(name);
@@ -262,6 +273,32 @@ describe("renderEntryWorkerPlaceholders", () => {
   });
 });
 
+describe("renderSelfDeployingPlaceholders", () => {
+  const callback = "https://void-{{stage}}-api.{{ workersDevSubdomain }}.workers.dev/auth/callback";
+
+  it("fills in the stage and the workers.dev subdomain", () => {
+    expect(
+      renderSelfDeployingPlaceholders(callback, {
+        stage: "appflare-7hq2k9x1",
+        workersDevSubdomain: "acme",
+      }),
+    ).toBe("https://void-appflare-7hq2k9x1-api.acme.workers.dev/auth/callback");
+  });
+
+  it("keeps one it has no value for, and leaves the other placeholders alone", () => {
+    expect(
+      renderSelfDeployingPlaceholders(`${callback} {{appUrl}}`, {
+        stage: "appflare-x",
+        workersDevSubdomain: null,
+      }),
+    ).toBe(
+      "https://void-appflare-x-api.{{ workersDevSubdomain }}.workers.dev/auth/callback {{appUrl}}",
+    );
+    expect(hasSelfDeployingPlaceholder(callback)).toBe(true);
+    expect(hasSelfDeployingPlaceholder("{{appUrl}} {{Stage}}")).toBe(false);
+  });
+});
+
 describe("placeholderProblems", () => {
   const entry = {
     workers: [
@@ -276,6 +313,26 @@ describe("placeholderProblems", () => {
     expect(
       placeholderProblems("{{appUrl:web}} {{workerName:internal}}", "postInstall", entry),
     ).toEqual([]);
+  });
+
+  it("takes the stage and the workers.dev subdomain in a self-deploying entry's notes and help only", () => {
+    const text = "https://void-{{stage}}-api.{{workersDevSubdomain}}.workers.dev/auth/callback";
+    for (const field of ["postInstall", "fieldHelp"] as const) {
+      expect(placeholderProblems(text, field, { selfDeploying: true })).toEqual([]);
+      expect(placeholderProblems(text, field)).toEqual([
+        "{{stage}} is filled in only for a self-deploying entry, whose installer names its Workers after the install's stage",
+        "{{workersDevSubdomain}} is filled in only for a self-deploying entry, whose installer names its Workers after the install's stage",
+      ]);
+    }
+    // Help takes nothing else: it is shown, never handed to the app.
+    expect(placeholderProblems("{{appUrl}}", "fieldHelp", { selfDeploying: true })[0]).toBe(
+      "{{appUrl}} is not filled in here; this field takes {{stage}}, {{workersDevSubdomain}}",
+    );
+    expect(placeholderProblems("{{workersDevSubdomain}}", "varDefault")[0]).toContain(
+      "is not filled in here",
+    );
+    // The installer's own fields take the stage without being told the tier.
+    expect(placeholderProblems("app-{{stage}}", "selfDeployingWorkerName")).toEqual([]);
   });
 
   it("refuses a placeholder the field does not take", () => {

@@ -393,7 +393,6 @@ const voidManifest = {
   install: {
     tier: "self-deploying",
     packageManager: "pnpm",
-    wranglerConfig: "package.json",
     workerName: "void",
     selfDeploying: voidBlock,
   },
@@ -617,6 +616,121 @@ describe("a void self-deploying entry", () => {
     expect(voidOption?.additionalProperties).toBe(false);
     const manifestSchema = JSON.stringify(z.toJSONSchema(catalogManifestSchema));
     expect(manifestSchema).toContain('"contains":{"const":"workers-for-platforms"}');
+  });
+});
+
+describe("what a self-deploying entry leaves out", () => {
+  it("needs no wrangler config, whichever its tool, as no build reads one", () => {
+    expect(issuesOf(strictCatalogManifestSchema.safeParse(voidManifest))).toEqual([]);
+    expect(voidManifest.install).not.toHaveProperty("wranglerConfig");
+    const { wranglerConfig: _omit, ...alchemyInstall } = manifest.install;
+    expect(
+      issuesOf(strictCatalogManifestSchema.safeParse({ ...manifest, install: alchemyInstall })),
+    ).toEqual([]);
+    // Written anyway, it is still taken.
+    expect(catalogManifestSchema.parse(manifest).install.wranglerConfig).toBe("wrangler.jsonc");
+  });
+
+  it("is still required on the tiers whose build reads it", () => {
+    const { selfDeploying: _block, wranglerConfig: _config, ...rest } = manifest.install;
+    for (const tier of ["artifact", "sandbox"]) {
+      const result = catalogManifestSchema.safeParse({
+        ...manifest,
+        plan: "paid",
+        requires: [],
+        install: { ...rest, buildCommand: undefined, tier },
+      });
+      expect(
+        issuesOf(result).filter((i) => i.path.join(".") === "install.wranglerConfig"),
+        tier,
+      ).toEqual([
+        {
+          path: ["install", "wranglerConfig"],
+          message: `install.wranglerConfig is required for the ${tier} tier, whose build reads it; only a self-deploying entry, whose own installer deploys the app, may leave it out`,
+        },
+      ]);
+    }
+  });
+
+  it("says so in the JSON Schema: required unless the tier is self-deploying", () => {
+    const install = (
+      z.toJSONSchema(catalogManifestSchema) as unknown as {
+        properties: { install: { required?: string[]; allOf?: unknown[] } };
+      }
+    ).properties.install;
+    expect(install.required).not.toContain("wranglerConfig");
+    expect(install.allOf).toContainEqual({
+      anyOf: [
+        { required: ["wranglerConfig"] },
+        { required: ["tier"], properties: { tier: { const: "self-deploying" } } },
+      ],
+    });
+  });
+});
+
+describe("help and notes of a self-deploying entry", () => {
+  const callback = "https://void-{{stage}}-api.{{workersDevSubdomain}}.workers.dev/auth/callback";
+
+  it("may name the install's stage and the account's workers.dev subdomain", () => {
+    const withCallback = {
+      ...voidManifest,
+      vars: voidManifest.vars.map((v) =>
+        v.name === "VOID_PLATFORM_GITHUB_CLIENT_ID"
+          ? { ...v, help: `Create a GitHub OAuth app whose callback URL is ${callback}.` }
+          : v,
+      ),
+      secrets: voidManifest.secrets.map((s) =>
+        s.name === "VOID_PLATFORM_GITHUB_CLIENT_SECRET"
+          ? { ...s, help: `The secret of the OAuth app with the callback ${callback}.` }
+          : s,
+      ),
+      postInstall: [
+        {
+          type: "markdown",
+          content: `Sign in at https://void-{{stage}}-api.{{workersDevSubdomain}}.workers.dev.`,
+        },
+      ],
+    };
+    expect(issuesOf(strictCatalogManifestSchema.safeParse(withCallback))).toEqual([]);
+  });
+
+  it("refuses them in other entries, and other placeholders in help", () => {
+    const artifact = {
+      ...manifest,
+      install: { tier: "artifact", packageManager: "pnpm", wranglerConfig: "wrangler.jsonc" },
+      plan: "free",
+      requires: [],
+      vars: [{ name: "X", label: "X", help: `Callback: ${callback}` }],
+      postInstall: [{ type: "markdown", content: "Stage {{stage}}." }],
+    };
+    expect(issuesOf(catalogManifestSchema.safeParse(artifact))).toEqual([
+      {
+        path: ["vars", 0, "help"],
+        message:
+          "{{stage}} is filled in only for a self-deploying entry, whose installer names its Workers after the install's stage",
+      },
+      {
+        path: ["vars", 0, "help"],
+        message:
+          "{{workersDevSubdomain}} is filled in only for a self-deploying entry, whose installer names its Workers after the install's stage",
+      },
+      {
+        path: ["postInstall", 0, "content"],
+        message:
+          "{{stage}} is filled in only for a self-deploying entry, whose installer names its Workers after the install's stage",
+      },
+    ]);
+    const appUrlInHelp = {
+      ...voidManifest,
+      secrets: [{ name: "S", label: "S", help: "Opens at {{appUrl}}." }],
+    };
+    expect(issuesOf(catalogManifestSchema.safeParse(appUrlInHelp))).toEqual([
+      {
+        path: ["secrets", 0, "help"],
+        message:
+          "{{appUrl}} is not filled in here; this field takes {{stage}}, {{workersDevSubdomain}}",
+      },
+    ]);
   });
 });
 

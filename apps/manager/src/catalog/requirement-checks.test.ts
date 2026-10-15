@@ -4,6 +4,7 @@ import {
   analyticsEngineRefusal,
   requirementChecks,
   usesAnalyticsEngine,
+  workersForPlatformsRefusal,
 } from "./requirement-checks";
 import { requirementLabel } from "./requirements";
 
@@ -164,6 +165,61 @@ describe("Analytics Engine", () => {
         availability: "unavailable",
         reason: expect.stringContaining("then choose Check again"),
       },
+    ]);
+  });
+});
+
+describe("Workers for Platforms", () => {
+  const stored = {
+    checkedAt: "2026-10-15T12:00:00.000Z",
+    r2: { state: "enabled" },
+    containers: { state: "available" },
+    workersPlan: { state: "paid" },
+  } as const;
+  const missing = capabilitiesView(null, {
+    ...stored,
+    workersForPlatforms: { state: "not-available" },
+  });
+
+  it("refuses an app that lists it only when the probe found it missing", () => {
+    expect(workersForPlatformsRefusal("Void", ["r2", "workers-for-platforms"], missing)).toBe(
+      "Void needs Workers for Platforms, which this account does not have. Buy Workers for Platforms in the Cloudflare dashboard, then choose Check again on Your account.",
+    );
+    expect(workersForPlatformsRefusal("Cut", ["r2"], missing)).toBeNull();
+    for (const view of [
+      null,
+      {},
+      { workersForPlatforms: null },
+      { workersForPlatforms: { state: "available" } as const },
+      {
+        workersForPlatforms: {
+          state: "unknown",
+          reason: "no-permission",
+          detail: "HTTP 403",
+        } as const,
+      },
+    ]) {
+      expect(workersForPlatformsRefusal("Void", ["workers-for-platforms"], view)).toBeNull();
+    }
+  });
+
+  it("is a requirement the account is checked for, met or not", () => {
+    const requires = ["workers-for-platforms"];
+    expect(requirementChecks({ plan: "paid", requires }, missing).pending).toContainEqual({
+      key: "workers-for-platforms",
+      label: "Workers for Platforms",
+      availability: "unavailable",
+      reason:
+        "Detected: this account does not have Workers for Platforms, a paid add-on. Buy Workers for Platforms in the Cloudflare dashboard, then choose Check again on Your account.",
+    });
+    const has = capabilitiesView(null, { ...stored, workersForPlatforms: { state: "available" } });
+    expect(requirementChecks({ plan: "paid", requires }, has).met.map((c) => c.key)).toEqual([
+      "plan",
+      "workers-for-platforms",
+    ]);
+    const unknown = capabilitiesView(null, stored);
+    expect(requirementChecks({ plan: "paid", requires }, unknown).pending).toMatchObject([
+      { key: "workers-for-platforms", availability: "unknown" },
     ]);
   });
 });

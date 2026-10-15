@@ -20,7 +20,9 @@ import {
   QueueIcon,
   SealCheckIcon,
   ShippingContainerIcon,
+  SignpostIcon,
   SparkleIcon,
+  StackIcon,
   VectorThreeIcon,
 } from "@phosphor-icons/react";
 import type { CapabilitiesView } from "../capabilities/capabilities";
@@ -136,6 +138,8 @@ export const PRIMITIVE_ICONS: Record<PrimitiveId, Icon> = {
   "browser-rendering": BrowserIcon,
   images: ImageIcon,
   containers: ShippingContainerIcon,
+  "workers-for-platforms": StackIcon,
+  "ai-gateway": SignpostIcon,
   "email-routing": EnvelopeSimpleIcon,
   zone: GlobeIcon,
   access: LockKeyIcon,

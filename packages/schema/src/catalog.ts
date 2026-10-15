@@ -38,9 +38,10 @@ import {
 } from "./pipelines.ts";
 import {
   jsonTexts,
-  PLACEHOLDER_FIELDS,
+  POST_INSTALL_PLACEHOLDERS,
   placeholderInJsonKey,
   placeholderProblems,
+  SELF_DEPLOYING_TEXT_PLACEHOLDERS,
   usesEmailPlaceholders,
 } from "./placeholders.ts";
 import { catalogR2Schema } from "./r2-lifecycle.ts";
@@ -314,7 +315,7 @@ export interface EntryWorkersProblem {
  */
 export function entryWorkersProblems(install: {
   tier: string;
-  wranglerConfig: string;
+  wranglerConfig?: string | undefined;
   workers?:
     | ReadonlyArray<Pick<CatalogEntryWorker, "name" | "wranglerConfig" | "primary" | "workersDev">>
     | undefined;
@@ -407,6 +408,16 @@ export type Requirement = z.infer<typeof requirementSchema>;
  * manager from before the value leaves such entries out.
  */
 export const WORKERS_FOR_PLATFORMS_REQUIREMENT = "workers-for-platforms" satisfies Requirement;
+
+/**
+ * What a field's `help` says about the placeholders it takes: only a
+ * self-deploying entry's help takes any, filled in by the install form.
+ */
+const FIELD_HELP_PLACEHOLDERS_NOTE =
+  "In a self-deploying entry it may hold `{{stage}}` and `{{workersDevSubdomain}}`, which the " +
+  "install form fills in before the install starts, for example in an address the admin " +
+  "registers elsewhere first: `https://app-{{stage}}.{{workersDevSubdomain}}.workers.dev/callback`; " +
+  "the form offers each such address to copy.";
 
 /**
  * What kind of value the install form generates for a secret. `password`: a
@@ -582,7 +593,8 @@ export const catalogSecretSchema = z
     help: z
       .string()
       .describe(
-        "A sentence or two shown under the field: what the value is for, or where to find it.",
+        "A sentence or two shown under the field: what the value is for, or where to find it. " +
+          FIELD_HELP_PLACEHOLDERS_NOTE,
       )
       .optional(),
     /** Where to get the value, as a link beside the field; see {@link catalogFieldLinkSchema}. */
@@ -988,7 +1000,8 @@ export const catalogVarSchema = z
     help: z
       .string()
       .describe(
-        "A sentence or two shown under the field: what the setting changes, or which values work.",
+        "A sentence or two shown under the field: what the setting changes, or which values work. " +
+          FIELD_HELP_PLACEHOLDERS_NOTE,
       )
       .optional(),
     /** A link beside the field; see {@link catalogFieldLinkSchema}. */
@@ -1145,7 +1158,9 @@ export const postInstallStepSchema = z
       .describe(
         "Markdown the manager shows once the app is installed, such as how to sign in the first " +
           "time. These placeholders are filled in: " +
-          PLACEHOLDER_FIELDS.postInstall.map((name) => `\`{{${name}}}\``).join(", ") +
+          POST_INSTALL_PLACEHOLDERS.map((name) => `\`{{${name}}}\``).join(", ") +
+          ", and in a self-deploying entry " +
+          SELF_DEPLOYING_TEXT_PLACEHOLDERS.map((name) => `\`{{${name}}}\``).join(" and ") +
           ". For the address people open, use `{{appUrl}}`, which follows a custom domain. An " +
           "entry of several Workers names one of them with `{{appUrl:<name>}}` and the like.",
       ),
@@ -1607,6 +1622,22 @@ export const CATALOG_TOOLCHAINS = ["rust"] as const;
 export const catalogToolchainSchema = z.enum(CATALOG_TOOLCHAINS);
 export type CatalogToolchain = z.infer<typeof catalogToolchainSchema>;
 
+/**
+ * The wrangler config the packer and the sandbox Worker's build read: the
+ * entry's `install.wranglerConfig`. The schema requires it on every tier but
+ * `self-deploying`, which no build reads; throws for an entry without one.
+ */
+export function buildWranglerConfig(
+  install: Partial<Pick<CatalogInstall, "tier" | "wranglerConfig">>,
+): string {
+  if (install.wranglerConfig === undefined) {
+    throw new Error(
+      `this ${install.tier ?? "artifact"} tier entry has no install.wranglerConfig, so there is no wrangler config to build from`,
+    );
+  }
+  return install.wranglerConfig;
+}
+
 /** The toolchains an entry's build needs (`install.toolchains`); empty when it lists none. */
 export function installToolchains(
   install: Pick<CatalogInstall, "toolchains">,
@@ -1621,7 +1652,7 @@ export function installToolchains(
  */
 export function wranglerConfigInlineProblems(install: {
   tier: string;
-  wranglerConfig: string;
+  wranglerConfig?: string | undefined;
   configPatch?: unknown;
   wranglerConfigInline?: unknown;
   workers?: ReadonlyArray<InlineConfigTarget> | undefined;
@@ -1641,7 +1672,9 @@ export function wranglerConfigInlineProblems(install: {
         message: `a config patch changes the repository's own config; with ${label}, change the inline config instead`,
       });
     }
-    const pathProblem = inlineConfigPathProblem(target.wranglerConfig);
+    // Without a config path (a self-deploying entry) the tier is the problem, said above.
+    const pathProblem =
+      target.wranglerConfig === undefined ? null : inlineConfigPathProblem(target.wranglerConfig);
     if (pathProblem !== null) {
       problems.push({ path: [...at, "wranglerConfig"], message: pathProblem });
     }
@@ -1663,7 +1696,7 @@ export function wranglerConfigInlineProblems(install: {
 
 /** The fields {@link wranglerConfigInlineProblems} reads of an entry or one of its Workers. */
 interface InlineConfigTarget {
-  wranglerConfig: string;
+  wranglerConfig?: string | undefined;
   configPatch?: unknown;
   wranglerConfigInline?: unknown;
 }
@@ -1727,6 +1760,11 @@ export const catalogInstallSchema = z
           '`"self-deploying"` (the app\'s own installer, run in the sandbox Worker).',
       ),
     packageManager: packageManagerSchema,
+    /**
+     * Required for the artifact and sandbox tiers, whose build reads it; a
+     * `self-deploying` entry may leave it out, since its own installer
+     * deploys the app and nothing of Appflare's reads a wrangler config.
+     */
     wranglerConfig: z
       .string()
       .min(1)
@@ -1734,8 +1772,10 @@ export const catalogInstallSchema = z
         "The wrangler config to build from, relative to the repository root, for example " +
           "`wrangler.jsonc`. A config the repository keeps only as a template " +
           "(`wrangler.toml.example`, `wrangler.jsonc.template`) is copied to its real name " +
-          "(`wrangler.toml`) before it is read.",
-      ),
+          "(`wrangler.toml`) before it is read. Required, except on the self-deploying tier, " +
+          "whose own installer deploys the app without one being read.",
+      )
+      .optional(),
     /**
      * The Worker name the install form suggests; the installer may change it
      * unless `fixedWorkerName` is set. Omitted means the entry's slug; read
@@ -1923,6 +1963,13 @@ export const catalogInstallSchema = z
       .optional(),
   })
   .superRefine((install, ctx) => {
+    if (install.wranglerConfig === undefined && install.tier !== "self-deploying") {
+      ctx.addIssue({
+        code: "custom",
+        path: ["wranglerConfig"],
+        message: `install.wranglerConfig is required for the ${install.tier} tier, whose build reads it; only a self-deploying entry, whose own installer deploys the app, may leave it out`,
+      });
+    }
     for (const problem of entryWorkersProblems(install)) {
       ctx.addIssue({ code: "custom", path: problem.path, message: problem.message });
     }
@@ -1995,7 +2042,8 @@ export const catalogInstallSchema = z
     }
   })
   // The refinements do not reach the JSON Schema; `allOf` states them there
-  // (no `container`, or a tier that runs in the sandbox Worker; `selfDeploying`
+  // (`wranglerConfig` unless the tier is `self-deploying`; no `container`,
+  // or a tier that runs in the sandbox Worker; `selfDeploying`
   // exactly when the tier is `self-deploying`; no `emailRouting` or
   // `installDirs` on a `self-deploying` entry; `emailRouting.worker` only
   // beside `workers`; `workers` and `toolchains`
@@ -2005,6 +2053,13 @@ export const catalogInstallSchema = z
   // refuse the same manifests.
   .meta({
     allOf: [
+      // A wrangler config, unless the app's own installer deploys it.
+      {
+        anyOf: [
+          { required: ["wranglerConfig"] },
+          { required: ["tier"], properties: { tier: { const: "self-deploying" } } },
+        ],
+      },
       {
         anyOf: [
           { not: { required: ["container"] } },
@@ -2454,8 +2509,21 @@ export const catalogManifestSchema = z
     check("secrets", manifest.secrets);
     check("vars", manifest.vars);
     // Placeholders a field does not take, that name a Worker the entry does
-    // not have (or one with no address), or that need an entry receiving email.
-    const entry = { workers: declared, emailRouting: manifest.install.emailRouting !== undefined };
+    // not have (or one with no address), that need an entry receiving email,
+    // or that need a self-deploying entry (whose install has a stage).
+    const entry = {
+      workers: declared,
+      emailRouting: manifest.install.emailRouting !== undefined,
+      selfDeploying: manifest.install.tier === "self-deploying",
+    };
+    for (const field of ["secrets", "vars"] as const) {
+      manifest[field].forEach((item, i) => {
+        if (item.help === undefined) return;
+        for (const message of placeholderProblems(item.help, "fieldHelp", entry)) {
+          ctx.addIssue({ code: "custom", path: [field, i, "help"], message });
+        }
+      });
+    }
     manifest.postInstall.forEach((step, i) => {
       for (const message of placeholderProblems(step.content, "postInstall", entry)) {
         ctx.addIssue({ code: "custom", path: ["postInstall", i, "content"], message });

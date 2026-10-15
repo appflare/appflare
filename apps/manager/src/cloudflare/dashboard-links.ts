@@ -55,7 +55,9 @@ export function zeroTrustDashboardUrl(accountId: string | null | undefined, path
  * `src/content/dash-routes/*.json`, read 2026-09-24; Access applications
  * from `zero-trust.json`, read 2026-10-01). The workers.dev
  * registration page is where wrangler sends people
- * (`/<account id>/workers/onboarding`, wrangler 4.136.2).
+ * (`/<account id>/workers/onboarding`, wrangler 4.136.2). Workers for
+ * Platforms is the page Cloudflare's own refusal of a dispatch namespace
+ * read names (`?to=/:account/workers-for-platforms`, recorded 2026-10-15).
  */
 export function dashboardLinks(accountId: string | null) {
   return {
@@ -64,6 +66,7 @@ export function dashboardLinks(accountId: string | null) {
     workersPlans: dashboardUrl(accountId, "workers/plans"),
     r2: dashboardUrl(accountId, "r2/overview"),
     analyticsEngine: dashboardUrl(accountId, "workers/analytics-engine"),
+    workersForPlatforms: dashboardUrl(accountId, "workers-for-platforms"),
     domains: dashboardUrl(accountId, "domains/overview"),
     emailRouting: dashboardUrl(accountId, "email-service/routing"),
     zeroTrust: zeroTrustDashboardUrl(accountId, "home"),

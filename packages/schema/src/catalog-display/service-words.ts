@@ -41,6 +41,8 @@ export const SERVICE_NOUNS: Record<ServiceId, ServiceNoun> = {
   "browser-rendering": uncountable("Browser Rendering"),
   images: uncountable("Images"),
   containers: uncountable("Containers"),
+  "workers-for-platforms": uncountable("Workers for Platforms"),
+  "ai-gateway": uncountable("AI Gateway"),
   "email-routing": uncountable("Email Routing"),
   zone: countable("domain"),
   access: uncountable("Cloudflare Access"),

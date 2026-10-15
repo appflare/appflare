@@ -32,7 +32,8 @@ import { requirementLabel } from "./requirements";
  * "What it needs on your account" on an app's catalog page, and the rows of
  * its "Before you install" banner: one row per thing the app uses, with its
  * state on this account. What the account can lack (the Workers plan, R2, a
- * domain, Email Routing, Analytics Engine, Zero Trust) is read from the same
+ * domain, Email Routing, Analytics Engine, Workers for Platforms, Zero
+ * Trust) is read from the same
  * capability rows as "What this account can run" on Your account, so both
  * pages use one name, one state and one action for it. The rows are built
  * as if this app were already in the account: something nothing else uses
@@ -46,6 +47,7 @@ const NEED_CAPABILITIES: Partial<Record<PrimitiveId, CapabilityId>> = {
   zone: "zone",
   "email-routing": "email-routing",
   "analytics-engine": "analytics-engine",
+  "workers-for-platforms": "workers-for-platforms",
   access: "zero-trust",
 };
 

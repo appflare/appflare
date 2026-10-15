@@ -120,6 +120,14 @@ export interface AccountSubdomain {
   subdomain: string;
 }
 
+/** A Workers for Platforms dispatch namespace, as `GET /workers/dispatch/namespaces` lists it. */
+export interface DispatchNamespace {
+  namespace_id?: string;
+  namespace_name?: string;
+  script_count?: number;
+  [key: string]: unknown;
+}
+
 export interface WorkerSecret {
   name: string;
   type: string;

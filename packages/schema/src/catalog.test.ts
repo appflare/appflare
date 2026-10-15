@@ -764,6 +764,8 @@ describe("install.container", () => {
     const install = z.toJSONSchema(catalogManifestSchema).properties?.install;
     expect(install).toMatchObject({
       allOf: [
+        // A wrangler config, unless the tier is self-deploying (see self-deploying.test.ts).
+        expect.anything(),
         {
           anyOf: [
             { not: { required: ["container"] } },
@@ -882,7 +884,9 @@ describe("placeholders in a manifest", () => {
 
   it("refuse {{stage}}, a known name in the wrong case, and per-Worker forms on one Worker", () => {
     const cases: Array<[string, string, string]> = [
-      ["{{stage}}", "x", "is not filled in here"],
+      // A note of an entry that does not deploy itself: there is no stage.
+      ["{{stage}}", "x", "is filled in only for a self-deploying entry"],
+      ["x", "{{stage}}", "is not filled in here"],
       ["x", "{{appURL}}", "write {{appUrl}}"],
       ["{{workerUrl:api}}", "x", "installs one Worker"],
     ];
