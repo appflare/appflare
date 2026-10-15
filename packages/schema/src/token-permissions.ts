@@ -21,9 +21,13 @@ import type { ServiceId } from "./services";
  * `purge` type selects); the dashboard's own group labels (`<key>_read` /
  * `<key>_write`) for `email_routing_rule`, `email_routing_address`,
  * `query_cache` (Hyperdrive), `pipelines`, `vectorize`, `workers_tail`,
- * `load_balancers`, `account_logs`, `magic_transit`; public template links
- * for `email_sending`, `secrets_store`, `r2_catalog`, `r2_catalog_sql` and
- * `containers`.
+ * `load_balancers`, `account_logs`, `magic_transit`, `aig` (AI Gateway:
+ * `aig_read` / `aig_write`) and `cloudchamber` (`cloudchamber_read` /
+ * `cloudchamber_write`); public template links for `email_sending`,
+ * `secrets_store`, `r2_catalog`, `r2_catalog_sql` and `containers`. The
+ * Cloudflare API names the same groups with Write for Edit
+ * (`GET /accounts/{account_id}/tokens/permission_groups`: "AI Gateway
+ * Write", "Cloudchamber Write").
  *
  * This module imports nothing at run time but zod: `catalog.ts` imports it,
  * and the JSON Schema export runs `catalog.ts` directly under Node's type
@@ -107,6 +111,10 @@ export const APP_TOKEN_PERMISSION_GROUPS = [
     templateKey: "containers",
     service: "containers",
   },
+  // The container platform under Workers Containers, which some installers
+  // call directly.
+  { scope: "account", group: "Cloudchamber", templateKey: "cloudchamber", service: "containers" },
+  { scope: "account", group: "AI Gateway", templateKey: "aig" },
   { scope: "account", group: "D1", templateKey: "d1", service: "d1" },
   { scope: "account", group: "Queues", templateKey: "queues", service: "queues" },
   { scope: "account", group: "Vectorize", templateKey: "vectorize", service: "vectorize" },

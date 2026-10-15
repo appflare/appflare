@@ -58,6 +58,11 @@ export const REQUIREMENTS: Record<
     sentence:
       "The app writes to Workers Analytics Engine, which must be turned on once for the account in the dashboard; until then Cloudflare refuses to deploy it.",
   },
+  "workers-for-platforms": {
+    label: "Workers for Platforms",
+    sentence:
+      "The app deploys Workers into a dispatch namespace, which needs the Workers for Platforms add-on on the account.",
+  },
 };
 
 /**

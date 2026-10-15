@@ -132,7 +132,8 @@ export const PLACEHOLDERS = [
     perWorker: false,
     meaning:
       "The install's stage, in the Worker names a self-deploying entry lists " +
-      "(`install.selfDeploying.workerNames`) and nowhere else.",
+      "(`install.selfDeploying.workerNames`) and in the commands of a `void` entry, " +
+      "and nowhere else.",
   },
 ] as const satisfies readonly PlaceholderInfo[];
 
@@ -198,8 +199,14 @@ export const INSTALL_PLACEHOLDERS = [
 ] as const satisfies readonly PlaceholderName[];
 export type InstallPlaceholder = (typeof INSTALL_PLACEHOLDERS)[number];
 
-/** The placeholder that names the install's stage in a self-deploying entry's Worker names. */
+/**
+ * The placeholder that names the install's stage in a self-deploying entry's
+ * Worker names and in a `void` entry's commands.
+ */
 export const STAGE_PLACEHOLDER = "{{stage}}";
+
+/** The account id placeholder, as a `void` entry's commands write it. */
+export const ACCOUNT_ID_PLACEHOLDER = "{{accountId}}";
 
 /**
  * The fields of a catalog manifest whose text may hold placeholders, and the
@@ -209,7 +216,10 @@ export const STAGE_PLACEHOLDER = "{{stage}}";
  *   people read has no use for a JWT audience tag);
  * - `varDefault`: `vars[].default`, and (for the packer) the string values
  *   of the wrangler config's `vars`, which the manager renders the same way;
- * - `selfDeployingWorkerName`: `install.selfDeploying.workerNames[]`.
+ * - `selfDeployingWorkerName`: `install.selfDeploying.workerNames[]`;
+ * - `selfDeployingCommand`: the words of a `void` entry's commands, written
+ *   exactly (`{{stage}}`, never `{{ stage }}`), which the sandbox Worker
+ *   fills in before it runs one.
  *
  * Secrets take none: their values are entered or generated, never filled in.
  */
@@ -217,6 +227,7 @@ export const PLACEHOLDER_FIELDS = {
   postInstall: POST_INSTALL_PLACEHOLDERS,
   varDefault: INSTALL_PLACEHOLDERS,
   selfDeployingWorkerName: ["stage"],
+  selfDeployingCommand: ["stage", "accountId"],
 } as const satisfies Record<string, readonly PlaceholderName[]>;
 export type PlaceholderField = keyof typeof PLACEHOLDER_FIELDS;
 

@@ -717,7 +717,12 @@ export const selfManagedRunRequestSchema = z
   });
 export type SelfManagedRunRequest = z.infer<typeof selfManagedRunRequestSchema>;
 
-/** Kinds of resources a deploy reports, as the manager records them. */
+/**
+ * Kinds of resources a deploy reports, as the manager records them. A
+ * `dispatch_namespace` is a Workers for Platforms namespace the installer's
+ * Workers dispatch to (named by the namespace); `hyperdrive` a Hyperdrive
+ * configuration (`cfId` its id); `ai_gateway` an AI Gateway (named by its id).
+ */
 export const selfManagedResourceKindSchema = z.enum([
   "worker",
   "d1",
@@ -727,6 +732,9 @@ export const selfManagedResourceKindSchema = z.enum([
   "vectorize",
   "durable_object",
   "workflow",
+  "dispatch_namespace",
+  "hyperdrive",
+  "ai_gateway",
 ]);
 export type SelfManagedResourceKind = z.infer<typeof selfManagedResourceKindSchema>;
 

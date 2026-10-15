@@ -1,19 +1,33 @@
 import { describe, expect, it } from "vitest";
-import { catalogManifestSchema } from "./catalog";
+import { z } from "zod";
+import {
+  catalogManifestSchema,
+  requirementSchema,
+  strictCatalogManifestSchema,
+  WORKERS_FOR_PLATFORMS_REQUIREMENT,
+} from "./catalog";
 import { indexAppSchema } from "./catalog-index";
+import { accountRequirements, isManagerFeatureRequirement } from "./manager-features";
 import {
   appSecretSecretName,
   appTokenSecretName,
   SANDBOX_PROTOCOL_VERSION,
   selfManagedOutcomeSchema,
+  selfManagedResourceKindSchema,
   selfManagedRunRequestSchema,
 } from "./sandbox";
 import {
+  catalogSelfDeployingSchema,
+  fillSelfDeployingCommand,
+  MAX_STAGE_LENGTH,
   renderWorkerTemplate,
   SELF_DEPLOYING_TOOLS,
+  selfDeployingCommandSchema,
+  selfDeployingCommandTemplateSchema,
   selfDeployingStage,
   selfDeployingStageArg,
   selfDeployingStageSchema,
+  selfDeployingWorkerTemplateSchema,
 } from "./self-deploying";
 
 const PIN = "84e4705503ceaef54d1b284c167de9942563cdae";
@@ -161,6 +175,13 @@ describe("stages", () => {
     for (const stage of ["", "-a", "a-", "A", "a_b", "a".repeat(25)]) {
       expect(selfDeployingStageSchema.safeParse(stage).success).toBe(false);
     }
+  });
+
+  it("refuses repeated dashes, which Void would fold into one", () => {
+    for (const stage of ["a--b", "appflare--x", "a---b"]) {
+      expect(selfDeployingStageSchema.safeParse(stage).success, stage).toBe(false);
+    }
+    expect(selfDeployingStageSchema.safeParse("a-b-c").success).toBe(true);
   });
 });
 
@@ -312,5 +333,459 @@ describe("self-deploying runs in the sandbox protocol", () => {
         exitCode: null,
       }).ok,
     ).toBe(false);
+  });
+});
+
+// The Void Platform, installed with the Void CLI's own `void platform` commands.
+const ACCOUNT_ID = "0123456789abcdef0123456789abcdef";
+const VOID = ["pnpm", "exec", "void", "platform"];
+const voidInstall = [
+  ...VOID,
+  "install",
+  "--yes",
+  "--name",
+  "{{stage}}",
+  "--display-name",
+  "Void",
+  "--account",
+  "{{accountId}}",
+  "--workers-dev",
+];
+const voidBlock = {
+  tool: "void" as const,
+  discoverCommand: [
+    ...VOID,
+    "discover",
+    "--account",
+    "{{accountId}}",
+    "--installation",
+    "{{stage}}",
+  ],
+  installCommand: voidInstall,
+  resumeCommand: [...voidInstall, "--resume"],
+  updateCommand: [...VOID, "upgrade", "{{stage}}", "--yes"],
+  destroyCommand: [...VOID, "uninstall", "{{stage}}", "--purge-resources", "--yes"],
+  workerNames: [
+    "void-{{stage}}-api",
+    "void-{{stage}}-proxy",
+    "void-{{stage}}-tail",
+    "void-{{stage}}-dispatch",
+  ],
+};
+
+const voidPermission = (group: string, access: "read" | "edit", scope = "account") => ({
+  group,
+  scope,
+  access,
+  reason: "The Void CLI needs it.",
+});
+
+const voidManifest = {
+  slug: "void",
+  name: "Void",
+  summary: "A platform for deploying apps.",
+  tagline: "Your own app platform",
+  repo: "appflare/void-installer",
+  license: "MIT",
+  categories: ["developer-tools"],
+  maintainers: ["appflare"],
+  source: { ref: "main", sha: PIN },
+  install: {
+    tier: "self-deploying",
+    packageManager: "pnpm",
+    wranglerConfig: "package.json",
+    workerName: "void",
+    selfDeploying: voidBlock,
+  },
+  plan: "paid",
+  requires: ["r2", "containers", "analytics-engine", "workers-for-platforms"],
+  secrets: [
+    { name: "VOID_PLATFORM_JWT_SECRET", label: "JWT secret", generate: "base64-key-32" },
+    {
+      name: "VOID_PLATFORM_PROJECT_SECRET_KEY",
+      label: "Project secret key",
+      generate: "base64-key-32",
+    },
+    { name: "VOID_PLATFORM_RECOVERY_KEY", label: "Recovery key", generate: "base64-key-32" },
+    { name: "VOID_PLATFORM_DATABASE_URL", label: "Postgres connection string" },
+    { name: "VOID_PLATFORM_GITHUB_CLIENT_SECRET", label: "GitHub OAuth client secret" },
+  ],
+  vars: [
+    { name: "VOID_PLATFORM_GITHUB_CLIENT_ID", label: "GitHub OAuth client id" },
+    { name: "VOID_PLATFORM_ADMIN_GITHUB_LOGIN", label: "Admin GitHub login" },
+  ],
+  postInstall: [],
+  tokenPermissions: [
+    voidPermission("Account Settings", "read"),
+    voidPermission("Workers Scripts", "edit"),
+    voidPermission("Workers Tail", "read"),
+    voidPermission("D1", "edit"),
+    voidPermission("Workers KV Storage", "edit"),
+    voidPermission("Workers R2 Storage", "edit"),
+    voidPermission("Queues", "edit"),
+    voidPermission("Hyperdrive", "edit"),
+    voidPermission("Account Analytics", "read"),
+    voidPermission("AI Gateway", "edit"),
+    voidPermission("Workers Containers", "edit"),
+    voidPermission("Cloudchamber", "edit"),
+    voidPermission("Cache Purge", "edit", "zone"),
+  ],
+};
+
+function withVoid(block: Record<string, unknown>) {
+  return {
+    ...voidManifest,
+    install: { ...voidManifest.install, selfDeploying: { ...voidBlock, ...block } },
+  };
+}
+
+function issuesOf(result: { error?: z.ZodError | undefined }) {
+  return (result.error?.issues ?? []).map((i) => ({ path: i.path, message: i.message }));
+}
+
+describe("a void self-deploying entry", () => {
+  it("accepts the Void Platform's entry as written, with the CLI's own commands", () => {
+    const parsed = strictCatalogManifestSchema.safeParse(voidManifest);
+    expect(issuesOf(parsed)).toEqual([]);
+    const block = parsed.data?.install.selfDeploying;
+    expect(block?.tool).toBe("void");
+    if (block?.tool === "void") {
+      expect(block.installCommand).toEqual(voidInstall);
+      expect(block.resumeCommand.at(-1)).toBe("--resume");
+    }
+  });
+
+  it("uses the tool's conventions: two token variables, no appended stage option", () => {
+    expect(SELF_DEPLOYING_TOOLS.void).toEqual({
+      label: "Void",
+      tokenEnv: ["CLOUDFLARE_API_TOKEN", "VOID_PLATFORM_RUNTIME_CLOUDFLARE_API_TOKEN"],
+      accountIdEnv: ["CLOUDFLARE_ACCOUNT_ID"],
+      stageArg: null,
+    });
+    expect(selfDeployingStageArg({ tool: "void" })).toBeNull();
+    expect(selfDeployingStageArg({ tool: "alchemy" })).toBe("--stage");
+  });
+
+  it("requires every one of its five commands", () => {
+    for (const key of [
+      "discoverCommand",
+      "installCommand",
+      "resumeCommand",
+      "updateCommand",
+      "destroyCommand",
+    ]) {
+      const { [key as keyof typeof voidBlock]: _omit, ...rest } = voidBlock;
+      const result = catalogManifestSchema.safeParse({
+        ...voidManifest,
+        install: { ...voidManifest.install, selfDeploying: rest },
+      });
+      expect(result.success, key).toBe(false);
+      expect(result.error?.issues[0]?.path, key).toEqual(["install", "selfDeploying", key]);
+    }
+  });
+
+  it("refuses alchemy's deploy command, and alchemy entries refuse void's commands", () => {
+    const onVoid = strictCatalogManifestSchema.safeParse(
+      withVoid({ deployCommand: ["pnpm", "alchemy", "deploy"] }),
+    );
+    expect(issuesOf(onVoid)).toEqual([
+      {
+        path: ["install", "selfDeploying", "deployCommand"],
+        message:
+          'install.selfDeploying.deployCommand is only for tool "alchemy"; a void entry lists discoverCommand, installCommand, resumeCommand, updateCommand and destroyCommand',
+      },
+    ]);
+    const onAlchemy = strictCatalogManifestSchema.safeParse(
+      withInstall({ selfDeploying: { ...selfDeploying, installCommand: voidInstall } }),
+    );
+    expect(issuesOf(onAlchemy)).toEqual([
+      {
+        path: ["install", "selfDeploying", "installCommand"],
+        message:
+          'install.selfDeploying.installCommand is only for tool "void"; an alchemy entry lists deployCommand and destroyCommand',
+      },
+    ]);
+    // A manager reads either leniently: the other tool's field is dropped.
+    const lenient = catalogManifestSchema.parse(
+      withInstall({ selfDeploying: { ...selfDeploying, installCommand: voidInstall } }),
+    );
+    expect(lenient.install.selfDeploying).not.toHaveProperty("installCommand");
+    // A void block without the void commands is not an alchemy block either.
+    expect(
+      catalogManifestSchema.safeParse(
+        withVoid({
+          discoverCommand: undefined,
+          installCommand: undefined,
+          resumeCommand: undefined,
+          updateCommand: undefined,
+          deployCommand: ["pnpm", "alchemy", "deploy"],
+        }),
+      ).success,
+    ).toBe(false);
+  });
+
+  it("needs {{stage}} in every command, since nothing is appended", () => {
+    const result = catalogManifestSchema.safeParse(
+      withVoid({ updateCommand: [...VOID, "upgrade", "prod", "--yes"] }),
+    );
+    expect(issuesOf(result)).toEqual([
+      {
+        path: ["install", "selfDeploying", "updateCommand"],
+        message: "must name the installation with {{stage}}; nothing is appended to a void command",
+      },
+    ]);
+  });
+
+  it('must list "workers-for-platforms" in requires', () => {
+    const result = catalogManifestSchema.safeParse({
+      ...voidManifest,
+      requires: ["r2", "containers", "analytics-engine"],
+    });
+    expect(result.success).toBe(false);
+    expect(result.error?.issues.map((i) => i.path)).toEqual([["requires"]]);
+    expect(result.error?.issues[0]?.message).toContain('"workers-for-platforms"');
+    // An alchemy entry may list it or not.
+    for (const requires of [[], [WORKERS_FOR_PLATFORMS_REQUIREMENT]]) {
+      expect(catalogManifestSchema.safeParse({ ...manifest, requires }).success).toBe(true);
+    }
+  });
+
+  it("refuses a secret or var under a name the sandbox Worker hands the token or account in", () => {
+    for (const name of [
+      "VOID_PLATFORM_RUNTIME_CLOUDFLARE_API_TOKEN",
+      "CLOUDFLARE_API_TOKEN",
+      "CLOUDFLARE_ACCOUNT_ID",
+    ]) {
+      const secret = catalogManifestSchema.safeParse({
+        ...voidManifest,
+        secrets: [...voidManifest.secrets, { name, label: "Token" }],
+      });
+      expect(
+        issuesOf(secret).map((i) => i.path),
+        name,
+      ).toEqual([["secrets", 5, "name"]]);
+      const variable = catalogManifestSchema.safeParse({
+        ...voidManifest,
+        vars: [{ name, label: "Token" }],
+      });
+      expect(
+        issuesOf(variable).map((i) => i.path),
+        name,
+      ).toEqual([["vars", 0, "name"]]);
+    }
+  });
+
+  it("keeps the alchemy commands free of placeholders, as before", () => {
+    const result = catalogManifestSchema.safeParse(
+      withInstall({
+        selfDeploying: {
+          ...selfDeploying,
+          deployCommand: ["pnpm", "alchemy", "deploy", "{{stage}}"],
+        },
+      }),
+    );
+    expect(result.success).toBe(false);
+    expect(result.error?.issues[0]?.path).toEqual(["install", "selfDeploying", "deployCommand", 3]);
+  });
+
+  it("states the tool's fields and the requirement in the JSON Schema", () => {
+    const schema = z.toJSONSchema(catalogSelfDeployingSchema) as {
+      oneOf: Array<{
+        properties: Record<string, { const?: string }>;
+        required: string[];
+        additionalProperties: boolean;
+      }>;
+    };
+    const [alchemy, voidOption] = schema.oneOf;
+    expect(alchemy?.properties.tool?.const).toBe("alchemy");
+    expect(alchemy?.required.sort()).toEqual(
+      ["deployCommand", "destroyCommand", "tool", "workerNames"].sort(),
+    );
+    expect(voidOption?.properties.tool?.const).toBe("void");
+    expect(voidOption?.required.sort()).toEqual(
+      [
+        "destroyCommand",
+        "discoverCommand",
+        "installCommand",
+        "resumeCommand",
+        "tool",
+        "updateCommand",
+        "workerNames",
+      ].sort(),
+    );
+    expect(alchemy?.additionalProperties).toBe(false);
+    expect(voidOption?.additionalProperties).toBe(false);
+    const manifestSchema = JSON.stringify(z.toJSONSchema(catalogManifestSchema));
+    expect(manifestSchema).toContain('"contains":{"const":"workers-for-platforms"}');
+  });
+});
+
+describe("command templates", () => {
+  const values = { stage: "appflare-x0yzabcd", accountId: ACCOUNT_ID };
+
+  it("takes {{stage}} and {{accountId}} as a word or inside one, and nothing else in braces", () => {
+    for (const word of ["{{stage}}", "--name={{stage}}", "void-{{stage}}", "{{accountId}}"]) {
+      expect(selfDeployingCommandTemplateSchema.safeParse(["void", word]).success, word).toBe(true);
+    }
+    for (const word of [
+      "{{ stage }}",
+      "{{Stage}}",
+      "{{appUrl}}",
+      "{{workerName}}",
+      "{stage}",
+      "{{stage}",
+      // biome-ignore lint/suspicious/noTemplateCurlyInString: a shell expansion, which a word must refuse
+      "${stage}",
+      "{{stage}};rm",
+    ]) {
+      expect(selfDeployingCommandTemplateSchema.safeParse(["void", word]).success, word).toBe(
+        false,
+      );
+    }
+  });
+
+  it("starts with a program written out, never a placeholder or an option", () => {
+    for (const argv of [["{{stage}}"], ["{{accountId}}", "x"], ["--yes"], []]) {
+      expect(selfDeployingCommandTemplateSchema.safeParse(argv).success).toBe(false);
+    }
+  });
+
+  it("refuses an environment assignment a placeholder would start", () => {
+    expect(selfDeployingCommandTemplateSchema.safeParse(["void", "{{stage}}=1"]).success).toBe(
+      false,
+    );
+    expect(selfDeployingCommandTemplateSchema.safeParse(["void", "{{accountId}}=1"]).success).toBe(
+      false,
+    );
+  });
+
+  it("counts the 256 characters once the longest stage and an account id are filled in", () => {
+    // 8 words, joined: the template is 7 shorter than the limit, but each
+    // {{stage}} grows by 15 characters filled in.
+    const filler = "a".repeat(256 - 7 - "void {{stage}}".length - 1);
+    const template = ["void", "{{stage}}", filler];
+    expect(template.join(" ").length).toBeLessThan(256);
+    const result = selfDeployingCommandTemplateSchema.safeParse(template);
+    expect(result.success).toBe(false);
+    expect(result.error?.issues[0]?.message).toBe(
+      "must be at most 256 characters in total once {{stage}} and {{accountId}} are filled in",
+    );
+    expect(
+      selfDeployingCommandTemplateSchema.safeParse(["void", "{{stage}}", filler.slice(15)]).success,
+    ).toBe(true);
+  });
+
+  it("fits every void command within the word and length limits, filled in", () => {
+    const longest = { stage: "a".repeat(MAX_STAGE_LENGTH), accountId: ACCOUNT_ID };
+    for (const key of [
+      "discoverCommand",
+      "installCommand",
+      "resumeCommand",
+      "updateCommand",
+      "destroyCommand",
+    ] as const) {
+      const filled = fillSelfDeployingCommand(voidBlock[key], longest);
+      expect(filled.length, key).toBeLessThanOrEqual(32);
+      expect(filled.join(" ").length, key).toBeLessThanOrEqual(256);
+      expect(selfDeployingCommandSchema.safeParse(filled).success, key).toBe(true);
+    }
+  });
+
+  it("fills in the stage and the account id, word by word", () => {
+    expect(fillSelfDeployingCommand(voidInstall, values)).toEqual([
+      ...VOID,
+      "install",
+      "--yes",
+      "--name",
+      "appflare-x0yzabcd",
+      "--display-name",
+      "Void",
+      "--account",
+      ACCOUNT_ID,
+      "--workers-dev",
+    ]);
+    expect(fillSelfDeployingCommand(["void", "--name={{stage}}-{{stage}}"], values)).toEqual([
+      "void",
+      "--name=appflare-x0yzabcd-appflare-x0yzabcd",
+    ]);
+    // A command without placeholders (an alchemy one) comes back as it was.
+    expect(fillSelfDeployingCommand(selfDeploying.deployCommand, values)).toEqual(
+      selfDeploying.deployCommand,
+    );
+  });
+
+  it("refuses to fill in anything but a stage and an account id", () => {
+    for (const bad of [
+      { ...values, stage: "Prod" },
+      { ...values, stage: "a; rm -rf /" },
+      { ...values, stage: "a".repeat(MAX_STAGE_LENGTH + 1) },
+      { ...values, accountId: "not-an-account" },
+      { ...values, accountId: ACCOUNT_ID.toUpperCase() },
+    ]) {
+      expect(() => fillSelfDeployingCommand(voidInstall, bad)).toThrow();
+    }
+  });
+});
+
+describe("stages and names of a void install", () => {
+  /** Void's own normalization of an installation name (packages/platform, manifest.ts). */
+  function voidSlug(value: string): string {
+    const slug = value
+      .trim()
+      .toLowerCase()
+      .replaceAll(/[^a-z0-9-]+/g, "-")
+      .replaceAll(/^-+|-+$/g, "")
+      .replaceAll(/-{2,}/g, "-");
+    if (!slug || slug.length > 40) throw new Error(`not a Void installation name: ${value}`);
+    return slug;
+  }
+
+  it("passes every stage Appflare derives to Void unchanged", () => {
+    for (const installId of [
+      "01J8Z3Q4R5S6T7V8W9X0YZABCD",
+      "01HZZZZZZZZZZZZZZZZZZZZZZZ",
+      "x",
+      // Dashes and other separators in an id never reach the stage.
+      "install--a--b--c",
+      "--------",
+      "",
+    ]) {
+      const stage = selfDeployingStage(installId);
+      expect(stage, installId).not.toContain("--");
+      expect(selfDeployingStageSchema.safeParse(stage).success, installId).toBe(true);
+      expect(voidSlug(stage)).toBe(stage);
+    }
+    // The longest stage Appflare accepts is well within Void's 40 characters.
+    expect(MAX_STAGE_LENGTH).toBeLessThanOrEqual(40);
+    expect(voidSlug("a".repeat(MAX_STAGE_LENGTH))).toHaveLength(MAX_STAGE_LENGTH);
+  });
+
+  it("fits Void's longest Worker name within 63 characters at the longest stage", () => {
+    const template = "void-{{stage}}-email-gateway";
+    expect(selfDeployingWorkerTemplateSchema.safeParse(template).success).toBe(true);
+    expect(renderWorkerTemplate(template, "a".repeat(MAX_STAGE_LENGTH))).toHaveLength(43);
+    for (const name of voidBlock.workerNames) {
+      expect(selfDeployingWorkerTemplateSchema.safeParse(name).success, name).toBe(true);
+    }
+  });
+});
+
+describe('the "workers-for-platforms" requirement', () => {
+  it("is an account capability, so the manager checks the account for it", () => {
+    expect(requirementSchema.safeParse(WORKERS_FOR_PLATFORMS_REQUIREMENT).success).toBe(true);
+    expect(isManagerFeatureRequirement(WORKERS_FOR_PLATFORMS_REQUIREMENT)).toBe(false);
+    expect(accountRequirements(["r2", WORKERS_FOR_PLATFORMS_REQUIREMENT, "secret-keys"])).toEqual([
+      "r2",
+      WORKERS_FOR_PLATFORMS_REQUIREMENT,
+    ]);
+  });
+});
+
+describe("resources a void install reports", () => {
+  it("takes dispatch namespaces, Hyperdrive configurations and AI Gateways", () => {
+    for (const kind of ["dispatch_namespace", "hyperdrive", "ai_gateway"]) {
+      expect(selfManagedResourceKindSchema.safeParse(kind).success, kind).toBe(true);
+    }
+    expect(selfManagedResourceKindSchema.safeParse("dispatch-namespace").success).toBe(false);
   });
 });

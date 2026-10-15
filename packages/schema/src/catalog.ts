@@ -46,7 +46,12 @@ import {
 import { catalogR2Schema } from "./r2-lifecycle.ts";
 import { BASE64_KEY_32_LENGTH, isBase64Key32 } from "./random-key.ts";
 import { isSeedOnly, seedManifestProblems } from "./seed.ts";
-import { catalogSelfDeployingSchema, selfDeployingTierProblem } from "./self-deploying.ts";
+import {
+  catalogSelfDeployingSchema,
+  SELF_DEPLOYING_TOOLS,
+  selfDeployingFieldMessage,
+  selfDeployingTierProblem,
+} from "./self-deploying.ts";
 import { formatPath, type StrictProblem, strictSchema } from "./strict.ts";
 import { taglineSchema } from "./tagline.ts";
 import { tokenPermissionGroupProblems, tokenPermissionsSchema } from "./token-permissions.ts";
@@ -389,9 +394,19 @@ export const requirementSchema = z.enum([
   "containers",
   "analytics-engine",
   "access",
+  "workers-for-platforms",
   ...MANAGER_FEATURE_REQUIREMENTS,
 ]);
 export type Requirement = z.infer<typeof requirementSchema>;
+
+/**
+ * The `requires` value of an app that deploys Workers into a dispatch
+ * namespace, which needs Workers for Platforms on the account. Every `void`
+ * self-deploying entry lists it: the Void Platform runs its users' Workers
+ * in one and does not check for it before it starts creating resources. A
+ * manager from before the value leaves such entries out.
+ */
+export const WORKERS_FOR_PLATFORMS_REQUIREMENT = "workers-for-platforms" satisfies Requirement;
 
 /**
  * What kind of value the install form generates for a secret. `password`: a
@@ -2322,7 +2337,10 @@ export const catalogManifestSchema = z
       .array(requirementSchema)
       .default([])
       .describe(
-        'Account capabilities the app needs beyond the free Workers baseline. `"access"`: ' +
+        "Account capabilities the app needs beyond the free Workers baseline. " +
+          '`"workers-for-platforms"`: the app deploys Workers into a dispatch namespace, which ' +
+          "needs Workers for Platforms (a paid add-on) on the account; required with " +
+          '`install.selfDeploying.tool: "void"`. `"access"`: ' +
           "the app goes with Cloudflare Access. The account needs a Zero Trust organization " +
           'only while the app is protected (always, with `access.mode: "required"`), and the ' +
           "value keeps the entry away from managers too old to protect apps. Required with " +
@@ -2472,6 +2490,38 @@ export const catalogManifestSchema = z
   })
   .superRefine((manifest, ctx) => {
     if (manifest.install.tier !== "self-deploying") return;
+    const installer = manifest.install.selfDeploying;
+    if (
+      installer?.tool === "void" &&
+      !manifest.requires.includes(WORKERS_FOR_PLATFORMS_REQUIREMENT)
+    ) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["requires"],
+        message: `a void entry must list "${WORKERS_FOR_PLATFORMS_REQUIREMENT}" in requires: the Void Platform runs its users' Workers in a dispatch namespace and does not check for Workers for Platforms before it starts creating resources`,
+      });
+    }
+    if (installer?.tool === "void") {
+      // The sandbox Worker sets these from the app's token and account; an
+      // app secret or var under one of the names could never reach the
+      // installer. Alchemy's names start with CLOUDFLARE_, which the sandbox
+      // Worker already refuses for an app's own settings when it runs;
+      // `VOID_PLATFORM_RUNTIME_CLOUDFLARE_API_TOKEN` matches no such prefix.
+      const tool = SELF_DEPLOYING_TOOLS[installer.tool];
+      const taken = new Set([...tool.tokenEnv, ...tool.accountIdEnv]);
+      const claimed = [
+        ...manifest.secrets.map((s, i) => ({ path: ["secrets", i, "name"], name: s.name })),
+        ...manifest.vars.map((v, i) => ({ path: ["vars", i, "name"], name: v.name })),
+      ];
+      for (const { path, name } of claimed) {
+        if (!taken.has(name)) continue;
+        ctx.addIssue({
+          code: "custom",
+          path,
+          message: `${name} is where the sandbox Worker hands ${tool.label} the app's token or account id, so the app cannot use it for a secret or var`,
+        });
+      }
+    }
     if (manifest.requires.includes("access")) {
       ctx.addIssue({
         code: "custom",
@@ -2579,7 +2629,8 @@ export const catalogManifestSchema = z
   // The refinements do not reach the JSON Schema; `allOf` states the
   // self-deploying ones there (no `access` block, no optional, derived or seed-only secrets, no
   // derived or seed-only vars, no Hyperdrive declarations, no D1 layout, no
-  // Pipelines), and that Pipelines needs `plan: "paid"`. Whether a
+  // Pipelines), that Pipelines needs `plan: "paid"`, and that a void entry
+  // lists "workers-for-platforms". Whether a
   // `derive.from` names another secret, or a sink's `tokenSecret` names a
   // secret the install form asks for, cannot be said in JSON Schema.
   .meta({
@@ -2701,6 +2752,32 @@ export const catalogManifestSchema = z
                   },
                 },
               },
+            },
+          },
+        ],
+      },
+      // A void entry lists "workers-for-platforms" in `requires`.
+      {
+        anyOf: [
+          {
+            not: {
+              properties: {
+                install: {
+                  required: ["selfDeploying"],
+                  properties: {
+                    selfDeploying: {
+                      required: ["tool"],
+                      properties: { tool: { const: "void" } },
+                    },
+                  },
+                },
+              },
+            },
+          },
+          {
+            required: ["requires"],
+            properties: {
+              requires: { contains: { const: WORKERS_FOR_PLATFORMS_REQUIREMENT } },
             },
           },
         ],
@@ -3119,13 +3196,18 @@ const RENAMED_FIELDS: ReadonlyArray<{
   },
 ];
 
-/** What the strict schemas say about an unknown key: where a renamed field went, or null. */
-function renamedFieldMessage(path: ReadonlyArray<string | number>): string | null {
+/**
+ * What the strict schemas say about an unknown key: where a renamed field
+ * went, or which installer an `install.selfDeploying` field belongs to; null
+ * for a key that is simply unknown.
+ */
+function unknownFieldMessage(path: ReadonlyArray<string | number>): string | null {
   const renamed = RENAMED_FIELDS.find(
     (r) =>
       r.path.length === path.length && r.path.every((part, i) => part === null || part === path[i]),
   );
-  return renamed === undefined ? null : renamed.message(formatPath(path));
+  if (renamed !== undefined) return renamed.message(formatPath(path));
+  return selfDeployingFieldMessage(path);
 }
 
 /**
@@ -3169,7 +3251,7 @@ function authoringProblems(input: unknown, repositoryBuild: boolean): StrictProb
 export const strictCatalogManifestSchema = strictSchema(
   catalogManifestSchema,
   (input) => authoringProblems(input, false),
-  renamedFieldMessage,
+  unknownFieldMessage,
 );
 
 /**
@@ -3181,5 +3263,5 @@ export const strictCatalogManifestSchema = strictSchema(
 export const strictRepositoryBuildManifestSchema = strictSchema(
   catalogManifestSchema,
   (input) => authoringProblems(input, true),
-  renamedFieldMessage,
+  unknownFieldMessage,
 );

@@ -29,6 +29,36 @@ describe("APP_TOKEN_PERMISSION_GROUPS", () => {
     for (const g of APP_TOKEN_PERMISSION_GROUPS) expect(g.templateKey).toMatch(/^[a-z0-9_]+$/);
   });
 
+  it("has every group the Void CLI's token needs, with the dashboard's template keys", () => {
+    // The dashboard labels these groups aig_read/aig_write and
+    // cloudchamber_read/cloudchamber_write; the API calls them "AI Gateway
+    // Write" and "Cloudchamber Write".
+    expect(appTokenPermissionGroup("account", "AI Gateway")?.templateKey).toBe("aig");
+    expect(appTokenPermissionGroup("account", "Cloudchamber")).toMatchObject({
+      templateKey: "cloudchamber",
+      service: "containers",
+    });
+    for (const [scope, group] of [
+      ["account", "Account Settings"],
+      ["account", "Workers Scripts"],
+      ["account", "Workers Tail"],
+      ["account", "D1"],
+      ["account", "Workers KV Storage"],
+      ["account", "Workers R2 Storage"],
+      ["account", "Queues"],
+      ["account", "Hyperdrive"],
+      ["account", "Account Analytics"],
+      ["account", "Workers Containers"],
+      ["zone", "Cache Purge"],
+    ] as const) {
+      expect(appTokenPermissionGroup(scope, group), group).not.toBeNull();
+    }
+    expect(tokenPermissionName({ scope: "account", group: "AI Gateway", access: "edit" })).toBe(
+      "Account: AI Gateway: Edit",
+    );
+    expect(appTokenPermissionGroup("zone", "AI Gateway")).toBeNull();
+  });
+
   it("tells the account and zone Logs groups apart", () => {
     expect(appTokenPermissionGroup("zone", "Logs")?.templateKey).toBe("logs");
     expect(appTokenPermissionGroup("account", "Logs")?.templateKey).toBe("account_logs");

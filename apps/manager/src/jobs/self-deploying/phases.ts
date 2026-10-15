@@ -204,6 +204,13 @@ export function installerRequest(input: {
   const { catalog } = input;
   const block = installerOf(catalog);
   const tool = SELF_DEPLOYING_TOOLS[block.tool];
+  if (block.tool !== "alchemy") {
+    // TODO: run a void entry's commands (discover, install, resume, update,
+    // destroy); the sandbox Worker cannot run them yet.
+    throw new JobError(
+      `${catalog.slug} is installed with ${tool.label}, which this version of Appflare cannot run yet`,
+    );
+  }
   const parsed = selfManagedRunRequestSchema.safeParse({
     protocol: SANDBOX_PROTOCOL_VERSION,
     installId: input.installId,
@@ -540,7 +547,10 @@ export async function recordDiscoveredPhase(
         .values({
           id: resourceId(installId, r.kind, discoveredKey(r)),
           install_id: installId,
-          kind: r.kind,
+          // TODO: list dispatch_namespace and ai_gateway in RESOURCE_KINDS, with
+          // labels and an uninstall treatment, before the sandbox Worker reports
+          // them. The column is plain text, so the cast changes nothing stored.
+          kind: r.kind as (typeof resources.$inferInsert)["kind"],
           binding: r.binding,
           name: r.name,
           cf_id: r.cfId,

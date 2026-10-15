@@ -1448,56 +1448,143 @@
           "description": "Toolchains beyond Node.js the build needs. `\"rust\"`: catalog CI installs a pinned Rust toolchain with the `wasm32-unknown-unknown` target before installing and building, for workers-rs apps (`worker-build`). Artifact tier only: the sandbox image that builds sandbox and self-deploying entries in an account has no Rust."
         },
         "selfDeploying": {
-          "type": "object",
-          "properties": {
-            "tool": {
-              "type": "string",
-              "enum": [
-                "alchemy"
+          "oneOf": [
+            {
+              "type": "object",
+              "properties": {
+                "tool": {
+                  "type": "string",
+                  "const": "alchemy",
+                  "description": "The installer the app ships. `\"alchemy\"`: an Alchemy stack, which gets the app's token as `CLOUDFLARE_API_TOKEN` and the account id as `CLOUDFLARE_ACCOUNT_ID`, and whose commands get `--stage <stage>` appended."
+                },
+                "deployCommand": {
+                  "minItems": 1,
+                  "maxItems": 32,
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "minLength": 1,
+                    "pattern": "^[A-Za-z0-9@%+,./:=_-]+$"
+                  },
+                  "description": "Alchemy only. The command that deploys (or updates) the app, as argv, run at the root of the checkout after the dependency install and `install.buildCommand`, for example `[\"pnpm\", \"alchemy\", \"deploy\", \"--yes\"]`. The sandbox Worker appends `--stage <stage>`. It must not prompt: it runs without a terminal. A list of words rather than one string, so the words run exactly as listed."
+                },
+                "destroyCommand": {
+                  "minItems": 1,
+                  "maxItems": 32,
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "minLength": 1,
+                    "pattern": "^[A-Za-z0-9@%+,./:=_-]+$"
+                  },
+                  "description": "The command that deletes everything the deploy command created, as argv, for example `[\"pnpm\", \"alchemy\", \"destroy\", \"--yes\"]`. Uninstalling runs it; Appflare never deletes the app's resources itself."
+                },
+                "workerNames": {
+                  "minItems": 1,
+                  "maxItems": 8,
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "pattern": "^[a-z0-9-]*\\{\\{stage\\}\\}[a-z0-9-]*$"
+                  },
+                  "description": "The Workers the installer creates, with `{{stage}}` for the install's stage, for example `[\"open-seo-{{stage}}\", \"open-seo-{{stage}}-audit\"]`. The first one serves the app: its workers.dev URL is the install's URL and the health check probes it. After each run Appflare reads these Workers and records what they bind."
+                }
+              },
+              "required": [
+                "tool",
+                "deployCommand",
+                "destroyCommand",
+                "workerNames"
               ],
-              "description": "The installer the app ships. `\"alchemy\"`: an Alchemy stack, which gets the app's token as `CLOUDFLARE_API_TOKEN` and the account id as `CLOUDFLARE_ACCOUNT_ID`."
+              "additionalProperties": false
             },
-            "deployCommand": {
-              "minItems": 1,
-              "maxItems": 32,
-              "type": "array",
-              "items": {
-                "type": "string",
-                "minLength": 1,
-                "pattern": "^[A-Za-z0-9@%+,./:=_-]+$"
+            {
+              "type": "object",
+              "properties": {
+                "tool": {
+                  "type": "string",
+                  "const": "void",
+                  "description": "`\"void\"`: the Void CLI (`void platform ...`), which gets the app's token as `CLOUDFLARE_API_TOKEN` and `VOID_PLATFORM_RUNTIME_CLOUDFLARE_API_TOKEN` and the account id as `CLOUDFLARE_ACCOUNT_ID`. Nothing is appended to its commands: they name the stage with `{{stage}}`."
+                },
+                "discoverCommand": {
+                  "minItems": 1,
+                  "maxItems": 32,
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "minLength": 1,
+                    "pattern": "^(?:[A-Za-z0-9@%+,./:=_-]|\\{\\{(?:stage|accountId)\\}\\})+$"
+                  },
+                  "description": "Void only. The command that rebuilds the installer's local record of an installation from the account, as argv, for example `[\"pnpm\", \"exec\", \"void\", \"platform\", \"discover\", \"--account\", \"{{accountId}}\", \"--installation\", \"{{stage}}\"]`. Run when that record is missing. Words may hold `{{stage}}` (the install's stage, Void's installation name) and `{{accountId}}`, which the sandbox Worker fills in. It must not prompt: it runs without a terminal."
+                },
+                "installCommand": {
+                  "minItems": 1,
+                  "maxItems": 32,
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "minLength": 1,
+                    "pattern": "^(?:[A-Za-z0-9@%+,./:=_-]|\\{\\{(?:stage|accountId)\\}\\})+$"
+                  },
+                  "description": "Void only. The command that installs the app the first time, as argv, for example `[\"pnpm\", \"exec\", \"void\", \"platform\", \"install\", \"--yes\", \"--name\", \"{{stage}}\", \"--display-name\", \"Void\", \"--account\", \"{{accountId}}\", \"--workers-dev\"]`. Words may hold `{{stage}}` (the install's stage, Void's installation name) and `{{accountId}}`, which the sandbox Worker fills in. It must not prompt: it runs without a terminal."
+                },
+                "resumeCommand": {
+                  "minItems": 1,
+                  "maxItems": 32,
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "minLength": 1,
+                    "pattern": "^(?:[A-Za-z0-9@%+,./:=_-]|\\{\\{(?:stage|accountId)\\}\\})+$"
+                  },
+                  "description": "Void only. The command that continues an install that stopped part way, as argv: the install command with `--resume`. Words may hold `{{stage}}` (the install's stage, Void's installation name) and `{{accountId}}`, which the sandbox Worker fills in. It must not prompt: it runs without a terminal."
+                },
+                "updateCommand": {
+                  "minItems": 1,
+                  "maxItems": 32,
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "minLength": 1,
+                    "pattern": "^(?:[A-Za-z0-9@%+,./:=_-]|\\{\\{(?:stage|accountId)\\}\\})+$"
+                  },
+                  "description": "Void only. The command that updates an installed app to the pinned version, as argv, for example `[\"pnpm\", \"exec\", \"void\", \"platform\", \"upgrade\", \"{{stage}}\", \"--yes\"]`. Words may hold `{{stage}}` (the install's stage, Void's installation name) and `{{accountId}}`, which the sandbox Worker fills in. It must not prompt: it runs without a terminal."
+                },
+                "destroyCommand": {
+                  "minItems": 1,
+                  "maxItems": 32,
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "minLength": 1,
+                    "pattern": "^(?:[A-Za-z0-9@%+,./:=_-]|\\{\\{(?:stage|accountId)\\}\\})+$"
+                  },
+                  "description": "The command that deletes everything the installer created, as argv, for example `[\"pnpm\", \"exec\", \"void\", \"platform\", \"uninstall\", \"{{stage}}\", \"--purge-resources\", \"--yes\"]`. Uninstalling runs it; Appflare never deletes the app's resources itself. Words may hold `{{stage}}` (the install's stage, Void's installation name) and `{{accountId}}`, which the sandbox Worker fills in. It must not prompt: it runs without a terminal."
+                },
+                "workerNames": {
+                  "minItems": 1,
+                  "maxItems": 8,
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "pattern": "^[a-z0-9-]*\\{\\{stage\\}\\}[a-z0-9-]*$"
+                  },
+                  "description": "The Workers the installer creates, with `{{stage}}` for the install's stage, for example `[\"open-seo-{{stage}}\", \"open-seo-{{stage}}-audit\"]`. The first one serves the app: its workers.dev URL is the install's URL and the health check probes it. After each run Appflare reads these Workers and records what they bind."
+                }
               },
-              "description": "The command that deploys (or updates) the app, as argv, run at the root of the checkout after the dependency install and `install.buildCommand`, for example `[\"pnpm\", \"alchemy\", \"deploy\", \"--yes\"]`. The sandbox Worker appends the stage option and the stage (`--stage <stage>` for Alchemy). It must not prompt: it runs without a terminal. A list of words rather than one string, so the words run exactly as listed."
-            },
-            "destroyCommand": {
-              "minItems": 1,
-              "maxItems": 32,
-              "type": "array",
-              "items": {
-                "type": "string",
-                "minLength": 1,
-                "pattern": "^[A-Za-z0-9@%+,./:=_-]+$"
-              },
-              "description": "The command that deletes everything the deploy command created, as argv, for example `[\"pnpm\", \"alchemy\", \"destroy\", \"--yes\"]`. Uninstalling runs it; Appflare never deletes the app's resources itself."
-            },
-            "workerNames": {
-              "minItems": 1,
-              "maxItems": 8,
-              "type": "array",
-              "items": {
-                "type": "string",
-                "pattern": "^[a-z0-9-]*\\{\\{stage\\}\\}[a-z0-9-]*$"
-              },
-              "description": "The Workers the deploy command creates, with `{{stage}}` for the install's stage, for example `[\"open-seo-{{stage}}\", \"open-seo-{{stage}}-audit\"]`. The first one serves the app: its workers.dev URL is the install's URL and the health check probes it. After each deploy Appflare reads these Workers and records what they bind."
+              "required": [
+                "tool",
+                "discoverCommand",
+                "installCommand",
+                "resumeCommand",
+                "updateCommand",
+                "destroyCommand",
+                "workerNames"
+              ],
+              "additionalProperties": false
             }
-          },
-          "required": [
-            "tool",
-            "deployCommand",
-            "destroyCommand",
-            "workerNames"
           ],
-          "additionalProperties": false,
-          "description": "How the sandbox Worker runs the app's own installer (self-deploying tier only). The admin creates a Cloudflare API token from `tokenPermissions` for it. The installer keeps its state in the account (for Alchemy, its `alchemy-state-store` Worker), so every run sees what earlier runs deployed."
+          "description": "How the sandbox Worker runs the app's own installer (self-deploying tier only), with fields that depend on `tool`: `\"alchemy\"` lists `deployCommand` and `destroyCommand`; `\"void\"` lists `discoverCommand`, `installCommand`, `resumeCommand`, `updateCommand` and `destroyCommand`. The admin creates a Cloudflare API token from `tokenPermissions` for it. The installer keeps its state in the account (for Alchemy, its `alchemy-state-store` Worker), so every run sees what earlier runs deployed."
         },
         "workers": {
           "minItems": 2,
@@ -2819,7 +2906,7 @@
     },
     "requires": {
       "default": [],
-      "description": "Account capabilities the app needs beyond the free Workers baseline. `\"access\"`: the app goes with Cloudflare Access. The account needs a Zero Trust organization only while the app is protected (always, with `access.mode: \"required\"`), and the value keeps the entry away from managers too old to protect apps. Required with `access.mode: \"required\"` and whenever a var's default uses an Access placeholder. Some values name a feature of Appflare instead, which keeps the entry away from managers too old for it: `\"secret-keys\"` (a secret with a `key`), `\"service-props\"` (`props` on a service binding), `\"config-patch-values\"` (a config patch that sets var text or adds Workers AI), `\"email-worker\"` (`install.emailRouting.worker`), `\"email-placeholders\"` (`{{emailDomain}}` or `{{emailZoneId}}` anywhere, or any placeholder in an object key of a JSON var or of service binding `props`) and `\"hyperdrive-caching\"` (`caching` on a Hyperdrive binding).",
+      "description": "Account capabilities the app needs beyond the free Workers baseline. `\"workers-for-platforms\"`: the app deploys Workers into a dispatch namespace, which needs Workers for Platforms (a paid add-on) on the account; required with `install.selfDeploying.tool: \"void\"`. `\"access\"`: the app goes with Cloudflare Access. The account needs a Zero Trust organization only while the app is protected (always, with `access.mode: \"required\"`), and the value keeps the entry away from managers too old to protect apps. Required with `access.mode: \"required\"` and whenever a var's default uses an Access placeholder. Some values name a feature of Appflare instead, which keeps the entry away from managers too old for it: `\"secret-keys\"` (a secret with a `key`), `\"service-props\"` (`props` on a service binding), `\"config-patch-values\"` (a config patch that sets var text or adds Workers AI), `\"email-worker\"` (`install.emailRouting.worker`), `\"email-placeholders\"` (`{{emailDomain}}` or `{{emailZoneId}}` anywhere, or any placeholder in an object key of a JSON var or of service binding `props`) and `\"hyperdrive-caching\"` (`caching` on a Hyperdrive binding).",
       "type": "array",
       "items": {
         "type": "string",
@@ -2832,6 +2919,7 @@
           "containers",
           "analytics-engine",
           "access",
+          "workers-for-platforms",
           "secret-keys",
           "service-props",
           "config-patch-values",
@@ -3370,6 +3458,8 @@
               "Workers R2 SQL",
               "Workers Tail",
               "Workers Containers",
+              "Cloudchamber",
+              "AI Gateway",
               "D1",
               "Queues",
               "Vectorize",
@@ -3382,7 +3472,7 @@
               "Access: Apps and Policies",
               "Access: Organizations, Identity Providers, and Groups"
             ],
-            "description": "The permission group, as the Cloudflare dashboard's token form names it, for example `\"DNS\"` or `\"Workers Scripts\"`. Zone groups: DNS, Zone, Zone Settings, Analytics, Page Rules, Cache Purge, SSL and Certificates, Firewall Services, Load Balancers, Logs, Workers Routes, Email Routing Rules. Account groups: Account Settings, Account Analytics, Billing, Logs, Magic Transit, Workers Scripts, Workers KV Storage, Workers R2 Storage, Workers R2 Data Catalog, Workers R2 SQL, Workers Tail, Workers Containers, D1, Queues, Vectorize, Images, Hyperdrive, Pipelines, Secrets Store, Email Sending, Email Routing Addresses, Access: Apps and Policies, Access: Organizations, Identity Providers, and Groups."
+            "description": "The permission group, as the Cloudflare dashboard's token form names it, for example `\"DNS\"` or `\"Workers Scripts\"`. Zone groups: DNS, Zone, Zone Settings, Analytics, Page Rules, Cache Purge, SSL and Certificates, Firewall Services, Load Balancers, Logs, Workers Routes, Email Routing Rules. Account groups: Account Settings, Account Analytics, Billing, Logs, Magic Transit, Workers Scripts, Workers KV Storage, Workers R2 Storage, Workers R2 Data Catalog, Workers R2 SQL, Workers Tail, Workers Containers, Cloudchamber, AI Gateway, D1, Queues, Vectorize, Images, Hyperdrive, Pipelines, Secrets Store, Email Sending, Email Routing Addresses, Access: Apps and Policies, Access: Organizations, Identity Providers, and Groups."
           },
           "scope": {
             "type": "string",
@@ -3435,6 +3525,8 @@
                   "Workers R2 SQL",
                   "Workers Tail",
                   "Workers Containers",
+                  "Cloudchamber",
+                  "AI Gateway",
                   "D1",
                   "Queues",
                   "Vectorize",
@@ -4489,6 +4581,45 @@
                     }
                   ]
                 }
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "anyOf": [
+        {
+          "not": {
+            "properties": {
+              "install": {
+                "required": [
+                  "selfDeploying"
+                ],
+                "properties": {
+                  "selfDeploying": {
+                    "required": [
+                      "tool"
+                    ],
+                    "properties": {
+                      "tool": {
+                        "const": "void"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "required": [
+            "requires"
+          ],
+          "properties": {
+            "requires": {
+              "contains": {
+                "const": "workers-for-platforms"
               }
             }
           }

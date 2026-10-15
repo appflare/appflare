@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   ACCESS_PLACEHOLDERS,
+  ACCOUNT_ID_PLACEHOLDER,
   accessTeamNameOf,
   EMAIL_PLACEHOLDERS,
   ENTRY_WORKER_PLACEHOLDER_SOURCE,
@@ -76,8 +77,10 @@ describe("the placeholder list", () => {
       expect(PLACEHOLDER_FIELDS.postInstall).toContain(name);
     }
     expect(PLACEHOLDER_FIELDS.selfDeployingWorkerName).toEqual(["stage"]);
+    expect(PLACEHOLDER_FIELDS.selfDeployingCommand).toEqual(["stage", "accountId"]);
     expect(INSTALL_PLACEHOLDERS).not.toContain("stage");
     expect(STAGE_PLACEHOLDER).toBe("{{stage}}");
+    expect(ACCOUNT_ID_PLACEHOLDER).toBe("{{accountId}}");
   });
 
   it("exports regular expression sources the manager's chips build on", () => {
