@@ -66,6 +66,8 @@ export const RESOURCE_KIND_LABELS: Record<string, string> = {
   email_route: "Email route",
   access_service_token: "Access service token",
   access_app: "Access application",
+  dispatch_namespace: "Dispatch namespace",
+  ai_gateway: "AI Gateway",
 };
 
 export function resourceKindLabel(kind: string): string {

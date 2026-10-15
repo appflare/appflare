@@ -4,6 +4,8 @@ import {
   type CatalogManifest,
   catalogManifestSchema,
   type IndexApp,
+  SANDBOX_FEATURE_SELF_DEPLOYING,
+  SANDBOX_FEATURE_SELF_DEPLOYING_VOID,
   SANDBOX_PROTOCOL_VERSION,
 } from "@appflare/schema";
 import { beforeEach, describe, expect, it } from "vitest";
@@ -198,6 +200,7 @@ function setup(
   opts: {
     sandbox?: FakeSandboxOptions["selfManaged"];
     versionIds?: FakeSandboxOptions["versionIds"];
+    info?: FakeSandboxOptions["info"];
   } = {},
 ): Setup {
   const held = new Set<string>();
@@ -205,6 +208,7 @@ function setup(
   const sandbox = fakeSandbox(null, {
     selfManaged: { held, ...opts.sandbox },
     versionIds: opts.versionIds,
+    ...(opts.info === undefined ? {} : { info: opts.info }),
   });
   const w = world({ catalog: () => state.catalog, held });
   return {
@@ -571,6 +575,130 @@ describe("installing a self-deploying app", () => {
       }),
     ).rejects.toThrow(/cannot run app installers/);
     expect(s.w.secretCalls).toEqual([]);
+  });
+});
+
+describe("installing an app with the Void CLI", () => {
+  const voidCommand = (...words: string[]) => ["pnpm", "exec", "void", "platform", ...words];
+  const commands = {
+    discoverCommand: voidCommand(
+      "discover",
+      "--account",
+      "{{accountId}}",
+      "--installation",
+      "{{stage}}",
+    ),
+    installCommand: voidCommand("install", "--yes", "--name", "{{stage}}", "--workers-dev"),
+    resumeCommand: voidCommand("install", "--resume", "--yes", "--name", "{{stage}}"),
+    updateCommand: voidCommand("upgrade", "{{stage}}", "--yes"),
+    destroyCommand: voidCommand("uninstall", "{{stage}}", "--purge-resources", "--yes"),
+  };
+
+  function voidCatalog(): CatalogManifest {
+    const alchemy = selfDeployingCatalog();
+    return catalogManifestSchema.parse({
+      ...alchemy,
+      install: {
+        tier: "self-deploying",
+        packageManager: "pnpm",
+        wranglerConfig: "wrangler.jsonc",
+        selfDeploying: {
+          tool: "void",
+          ...commands,
+          workerNames: ["cut-{{stage}}", "cut-{{stage}}-jobs"],
+        },
+      },
+      requires: ["containers", "workers-for-platforms"],
+    });
+  }
+
+  it("hands the sandbox Worker every command, and records the namespace and gateway it reports", async () => {
+    const s = setup({
+      info: {
+        protocol: SANDBOX_PROTOCOL_VERSION,
+        sandboxVersion: "0.5.0",
+        image: "docker.io/mendylanda/appflare-sandbox:0.5.0",
+        features: [SANDBOX_FEATURE_SELF_DEPLOYING, SANDBOX_FEATURE_SELF_DEPLOYING_VOID],
+      },
+      sandbox: {
+        deploy: (request) => ({
+          ok: true,
+          action: "deploy",
+          protocol: SANDBOX_PROTOCOL_VERSION,
+          sandboxVersion: "0.4.0",
+          minutes: 9,
+          logKey: null,
+          log: "",
+          image: "docker.io/mendylanda/appflare-sandbox:0.4.0",
+          installId: request.installId,
+          workers: request.expectedWorkers.map((name, i) => ({
+            name,
+            url: i === 0 ? `https://${name}.acme.workers.dev` : null,
+          })),
+          resources: [
+            { kind: "worker", name: MAIN, cfId: MAIN, worker: MAIN, binding: null },
+            {
+              kind: "dispatch_namespace",
+              name: `void-${STAGE}-users`,
+              cfId: "ns-1",
+              worker: MAIN,
+              binding: "USER_WORKERS",
+            },
+            { kind: "ai_gateway", name: `void-${STAGE}`, cfId: null, worker: MAIN, binding: null },
+          ],
+        }),
+      },
+    });
+    s.catalog = voidCatalog();
+    const r = await install(s);
+    expect(r.error).toBeNull();
+    expect(s.sandbox.runs[0]).toMatchObject({
+      tool: "void",
+      stage: STAGE,
+      accountId: ACC,
+      commands: {
+        discover: commands.discoverCommand,
+        install: commands.installCommand,
+        resume: commands.resumeCommand,
+        update: commands.updateCommand,
+        destroy: commands.destroyCommand,
+      },
+      tokenEnv: ["CLOUDFLARE_API_TOKEN", "VOID_PLATFORM_RUNTIME_CLOUDFLARE_API_TOKEN"],
+    });
+    const rows = (
+      await env.DB.prepare(
+        "SELECT kind, name, managed_by FROM resources WHERE install_id = 'id1' AND kind != 'secret' ORDER BY rowid",
+      ).all<{ kind: string; name: string; managed_by: string }>()
+    ).results;
+    expect(rows.map((x) => `${x.kind} ${x.name} ${x.managed_by}`)).toEqual([
+      `worker ${MAIN} app`,
+      `dispatch_namespace void-${STAGE}-users app`,
+      `ai_gateway void-${STAGE} app`,
+    ]);
+  });
+
+  it("refuses a sandbox Worker that cannot run the Void CLI, before running anything", async () => {
+    const s = setup();
+    s.catalog = voidCatalog();
+    const started = await startInstall(s);
+    const old = fakeSandbox(null, {
+      selfManaged: { held: s.held },
+      info: {
+        protocol: 1,
+        sandboxVersion: "0.4.0",
+        image: "docker.io/mendylanda/appflare-sandbox:0.4.0",
+        features: [SANDBOX_FEATURE_SELF_DEPLOYING],
+      },
+    });
+    await expect(
+      runInstall({
+        params: started.params,
+        step: fakeStep(),
+        env: { ...s.jobEnv, SANDBOX: old },
+        deps: { fetch: s.w.fetch, now: () => NOW, sleep: async () => {} },
+      }),
+    ).rejects.toThrow(/cannot run the Void CLI/);
+    expect(old.runs).toEqual([]);
   });
 });
 

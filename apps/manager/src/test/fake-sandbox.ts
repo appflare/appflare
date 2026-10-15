@@ -136,7 +136,10 @@ export function fakeSandbox(
       sandboxVersion: "0.4.0",
       minutes: 6.5,
       logKey: `builds/${request.installId}/${request.runId}/log.txt`,
-      log: `Running the installer\n$ ${request.command.join(" ")} ${request.stageArg} ${request.stage}\n`,
+      log:
+        request.tool === "alchemy"
+          ? `Running the installer\n$ ${request.command.join(" ")} ${request.stageArg} ${request.stage}\n`
+          : `Running the Void CLI\n$ ${request.commands.install.join(" ")}\n`,
     };
     if (runFailuresLeft > 0) {
       runFailuresLeft -= 1;

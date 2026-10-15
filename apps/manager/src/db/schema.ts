@@ -64,6 +64,8 @@ export const RESOURCE_KINDS = [
   "email_route",
   "access_service_token",
   "access_app",
+  "dispatch_namespace",
+  "ai_gateway",
 ] as const;
 
 /**

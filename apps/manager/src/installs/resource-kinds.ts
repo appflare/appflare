@@ -189,6 +189,17 @@ export const PIPELINE_KINDS = [PIPELINE_KIND, PIPELINE_SINK_KIND, PIPELINE_STREA
  */
 export const R2_CATALOG_KIND = "r2_catalog" as const;
 
+/**
+ * Resources only an app's own installer creates (the self-deploying tier;
+ * the Void CLI makes both): a Workers for Platforms dispatch namespace,
+ * which holds the Workers the app deploys for its users, and an AI Gateway.
+ * They are recorded as managed by the app. An uninstall runs the installer's
+ * destroy command, which removes them, and then marks their records deleted;
+ * Appflare never deletes them itself, and the uninstall dialog offers no
+ * choice for them.
+ */
+export const APP_MANAGED_KINDS = ["dispatch_namespace", "ai_gateway"] as const;
+
 export function isDataResourceKind(kind: string): kind is DataResourceKind {
   return (DATA_RESOURCE_KINDS as readonly string[]).includes(kind);
 }

@@ -24,6 +24,8 @@ export interface BuildSandbox {
   /** Runs a command line to completion, streaming its output to `onOutput`. */
   exec(command: string, options: ExecOptions): Promise<ExecOutcome>;
   writeFile(path: string, content: string): Promise<void>;
+  /** A text file's contents, read as UTF-8; throws when it cannot be read. */
+  readFile(path: string): Promise<string>;
   /** Mounts `prefix` of the Worker's R2 binding `binding` at `mountPath`, without credentials. */
   mountBucket(binding: string, mountPath: string, prefix: string): Promise<void>;
   unmountBucket(mountPath: string): Promise<void>;
@@ -214,6 +216,11 @@ function openSandbox(
     },
     async writeFile(path, content) {
       await sandbox.writeFile(path, content);
+    },
+    async readFile(path) {
+      const result = await sandbox.readFile(path, { encoding: "utf-8" });
+      if (!result.success) throw new Error(`${path} could not be read`);
+      return result.content;
     },
     async mountBucket(binding, mountPath, prefix) {
       await sandbox.mountBucket(binding, mountPath, { prefix });

@@ -12,11 +12,12 @@ import {
   sandboxInstanceTypeSchema,
 } from "./catalog";
 import { packageManagerSchema } from "./install-dirs";
+import { STAGE_PLACEHOLDER } from "./placeholders";
 import {
   namesStage,
   selfDeployingCommandSchema,
+  selfDeployingCommandTemplateSchema,
   selfDeployingStageSchema,
-  selfDeployingToolSchema,
 } from "./self-deploying";
 
 /**
@@ -526,6 +527,12 @@ export function sandboxObjectUrl(key: string): string {
 export const SANDBOX_FEATURE_SELF_DEPLOYING = "self-deploying";
 
 /**
+ * The `info().features` entry of a sandbox Worker that also runs the Void
+ * CLI (`tool: "void"` requests). One without it refuses such a request.
+ */
+export const SANDBOX_FEATURE_SELF_DEPLOYING_VOID = "self-deploying-void";
+
+/**
  * An install id as a self-deploying request carries it: letters and digits
  * only, because it is part of the names of the secrets that hold the app's
  * token and secrets.
@@ -621,71 +628,132 @@ const selfManagedRepoSchema = ownerRepoSchema.refine(
   "must be a GitHub owner/repo",
 );
 
+/** The fields every run request starts with. */
+const runRequestHead = {
+  protocol: z.literal(SANDBOX_PROTOCOL_VERSION),
+  installId: selfManagedInstallIdSchema,
+  /**
+   * Names the run's log, `builds/<installId>/<runId>/log.txt`, which
+   * `progress({ installId, version: runId })` reads while it runs.
+   */
+  runId: buildVersionSchema,
+  /** The account the installer deploys to (the app token must be for it). */
+  accountId: z.string().regex(/^[0-9a-f]{32}$/, "must be a Cloudflare account id"),
+};
+
+/** The pinned source and how to build it, after `tool`. */
+const runRequestSource = {
+  repo: selfManagedRepoSchema,
+  /** The pin: the run checks out exactly this commit. */
+  sha: gitShaSchema,
+  /** The pin's branch or tag, tried first for a shallow clone. */
+  ref: z.string().min(1).max(256),
+  /** Where the installer's project sits inside the repository, when not at its root. */
+  subdirectory: checkoutPathSchema.optional(),
+  packageManager: packageManagerSchema,
+  /**
+   * The entry's `install.buildCommand`, run without credentials before the
+   * installer: one argv, or for an entry that lists several commands, their
+   * argvs in the order they run.
+   */
+  buildCommand: z
+    .union([buildCommandArgvSchema, z.array(buildCommandArgvSchema).min(1).max(MAX_BUILD_COMMANDS)])
+    .optional(),
+};
+
+/** What the installer's commands get, after the commands and the stage. */
+const runRequestTail = {
+  /** Environment variables the app token is exposed under (for Alchemy, `CLOUDFLARE_API_TOKEN`). */
+  tokenEnv: z.array(installerEnvNameSchema).min(1).max(4),
+  /** Environment variables the account id is exposed under (for Alchemy, `CLOUDFLARE_ACCOUNT_ID`). */
+  accountIdEnv: z.array(installerEnvNameSchema).max(4),
+  /** The app's settings (not secret), as environment variables. */
+  vars: z.record(installerEnvNameSchema, z.string().max(4096)),
+  /**
+   * Names of the app's secrets to expose, each read from
+   * `appSecretSecretName(installId, name)` on the sandbox Worker; every one must be there.
+   */
+  secretNames: z.array(installerEnvNameSchema).max(32),
+  /** The Workers the installer creates (deploy) or deletes (destroy), stage filled in. */
+  expectedWorkers: z.array(selfManagedWorkerNameSchema).min(1).max(8),
+  instanceType: sandboxInstanceTypeSchema.optional(),
+  /**
+   * The caller's attempt at this run, from 1. A later attempt runs in a
+   * container of its own: the one before may still be busy (or be restarting)
+   * after the run was cut off, and must not be wiped under it.
+   */
+  attempt: z.int().min(1).max(20).optional(),
+};
+
+/** The run of an Alchemy stack: one command, with `<stageArg> <stage>` appended. */
+const alchemyRunRequestSchema = z.object({
+  ...runRequestHead,
+  tool: z.literal("alchemy"),
+  ...runRequestSource,
+  /** The installer's deploy or destroy command (the method says which). */
+  command: selfDeployingCommandSchema,
+  /** The install's stage, appended to the command after `stageArg`. */
+  stage: selfDeployingStageSchema,
+  stageArg: z.string().regex(/^--?[a-z][a-z0-9-]*$/, "must be an option such as --stage"),
+  ...runRequestTail,
+});
+
+/**
+ * The commands of a Void run, by what each does: the catalog entry's
+ * `discoverCommand`, `installCommand`, `resumeCommand`, `updateCommand` and
+ * `destroyCommand`.
+ */
+export const VOID_RUN_COMMANDS = ["discover", "install", "resume", "update", "destroy"] as const;
+export type VoidRunCommand = (typeof VOID_RUN_COMMANDS)[number];
+
+/**
+ * Environment variables the sandbox Worker sets for a Void run itself, so a
+ * request may not set them: where the Void CLI keeps its record of the
+ * installation, and the R2 access keys derived from the app token.
+ */
+export const VOID_RUN_ENV = [
+  "VOID_PLATFORM_REGISTRY_DIR",
+  "VOID_PLATFORM_R2_ACCESS_KEY_ID",
+  "VOID_PLATFORM_R2_SECRET_ACCESS_KEY",
+] as const;
+
+/**
+ * The run of the Void CLI: every command of the entry, with `{{stage}}` and
+ * `{{accountId}}` still in their words. Nothing is appended to them; the
+ * sandbox Worker fills them in with the request's `stage` and `accountId`
+ * and picks which one runs from the installation's recorded status, so a
+ * deploy may run discover and then install, resume or update, and a destroy
+ * discover and then destroy.
+ */
+const voidRunRequestSchema = z.object({
+  ...runRequestHead,
+  tool: z.literal("void"),
+  ...runRequestSource,
+  commands: z.object({
+    discover: selfDeployingCommandTemplateSchema,
+    install: selfDeployingCommandTemplateSchema,
+    resume: selfDeployingCommandTemplateSchema,
+    update: selfDeployingCommandTemplateSchema,
+    destroy: selfDeployingCommandTemplateSchema,
+  }),
+  /** The install's stage: Void's installation name, filled in for `{{stage}}`. */
+  stage: selfDeployingStageSchema,
+  ...runRequestTail,
+});
+
 /**
  * `SandboxBuilds.deploySelfManaged()` and `destroySelfManaged()` input: one
- * run of the app's installer for one install.
+ * run of the app's installer for one install, in the shape of its `tool`.
  */
 export const selfManagedRunRequestSchema = z
-  .object({
-    protocol: z.literal(SANDBOX_PROTOCOL_VERSION),
-    installId: selfManagedInstallIdSchema,
-    /**
-     * Names the run's log, `builds/<installId>/<runId>/log.txt`, which
-     * `progress({ installId, version: runId })` reads while it runs.
-     */
-    runId: buildVersionSchema,
-    /** The account the installer deploys to (the app token must be for it). */
-    accountId: z.string().regex(/^[0-9a-f]{32}$/, "must be a Cloudflare account id"),
-    tool: selfDeployingToolSchema,
-    repo: selfManagedRepoSchema,
-    /** The pin: the run checks out exactly this commit. */
-    sha: gitShaSchema,
-    /** The pin's branch or tag, tried first for a shallow clone. */
-    ref: z.string().min(1).max(256),
-    /** Where the installer's project sits inside the repository, when not at its root. */
-    subdirectory: checkoutPathSchema.optional(),
-    packageManager: packageManagerSchema,
-    /**
-     * The entry's `install.buildCommand`, run without credentials before the
-     * installer: one argv, or for an entry that lists several commands, their
-     * argvs in the order they run.
-     */
-    buildCommand: z
-      .union([
-        buildCommandArgvSchema,
-        z.array(buildCommandArgvSchema).min(1).max(MAX_BUILD_COMMANDS),
-      ])
-      .optional(),
-    /** The installer's deploy or destroy command (the method says which). */
-    command: selfDeployingCommandSchema,
-    /** The install's stage, appended to the command after `stageArg`. */
-    stage: selfDeployingStageSchema,
-    stageArg: z.string().regex(/^--?[a-z][a-z0-9-]*$/, "must be an option such as --stage"),
-    /** Environment variables the app token is exposed under (for Alchemy, `CLOUDFLARE_API_TOKEN`). */
-    tokenEnv: z.array(installerEnvNameSchema).min(1).max(4),
-    /** Environment variables the account id is exposed under (for Alchemy, `CLOUDFLARE_ACCOUNT_ID`). */
-    accountIdEnv: z.array(installerEnvNameSchema).max(4),
-    /** The app's settings (not secret), as environment variables. */
-    vars: z.record(installerEnvNameSchema, z.string().max(4096)),
-    /**
-     * Names of the app's secrets to expose, each read from
-     * `appSecretSecretName(installId, name)` on the sandbox Worker; every one must be there.
-     */
-    secretNames: z.array(installerEnvNameSchema).max(32),
-    /** The Workers the installer creates (deploy) or deletes (destroy), stage filled in. */
-    expectedWorkers: z.array(selfManagedWorkerNameSchema).min(1).max(8),
-    instanceType: sandboxInstanceTypeSchema.optional(),
-    /**
-     * The caller's attempt at this run, from 1. A later attempt runs in a
-     * container of its own: the one before may still be busy (or be restarting)
-     * after the run was cut off, and must not be wiped under it.
-     */
-    attempt: z.int().min(1).max(20).optional(),
-  })
+  .discriminatedUnion("tool", [alchemyRunRequestSchema, voidRunRequestSchema])
   .superRefine((request, ctx) => {
     const seen = new Map<string, string>();
+    const setHere: readonly string[] = request.tool === "void" ? VOID_RUN_ENV : [];
     const claim = (name: string, what: string, path: (string | number)[], fromApp = true) => {
-      const reserved = reservedInstallerEnvProblem(name, fromApp);
+      const reserved =
+        reservedInstallerEnvProblem(name, fromApp) ??
+        (setHere.includes(name) ? `${name} is set by the sandbox Worker` : null);
       if (reserved !== null) {
         ctx.addIssue({ code: "custom", path, message: reserved });
         return;
@@ -707,15 +775,29 @@ export const selfManagedRunRequestSchema = z
       claim(n, "an app secret", ["secretNames", i]);
     });
     for (const n of Object.keys(request.vars)) claim(n, "an app setting", ["vars", n]);
-    if (namesStage(request.command, request.stageArg)) {
-      ctx.addIssue({
-        code: "custom",
-        path: ["command"],
-        message: `must not name the stage itself; the sandbox Worker appends ${request.stageArg} <stage>`,
-      });
+    if (request.tool === "alchemy") {
+      if (namesStage(request.command, request.stageArg)) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["command"],
+          message: `must not name the stage itself; the sandbox Worker appends ${request.stageArg} <stage>`,
+        });
+      }
+      return;
+    }
+    for (const name of VOID_RUN_COMMANDS) {
+      if (!request.commands[name].some((word) => word.includes(STAGE_PLACEHOLDER))) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["commands", name],
+          message: `must name the installation with ${STAGE_PLACEHOLDER}; nothing is appended to a void command`,
+        });
+      }
     }
   });
 export type SelfManagedRunRequest = z.infer<typeof selfManagedRunRequestSchema>;
+export type AlchemyRunRequest = Extract<SelfManagedRunRequest, { tool: "alchemy" }>;
+export type VoidRunRequest = Extract<SelfManagedRunRequest, { tool: "void" }>;
 
 /**
  * Kinds of resources a deploy reports, as the manager records them. A

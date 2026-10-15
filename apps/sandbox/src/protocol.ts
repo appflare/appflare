@@ -46,6 +46,14 @@ export const STAGE_TIMEOUTS = {
   installer: 30 * 60_000,
 } as const;
 
+/**
+ * The image's launcher that runs a command with Node 24 first on PATH
+ * (installed under `/opt/node24`, see the Dockerfile). Node 22 stays the
+ * container's default; only an installer that needs Node 24 (the Void CLI)
+ * runs its commands behind this.
+ */
+export const NODE_24_LAUNCHER = "with-node-24";
+
 /** How often, at most, the build log is written to R2 while output arrives. */
 export const LOG_FLUSH_INTERVAL_MS = 5_000;
 

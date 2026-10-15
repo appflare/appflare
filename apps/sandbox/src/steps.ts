@@ -76,6 +76,34 @@ export class CommandRunner<S extends RunStep> {
     this.log.line(message);
   }
 
+  /** Writes a text file in the container; retryable when the container cannot. */
+  async writeFile(step: S, path: string, content: string): Promise<void> {
+    try {
+      await this.sandbox.writeFile(path, content);
+    } catch (error) {
+      throw new StepError(
+        step,
+        `the container could not write ${path}: ${this.log.scrub(messageOf(error))}`,
+        null,
+        true,
+      );
+    }
+  }
+
+  /** Reads a text file from the container; retryable when the container cannot. */
+  async readFile(step: S, path: string): Promise<string> {
+    try {
+      return await this.sandbox.readFile(path);
+    } catch (error) {
+      throw new StepError(
+        step,
+        `the container could not read ${path}: ${this.log.scrub(messageOf(error))}`,
+        null,
+        true,
+      );
+    }
+  }
+
   /**
    * Runs one command line; its output streams into the log. A command that
    * cannot be run at all (the container did not start or went away) is
@@ -123,6 +151,11 @@ export class ContainerSteps<S extends RunStep> extends CommandRunner<S> {
     private readonly source: RunSource,
     /** The step names this run reports its checkout and install as. */
     private readonly steps: { checkout: S; install: S },
+    /**
+     * Words the dependency install runs behind, such as the launcher that
+     * puts Node 24 first on PATH for a tool that needs it; none by default.
+     */
+    readonly launcher: readonly string[] = [],
   ) {
     super(sandbox, log);
   }
@@ -219,7 +252,7 @@ export class ContainerSteps<S extends RunStep> extends CommandRunner<S> {
     const { packageManager } = this.source;
     const step = this.steps.install;
     await this.log.stage(step, `Installing dependencies with ${packageManager}, scripts disabled`);
-    await this.run(step, commandLine(installArgv(packageManager)), {
+    await this.run(step, commandLine([...this.launcher, ...installArgv(packageManager)]), {
       cwd: this.project,
       timeoutMs: STAGE_TIMEOUTS.install,
       failure: "installing the dependencies failed",

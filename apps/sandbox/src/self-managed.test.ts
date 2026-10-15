@@ -90,6 +90,22 @@ function fakeAccount(
         ["kv-2", `open-seo-oauth-kv-${STAGE}`],
       ]);
     },
+    async dispatchNamespaces() {
+      calls.push("dispatch namespaces");
+      return [];
+    },
+    async hyperdriveConfigs() {
+      calls.push("hyperdrive list");
+      return [];
+    },
+    async aiGateways() {
+      calls.push("ai gateway list");
+      return [];
+    },
+    async tokenId() {
+      calls.push("token verify");
+      return "token-id";
+    },
   };
 }
 

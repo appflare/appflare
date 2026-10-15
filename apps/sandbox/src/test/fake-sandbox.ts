@@ -57,6 +57,8 @@ export interface FakeSandboxOptions {
 export class FakeSandbox implements BuildSandbox {
   readonly commands: string[] = [];
   readonly written = new Map<string, string>();
+  /** Files `readFile` finds, by absolute path, besides what `writeFile` wrote. */
+  readonly readable = new Map<string, string>();
   readonly envs: Readonly<Record<string, string>>[] = [];
   /** Each command's time limit, by command line (the last run's). */
   readonly timeouts = new Map<string, number>();
@@ -175,6 +177,14 @@ export class FakeSandbox implements BuildSandbox {
 
   async writeFile(path: string, content: string): Promise<void> {
     this.written.set(path, content);
+  }
+
+  /** What `files` (by path), or else a `writeFile`, put at `path`. */
+  async readFile(path: string): Promise<string> {
+    this.commands.push(`<readFile ${path}>`);
+    const content = this.readable.get(path) ?? this.written.get(path);
+    if (content === undefined) throw new Error(`ENOENT: no such file, open '${path}'`);
+    return content;
   }
 
   async mountBucket(binding: string, path: string, prefix: string): Promise<void> {

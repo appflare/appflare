@@ -9,6 +9,7 @@ import {
   type PlaceholderValues,
   renderPlaceholders,
   renderWorkerTemplate,
+  SANDBOX_FEATURE_SELF_DEPLOYING_VOID,
   SANDBOX_PROTOCOL_VERSION,
   SANDBOX_WORKER_NAME,
   SELF_DEPLOYING_TOOLS,
@@ -204,13 +205,24 @@ export function installerRequest(input: {
   const { catalog } = input;
   const block = installerOf(catalog);
   const tool = SELF_DEPLOYING_TOOLS[block.tool];
-  if (block.tool !== "alchemy") {
-    // TODO: run a void entry's commands (discover, install, resume, update,
-    // destroy); the sandbox Worker cannot run them yet.
-    throw new JobError(
-      `${catalog.slug} is installed with ${tool.label}, which this version of Appflare cannot run yet`,
-    );
-  }
+  // Alchemy gets the one command for the action, the stage appended; the
+  // Void CLI gets every command with its placeholders, and the sandbox
+  // Worker picks which run from the installation's recorded status.
+  const commands =
+    block.tool === "alchemy"
+      ? {
+          command: input.action === "deploy" ? block.deployCommand : block.destroyCommand,
+          stageArg: selfDeployingStageArg(block),
+        }
+      : {
+          commands: {
+            discover: block.discoverCommand,
+            install: block.installCommand,
+            resume: block.resumeCommand,
+            update: block.updateCommand,
+            destroy: block.destroyCommand,
+          },
+        };
   const parsed = selfManagedRunRequestSchema.safeParse({
     protocol: SANDBOX_PROTOCOL_VERSION,
     installId: input.installId,
@@ -224,9 +236,8 @@ export function installerRequest(input: {
     ...(catalog.install.buildCommand === undefined
       ? {}
       : { buildCommand: buildCommandRequestArgv(catalog.install.buildCommand) }),
-    command: input.action === "deploy" ? block.deployCommand : block.destroyCommand,
+    ...commands,
     stage: selfDeployingStage(input.installId),
-    stageArg: selfDeployingStageArg(block),
     tokenEnv: [...tool.tokenEnv],
     accountIdEnv: [...tool.accountIdEnv],
     vars: input.vars,
@@ -491,6 +502,16 @@ export async function runInstallerPhase<A extends "deploy" | "destroy">(
       const attempted = { ...request, attempt };
       let outcome: ReturnType<typeof parseSelfManagedOutcome>;
       try {
+        if (request.tool === "void") {
+          // A sandbox Worker from before the Void CLI would refuse the request
+          // as invalid; say what to do instead.
+          const info = await sandboxInfo(sandbox);
+          if (info.features?.includes(SANDBOX_FEATURE_SELF_DEPLOYING_VOID) !== true) {
+            throw new JobError(
+              `the sandbox Worker ${info.sandboxVersion} cannot run the Void CLI; to update it, ${UPDATE_SANDBOX_HINT}`,
+            );
+          }
+        }
         outcome = parseSelfManagedOutcome(
           action === "deploy"
             ? await sandbox.deploySelfManaged(attempted)
@@ -547,10 +568,7 @@ export async function recordDiscoveredPhase(
         .values({
           id: resourceId(installId, r.kind, discoveredKey(r)),
           install_id: installId,
-          // TODO: list dispatch_namespace and ai_gateway in RESOURCE_KINDS, with
-          // labels and an uninstall treatment, before the sandbox Worker reports
-          // them. The column is plain text, so the cast changes nothing stored.
-          kind: r.kind as (typeof resources.$inferInsert)["kind"],
+          kind: r.kind,
           binding: r.binding,
           name: r.name,
           cf_id: r.cfId,

@@ -31,28 +31,41 @@ import {
 } from "./protocol";
 import { restartNote, restartOnRuntimeUpdate } from "./restart";
 import type { BuildSandbox } from "./sandbox";
+import { alchemyStrategy } from "./self-deploying/alchemy";
+import type { InstallerStrategy, SelfManagedAction, StrategyDeps } from "./self-deploying/strategy";
+import { voidStrategy } from "./self-deploying/void";
 import { ContainerSteps, messageOf, StepError } from "./steps";
+
+export type { SelfManagedAction } from "./self-deploying/strategy";
 
 /**
  * One run of a self-deploying app's own installer, start to finish:
  *
  * 1. token: read the app's token (and its secret values) that the manager
  *    stored as secrets on this Worker for the install. Nothing secret
- *    arrives in the request.
+ *    arrives in the request. The tool's strategy reads what else it needs
+ *    from the account with the token (the Void CLI: the token's id).
  * 2. checkout and install: the pinned commit, dependencies installed with
  *    install scripts disabled (as for a build).
  * 3. build: the entry's `install.buildCommand`, if any, in the same
  *    credential-free environment as a build.
  * 4. deploy (or destroy): any `.env` in the project or at the checkout root
  *    is deleted first (installers such as Alchemy read it before the
- *    environment), then the installer's command with `<stageArg> <stage>`
- *    appended, in the build environment plus the app's settings, its
- *    secrets, the account id and the app token under the names the tool
- *    reads. This is the only command that sees a credential, and the only
- *    credential it sees is the app's own. Known secret values are redacted
- *    from the log.
+ *    environment), then the tool's strategy runs its command or commands
+ *    (self-deploying/: Alchemy's command with `<stageArg> <stage>` appended;
+ *    the Void CLI's commands picked from its recorded status), in the build
+ *    environment plus the app's settings, its secrets, the account id and
+ *    the app token under the names the tool reads. These are the only
+ *    commands that see a credential, and the only credential they see is
+ *    the app's own. Known secret values are redacted from the log.
  * 5. discover: read the expected Workers and what they bind back from the
- *    account with the app token. After a destroy, only which Workers remain.
+ *    account with the app token (and, for a tool that names them after the
+ *    install, its account-wide resources). After a destroy, only which
+ *    Workers remain.
+ *
+ * A tool's commands, the dependency install and the build included, run
+ * behind its strategy's launcher (for the Void CLI, the one that puts Node
+ * 24 first on PATH).
  *
  * A new version of this Worker (each secret the manager stores here deploys
  * one) that resets the container before its first command went through sends
@@ -61,7 +74,10 @@ import { ContainerSteps, messageOf, StepError } from "./steps";
  * {@link SelfManagedFailure} naming the step, never as a thrown error.
  */
 
-export type SelfManagedAction = "deploy" | "destroy";
+/** The strategy of the request's tool. */
+function strategyFor(request: SelfManagedRunRequest, deps: StrategyDeps): InstallerStrategy {
+  return request.tool === "alchemy" ? alchemyStrategy(request) : voidStrategy(request, deps);
+}
 
 /** What the sandbox Worker holds for an install, read from its own secrets. */
 export interface HeldCredentials {
@@ -144,11 +160,6 @@ async function removeDotEnv(
   }
 }
 
-/** The installer's command line with the stage appended. */
-export function installerCommand(request: SelfManagedRunRequest): string {
-  return commandLine([...request.command, request.stageArg, request.stage]);
-}
-
 type RunError = StepError<SelfManagedStep>;
 
 function failure(step: SelfManagedStep, message: string, retryable = false): RunError {
@@ -220,6 +231,13 @@ export async function runSelfManaged(
     const token = held.token;
     log.redact([token, ...request.secretNames.map((n) => secrets[n] ?? "")]);
     log.line("The app token and secrets are here; they reach only the installer's command.");
+    const strategy = strategyFor(request, {
+      bucket: deps.bucket,
+      log,
+      token,
+      account: () => deps.account(token, request.accountId),
+    });
+    await strategy.prepare();
 
     sandbox = restartOnRuntimeUpdate(
       (id) => deps.openSandbox(id, instanceType),
@@ -237,6 +255,7 @@ export async function runSelfManaged(
         packageManager: request.packageManager,
       },
       { checkout: "checkout", install: "install" },
+      strategy.launcher,
     );
     step = "checkout";
     await container.checkout();
@@ -250,7 +269,7 @@ export async function runSelfManaged(
       // the build's time limit.
       const deadline = Date.now() + STAGE_TIMEOUTS.build;
       for (const argv of buildCommandArgvList(request.buildCommand)) {
-        await container.run("build", commandLine(argv), {
+        await container.run("build", commandLine([...strategy.launcher, ...argv]), {
           cwd: container.project,
           timeoutMs: Math.max(1_000, deadline - Date.now()),
           env: BUILD_COMMAND_ENV,
@@ -268,12 +287,7 @@ export async function runSelfManaged(
       action,
       `Running the installer's ${action} command with the app's token (${request.tokenEnv.join(", ")})`,
     );
-    await container.run(action, installerCommand(request), {
-      cwd: container.project,
-      timeoutMs: STAGE_TIMEOUTS.installer,
-      env: installerEnv(request, token, secrets),
-      failure: `the installer's ${action} command failed`,
-    });
+    await strategy.run({ action, container, env: installerEnv(request, token, secrets) });
 
     step = "discover";
     await log.stage("discover", "Reading what the installer left in the account");
@@ -281,6 +295,7 @@ export async function runSelfManaged(
     try {
       found = await discover(deps.account(token, request.accountId), request.expectedWorkers, {
         withResources: action === "deploy",
+        owned: strategy.ownedResources,
       });
     } catch (error) {
       throw failure(

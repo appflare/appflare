@@ -4,6 +4,7 @@ import { RESOURCE_KINDS } from "../db/schema";
 import {
   ACCESS_KINDS,
   ADDRESS_KINDS,
+  APP_MANAGED_KINDS,
   CUSTOM_DOMAIN_KIND,
   CUSTOM_HOSTNAME_KIND,
   DATA_RESOURCE_KINDS,
@@ -46,6 +47,7 @@ describe("resource kinds", () => {
         (PIPELINE_KINDS as readonly string[]).includes(kind),
         kind === R2_CATALOG_KIND,
         (ACCESS_KINDS as readonly string[]).includes(kind),
+        (APP_MANAGED_KINDS as readonly string[]).includes(kind),
       ].filter(Boolean);
       expect(treatments, kind).toHaveLength(1);
     }
@@ -104,6 +106,14 @@ describe("resource kinds", () => {
       "Access application",
       "Access service token",
     ]);
+  });
+
+  it("records what only an app's installer creates as its own kinds, never data to keep", () => {
+    for (const kind of APP_MANAGED_KINDS) {
+      expect(RESOURCE_KINDS).toContain(kind);
+      expect(isDataResourceKind(kind)).toBe(false);
+    }
+    expect(APP_MANAGED_KINDS.map(resourceKindLabel)).toEqual(["Dispatch namespace", "AI Gateway"]);
   });
 
   it("records email routes as their own kind, never data to keep", () => {

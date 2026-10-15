@@ -11,6 +11,8 @@ import {
   SANDBOX_PROTOCOL_VERSION,
   sandboxImage,
   sandboxObjectUrl,
+  selfManagedRunRequestSchema,
+  VOID_RUN_ENV,
 } from "./index";
 
 const SHA = "0123456789abcdef0123456789abcdef01234567";
@@ -228,5 +230,123 @@ describe("buildOutcomeSchema", () => {
         exitCode: null,
       }).ok,
     ).toBe(false);
+  });
+});
+
+describe("selfManagedRunRequestSchema", () => {
+  const base = {
+    protocol: SANDBOX_PROTOCOL_VERSION,
+    installId: "01J8Z3Q4R5S6T7V8W9X0YZABCD",
+    runId: "deploy-1.1.11",
+    accountId: "0123456789abcdef0123456789abcdef",
+    sha: SHA,
+    packageManager: "pnpm",
+    stage: "appflare-x0yzabcd",
+    accountIdEnv: ["CLOUDFLARE_ACCOUNT_ID"],
+    vars: {},
+    secretNames: ["VOID_PLATFORM_RECOVERY_KEY"],
+  };
+  // In the order the request's fields have always come in.
+  const alchemy = {
+    protocol: SANDBOX_PROTOCOL_VERSION,
+    installId: base.installId,
+    runId: "deploy-0.1.9",
+    accountId: base.accountId,
+    tool: "alchemy",
+    repo: "every-app/open-seo",
+    sha: SHA,
+    ref: "v0.1.9",
+    packageManager: "pnpm",
+    command: ["pnpm", "alchemy", "deploy", "--yes"],
+    stage: base.stage,
+    stageArg: "--stage",
+    tokenEnv: ["CLOUDFLARE_API_TOKEN"],
+    accountIdEnv: ["CLOUDFLARE_ACCOUNT_ID"],
+    vars: {},
+    secretNames: ["DATAFORSEO_API_KEY"],
+    expectedWorkers: ["open-seo-appflare-x0yzabcd"],
+  };
+  const voidCommand = (...words: string[]) => ["pnpm", "exec", "void", "platform", ...words];
+  const voidRun = {
+    ...base,
+    tool: "void",
+    repo: "appflare/void-platform",
+    ref: "main",
+    commands: {
+      discover: voidCommand(
+        "discover",
+        "--account",
+        "{{accountId}}",
+        "--installation",
+        "{{stage}}",
+      ),
+      install: voidCommand("install", "--yes", "--name", "{{stage}}", "--workers-dev"),
+      resume: voidCommand("install", "--resume", "--yes", "--name", "{{stage}}"),
+      update: voidCommand("upgrade", "{{stage}}", "--yes"),
+      destroy: voidCommand("uninstall", "{{stage}}", "--purge-resources", "--yes"),
+    },
+    tokenEnv: ["CLOUDFLARE_API_TOKEN", "VOID_PLATFORM_RUNTIME_CLOUDFLARE_API_TOKEN"],
+    expectedWorkers: ["void-appflare-x0yzabcd-api"],
+  };
+
+  it("keeps an Alchemy request exactly as it was", () => {
+    const parsed = selfManagedRunRequestSchema.parse(alchemy);
+    expect(JSON.stringify(parsed)).toBe(JSON.stringify(alchemy));
+    expect(selfManagedRunRequestSchema.safeParse({ ...alchemy, stageArg: undefined }).success).toBe(
+      false,
+    );
+    // An Alchemy request has no command templates, and a Void one no single command.
+    expect(selfManagedRunRequestSchema.safeParse({ ...voidRun, tool: "alchemy" }).success).toBe(
+      false,
+    );
+    expect(selfManagedRunRequestSchema.safeParse({ ...alchemy, tool: "void" }).success).toBe(false);
+  });
+
+  it("round-trips a Void request with its command templates, stage and account", () => {
+    const parsed = selfManagedRunRequestSchema.parse(structuredClone(voidRun));
+    expect(parsed).toEqual(voidRun);
+    if (parsed.tool !== "void") throw new Error("expected a void request");
+    expect(parsed.commands.update).toEqual(voidCommand("upgrade", "{{stage}}", "--yes"));
+    expect("stageArg" in parsed).toBe(false);
+    // Every command must be there.
+    const { resume: _resume, ...fewer } = voidRun.commands;
+    expect(selfManagedRunRequestSchema.safeParse({ ...voidRun, commands: fewer }).success).toBe(
+      false,
+    );
+  });
+
+  it("refuses a Void command that does not name the installation", () => {
+    const result = selfManagedRunRequestSchema.safeParse({
+      ...voidRun,
+      commands: { ...voidRun.commands, update: voidCommand("upgrade", "--yes") },
+    });
+    expect(result.success).toBe(false);
+    expect(result.error?.issues[0]?.path).toEqual(["commands", "update"]);
+    for (const word of ["{{ stage }}", "{{name}}", "$(id)"]) {
+      expect(
+        selfManagedRunRequestSchema.safeParse({
+          ...voidRun,
+          commands: { ...voidRun.commands, install: voidCommand("install", "--name", word) },
+        }).success,
+      ).toBe(false);
+    }
+  });
+
+  it("keeps what the sandbox Worker sets for a Void run out of the app's settings", () => {
+    for (const name of VOID_RUN_ENV) {
+      expect(
+        selfManagedRunRequestSchema.safeParse({ ...voidRun, vars: { [name]: "x" } }).success,
+      ).toBe(false);
+      expect(
+        selfManagedRunRequestSchema.safeParse({ ...voidRun, secretNames: [name] }).success,
+      ).toBe(false);
+    }
+    // Nothing sets them for an Alchemy stack, which may use such a name.
+    expect(
+      selfManagedRunRequestSchema.safeParse({
+        ...alchemy,
+        vars: { VOID_PLATFORM_REGISTRY_DIR: "x" },
+      }).success,
+    ).toBe(true);
   });
 });

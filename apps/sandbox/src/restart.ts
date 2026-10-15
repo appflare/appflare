@@ -72,6 +72,7 @@ export function restartOnRuntimeUpdate(
     gitCheckout: (repoUrl, options) => call((s) => s.gitCheckout(repoUrl, options)),
     exec: (command, options) => call((s) => s.exec(command, options)),
     writeFile: (path, content) => call((s) => s.writeFile(path, content)),
+    readFile: (path) => call((s) => s.readFile(path)),
     mountBucket: (binding, mountPath, prefix) =>
       call((s) => s.mountBucket(binding, mountPath, prefix)),
     unmountBucket: (mountPath) => call((s) => s.unmountBucket(mountPath)),
