@@ -11,3 +11,9 @@ declare module "*&as=srcset" {
   const srcset: string;
   export default srcset;
 }
+
+/** One resized WebP copy of an image, made by vite-imagetools during the build. */
+declare module "*&format=webp" {
+  const src: string;
+  export default src;
+}

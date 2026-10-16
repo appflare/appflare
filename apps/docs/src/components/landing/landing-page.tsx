@@ -28,6 +28,7 @@ import {
   Wordmark,
   ZoomableShot,
 } from "./parts.tsx";
+import { Testimonials } from "./testimonials.tsx";
 
 const notAffiliated =
   "Appflare is an independent open-source project, not affiliated with, endorsed by, or sponsored by Cloudflare, Inc.";
@@ -66,6 +67,15 @@ export function LandingContent({ data }: { data: LandingData }) {
         </dl>
       </section>
 
+      <Testimonials
+        heading={
+          <SectionHeading
+            eyebrow="On X"
+            title="What people are saying"
+            lead="Including a few people who work at Cloudflare."
+          />
+        }
+      />
       <HowItWorks data={data} />
       <Apps data={data} />
       <Features />

@@ -102,6 +102,26 @@ describe("the front page", () => {
     for (const app of data.showcase) expect(html).toContain(`href="/apps/${app.slug}/"`);
   });
 
+  it("shows what people said on X, each post linking to itself, and loads nothing from X", () => {
+    const section = html.slice(
+      html.indexOf('aria-label="What people are saying"'),
+      html.indexOf("How it works"),
+    );
+    const posts = [...section.matchAll(/href="(https:\/\/x\.com\/[^/]+\/status\/\d+)"/g)];
+    expect(posts.length).toBeGreaterThan(1);
+    expect(new Set(posts.map((post) => post[1])).size).toBe(posts.length);
+    expect(html).not.toMatch(/twimg\.com|pbs\.twimg/);
+  });
+
+  it("puts one post in front and gives a face button to every post", () => {
+    const section = html.slice(html.indexOf('aria-label="What people are saying"'));
+    const articles = [...section.matchAll(/<article[^>]*>/g)].map((m) => m[0]);
+    expect(articles.filter((tag) => !tag.includes('aria-hidden="true"'))).toHaveLength(1);
+    expect([...section.matchAll(/aria-label="Show [^"]+&#x27;s post"/g)].length).toBe(
+      articles.length,
+    );
+  });
+
   it("has a footer of its own that links to the privacy page", () => {
     const footer = html.slice(html.lastIndexOf("<footer"));
     expect(footer).toContain('href="/privacy/"');
