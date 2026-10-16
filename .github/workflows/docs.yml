@@ -190,9 +190,11 @@ jobs:
             echo "::error::${PREVIEW_URL}/assets/no-such-file-0.js is not a 404 with Cache-Control: no-store"
             exit 1
           }
-          # `/` is the front page, not the documentation's index.
-          if ! curl -sS --retry 5 --retry-delay 3 --retry-all-errors "${PREVIEW_URL}/" |
-            grep -q "Install Appflare"; then
+          # `/` is the front page, not the documentation's index. The page is
+          # read whole first: `grep -q` stops at the first match, and with
+          # pipefail the curl it cut off would fail the check.
+          page=$(curl -sS --retry 5 --retry-delay 3 --retry-all-errors "${PREVIEW_URL}/" || true)
+          if ! grep -q "Install Appflare" <<<"${page}"; then
             echo "::error::${PREVIEW_URL}/ does not say \"Install Appflare\"; it is not the front page"
             exit 1
           fi
