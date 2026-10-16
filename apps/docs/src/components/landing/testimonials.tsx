@@ -119,21 +119,24 @@ const BEHIND = 2;
  * stack goes through every post on its own, one every few seconds, while it is
  * on screen. A ring around the front post's face fills until the next one.
  * Picking a face, or clicking a post behind the front one, shows that post and
- * carries on from it; the button beside the faces pauses it.
+ * carries on from it; the button beside the faces pauses it, and so does
+ * keyboard focus inside the section, so a post does not move away from it.
  */
 export function Testimonials({ heading }: { heading: ReactNode }) {
   const count = testimonials.length;
   const [front, setFront] = useState(0);
   const [paused, setPaused] = useState(false);
   const [visible, setVisible] = useState(false);
+  const [keyboardFocus, setKeyboardFocus] = useState(false);
   const section = useRef<HTMLElement>(null);
-  const playing = visible && !paused;
+  const playing = visible && !paused && !keyboardFocus;
 
   useEffect(() => {
     const element = section.current;
     if (!element) return;
     const observer = new IntersectionObserver(
-      ([entry]) => setVisible(entry?.isIntersecting ?? false),
+      // The threshold only decides when this runs: a sliver on screen still "intersects".
+      ([entry]) => setVisible((entry?.intersectionRatio ?? 0) >= 0.25),
       { threshold: 0.25 },
     );
     observer.observe(element);
@@ -153,6 +156,11 @@ export function Testimonials({ heading }: { heading: ReactNode }) {
     <section
       ref={section}
       aria-label="What people are saying"
+      // A click focuses a face too, but only focus from the keyboard holds the stack.
+      onFocus={(event) => setKeyboardFocus(event.target.matches(":focus-visible"))}
+      onBlur={(event) => {
+        if (!event.currentTarget.contains(event.relatedTarget)) setKeyboardFocus(false);
+      }}
       className="mx-auto grid w-full max-w-6xl items-center gap-12 overflow-x-clip px-4 pt-24 md:px-6 lg:grid-cols-[5fr_7fr] lg:gap-8"
     >
       <div className="grid gap-8">
