@@ -776,6 +776,27 @@ describe("a failed preflight", () => {
     }
   });
 
+  it("does not name a limit when the count's own read failed", () => {
+    expect(
+      classifyJobError(
+        "check D1 database limit: Cloudflare API request failed: GET /x -> 503: [10013] unavailable",
+      ),
+    ).toMatchObject({
+      errorCategory: "cloudflare_unavailable",
+      failedPhase: "preflight",
+      failureReason: "cloudflare_unavailable",
+    });
+    expect(
+      classifyJobError(
+        "check cron trigger limit: Cloudflare API request failed: GET /x -> 403: [10000] Authentication error",
+      ),
+    ).toMatchObject({
+      errorCategory: "cloudflare_permission",
+      failedPhase: "preflight",
+      failureReason: "token_permission_missing",
+    });
+  });
+
   it("carries no reason when the job failed later", () => {
     expect(
       classifyJobError(

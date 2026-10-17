@@ -487,12 +487,20 @@ const LIMIT_STEP_REASONS: readonly [RegExp, PreflightReason][] = [
 ];
 
 /**
- * Which preflight check refused: a count's by its step, else from its
- * message, else Cloudflare's status, else `preflight_other`.
+ * Which preflight check refused: a count's by its step when it refused for
+ * the limit (not when its read failed), else from its message, else
+ * Cloudflare's status, else `preflight_other`.
  */
-function preflightReason(step: string, message: string, cfStatus: number | null): PreflightReason {
-  for (const [pattern, reason] of LIMIT_STEP_REASONS) {
-    if (pattern.test(step)) return reason;
+function preflightReason(
+  step: string,
+  message: string,
+  cfStatus: number | null,
+  errorCategory: ErrorCategory,
+): PreflightReason {
+  if (errorCategory === "plan_limit") {
+    for (const [pattern, reason] of LIMIT_STEP_REASONS) {
+      if (pattern.test(step)) return reason;
+    }
   }
   for (const [pattern, reason] of PREFLIGHT_REASON_PATTERNS) {
     if (pattern.test(message)) return reason;
@@ -671,7 +679,7 @@ export function classifyJobError(
     "unknown";
   const failureReason =
     phase === "preflight" || errorCategory === "preflight"
-      ? preflightReason(failedStepName(step), message, cfStatus)
+      ? preflightReason(failedStepName(step), message, cfStatus, errorCategory)
       : null;
   const cfMessage =
     cf !== null && names !== null && errorCategory.startsWith("cloudflare_")
