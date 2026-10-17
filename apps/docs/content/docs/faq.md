@@ -17,12 +17,13 @@ Each app's catalog card shows **Free plan** or **Workers Paid**.
 | 5 cron triggers per account | The manager uses one (every 5 minutes). Apps with cron triggers share the other four. The catalog page says how many an app uses, and an install stops before it creates anything if the account would pass 5. If Cloudflare still refuses them once the app is uploaded (another tool added cron triggers meanwhile, say), the install removes what it created. |
 | 10 D1 databases, 10 Hyperdrive configurations and 100 Vectorize indexes per account | The manager uses one D1 database. Each app that binds D1 uses one per database, per install, and so on for the others. Before an install or update creates any of them, it counts what the account already has and stops before it changes anything if the account would pass the limit. An account that already has more than Workers Free allows is taken as on Workers Paid. |
 
-These counts are skipped when the account's Workers plan (detected, or chosen in
-**Settings > Your account > What this account can run**) is Workers Paid. While
-Appflare does not know the plan, the install form and the update dialog offer
-**This account is on Workers Paid** for an app that sets cron triggers or creates
-D1 databases, Hyperdrive configurations or Vectorize indexes, and ticking it skips
-the counts for that install or update. On a plan detected or chosen as Workers Free
+When the account's Workers plan (detected, or chosen in
+**Settings > Your account > What this account can run**) is Workers Paid, these
+counts are skipped, except Hyperdrive configurations, which are counted against
+Workers Paid's 25. While Appflare does not know the plan, the install form and the
+update dialog offer **This account is on Workers Paid** for an app that sets cron
+triggers or creates D1 databases, Hyperdrive configurations or Vectorize indexes,
+and ticking it applies Workers Paid's limits to that install or update. On a plan detected or chosen as Workers Free
 the box is not offered, and the counts always run.
 
 Other free plan quotas, such as requests per day and KV writes per day, apply to

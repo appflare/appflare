@@ -110,6 +110,13 @@ describe("classifyJobError", () => {
     expect(failedPhase("skip Worker cut")).toBe("delete");
   });
 
+  it("keeps a name in an uninstall step from matching another phase", () => {
+    expect(failedPhase("remove external domain installer.example.net")).toBe("domains");
+    expect(failedPhase("remove gateway binding SNAPSHOT_ASSETS")).toBe("domains");
+    expect(failedPhase("restore catch-all *@snapshot.example.com")).toBe("email_routing");
+    expect(failedPhase("forget email route bookmark@example.com")).toBe("email_routing");
+  });
+
   it("recognises artifact integrity and fetch failures", () => {
     expect(
       classifyJobError(

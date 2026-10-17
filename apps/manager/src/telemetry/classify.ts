@@ -99,6 +99,10 @@ const PHASE_PATTERNS: readonly [RegExp, FailedPhase][] = [
   // A pause or resume reads the app's Workers before it changes anything;
   // "read Worker <name>" carries a Worker name too.
   [/^read Worker \S+$|^check the app's Workers$/, "preflight"],
+  // Uninstall steps that carry a domain, binding or address, which may
+  // contain any word a later pattern looks for.
+  [/^remove (external|wildcard) domain |^remove gateway binding /, "domains"],
+  [/^(remove|forget) email route |^restore catch-all /, "email_routing"],
   [/^D1 .*: (apply |seed$)|migration/i, "d1_migrations"],
   [/^canary (check|wait)|^skip canary$|version previews/i, "canary"],
   [/^health check|^skip health check$/i, "health"],
@@ -109,14 +113,8 @@ const PHASE_PATTERNS: readonly [RegExp, FailedPhase][] = [
   ],
   [/^check sandbox Worker$/i, "sandbox"],
   [/bookmark|snapshot/i, "snapshot"],
-  [
-    /custom domain|workers\.dev|^remove (external|wildcard) domain |^remove gateway binding /i,
-    "domains",
-  ],
-  [
-    /email routing|mail at|^route .* to the Worker$|^(remove|forget) email route |^restore catch-all /i,
-    "email_routing",
-  ],
+  [/custom domain|workers\.dev/i, "domains"],
+  [/email routing|mail at|^route .* to the Worker$/i, "email_routing"],
   [/^set cron triggers$/i, "crons"],
   [/^set secret /i, "secrets"],
   [/assets/i, "assets"],
