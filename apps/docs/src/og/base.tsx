@@ -445,9 +445,9 @@ export interface Crop {
 
 /**
  * The manager's Home, cropped to the "Your apps" list: at 0.8 of the
- * 2352x2752 screenshot the tiles stay readable at half size.
+ * 2352x2790 screenshot the tiles stay readable at half size.
  */
-export const YOUR_APPS_CROP: Crop = { scale: 0.8, x: 84, y: 1404 };
+export const YOUR_APPS_CROP: Crop = { scale: 0.8, x: 84, y: 1434 };
 
 /** A browser-like window, placed absolutely (often running off the edges), showing a crop of a picture. */
 export function Window({
