@@ -1269,6 +1269,29 @@ describe("update job", () => {
       expect(r.fake.state.queries.some((q) => q.includes("ADD COLUMN level"))).toBe(false);
     });
 
+    it("stops before anything changes when the account has no room for the new database", async () => {
+      const full = [
+        { uuid: "d1-1", name: "cut-db" },
+        ...Array.from({ length: 9 }, (_, i) => ({ uuid: `d1-other-${i}`, name: `other-${i}` })),
+      ];
+      const r = await update(WITH_BASELINE, { d1: full });
+      expect(r.job?.error).toMatch(
+        /^check D1 database limit: this app needs a new D1 database and the account already has 10; Workers Free allows 10 per account/,
+      );
+      expect(r.step.names).not.toContain("snapshot");
+      expect(r.fake.state.d1).toHaveLength(10);
+    });
+
+    it("does not count when the admin confirmed Workers Paid while the plan is not known", async () => {
+      const full = [
+        { uuid: "d1-1", name: "cut-db" },
+        ...Array.from({ length: 9 }, (_, i) => ({ uuid: `d1-other-${i}`, name: `other-${i}` })),
+      ];
+      const r = await update(WITH_BASELINE, { d1: full }, {}, { paidConfirmed: true });
+      expect(r.error).toBeNull();
+      expect(r.step.names).not.toContain("check D1 database limit");
+    });
+
     it("runs the baseline on a database an earlier failed attempt created and left empty", async () => {
       const r = await update(
         WITH_BASELINE,

@@ -39,7 +39,7 @@ import { entryWorkers } from "./entry-workers";
 import { API_STEP, type InstallJobParams, runInstall } from "./install";
 import { SIGN_IN_ACCESS_STEP, SIGN_IN_REFUSED } from "./install/sign-in-access";
 import { FRESH_INVOCATION_SLEEP } from "./invocation-budget";
-import type { JobEnv } from "./run-job";
+import type { JobEnv, JobParams } from "./run-job";
 import { FRESH_INVOCATION_NOTE } from "./steps";
 import { runUninstall, type UninstallJobParams } from "./uninstall";
 
@@ -189,6 +189,22 @@ interface FakeState {
   signIn?: "connected" | "refused";
   /** Runs after each step of the job succeeds (a test changes the manager between steps). */
   afterStep?: (name: string) => Promise<void>;
+  /**
+   * Cloudflare takes each assets completion token once: an upload that
+   * sends a spent one is refused (400, code 100312), and each upload
+   * session hands out a token of its own.
+   */
+  spendTokens?: boolean;
+  /** Assets tokens the script upload took (with `spendTokens`). */
+  spentTokens?: Set<string>;
+  /** The next this many script uploads are refused for the Worker's startup CPU time (code 10021). */
+  startupTooSlow?: number;
+  /** When set, the units' own waits are recorded here instead of waiting. */
+  unitPauses?: number[];
+  /** `POST /d1/database` is refused the way Workers Free refuses one past this many. */
+  d1Limit?: number;
+  /** The manager's `JOBS` binding, for a job that starts another (a failed install's removal). */
+  jobs?: JobEnv["JOBS"];
 }
 
 /** What the fake records for an app's Worker other than `cut`. */
@@ -255,9 +271,10 @@ function fakeWorld(fixture: ArtifactFixture, over: Partial<FakeState> = {}) {
     state.serving[script] = secretVersionId(state.secretVersions);
   }
   const host = redirectingArtifactHost(fixture);
-  const sessionJwt = state.singleUploads
+  let sessionJwt = state.singleUploads
     ? `e30.${btoa(JSON.stringify({ wrangler_single_asset_uploads: true })).replace(/=+$/, "")}.sig`
     : "session-jwt";
+  let sessions = 0;
   function storeUpload(hashes: Iterable<string>) {
     for (const hash of hashes) state.uploaded.add(hash);
     state.bucketUploads += 1;
@@ -539,12 +556,29 @@ function fakeWorld(fixture: ArtifactFixture, over: Partial<FakeState> = {}) {
       case "GET /d1/database":
         return ok(state.d1, { result_info: { page: 1, total_pages: 1 } });
       case "POST /d1/database": {
+        if (state.d1Limit !== undefined && state.d1.length >= state.d1Limit) {
+          // Cloudflare's answer on a free account at its limit.
+          return Response.json(
+            {
+              success: false,
+              errors: [
+                {
+                  code: 7406,
+                  message: `System limit reached: databases per account (${state.d1Limit})`,
+                },
+              ],
+            },
+            { status: 403 },
+          );
+        }
         const { name } = (await request.json()) as { name: string };
         const db = { uuid: `d1-${state.d1.length + 1}`, name };
         state.d1.push(db);
         return ok(db);
       }
       case "POST /workers/scripts/cut/assets-upload-session": {
+        sessions += 1;
+        if (state.spendTokens === true && sessions > 1) sessionJwt = `session-jwt-${sessions}`;
         const needed = state.bucketHashes.filter((h) => !state.uploaded.has(h));
         const size = state.bucketSize ?? Math.max(1, needed.length);
         const buckets: string[][] = [];
@@ -563,7 +597,32 @@ function fakeWorld(fixture: ArtifactFixture, over: Partial<FakeState> = {}) {
           );
         }
         const form = await request.formData();
-        state.metadata = JSON.parse(String(form.get("metadata")));
+        const sent = JSON.parse(String(form.get("metadata"))) as Record<string, unknown>;
+        if ((state.startupTooSlow ?? 0) > 0) {
+          state.startupTooSlow = (state.startupTooSlow ?? 0) - 1;
+          return Response.json(
+            {
+              success: false,
+              errors: [{ code: 10021, message: "Error: Script startup exceeded CPU time limit." }],
+            },
+            { status: 400 },
+          );
+        }
+        const token = (sent.assets as { jwt?: string } | undefined)?.jwt;
+        if (state.spendTokens === true && token !== undefined) {
+          state.spentTokens ??= new Set();
+          if (state.spentTokens.has(token)) {
+            return Response.json(
+              {
+                success: false,
+                errors: [{ code: 100312, message: "Completion token has already been consumed" }],
+              },
+              { status: 400 },
+            );
+          }
+          state.spentTokens.add(token);
+        }
+        state.metadata = sent;
         state.modules = [...form.keys()].filter((k) => k !== "metadata");
         state.observability.cut = state.metadata?.observability ?? null;
         state.scripts.push("cut");
@@ -898,13 +957,23 @@ async function install(
   const self = fakeSelf(managerEnv, {
     fetch: fake.fetch,
     ...(clock === undefined ? {} : { now: clock.now }),
+    ...(world.unitPauses === undefined
+      ? {}
+      : {
+          sleep: async (ms: number) => {
+            world.unitPauses?.push(ms);
+          },
+        }),
   });
   let error: unknown = null;
   try {
     await runInstall({
       params,
       step,
-      env: units === "self" ? { ...managerEnv, SELF: self } : managerEnv,
+      env: {
+        ...(units === "self" ? { ...managerEnv, SELF: self } : managerEnv),
+        ...(world.jobs === undefined ? {} : { JOBS: world.jobs }),
+      },
       deps: {
         fetch: fake.fetch,
         signingKeys: fixture.keys,
@@ -1032,6 +1101,7 @@ describe("install job", () => {
       "verify API token",
       "check Worker name",
       "check cron trigger limit",
+      "check D1 database limit",
       "check KV namespace cut-cut-kv",
       "record KV namespace name cut-cut-kv",
       "create KV namespace cut-cut-kv",
@@ -2627,9 +2697,9 @@ describe("install job", () => {
       expect(r.resources).toEqual([]);
       expect(r.step.names.slice(-2)).toEqual(["check cron trigger limit", "mark install failed"]);
       expect(r.step.retried).toEqual({});
-      // Counted in a unit of its own; a Worker without a scheduled handler is not read.
-      expect(r.self.calls.map((c) => [c.unit, c.subrequests])).toEqual([["countCronTriggers", 4]]);
-      expect(r.fake.state.calls).not.toContain("GET /workers/scripts/appflare-docs/schedules");
+      // Counted in a unit of its own; a Worker without a scheduled handler is read too.
+      expect(r.self.calls.map((c) => [c.unit, c.subrequests])).toEqual([["countCronTriggers", 5]]);
+      expect(r.fake.state.calls).toContain("GET /workers/scripts/appflare-docs/schedules");
       expect(r.fake.state.calls.some((c) => c.startsWith("POST ") || c.startsWith("PUT "))).toBe(
         false,
       );
@@ -2705,46 +2775,313 @@ describe("install job", () => {
       expect(r.step.names).toContain("check cron trigger limit");
     });
 
-    it("maps Cloudflare's refusal at the cron trigger step into what to do, without retrying", async () => {
-      // A Worker without a scheduled handler still holds triggers, so the
-      // count misses them and Cloudflare refuses the schedule.
+    it("counts the triggers of a Worker whose deploy dropped its scheduled handler", async () => {
       const account = busy();
       const r = await install(cronApp, {
         ...account,
         handlers: { ...account.handlers, flaremo: ["fetch"], "second-brain": ["fetch"] },
       });
       expect(r.job?.status).toBe("failed");
+      expect(r.job?.error).toMatch(
+        /^check cron trigger limit: this app needs 2 cron triggers and the account's other Workers already use 4 /,
+      );
+      expect(r.resources).toEqual([]);
+    });
+
+    it("ignores a Workers Paid tick when the plan is known to be free", async () => {
+      await env.DB.prepare(
+        "INSERT INTO settings (key, value, updated_at) VALUES ('account_plan', 'free', 0)",
+      ).run();
+      const r = await install(cronApp, busy(), { paidConfirmed: true });
+      expect(r.job?.status).toBe("failed");
+      expect(r.step.names).toContain("check cron trigger limit");
+      expect(r.resources).toEqual([]);
+    });
+
+    it("still takes the Workers Paid tick when the plan is not known", async () => {
+      const r = await install(
+        cronApp,
+        { ...busy(), freeCronLimit: false },
+        { paidConfirmed: true },
+      );
+      expect(r.error).toBeNull();
+      expect(r.step.names).not.toContain("check cron trigger limit");
+    });
+
+    it("removes what it created when Cloudflare refuses the cron triggers anyway, and says why", async () => {
+      // Triggers the count cannot see (a Worker the list does not show):
+      // Cloudflare refuses the schedule once the Worker is uploaded.
+      const created: JobParams[] = [];
+      const r = await install(
+        { ...cronApp, bindings: [{ type: "kv_namespace", name: "CUT_KV" }] },
+        {
+          ...busy(),
+          otherCrons: {
+            appflare: ["*/30 * * * *"],
+            flaremo: ["17 3 * * *"],
+            hidden: ["0 5 * * *", "0 6 * * *"],
+          },
+          jobs: {
+            create: async ({ id, params }) => {
+              created.push(params);
+              return { id };
+            },
+          },
+        },
+      );
+      expect(r.job?.status).toBe("failed");
       expect(r.job?.error).toBe(
-        'set cron triggers: Cloudflare refused 2 cron triggers: this account has reached the Workers Free limit of 5 cron triggers per account. The Worker "cut" is uploaded without them; uninstall this install to remove it. Remove a cron trigger from another Worker (for example by uninstalling an app that uses one), or upgrade the account to Workers Paid (1,000 per account), then try again.',
+        "set cron triggers: Cloudflare refused 2 cron triggers: this account has reached the Workers Free limit of 5 cron triggers per account. Appflare removes what this install created. Remove a cron trigger from another Worker (for example by uninstalling an app that uses one), or upgrade the account to Workers Paid (1,000 per account), then install the app again from its catalog page.",
       );
       expect(r.step.retried).toEqual({});
       expect(
         r.fake.state.calls.filter((c) => c === "PUT /workers/scripts/cut/schedules"),
       ).toHaveLength(1);
-      // The Worker exists and stays recorded; no cron trigger is.
-      expect(r.resources).toContainEqual({
-        kind: "worker",
-        binding: null,
-        name: "cut",
-        cf_id: "cut",
+      const messages = r.logs.map((l) => l.message);
+      expect(messages).toContain(
+        'Install failed at "set cron triggers". What it created is removed next.',
+      );
+      expect(messages.at(-1)).toMatch(
+        /^Removing what this install created, so nothing of it stays in the account \(job .+\)\.$/,
+      );
+      // The removal is an uninstall that keeps nothing.
+      expect(created).toHaveLength(1);
+      const removal = created[0] as UninstallJobParams;
+      expect(removal.kind).toBe("uninstall");
+      expect(r.fake.state.kv).toHaveLength(1);
+      await runUninstall({
+        params: removal,
+        step: fakeStep(),
+        env: { ...jobEnv(), SELF: r.self },
+        deps: { fetch: r.fake.fetch, signingKeys: r.fixture.keys },
       });
-      expect(r.resources.some((row) => (row as { kind: string }).kind === "cron")).toBe(false);
-      expect(r.fake.state.schedules).toEqual([]);
+      expect(r.fake.state.scripts).not.toContain("cut");
+      expect(r.fake.state.kv).toEqual([]);
+      const row = await env.DB.prepare("SELECT status FROM installs WHERE id = ?1")
+        .bind(removal.installId)
+        .first<{ status: string }>();
+      expect(row?.status).toBe("uninstalled");
+    });
+
+    it("removes only what it created, never another install's, kept data or a name-only row", async () => {
+      // Another app installed (second-brain), with a namespace recorded by
+      // name only (one of that name was made elsewhere), and an app removed
+      // with its data kept.
+      const seedOthers = async () => {
+        await env.DB.batch([
+          env.DB.prepare(
+            `INSERT INTO installs (id, app_slug, worker_name, instance_name, catalog_version, artifact_url, status, installed_at, updated_at)
+             VALUES ('brain', 'second-brain', 'second-brain', 'second-brain', '1.0.0', 'u', 'installed', 1, 1),
+                    ('gone', 'notes', 'notes', 'notes', '1.0.0', 'u', 'uninstalled', 1, 1)`,
+          ),
+          env.DB.prepare(
+            `INSERT INTO resources (id, install_id, kind, binding, name, cf_id, created_at, retained_at)
+             VALUES ('brain-w', 'brain', 'worker', NULL, 'second-brain', 'second-brain', 1, NULL),
+                    ('brain-kv', 'brain', 'kv', 'BRAIN_KV', 'second-brain-kv', 'kv-brain', 1, NULL),
+                    ('brain-cache', 'brain', 'kv', 'CACHE', 'second-brain-cache', NULL, 1, NULL),
+                    ('gone-kv', 'gone', 'kv', 'NOTES_KV', 'notes-kv', 'kv-notes', 1, 1)`,
+          ),
+        ]);
+      };
+      const created: JobParams[] = [];
+      const r = await install(
+        { ...cronApp, bindings: [{ type: "kv_namespace", name: "CUT_KV" }] },
+        {
+          ...busy(),
+          kv: [
+            { id: "kv-brain", title: "second-brain-kv" },
+            { id: "kv-elsewhere", title: "second-brain-cache" },
+            { id: "kv-notes", title: "notes-kv" },
+          ],
+          otherCrons: {
+            appflare: ["*/30 * * * *"],
+            flaremo: ["17 3 * * *"],
+            hidden: ["0 5 * * *", "0 6 * * *"],
+          },
+          jobs: {
+            create: async ({ id, params }) => {
+              created.push(params);
+              return { id };
+            },
+          },
+        },
+        {},
+        {},
+        undefined,
+        "self",
+        seedOthers,
+      );
+      expect(r.job?.status).toBe("failed");
+      expect(created).toHaveLength(1);
+      const removal = created[0] as UninstallJobParams;
+      expect(
+        await env.DB.prepare("SELECT worker_name FROM installs WHERE id = ?1")
+          .bind(removal.installId)
+          .first(),
+      ).toEqual({ worker_name: "cut" });
+      await runUninstall({
+        params: removal,
+        step: fakeStep(),
+        env: { ...jobEnv(), SELF: r.self },
+        deps: { fetch: r.fake.fetch, signingKeys: r.fixture.keys },
+      });
+      // This install's Worker and namespace are gone; nothing else is.
+      expect(r.fake.state.scripts).not.toContain("cut");
+      expect(r.fake.state.scripts).toContain("second-brain");
+      expect(r.fake.state.kv.map((n) => n.id).sort()).toEqual([
+        "kv-brain",
+        "kv-elsewhere",
+        "kv-notes",
+      ]);
+      const others = await env.DB.prepare(
+        "SELECT id, deleted_at, retained_at FROM resources WHERE install_id IN ('brain', 'gone') ORDER BY id",
+      ).all();
+      expect(others.results).toEqual([
+        { id: "brain-cache", deleted_at: null, retained_at: null },
+        { id: "brain-kv", deleted_at: null, retained_at: null },
+        { id: "brain-w", deleted_at: null, retained_at: null },
+        { id: "gone-kv", deleted_at: null, retained_at: 1 },
+      ]);
+      const statuses = await env.DB.prepare(
+        "SELECT id, status FROM installs WHERE id IN ('brain', 'gone') ORDER BY id",
+      ).all();
+      expect(statuses.results).toEqual([
+        { id: "brain", status: "installed" },
+        { id: "gone", status: "uninstalled" },
+      ]);
     });
 
     it("goes on without the count when the account has too many scheduled Workers to read", async () => {
-      const many = Array.from({ length: 21 }, (_, i) => `worker-${i}`);
+      const many = Array.from({ length: 41 }, (_, i) => `worker-${i}`);
       const r = await install(cronApp, {
         scripts: many,
         handlers: Object.fromEntries(many.map((w) => [w, ["scheduled"]])),
       });
       expect(r.error).toBeNull();
       expect(r.logs.map((l) => l.message)).toContain(
-        "Did not count the account's cron triggers: the account has 21 Workers with scheduled handlers, more than the 20 this check reads. Cloudflare checks the limit when the cron triggers are set.",
+        "Did not count the account's cron triggers: the account has 41 Workers with scheduled handlers, more than the 40 this check reads. Cloudflare checks the limit when the cron triggers are set.",
       );
       expect(r.fake.state.calls.filter((c) => c.endsWith("/schedules"))).toEqual([
         "PUT /workers/scripts/cut/schedules",
       ]);
+    });
+  });
+
+  describe("a Worker upload Cloudflare refuses once", () => {
+    const assetsApp: ArtifactFixtureOptions = {
+      assets: [{ route: "/app.js", content: "console.log('app')" }],
+    };
+
+    it("uploads again with a new assets token when its first upload went through unanswered", async () => {
+      const r = await install(assetsApp, {
+        spendTokens: true,
+        // The upload is done, but its answer is lost: the step is retried.
+        failAfter: new Set(["PUT /workers/scripts/cut"]),
+      });
+      expect(r.error).toBeNull();
+      expect(r.job?.status).toBe("succeeded");
+      // Its second attempt succeeded.
+      expect(r.step.retried).toEqual({ "upload Worker script": 2 });
+      // The retry's token was spent: a new upload session gave a new one,
+      // and asked for no file again.
+      expect(
+        r.fake.state.calls.filter((c) => c === "POST /workers/scripts/cut/assets-upload-session"),
+      ).toHaveLength(2);
+      expect(r.fake.state.bucketUploads).toBe(1);
+      expect((r.fake.state.metadata?.assets as { jwt: string } | undefined)?.jwt).toBe(
+        "session-jwt-2",
+      );
+      expect(r.logs.map((l) => l.message)).toContain(
+        "Cloudflare had already taken this upload's assets token (an earlier attempt went through); uploading again with a new one.",
+      );
+    });
+
+    it("sends the upload once more when the app's startup went over Cloudflare's CPU limit", async () => {
+      const unitPauses: number[] = [];
+      const r = await install(assetsApp, { startupTooSlow: 1, unitPauses });
+      expect(r.error).toBeNull();
+      expect(r.job?.status).toBe("succeeded");
+      expect(unitPauses).toEqual([3000]);
+      expect(r.step.retried).toEqual({});
+      expect(r.logs.map((l) => l.message)).toContain(
+        "Cloudflare refused the upload: the app's startup used more CPU time than Cloudflare allows. Startup time varies, so the upload is sent once more.",
+      );
+    });
+
+    it("says the startup took too long, and that trying again often works, when it fails twice", async () => {
+      const unitPauses: number[] = [];
+      const r = await install(assetsApp, { startupTooSlow: 2, unitPauses });
+      expect(r.job?.status).toBe("failed");
+      expect(r.job?.error).toBe(
+        "upload Worker script: the app's startup took too long for Cloudflare: it refused the upload twice because the Worker's startup used more CPU time than it allows (Cloudflare API request failed: PUT /accounts/acc0000000000000000000000000000a/workers/scripts/cut -> 400: [10021] Error: Script startup exceeded CPU time limit.). How long a startup takes varies from one try to the next, so trying again often works",
+      );
+      expect(unitPauses).toEqual([3000]);
+      expect(r.step.retried).toEqual({});
+    });
+  });
+
+  describe("an app with D1 databases on a free account", () => {
+    const d1App: ArtifactFixtureOptions = { bindings: [{ type: "d1", name: "DB" }] };
+    const databases = (n: number) =>
+      Array.from({ length: n }, (_, i) => ({ uuid: `d1-other-${i}`, name: `other-${i}` }));
+
+    it("refuses before creating anything when the account has no room for its database", async () => {
+      const r = await install(d1App, { d1: databases(10) });
+      expect(r.job?.status).toBe("failed");
+      expect(r.job?.error).toBe(
+        "check D1 database limit: this app needs a new D1 database and the account already has 10; Workers Free allows 10 per account, so this would make 11. Delete D1 databases the account no longer uses (for example by uninstalling an app that has one without keeping its data), or upgrade the account to Workers Paid (50,000 per account). If it is already on Workers Paid, choose that plan under [Workers plan in Your account](/settings/account#capability-workers-plan). Then try again.",
+      );
+      expect(r.resources).toEqual([]);
+      expect(r.fake.state.calls).not.toContain("POST /d1/database");
+    });
+
+    it("installs when there is room, and logs the count", async () => {
+      const r = await install(d1App, { d1: databases(9) });
+      expect(r.job?.status).toBe("succeeded");
+      expect(r.logs.map((l) => l.message)).toContain(
+        "The account has 9 D1 databases; with 1 more that is 10 of the 10 Workers Free allows.",
+      );
+    });
+
+    it("does not count on Workers Paid", async () => {
+      await env.DB.prepare(
+        "INSERT INTO settings (key, value, updated_at) VALUES ('account_plan', 'paid', 0)",
+      ).run();
+      const r = await install(d1App, { d1: databases(10) });
+      expect(r.job?.status).toBe("succeeded");
+      expect(r.step.names).not.toContain("check D1 database limit");
+    });
+
+    it("installs on an account past Workers Free's limit, which only Workers Paid allows", async () => {
+      // Appflare does not know the plan; 12 databases say it is not Workers Free.
+      const r = await install(d1App, { d1: databases(12) });
+      expect(r.job?.status).toBe("succeeded");
+      expect(r.logs.map((l) => l.message)).toContain(
+        "The account has 12 D1 databases, more than Workers Free allows, so the account is not on Workers Free.",
+      );
+    });
+
+    it("does not count when the admin confirmed Workers Paid while the plan is not known", async () => {
+      const r = await install(d1App, { d1: databases(10) }, { paidConfirmed: true });
+      expect(r.job?.status).toBe("succeeded");
+      expect(r.step.names).not.toContain("check D1 database limit");
+    });
+
+    it("names the limit when Cloudflare refuses the database anyway", async () => {
+      const d1 = databases(9);
+      const r = await install(d1App, {
+        d1,
+        d1Limit: 10,
+        afterStep: async (name) => {
+          // Another tool takes the last place after the count.
+          if (name === "check D1 database limit") d1.push({ uuid: "d1-late", name: "late" });
+        },
+      });
+      expect(r.job?.status).toBe("failed");
+      expect(r.job?.error).toBe(
+        "create D1 database cut-db: Cloudflare refused another D1 database: this account has reached its limit of 10 D1 databases per account (Cloudflare API request failed: POST /accounts/acc0000000000000000000000000000a/d1/database -> 403: [7406] System limit reached: databases per account (10)). Delete D1 databases the account no longer uses (for example by uninstalling an app that has one without keeping its data), or upgrade the account to Workers Paid (50,000 per account), then try again.",
+      );
+      expect(r.step.retried).toEqual({});
     });
   });
 

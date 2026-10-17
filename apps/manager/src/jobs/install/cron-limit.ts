@@ -17,25 +17,29 @@ import { settleUnit } from "../units/result";
  *    version sets more cron triggers than the Worker has) counts the
  *    triggers the account's other Workers use and stops when the app's own
  *    would take the account past 5. The count lists the account's Workers
- *    once and reads the schedule of each Worker that exports a `scheduled`
- *    handler, in the job unit `countCronTriggers` (its own invocation, one
- *    subrequest for the job). An account with more such Workers than
- *    {@link CRON_SCAN_MAX_WORKERS} is not counted: that many reads are not
+ *    once and reads their schedules in the job unit `countCronTriggers`
+ *    (its own invocation, one subrequest for the job): first every Worker
+ *    that exports a `scheduled` handler, then, as far as
+ *    {@link CRON_SCAN_MAX_WORKERS} reads go, the others, since a Worker
+ *    keeps its cron triggers when a deploy drops its handler and Cloudflare
+ *    counts them all the same. An account with more Workers with a
+ *    `scheduled` handler than that is not counted: that many reads are not
  *    worth it for a check that step 2 backs up.
- * 2. When Cloudflare refuses the schedule anyway (the count skipped a Worker
- *    with triggers but no `scheduled` handler, another tool added triggers
- *    in between, or the count was skipped), the "set cron triggers" step
- *    turns the refusal into a message that says what to do. An install
- *    fails there at once. An update or rollback, whose version already
- *    serves, logs it as a warning and goes on: the Worker keeps the triggers
- *    it had and the job still checks the Worker's health and finishes.
+ * 2. When Cloudflare refuses the schedule anyway (the count could not read
+ *    every Worker, another tool added triggers in between, or the count was
+ *    skipped), the "set cron triggers" step turns the refusal into a
+ *    message that says what to do. An install fails there at once, and
+ *    removes what it created (../install.ts). An update or rollback, whose
+ *    version already serves, logs it as a warning and goes on: the Worker
+ *    keeps the triggers it had and the job still checks the Worker's health
+ *    and finishes.
  *
- * Nothing about the plan can be read with the manager's token, so the count
- * treats the account as on Workers Free unless there is evidence otherwise:
- * Settings records Workers Paid, the admin confirmed Workers Paid for this
- * job, the app itself needs Workers Paid (installing it asked for that
- * confirmation), or the other Workers already use more than 5 triggers,
- * which a free account cannot have.
+ * The count treats the account as on Workers Free unless there is evidence
+ * otherwise: the plan detected or set as Workers Paid, the admin confirmed
+ * Workers Paid for this job while Appflare does not know the plan
+ * (`freeLimitsApply`), the app itself needs Workers Paid (installing it
+ * asked for that confirmation), or the other Workers already use more than
+ * 5 triggers, which a free account cannot have.
  */
 
 const PAID_LIMIT = PAID_PLAN_CRON_TRIGGERS.toLocaleString("en-US");
@@ -43,8 +47,11 @@ const PAID_LIMIT = PAID_PLAN_CRON_TRIGGERS.toLocaleString("en-US");
 /** Cloudflare's error code for "This account has reached the Workers Free limit of 5 cron triggers per account". */
 export const CRON_LIMIT_ERROR_CODE = 10072;
 
-/** Workers with a `scheduled` handler the count reads, at most, in the unit's own invocation. */
-export const CRON_SCAN_MAX_WORKERS = 20;
+/**
+ * Workers whose schedule the count reads, at most, in the unit's own
+ * invocation: the Worker list and 40 reads fit its 50 subrequests.
+ */
+export const CRON_SCAN_MAX_WORKERS = 40;
 
 /** The same, when the unit runs in the job's own invocation (no `SELF` binding) and spends its budget. */
 export const CRON_SCAN_MAX_WORKERS_LOCAL = 5;
@@ -59,29 +66,37 @@ export type CronTriggerScan =
       byWorker: Array<{ worker: string; count: number }>;
       /** Workers whose schedule was read. */
       read: number;
+      /**
+       * Workers without a `scheduled` handler whose schedule was not read
+       * (past the reads one count makes); 0 when every Worker was read.
+       */
+      unread?: number;
     }
   | { kind: "skipped"; reason: string };
 
 /**
  * Counts the cron triggers of the account's Workers other than `exclude`:
- * one list call, then one schedule read per Worker that exports a
- * `scheduled` handler (every Worker when the list does not say), at most
- * `maxWorkers` of them. A Worker deleted between the two calls counts 0.
+ * one list call, then one schedule read per Worker, at most `maxWorkers` of
+ * them: first each Worker that exports a `scheduled` handler (every Worker
+ * when the list does not say), then the others as far as the reads go. A
+ * Worker deleted between the two calls counts 0.
  */
 export async function countAccountCronTriggers(
   api: CloudflareClient,
   opts: { exclude: string; maxWorkers: number },
 ): Promise<CronTriggerScan> {
-  const scripts = await api.workers.listScripts();
-  const candidates = scripts.filter(
-    (s) => s.id !== opts.exclude && (s.handlers === undefined || s.handlers.includes("scheduled")),
+  const scripts = (await api.workers.listScripts()).filter((s) => s.id !== opts.exclude);
+  const scheduled = scripts.filter(
+    (s) => s.handlers === undefined || s.handlers.includes("scheduled"),
   );
-  if (candidates.length > opts.maxWorkers) {
+  if (scheduled.length > opts.maxWorkers) {
     return {
       kind: "skipped",
-      reason: `the account has ${candidates.length} Workers with scheduled handlers, more than the ${opts.maxWorkers} this check reads`,
+      reason: `the account has ${scheduled.length} Workers with scheduled handlers, more than the ${opts.maxWorkers} this check reads`,
     };
   }
+  const rest = scripts.filter((s) => !scheduled.includes(s));
+  const candidates = [...scheduled, ...rest.slice(0, opts.maxWorkers - scheduled.length)];
   const byWorker: Array<{ worker: string; count: number }> = [];
   let total = 0;
   for (const script of candidates) {
@@ -95,7 +110,13 @@ export async function countAccountCronTriggers(
     if (count > 0) byWorker.push({ worker: script.id, count });
   }
   byWorker.sort((a, b) => b.count - a.count || a.worker.localeCompare(b.worker));
-  return { kind: "counted", total, byWorker, read: candidates.length };
+  return {
+    kind: "counted",
+    total,
+    byWorker,
+    read: candidates.length,
+    unread: scripts.length - candidates.length,
+  };
 }
 
 /** "second-brain: 2, appflare: 1", naming at most five Workers. */
@@ -121,7 +142,7 @@ export interface CronLimitCheck {
  * knows the app's triggers, which a sandbox tier app's page does not before
  * the build.
  */
-const PAID_ALREADY = `If it is already on Workers Paid, choose that plan under ${messageLink("Workers plan in Your account", settingsLink("account", "capability-workers-plan"))}.`;
+export const PAID_ALREADY = `If it is already on Workers Paid, choose that plan under ${messageLink("Workers plan in Your account", settingsLink("account", "capability-workers-plan"))}.`;
 
 /**
  * Why the triggers would not fit a Workers Free account, or null when they
@@ -262,6 +283,12 @@ export async function checkCronLimitPhase(
         ? `The account's other Workers use ${cronTriggersPhrase(scan.total)}, more than Workers Free allows, so the account is not on the free limit.`
         : `The account's other Workers use ${cronTriggersPhrase(scan.total)}; with ${input.wanted} more that is ${scan.total + input.wanted} of the ${FREE_PLAN_CRON_TRIGGERS} Workers Free allows.`,
     );
+    const unread = scan.unread ?? 0;
+    if (unread > 0 && scan.total <= FREE_PLAN_CRON_TRIGGERS) {
+      log.info(
+        `${unread} Worker(s) without a scheduled handler were not read; Cloudflare checks the limit when the cron triggers are set.`,
+      );
+    }
     return {};
   });
 }

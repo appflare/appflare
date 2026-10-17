@@ -10,8 +10,9 @@ import { periodEnd } from "../usage/math";
 import { recordActivity } from "../usage/store/activity.server";
 import { effectiveSpendSettings, writeAppSpendSettings } from "../usage/store/app-settings.server";
 import { closePause, findOpenPause, recordPauseProgress } from "../usage/store/pauses.server";
+import { servingVersionOf } from "./pause/cloudflare";
 import { type ResumeJobParams, resumeJobParams } from "./pause/params";
-import { instancesPerStep, restorePhases } from "./pause/phases";
+import { instancesPerStep, restorePhases, workersGoneMessage } from "./pause/phases";
 import { parsePausedContainers, parsePausedQueues, parsePausedWorkflows } from "./pause/records";
 import type { JobContext } from "./run-job";
 import { StepLog } from "./step-log";
@@ -87,6 +88,27 @@ export async function runResume(ctx: JobContext): Promise<void> {
     pauseId = started.pauseId;
     steps.setAccountId(started.accountId);
     if (!started.accountPaid) steps.spreadOverInvocations();
+
+    // Every Worker the pause recorded was deleted outside Appflare: nothing
+    // is put back for an app that cannot run, and the pause stays open
+    // until the app is uninstalled.
+    const workers = Object.keys(started.recorded.workerVersions);
+    if (workers.length > 0) {
+      await run("check the app's Workers", async ({ log, cf }) => {
+        const api = cf();
+        const gone: string[] = [];
+        for (const script of workers) {
+          if ((await servingVersionOf(api, script)) === null) gone.push(script);
+        }
+        if (gone.length === workers.length) throw new JobError(workersGoneMessage(gone, "resume"));
+        if (gone.length > 0) {
+          log.warn(
+            `${gone.map((w) => `"${w}"`).join(", ")} ${gone.length === 1 ? "is" : "are"} gone from the account; the app's other Workers run again.`,
+          );
+        }
+        return {};
+      });
+    }
 
     await restorePhases(steps, started.recorded, {
       perStep: instancesPerStep(started.accountPaid),

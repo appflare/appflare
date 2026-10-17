@@ -100,7 +100,11 @@ no mail is sent to a Worker that no longer exists:
    counts as removed.
 2. It puts the catch-all back as the install found it (for example off, or set to
    drop), but only if it is still on and delivers to the app. A catch-all you pointed
-   elsewhere or turned off since is left alone.
+   elsewhere or turned off since is left alone. Cloudflare cannot read a catch-all
+   that delivers to a Worker that no longer exists; the uninstall puts such a one
+   back only when none of the app's Workers is left in the account (deleted by
+   hand, say). Otherwise it leaves it as it is and says so in the log, since it may
+   be one you pointed at a Worker of your own.
 3. If this install turned Email Routing on for the zone, it turns it off again, which
    removes the MX records, but only when no other routing rule is left there and the
    catch-all is off or set to drop. Otherwise Email Routing stays on.

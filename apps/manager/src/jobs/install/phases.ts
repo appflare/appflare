@@ -27,6 +27,7 @@ import { errorMessage, JobError, type JobSteps } from "../steps";
 import { failureError, settleUnit } from "../units/result";
 import type { ArtifactHost } from "../units/units";
 import { ACCESS_PREVIEW_REASON, activeVersionId, cronChanges } from "../update/plan";
+import { explainLimitRefusal } from "./account-limits";
 import { fetchWhole, sha256Hex, verifyArtifactManifest } from "./artifact";
 import { planAssetParts } from "./asset-parts";
 import type { ResourceBindingPlan, WorkflowPlan } from "./bindings";
@@ -274,7 +275,11 @@ export async function provisionResourcePhase(
       cfId =
         res.type === "hyperdrive"
           ? await createHyperdriveConfig(api, res, connections[res.binding])
-          : await explain(() => createResource(api, res));
+          : await explain(() =>
+              res.kind === "d1" || res.kind === "vectorize"
+                ? explainLimitRefusal(res.kind, () => createResource(api, res))
+                : createResource(api, res),
+            );
     } catch (error) {
       // Refused (or never sent): nothing was created. Release the name so
       // an uninstall never deletes a same-named resource made elsewhere later.
@@ -518,7 +523,9 @@ export async function createHyperdriveConfig(
     throw new JobError(`the connection string for ${res.binding} is not usable: ${parsed.problem}`);
   }
   try {
-    return await explainHyperdriveRefusal(() => createResource(api, res, parsed.origin));
+    return await explainHyperdriveRefusal(() =>
+      explainLimitRefusal("hyperdrive", () => createResource(api, res, parsed.origin)),
+    );
   } catch (error) {
     if (error instanceof CloudflareApiError && error.status < 500 && error.status !== 429) {
       const said = error.errors.map((e) => e.message).join("; ") || `HTTP ${error.status}`;

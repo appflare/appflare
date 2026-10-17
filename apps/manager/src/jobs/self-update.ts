@@ -36,6 +36,7 @@ import { StepLog } from "./step-log";
 import { createJobSteps, errorMessage, JobError } from "./steps";
 import { settleUnit } from "./units/result";
 import type { ArtifactHost } from "./units/units";
+import { assetFilesOf } from "./units/upload-retry";
 import { activeVersionId, bookmarksJson, previewUrl } from "./update/plan";
 
 /**
@@ -317,6 +318,7 @@ export async function runSelfUpdate(ctx: JobContext): Promise<void> {
           modules: manifest.worker.modules,
           metadata,
           target: "version",
+          ...assetFilesOf(manifest.assets.files, assetsJwt),
         }),
         log,
       );

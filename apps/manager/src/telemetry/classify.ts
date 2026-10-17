@@ -96,6 +96,9 @@ const PHASE_PATTERNS: readonly [RegExp, FailedPhase][] = [
     /Cloudflare Access|^keep Worker \S+ unreachable$|^Worker \S+ may be reachable$|^public paths back /,
     "access",
   ],
+  // A pause or resume reads the app's Workers before it changes anything;
+  // "read Worker <name>" carries a Worker name too.
+  [/^read Worker \S+$|^check the app's Workers$/, "preflight"],
   [/^D1 .*: (apply |seed$)|migration/i, "d1_migrations"],
   [/^canary (check|wait)|^skip canary$|version previews/i, "canary"],
   [/^health check|^skip health check$/i, "health"],
@@ -106,8 +109,14 @@ const PHASE_PATTERNS: readonly [RegExp, FailedPhase][] = [
   ],
   [/^check sandbox Worker$/i, "sandbox"],
   [/bookmark|snapshot/i, "snapshot"],
-  [/custom domain|workers\.dev/i, "domains"],
-  [/email routing|mail at|^route .* to the Worker$/i, "email_routing"],
+  [
+    /custom domain|workers\.dev|^remove (external|wildcard) domain |^remove gateway binding /i,
+    "domains",
+  ],
+  [
+    /email routing|mail at|^route .* to the Worker$|^(remove|forget) email route |^restore catch-all /i,
+    "email_routing",
+  ],
   [/^set cron triggers$/i, "crons"],
   [/^set secret /i, "secrets"],
   [/assets/i, "assets"],
@@ -116,9 +125,9 @@ const PHASE_PATTERNS: readonly [RegExp, FailedPhase][] = [
     "promote",
   ],
   [/^upload Worker|^read current bindings$|^record (new|Worker) version$/i, "upload"],
-  [/^(delete|empty) |^remove consumer|resources deleted$/i, "delete"],
+  [/^(delete|empty) |^remove consumer|resources deleted$|^skip Worker /i, "delete"],
   [
-    /^(start|preflight checks|plan update|catalog keys|verify .*|load .* manifest|check (Worker names?|release shape|R2 is enabled|cron trigger limit|Workflow .*)|read current deployment)$/i,
+    /^(start|preflight checks|plan update|catalog keys|verify .*|load .* manifest|check (Worker names?|release shape|R2 is enabled|[A-Za-z0-9 ]+ limit|Workflow .*)|read current deployment)$/i,
     "preflight",
   ],
   [
@@ -139,8 +148,8 @@ export function failedPhase(step: string): FailedPhase {
 const CLOUDFLARE_FAILURE =
   /Cloudflare API request failed: \S+ \S+ -> (\d{3})(?:: \[(\d+)\] ?([\s\S]*))?/;
 
-/** Workers Free's cron trigger limit and Cloudflare's script size refusal. */
-const PLAN_LIMIT_CODES = new Set([10072, 10027]);
+/** Workers Free's cron trigger limit, Cloudflare's script size refusal, and an account limit reached. */
+const PLAN_LIMIT_CODES = new Set([10072, 10027, 7406]);
 
 function categoryFromMessage(
   message: string,
@@ -152,13 +161,16 @@ function categoryFromMessage(
   }
   if (
     (cfCode !== null && PLAN_LIMIT_CODES.has(cfCode)) ||
-    /cron triggers per account|needs Workers Paid|script (is )?too large|exceeds? .*size limit/i.test(
+    /cron triggers per account|needs Workers Paid|script (is )?too large|exceeds? .*size limit|Workers (Free|Paid) allows [\d,]+ per account|limit of [\d,]+ [A-Za-z0-9 ]+ per account/i.test(
       message,
     )
   ) {
     return "plan_limit";
   }
   if (/already exists in this account/i.test(message)) return "name_conflict";
+  // Something of the app deleted outside Appflare, found before the job
+  // changes anything (a pause's or resume's Worker, an update's stream).
+  if (/ is gone from the account\b/.test(message)) return "preflight";
   if (/^The Cloudflare Access application ".*" already covers /.test(message)) {
     return "access_conflict";
   }

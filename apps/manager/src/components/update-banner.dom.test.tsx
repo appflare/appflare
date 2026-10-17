@@ -224,6 +224,46 @@ describe("the update dialog of a version whose database an earlier update connec
   });
 });
 
+describe("the update dialog of a version that creates a D1 database", () => {
+  const D1: UpdateNeeds = {
+    version: "1.1.0",
+    needsSecrets: [],
+    skipsPreview: null,
+    build: null,
+    cronTriggers: null,
+    limitedCreates: { d1: 1 },
+  };
+
+  function paidInput(): HTMLInputElement | null {
+    const label = [...document.body.querySelectorAll("label")].find((l) =>
+      l.textContent?.includes("This account is on Workers Paid"),
+    );
+    return label?.querySelector("input") ?? null;
+  }
+
+  it("offers to confirm Workers Paid while the plan is not known, and sends the answer", async () => {
+    await openDialog(D1);
+    expect(document.body.textContent).toContain(
+      "Workers Paid allows 50,000 D1 databases per account.",
+    );
+    await act(async () => paidInput()?.click());
+    calls.startUpdate.mockResolvedValueOnce({ jobId: "job1" });
+    await act(async () => document.body.querySelector("form")?.requestSubmit());
+    expect(calls.startUpdate).toHaveBeenLastCalledWith({
+      data: expect.objectContaining({ installId: "i1", paidConfirmed: true }),
+    });
+  });
+
+  it("sends no for an unticked box: the job counts the account's databases", async () => {
+    await openDialog(D1);
+    calls.startUpdate.mockResolvedValueOnce({ jobId: "job1" });
+    await act(async () => document.body.querySelector("form")?.requestSubmit());
+    expect(calls.startUpdate).toHaveBeenLastCalledWith({
+      data: expect.objectContaining({ paidConfirmed: false }),
+    });
+  });
+});
+
 describe("the banner while an update runs", () => {
   it("shows the moving mark as decoration, with the link to the log", () => {
     const install = {

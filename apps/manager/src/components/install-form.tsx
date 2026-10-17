@@ -20,6 +20,7 @@ import { type FormEvent, type ReactNode, useCallback, useId, useState } from "re
 import { storedAccessProblem } from "../access/app-access";
 import type { AccountPlan } from "../account/plan";
 import type { CapabilitiesView } from "../capabilities/capabilities";
+import { type LimitedKind, workersPaidLimitsConfirmation } from "../catalog/account-limits";
 import { accessStartsOn } from "../installs/access-offer";
 import { appTokenSecret } from "../installs/app-token-secret";
 import { DISPLAY_NAME_MAX_LENGTH, displayNameProblem } from "../installs/display-name";
@@ -163,8 +164,10 @@ export function InstallForm({
   sandboxFirst = false,
   installer = null,
   cronTriggers = 0,
+  limitedResources = {},
   accountPlan = "free",
   planDetected = false,
+  planKnown = planDetected,
   reviewedBuildId = null,
   capabilities = null,
   prefill = null,
@@ -204,9 +207,21 @@ export function InstallForm({
   /** Distinct cron triggers the artifact declares (0 when none or not known before a build). */
   cronTriggers?: number;
   /** The account's Workers plan in force: detected, else as Settings records it. */
+  /**
+   * The D1 databases, Hyperdrive configurations and Vectorize indexes the
+   * app creates, by kind: while the plan is not known, the form offers to
+   * confirm Workers Paid, which skips counting the account's.
+   */
+  limitedResources?: Partial<Record<LimitedKind, number>>;
   accountPlan?: AccountPlan;
   /** The plan was detected, so remembering one for the account would not apply. */
   planDetected?: boolean;
+  /**
+   * The plan was detected or set in Settings. A plan known as free is not
+   * asked about again for cron triggers: the install counts them whatever
+   * is ticked here, and Settings is where a plan set by hand changes.
+   */
+  planKnown?: boolean;
   /**
    * The review of a build from a repository (or from source): the form
    * installs that build, whose manifest `catalog` is, instead of the catalog's
@@ -494,8 +509,15 @@ export function InstallForm({
   // Something to tick before the install gets a box of its own; the cron
   // count alone, on a Workers Paid account, is one quiet line by the button.
   const asksPaid = catalog.plan === "paid" && !accountPaid && !planAskedAbove;
-  const asksCron = !accountPaid && cronTriggers > 0 && catalog.plan !== "paid";
-  const confirms = confirmsCost !== null || asksCron || asksPaid;
+  // "This account is on Workers Paid" for an app that sets cron triggers or
+  // creates resources Workers Free has a low limit for: only while the plan
+  // is not known, since the install counts on a plan known as free whatever
+  // is ticked.
+  const paidLimits =
+    !accountPaid && !(planKnown && accountPlan === "free") && catalog.plan !== "paid"
+      ? workersPaidLimitsConfirmation({ cronTriggers, creates: limitedResources })
+      : null;
+  const confirms = confirmsCost !== null || paidLimits !== null || asksPaid;
   // Why Install is off, first reason first; empty when it is on.
   const blockers = [
     !nameValid && "choose a Worker name that is free",
@@ -728,10 +750,14 @@ export function InstallForm({
                       sandboxFirst={sandboxFirst}
                     />
                   )}
-                  <CronTriggersField
-                    count={cronTriggers}
-                    confirmation={catalog.plan === "paid" || accountPaid ? null : paidConfirmation}
-                  />
+                  <CronTriggersField count={cronTriggers} />
+                  {paidLimits !== null && (
+                    <WorkersPaidConfirmation
+                      state={paidConfirmation}
+                      label={paidLimits.label}
+                      description={paidLimits.description}
+                    />
+                  )}
                   {asksPaid && <WorkersPaidConfirmation state={paidConfirmation} />}
                 </fieldset>
               )}

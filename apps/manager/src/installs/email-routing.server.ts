@@ -418,14 +418,27 @@ export async function removeEmailRule(
   }
 }
 
-/** What restoring a recorded catch-all did. */
-export type CatchAllReset = "restored" | "not-ours";
+/**
+ * What restoring a recorded catch-all did. `unreadable`: Cloudflare could
+ * not read it, which it answers for a catch-all that delivers to a Worker
+ * that no longer exists, and it was left as it is.
+ */
+export type CatchAllReset = "restored" | "not-ours" | "unreadable";
 
 /**
  * Puts the zone's catch-all back as it was before the install (`previous`;
  * without a record of it, drop and off, as Cloudflare starts a zone), if it
  * is on and still delivers to `workerName` (or one of the app's Workers);
  * one changed since is left alone.
+ *
+ * A catch-all that delivers to a Worker deleted outside Appflare cannot be
+ * read: Cloudflare answers 404, "Workers Script Info not found" (code 2016,
+ * seen when an app's Worker had been deleted by hand). Which Worker it named
+ * is then unknown: it may be one the admin pointed it at since. It is put
+ * back as it was before the install only when `workersGone` confirms every
+ * Worker of the app is gone from the account, so the catch-all can only have
+ * been the app's; otherwise, or when Cloudflare refuses the change too, it is
+ * `unreadable` and nothing is changed.
  */
 export async function resetEmailCatchAll(
   api: CloudflareClient,
@@ -433,20 +446,37 @@ export async function resetEmailCatchAll(
     zoneId: string;
     workerName: string | readonly string[];
     previous: SavedCatchAll | null;
+    /** Whether none of the app's Workers is in the account any more; absent: not known. */
+    workersGone?: () => Promise<boolean>;
   },
 ): Promise<CatchAllReset> {
-  const current = await api.emailRouting.getCatchAll(target.zoneId);
+  const previous = target.previous ?? DEFAULT_CATCH_ALL;
+  const restore = () =>
+    api.emailRouting.updateCatchAll(target.zoneId, {
+      actions: previous.actions.length > 0 ? previous.actions : DEFAULT_CATCH_ALL.actions,
+      matchers: [{ type: "all" }],
+      enabled: previous.enabled,
+    });
+  let current: EmailRoutingCatchAll;
+  try {
+    current = await api.emailRouting.getCatchAll(target.zoneId);
+  } catch (error) {
+    if (!isGone(error)) throw error;
+    if (target.workersGone === undefined || !(await target.workersGone())) return "unreadable";
+    try {
+      await restore();
+      return "restored";
+    } catch (again) {
+      if (isGone(again)) return "unreadable";
+      throw again;
+    }
+  }
   // One turned off since is left as it is: restoring the earlier state could
   // turn a dropping catch-all back on.
   if (current.enabled === false || !deliversTo(current.actions, target.workerName)) {
     return "not-ours";
   }
-  const previous = target.previous ?? DEFAULT_CATCH_ALL;
-  await api.emailRouting.updateCatchAll(target.zoneId, {
-    actions: previous.actions.length > 0 ? previous.actions : DEFAULT_CATCH_ALL.actions,
-    matchers: [{ type: "all" }],
-    enabled: previous.enabled,
-  });
+  await restore();
   return "restored";
 }
 
@@ -548,7 +578,16 @@ export async function releaseEmailRouting(
   }
   if (!settings.enabled) return { outcome: "already-off" };
   const rules = regularRules(await api.emailRouting.listRules(zoneId));
-  const catchAll = catchAllInUse(await api.emailRouting.getCatchAll(zoneId));
+  // One Cloudflare cannot read (it delivers to a Worker that no longer
+  // exists, see `resetEmailCatchAll`) counts as in use: turning routing off
+  // would take away the zone's MX records on a guess.
+  let catchAll: boolean;
+  try {
+    catchAll = catchAllInUse(await api.emailRouting.getCatchAll(zoneId));
+  } catch (error) {
+    if (!isGone(error)) throw error;
+    catchAll = true;
+  }
   if (rules.length > 0 || catchAll) {
     return { outcome: "in-use", rules: rules.length, catchAll };
   }

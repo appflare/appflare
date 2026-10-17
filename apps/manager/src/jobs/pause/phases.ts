@@ -39,6 +39,21 @@ export function instancesPerStep(accountPaid: boolean): number {
   return accountPaid ? 50 : 6;
 }
 
+/**
+ * Why a pause or resume cannot go on: every Worker of the app is gone from
+ * the account (deleted outside Appflare), so nothing of it can be paused or
+ * run again, and what is left of it only goes with an uninstall.
+ */
+export function workersGoneMessage(workers: readonly string[], job: "pause" | "resume"): string {
+  const outcome =
+    job === "pause" ? "so there is nothing of it to pause" : "so the app cannot run again";
+  const which =
+    workers.length === 1
+      ? `the app's Worker "${workers[0]}" is gone from the account (it was deleted outside Appflare)`
+      : `every Worker of the app (${workers.map((w) => `"${w}"`).join(", ")}) is gone from the account (they were deleted outside Appflare)`;
+  return `${which}, ${outcome}. Uninstall the app to remove what is left of it`;
+}
+
 /** A container application allows its recorded most instances again. */
 export async function restoreContainerPhase(
   steps: JobSteps,

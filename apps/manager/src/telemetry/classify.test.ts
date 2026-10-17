@@ -57,6 +57,57 @@ describe("classifyJobError", () => {
         "check Worker name: a Worker named cut already exists in this account; Appflare does not adopt existing Workers",
       ),
     ).toMatchObject({ errorCategory: "name_conflict", failedPhase: "preflight" });
+    expect(
+      classifyJobError(
+        "check D1 database limit: this app needs a new D1 database and the account already has 10; Workers Free allows 10 per account, so this would make 11.",
+      ),
+    ).toMatchObject({ errorCategory: "plan_limit", failedPhase: "preflight" });
+    expect(
+      classifyJobError(
+        "create D1 database cut-db: Cloudflare API request failed: POST /x -> 403: [7406] System limit reached: databases per account (10)",
+      ),
+    ).toMatchObject({ errorCategory: "plan_limit", failedPhase: "resources", cfCode: 7406 });
+    // The job's error when Cloudflare refuses a D1 database at the limit.
+    expect(
+      classifyJobError(
+        "create D1 database cut-db: Cloudflare refused another D1 database: this account has reached its limit of 10 D1 databases per account (Cloudflare API request failed: POST /accounts/acc0000000000000000000000000000a/d1/database -> 403: [7406] System limit reached: databases per account (10)). Delete D1 databases the account no longer uses (for example by uninstalling an app that has one without keeping its data), or upgrade the account to Workers Paid (50,000 per account), then try again.",
+      ),
+    ).toMatchObject({
+      errorCategory: "plan_limit",
+      failedPhase: "resources",
+      cfStatus: 403,
+      cfCode: 7406,
+    });
+    // Without Cloudflare's answer, the sentence alone names the limit.
+    expect(
+      classifyJobError(
+        "create D1 database cut-db: Cloudflare refused another D1 database: this account has reached its limit of 10 D1 databases per account. Delete D1 databases the account no longer uses, then try again.",
+      ).errorCategory,
+    ).toBe("plan_limit");
+  });
+
+  it("knows a pause's and a resume's reads of the app's Workers", () => {
+    expect(failedPhase("check the app's Workers")).toBe("preflight");
+    expect(failedPhase("read Worker my-assets-snapshot")).toBe("preflight");
+    expect(
+      classifyJobError(
+        "check the app's Workers: the app's Worker \"cut\" is gone from the account (it was deleted outside Appflare), so the app cannot run again. Uninstall the app to remove what is left of it",
+      ),
+    ).toMatchObject({ errorCategory: "preflight", failedPhase: "preflight" });
+    expect(
+      classifyJobError(
+        "read Pipelines streams: The Pipelines stream of EVENTS (id streams-1), which an earlier update made, is gone from the account; uninstall the app and install this version instead",
+      ).errorCategory,
+    ).toBe("preflight");
+  });
+
+  it("knows the uninstall's steps for Email Routing and domains", () => {
+    expect(failedPhase("restore catch-all *@example.com")).toBe("email_routing");
+    expect(failedPhase("remove email route inbox@example.com")).toBe("email_routing");
+    expect(failedPhase("remove external domain shop.example.net")).toBe("domains");
+    expect(failedPhase("remove wildcard domain example.com")).toBe("domains");
+    expect(failedPhase("remove gateway binding APP_CUT")).toBe("domains");
+    expect(failedPhase("skip Worker cut")).toBe("delete");
   });
 
   it("recognises artifact integrity and fetch failures", () => {

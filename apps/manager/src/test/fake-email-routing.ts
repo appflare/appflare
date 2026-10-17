@@ -35,6 +35,14 @@ export interface EmailWorld {
   /** `METHOD /path` keys whose next call does its work and then answers 500. */
   failAfter: Set<string>;
   calls: string[];
+  /**
+   * Whether a Worker exists in the account. A catch-all that is on and
+   * delivers to one that does not cannot be read: Cloudflare answers 404,
+   * code 2016, as it did for an app whose Worker was deleted by hand.
+   */
+  workerExists?: (name: string) => boolean;
+  /** Such a catch-all cannot be changed either (`PUT` answers the same 404). */
+  catchAllStuck?: boolean;
 }
 
 const CLOUDFLARE_MX = [
@@ -115,9 +123,19 @@ export function fakeEmailRouting(accountId: string, over: Partial<EmailWorld> = 
         world.rules.push(rule);
         return ok(rule);
       }
-      case `GET ${er}/rules/catch_all`:
+      case `GET ${er}/rules/catch_all`: {
+        const delivers = world.catchAll.actions.find((a) => a.type === "worker")?.value?.[0];
+        if (
+          world.catchAll.enabled &&
+          delivers !== undefined &&
+          world.workerExists?.(delivers) === false
+        ) {
+          return fail(404, 2016, "Workers Script Info not found");
+        }
         return ok({ id: "catchall", ...world.catchAll });
+      }
       case `PUT ${er}/rules/catch_all`: {
+        if (world.catchAllStuck === true) return fail(404, 2016, "Workers Script Info not found");
         const body = (await request.json()) as EmailWorld["catchAll"];
         world.catchAll = {
           enabled: body.enabled,

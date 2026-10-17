@@ -7,6 +7,7 @@ import {
   type CatalogSecret,
   type CatalogVar,
   type HyperdriveDeclaration,
+  hyperdriveDeclarations,
   type IndexApp,
   type IndexBuild,
   secretKey,
@@ -16,7 +17,13 @@ import { and, desc, eq, inArray, isNull } from "drizzle-orm";
 import { ulid } from "ulidx";
 import { readInstallProtection } from "../access/protect.server";
 import { storedCatalogAccess } from "../access/stored-access.server";
-import { readAccountPlan, writeAccountPlan } from "../account/plan.server";
+import { readResolvedAccountPlan, writeAccountPlan } from "../account/plan.server";
+import {
+  hasLimited,
+  LIMITED_KINDS,
+  type LimitedKind,
+  limitedCreates,
+} from "../catalog/account-limits";
 import { cronTriggerCount } from "../catalog/cron-triggers";
 import { installAppKey, unsignedTierRefusal } from "../catalog/sources";
 import { settingsPlace } from "../components/settings-links";
@@ -24,11 +31,13 @@ import { createDb, type Database } from "../db/client";
 import { installs, type JobStarter, jobs, resources, snapshots } from "../db/schema";
 import {
   durableObjectExportsDiffer,
+  entryBindings,
   otherDoTagsDiffer,
   otherWorkersMatch,
   parseStoredManifest,
   storedOtherWorkers,
 } from "../jobs/entry-workers";
+import { planBindings } from "../jobs/install/bindings";
 import type { WorkflowLookup } from "../jobs/reconcile.server";
 import { liveHyperdriveIds } from "../jobs/reconfigure/hyperdrive";
 import { parseStoredVars } from "../jobs/reconfigure/plan";
@@ -316,6 +325,16 @@ export interface UpdateNeeds {
    * free plan's limit and offers to confirm Workers Paid.
    */
   cronTriggers: number | null;
+  /** With `cronTriggers`: the plan was detected or set as free, so Workers Paid is not asked about. */
+  planKnownFree?: boolean;
+  /**
+   * The D1 databases, Hyperdrive configurations and Vectorize indexes the
+   * new version creates, by kind, when the app does not need Workers Paid
+   * and Appflare does not know the account's plan: the dialog offers to
+   * confirm Workers Paid, which skips counting the account's. Absent
+   * otherwise.
+   */
+  limitedCreates?: Partial<Record<LimitedKind, number>>;
   /**
    * The new version receives other email than the installed one: what the
    * update changes about the app's Email Routing once it serves (routing
@@ -335,6 +354,32 @@ export type StartUpdateResult = { jobId: string } | UpdateNeeds;
  * call returns what the admin must provide or confirm instead; the second call carries the values
  * (which go only into the Workflow params) and the confirmation.
  */
+/**
+ * Of `bound` (the new version's resources of a limited kind), how many of
+ * each kind the install has no row for, which the update creates; null when
+ * it creates none.
+ */
+async function newLimitedResources(
+  db: D1Database,
+  installId: string,
+  bound: ReadonlyArray<{ kind: string; binding: string }>,
+): Promise<Partial<Record<LimitedKind, number>> | null> {
+  const rows = await createDb(db)
+    .select({ kind: resources.kind, binding: resources.binding })
+    .from(resources)
+    .where(
+      and(
+        eq(resources.install_id, installId),
+        inArray(resources.kind, [...LIMITED_KINDS]),
+        isNull(resources.deleted_at),
+      ),
+    );
+  const counts = limitedCreates(
+    bound.filter((b) => !rows.some((r) => r.kind === b.kind && r.binding === b.binding)),
+  );
+  return hasLimited(counts) ? counts : null;
+}
+
 export async function startUpdateCore(
   deps: StartUpdateDeps,
   request: StartUpdateRequest,
@@ -372,6 +417,8 @@ export async function startUpdateCore(
   let skipPreview: string | null = null;
   /** Cron triggers of the new version; unknown for a sandbox build (and it needs Workers Paid anyway). */
   let newCrons: number | null = null;
+  /** The new version's D1 databases, Hyperdrive configurations and Vectorize indexes; unknown for a sandbox build. */
+  let limitedBound: Array<{ kind: string; binding: string }> = [];
   if (sandbox !== null) {
     if ((await deps.sandboxConnected?.()) !== true) {
       throw new VersionActionError(
@@ -391,6 +438,14 @@ export async function startUpdateCore(
     const manifest = await deps.loadManifest(app);
     catalog = manifest.catalog;
     newCrons = appWorkers(manifest).reduce((n, w) => n + cronTriggerCount(w.worker.crons), 0);
+    limitedBound = planBindings(
+      install.worker_name,
+      entryBindings(manifest),
+      hyperdriveDeclarations(catalog.resources?.hyperdrive),
+      catalog.resources?.pipelines,
+    )
+      .resources.filter((r) => (LIMITED_KINDS as readonly string[]).includes(r.kind))
+      .map((r) => ({ kind: r.kind, binding: r.binding }));
     skipPreview = updatePath(
       manifest,
       install.do_migration_tag ?? lastDurableObjectTagOf(install.manifest_json),
@@ -447,10 +502,19 @@ export async function startUpdateCore(
       (n, w) => n + cronTriggerCount(w.manifest.worker.crons),
       0,
     );
-  const accountPaid = (await readAccountPlan(createDb(deps.db))) === "paid";
+  const plan = await readResolvedAccountPlan(createDb(deps.db));
+  const accountPaid = plan.plan === "paid";
   const cronTriggers =
     newCrons !== null && newCrons > recordedCrons && catalog.plan !== "paid" && !accountPaid
       ? newCrons
+      : null;
+  // What the version creates where Workers Free's per-account limit is low,
+  // while Appflare does not know the plan: the job counts the account's
+  // first, unless the admin confirms Workers Paid (a plan known as free is
+  // counted whatever is ticked, and nothing is asked).
+  const limited =
+    limitedBound.length > 0 && catalog.plan !== "paid" && plan.source === "default"
+      ? await newLimitedResources(deps.db, install.id, limitedBound)
       : null;
   // The job changes Email Routing to match the new version once it serves
   // (it may take the catch-all, create rules, or turn routing on), which an
@@ -471,6 +535,8 @@ export async function startUpdateCore(
     (skipPreview !== null && request.confirmNoPreview !== true) ||
     (sandbox !== null && request.buildConfirmed !== true) ||
     (cronTriggers !== null && request.paidConfirmed === undefined) ||
+    // Offered only to an admin who pressed Update: unconfirmed, the job counts.
+    (limited !== null && request.offerChoices === true && request.paidConfirmed === undefined) ||
     // Confirmed for the version the admin saw: a newer one the catalog
     // published meanwhile is shown again.
     (emailNote !== null && request.confirmEmailRouting !== app.version)
@@ -495,6 +561,12 @@ export async function startUpdateCore(
       skipsPreview: skipPreview,
       build: sandbox,
       cronTriggers,
+      // Detected or set as free: the job counts the cron triggers whatever
+      // is ticked, so the dialog does not ask about Workers Paid.
+      ...(cronTriggers !== null && plan.plan === "free" && plan.source !== "default"
+        ? { planKnownFree: true }
+        : {}),
+      ...(limited === null ? {} : { limitedCreates: limited }),
       ...(emailNote === null ? {} : { emailRouting: emailNote }),
     };
   }
@@ -519,8 +591,9 @@ export async function startUpdateCore(
   const secrets = await withDerivedSecrets(catalog.secrets, entered);
   // A derived var follows its source's new value; the job stores it.
   const vars = await derivedVarValues(catalog.vars, entered);
+  const asksPaid = cronTriggers !== null || limited !== null;
   const rememberPaid =
-    cronTriggers !== null && request.paidConfirmed === true && request.rememberPaidPlan === true;
+    asksPaid && request.paidConfirmed === true && request.rememberPaidPlan === true;
   const jobId = (deps.newId ?? (() => ulid()))();
   return claim(deps, {
     installId: install.id,
@@ -546,7 +619,7 @@ export async function startUpdateCore(
       ...(sandbox === null
         ? {}
         : { buildConfirmed: true, confirmNoPreview: request.confirmNoPreview === true }),
-      ...(cronTriggers === null ? {} : { paidConfirmed: request.paidConfirmed === true }),
+      ...(asksPaid ? { paidConfirmed: request.paidConfirmed === true } : {}),
     },
     // "Remember this for the account" beside a ticked Workers Paid
     // confirmation, recorded only once the job row exists: a refused start

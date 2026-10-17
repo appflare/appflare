@@ -22,6 +22,7 @@ import { and, eq, inArray, isNull, ne, or } from "drizzle-orm";
 import { z } from "zod";
 import { accessPlaceholderValues } from "../access/placeholder-values.server";
 import { parseStoredCapabilities, resolveAccountPlan } from "../capabilities/capabilities";
+import { limitedCreates } from "../catalog/account-limits";
 import { CatalogTrustError, catalogTrust } from "../catalog/catalogs.server";
 import { cronTriggerCount } from "../catalog/cron-triggers";
 import {
@@ -60,6 +61,7 @@ import {
   protectBeforeUploadPhase,
   syncAccessPhase,
 } from "./install/access";
+import { checkAccountLimitsPhase, freeLimitsApply } from "./install/account-limits";
 import {
   type ArtifactOrigin,
   prebuiltBuildParams,
@@ -113,6 +115,11 @@ import {
 import { attachQueueConsumersPhase } from "./install/queue-consumers";
 import { explainR2Refusal } from "./install/r2-enablement";
 import { assignRateLimitsPhase } from "./install/rate-limits";
+import {
+  CRON_REFUSED_NEXT,
+  CRON_REFUSED_UNDO,
+  removeFailedInstallPhase,
+} from "./install/remove-failed";
 import { checkSignInPhase } from "./install/sign-in-access";
 import { putWorkflowsPhase, workflowsOf, workflowTargets } from "./install/workflows";
 import type { JobContext } from "./run-job";
@@ -122,6 +129,7 @@ import { selfDeployingJobInput } from "./self-deploying/phases";
 import { StepLog } from "./step-log";
 import { createJobSteps, errorMessage, JobError } from "./steps";
 import { settleUnit } from "./units/result";
+import { assetFilesOf } from "./units/upload-retry";
 import { appliedDurableObjectTag } from "./update/plan";
 
 export { API_STEP, toStepError } from "./steps";
@@ -578,10 +586,17 @@ export async function runInstall(ctx: JobContext): Promise<void> {
       });
     }
 
-    // The account's cron trigger limit (5 on Workers Free) is checked before
-    // anything is created, like R2. Skipped on Workers Paid: the admin
-    // confirmed it for this install (a paid app always asks), or Settings
-    // records it for the account.
+    // The account's limits are checked before anything is created, like R2:
+    // its cron triggers (5 on Workers Free) and the resources of the kinds
+    // the app creates where Workers Free's limit is low (10 D1 databases).
+    // Workers Free's limits apply unless Settings records Workers Paid, or
+    // Appflare does not know the plan and the admin confirmed Workers Paid
+    // for this install (a paid app always asks).
+    const freeLimits = freeLimitsApply({
+      paid: preflight.accountPaid,
+      knownFree: preflight.accountFree,
+      paidConfirmed: params.paidConfirmed,
+    });
     const crons = [...new Set(primaryManifest.worker.crons)];
     await checkCronLimitPhase(steps, {
       workerName: params.workerName,
@@ -590,9 +605,10 @@ export async function runInstall(ctx: JobContext): Promise<void> {
         (n, w) => n + cronTriggerCount([...new Set(w.manifest.worker.crons)]),
         0,
       ),
-      paid: params.paidConfirmed || preflight.accountPaid,
+      paid: !freeLimits,
       subject: "this app",
     });
+    await checkAccountLimitsPhase(steps, { wanted: limitedCreates(toCreate), freeLimits });
 
     // Pipelines too: a token without its permission, or an account without
     // it, is refused before anything is created.
@@ -800,6 +816,7 @@ export async function runInstall(ctx: JobContext): Promise<void> {
             modules: primaryManifest.worker.modules,
             metadata,
             target: "script",
+            ...assetFilesOf(primaryManifest.assets.files, assetsJwt),
           }),
           log,
         );
@@ -990,7 +1007,8 @@ export async function runInstall(ctx: JobContext): Promise<void> {
           cf(),
           params.workerName,
           crons,
-          `The Worker "${params.workerName}" is uploaded without them; uninstall this install to remove it.`,
+          CRON_REFUSED_UNDO,
+          CRON_REFUSED_NEXT,
         );
         for (const cron of crons) {
           await recordResource(orm, {
@@ -1131,6 +1149,12 @@ export async function runInstall(ctx: JobContext): Promise<void> {
     // Fail closed: nothing of an app meant to be behind Access stays reachable.
     if (uncovered.length > 0) await keepWorkersUnreachablePhase(steps, uncovered);
     const nameOnly = await resolveReservedNamesPhase(steps, reserved);
+    // Cloudflare refused the cron triggers at the account's limit: the app
+    // is uploaded without them, and installing it again fails the same way
+    // until there is room, so what it created is removed now. Known by the
+    // refusal's own sentence: a step's error reaches here as the step
+    // runner's, without its class.
+    const undo = errorMessage(error).includes(CRON_REFUSED_UNDO);
     await step.do("mark install failed", async () => {
       const orm = createDb(db);
       const at = new Date(now());
@@ -1144,10 +1168,15 @@ export async function runInstall(ctx: JobContext): Promise<void> {
         .where(eq(installs.id, params.installId));
       const log = new StepLog(now);
       if (nameOnly.length > 0) log.error(nameOnlyNote(nameOnly));
-      log.error(`Install failed at "${steps.current}". Resources created so far stay recorded.`);
+      log.error(
+        undo
+          ? `Install failed at "${steps.current}". What it created is removed next.`
+          : `Install failed at "${steps.current}". Resources created so far stay recorded.`,
+      );
       await log.flush(db, params.jobId);
       return {};
     });
+    if (undo) await removeFailedInstallPhase({ step, env, params }, now);
     throw new NonRetryableError(reason);
   }
 }

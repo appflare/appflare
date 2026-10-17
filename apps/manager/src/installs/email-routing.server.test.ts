@@ -532,6 +532,82 @@ describe("undoing an install's email routes", () => {
     });
   });
 
+  it("puts back a catch-all Cloudflare cannot read only when the app's Workers are gone", async () => {
+    const ours = {
+      enabled: true,
+      matchers: [{ type: "all" }],
+      actions: [{ type: "worker", value: ["inbox"] }],
+    };
+    const previous = { enabled: false, actions: [{ type: "forward", value: ["me@example.net"] }] };
+    const gone = setup({ catchAll: ours, workerExists: () => false });
+    expect(
+      await resetEmailCatchAll(gone.api, {
+        zoneId: ZONE_ID,
+        workerName: "inbox",
+        previous,
+        workersGone: async () => true,
+      }),
+    ).toBe("restored");
+    expect(gone.world.catchAll).toEqual({
+      enabled: false,
+      matchers: [{ type: "all" }],
+      actions: [{ type: "forward", value: ["me@example.net"] }],
+    });
+
+    const stuck = setup({ catchAll: ours, workerExists: () => false, catchAllStuck: true });
+    expect(
+      await resetEmailCatchAll(stuck.api, {
+        zoneId: ZONE_ID,
+        workerName: "inbox",
+        previous,
+        workersGone: async () => true,
+      }),
+    ).toBe("unreadable");
+    expect(stuck.world.catchAll).toEqual(ours);
+  });
+
+  it("leaves a catch-all it cannot read alone while the app's Worker may still be there", async () => {
+    // The catch-all may deliver to a Worker the admin pointed it at since,
+    // deleted later: nothing says it is still the app's.
+    const elsewhere = {
+      enabled: true,
+      matchers: [{ type: "all" }],
+      actions: [{ type: "worker", value: ["their-own"] }],
+    };
+    const previous = { enabled: false, actions: [{ type: "drop" }] };
+    for (const workersGone of [undefined, async () => false]) {
+      const { api, world } = setup({ catchAll: elsewhere, workerExists: () => false });
+      expect(
+        await resetEmailCatchAll(api, {
+          zoneId: ZONE_ID,
+          workerName: "inbox",
+          previous,
+          ...(workersGone === undefined ? {} : { workersGone }),
+        }),
+      ).toBe("unreadable");
+      expect(world.catchAll).toEqual(elsewhere);
+      expect(world.calls.some((c) => c.startsWith("PUT"))).toBe(false);
+    }
+  });
+
+  it("leaves routing on when the catch-all cannot be read", async () => {
+    const { api, world } = setup({
+      routingEnabled: true,
+      catchAll: {
+        enabled: true,
+        matchers: [{ type: "all" }],
+        actions: [{ type: "worker", value: ["inbox"] }],
+      },
+      workerExists: () => false,
+    });
+    expect(await releaseEmailRouting(api, ZONE_ID)).toEqual({
+      outcome: "in-use",
+      rules: 0,
+      catchAll: true,
+    });
+    expect(world.routingEnabled).toBe(true);
+  });
+
   it("turns routing off only when nothing else uses it", async () => {
     const busy = setup({
       routingEnabled: true,

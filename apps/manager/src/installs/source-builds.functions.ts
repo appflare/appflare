@@ -151,6 +151,8 @@ export interface SourceBuildReview {
   subdomain: string | null;
   accountPlan: AccountPlan;
   planDetected: boolean;
+  /** The plan was detected or set in Settings. */
+  planKnown: boolean;
   capabilities: CapabilitiesView;
 }
 
@@ -311,6 +313,7 @@ export const getSourceBuild = createServerFn({ method: "GET" })
         subdomain: settings.account_subdomain || null,
         accountPlan: capabilities.plan.plan,
         planDetected: capabilities.plan.source === "detected",
+        planKnown: capabilities.plan.source !== "default",
         capabilities,
       };
     }

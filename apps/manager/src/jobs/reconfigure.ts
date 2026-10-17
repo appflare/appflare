@@ -105,6 +105,7 @@ import { StepLog } from "./step-log";
 import { createJobSteps, errorMessage, JobError } from "./steps";
 import { settleUnit } from "./units/result";
 import type { ArtifactHost } from "./units/units";
+import { assetFilesOf } from "./units/upload-retry";
 import { CANARY_MAX_ATTEMPTS } from "./update";
 import { emailZoneOnRecord, readEmailRouteRows } from "./update/email-routing";
 import {
@@ -1003,6 +1004,7 @@ export async function runReconfigure(ctx: JobContext): Promise<void> {
             modules: primaryManifest.worker.modules,
             metadata,
             target: "version",
+            ...assetFilesOf(primaryManifest.assets.files, assetsJwt),
           }),
           log,
         );

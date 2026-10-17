@@ -2,6 +2,7 @@ import { AppflareLoader } from "@appflare/brand/loader";
 import { Banner, Checkbox, LayerDialog, LinkButton, Text } from "@cloudflare/kumo";
 import { ArrowCircleUpIcon, ArrowRightIcon, EnvelopeSimpleIcon } from "@phosphor-icons/react";
 import { type FormEvent, type ReactNode, useId, useState } from "react";
+import { workersPaidLimitsConfirmation } from "../catalog/account-limits";
 import type { InstallDetail } from "../installs/installs.functions";
 import { reinstallSentence } from "../installs/tier-change";
 import { startUpdate } from "../installs/versions.functions";
@@ -19,6 +20,7 @@ import {
   secretsComplete,
   withSecretValue,
 } from "./secret-fields";
+import { WorkersPaidConfirmation } from "./workers-paid-confirmation";
 
 /**
  * The update state of `/apps/$installId`: an update or rollback running
@@ -222,6 +224,14 @@ function UpdateDialog({
   /** A sandbox build may turn out to have no preview; the admin may accept that up front. */
   const [allowNoPreview, setAllowNoPreview] = useState(false);
   const [paidConfirmed, setPaidConfirmed] = useState(false);
+  // Not asked when the plan is known as free: the job counts whatever is ticked.
+  const paidLimits =
+    needs.planKnownFree === true
+      ? null
+      : workersPaidLimitsConfirmation({
+          cronTriggers: needs.cronTriggers ?? 0,
+          creates: needs.limitedCreates ?? {},
+        });
   const [rememberPaid, setRememberPaid] = useState(false);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -247,7 +257,7 @@ function UpdateDialog({
             : { hyperdrive: filledConnections(connections) }),
           confirmNoPreview: needs.skipsPreview !== null || allowNoPreview,
           ...(needs.build === null ? {} : { buildConfirmed: true }),
-          ...(needs.cronTriggers === null
+          ...(needs.cronTriggers === null && needs.limitedCreates === undefined
             ? {}
             : {
                 paidConfirmed,
@@ -329,16 +339,18 @@ function UpdateDialog({
                 description={needs.emailRouting}
               />
             )}
-            {needs.cronTriggers !== null && (
-              <CronTriggersField
-                count={needs.cronTriggers}
-                confirmation={{
+            {needs.cronTriggers !== null && <CronTriggersField count={needs.cronTriggers} />}
+            {paidLimits !== null && (
+              <WorkersPaidConfirmation
+                state={{
                   checked: paidConfirmed,
                   onChange: setPaidConfirmed,
                   remember: rememberPaid,
                   onRememberChange: setRememberPaid,
                   disabled: pending,
                 }}
+                label={paidLimits.label}
+                description={paidLimits.description}
               />
             )}
             {needs.needsSecrets.length > 0 && (

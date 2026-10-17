@@ -32,7 +32,7 @@ const schedules = (...crons: string[]): FakeRoute => ({
 });
 
 describe("countAccountCronTriggers", () => {
-  it("reads the schedules of the Workers with a scheduled handler, except the one being set", async () => {
+  it("reads the schedules of the Workers with a scheduled handler first, then the others, except the one being set", async () => {
     const { api, cf } = client({
       [`GET ${A}/workers/scripts`]: {
         result: [
@@ -50,21 +50,52 @@ describe("countAccountCronTriggers", () => {
         status: 404,
         errors: [{ code: 10007, message: "This Worker does not exist on your account." }],
       },
+      // Its deploy dropped the handler; Cloudflare still counts its trigger.
+      [`GET ${A}/workers/scripts/docs/schedules`]: schedules("0 4 * * *"),
     });
     expect(await countAccountCronTriggers(cf, { exclude: "cut", maxWorkers: 20 })).toEqual({
       kind: "counted",
-      total: 3,
+      total: 4,
       byWorker: [
         { worker: "second-brain", count: 2 },
         { worker: "appflare", count: 1 },
+        { worker: "docs", count: 1 },
       ],
-      read: 3,
+      read: 4,
+      unread: 0,
     });
     expect(api.keys()).toEqual([
       `GET ${A}/workers/scripts`,
       `GET ${A}/workers/scripts/appflare/schedules`,
       `GET ${A}/workers/scripts/second-brain/schedules`,
       `GET ${A}/workers/scripts/old/schedules`,
+      `GET ${A}/workers/scripts/docs/schedules`,
+    ]);
+  });
+
+  it("reads the Workers without a scheduled handler only as far as its reads go", async () => {
+    const { api, cf } = client({
+      [`GET ${A}/workers/scripts`]: {
+        result: [
+          { id: "a", handlers: ["fetch"] },
+          { id: "b", handlers: ["fetch", "scheduled"] },
+          { id: "c", handlers: ["fetch"] },
+        ],
+      },
+      [`GET ${A}/workers/scripts/b/schedules`]: schedules("0 1 * * *"),
+      [`GET ${A}/workers/scripts/a/schedules`]: schedules(),
+    });
+    expect(await countAccountCronTriggers(cf, { exclude: "cut", maxWorkers: 2 })).toEqual({
+      kind: "counted",
+      total: 1,
+      byWorker: [{ worker: "b", count: 1 }],
+      read: 2,
+      unread: 1,
+    });
+    expect(api.keys()).toEqual([
+      `GET ${A}/workers/scripts`,
+      `GET ${A}/workers/scripts/b/schedules`,
+      `GET ${A}/workers/scripts/a/schedules`,
     ]);
   });
 

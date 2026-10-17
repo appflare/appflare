@@ -877,6 +877,35 @@ describe("resume job", () => {
   });
 });
 
+describe("pause and resume of an app whose Worker was deleted by hand", () => {
+  it("refuses to pause, in a sentence, before changing anything", async () => {
+    await seedApp();
+    const fake = world({ scripts: new Map() });
+    const { jobId, error } = await pause(fake);
+    expect(error).toBeInstanceOf(NonRetryableError);
+    expect((await job(jobId))?.error).toBe(
+      'read Worker cut: the app\'s Worker "cut" is gone from the account (it was deleted outside Appflare), so there is nothing of it to pause. Uninstall the app to remove what is left of it',
+    );
+    // Nothing changed: the queue still delivers, the Workflow still runs.
+    expect(fake.world.queues.get("q-1")?.paused).toBe(false);
+    expect(fake.world.workflows.get("cut-jobs")?.get("run-1")).toBe("running");
+    expect(await findOpenPause(createDb(env.DB), "i1")).toBeNull();
+  });
+
+  it("refuses to resume, in a sentence, and keeps the pause open", async () => {
+    await seedApp({ queues: false, workflow: false });
+    const fake = world();
+    expect((await pause(fake)).error).toBeNull();
+    fake.world.scripts.delete("cut");
+    const { jobId, error } = await resume(fake);
+    expect(error).toBeInstanceOf(NonRetryableError);
+    expect((await job(jobId))?.error).toBe(
+      "check the app's Workers: the app's Worker \"cut\" is gone from the account (it was deleted outside Appflare), so the app cannot run again. Uninstall the app to remove what is left of it",
+    );
+    expect(await findOpenPause(createDb(env.DB), "i1")).not.toBeNull();
+  });
+});
+
 /**
  * A step runner whose run stops for good (its promise never settles, as an
  * isolate that is gone) once the named step is about to run.

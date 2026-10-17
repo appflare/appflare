@@ -1,4 +1,8 @@
-import { parseStoredCapabilities, resolveAccountPlan } from "../capabilities/capabilities";
+import {
+  parseStoredCapabilities,
+  type ResolvedAccountPlan,
+  resolveAccountPlan,
+} from "../capabilities/capabilities";
 import { type Read, read, runRead } from "../db/batch";
 import type { Database } from "../db/client";
 import { SETTING, settingsRead, writeSettings } from "../db/settings";
@@ -10,6 +14,21 @@ import type { AccountPlan } from "./plan";
  */
 export async function readAccountPlan(db: Database): Promise<AccountPlan> {
   return runRead(db, accountPlanRead(db));
+}
+
+/** The plan in force and where it comes from: detected, set in Settings, or the default. */
+export async function readResolvedAccountPlan(db: Database): Promise<ResolvedAccountPlan> {
+  const rows = settingsRead(db, [SETTING.accountPlan, SETTING.accountCapabilities]);
+  return runRead(
+    db,
+    read(rows.queries, (results) => {
+      const row = rows.decode(results);
+      return resolveAccountPlan(
+        row.account_plan,
+        parseStoredCapabilities(row.account_capabilities),
+      );
+    }),
+  );
 }
 
 /** {@link readAccountPlan} as a read that can share a round trip with others (db/batch.ts). */

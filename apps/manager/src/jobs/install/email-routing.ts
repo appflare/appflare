@@ -343,6 +343,11 @@ export interface EmailRouteRecord {
  * `otherWorkers` are the app's other Workers (an app of several): a route
  * that delivers to one of them is the app's too, since a version may have had
  * another Worker receive its mail.
+ * `appWorkersMayBeGone` (an uninstall): a catch-all Cloudflare cannot read
+ * (it delivers to a Worker that no longer exists) is put back as it was
+ * before the install when the account's Worker list confirms none of the
+ * app's Workers is left; anywhere else, or with one of them left, it may
+ * deliver to a Worker the admin chose since, and it is left alone.
  */
 export async function removeEmailRoutesPhase(
   steps: JobSteps,
@@ -353,6 +358,7 @@ export async function removeEmailRoutesPhase(
     keepInUseRouting?: boolean;
     onlyDelivering?: boolean;
     otherWorkers?: readonly string[];
+    appWorkersMayBeGone?: boolean;
   } = {},
 ): Promise<void> {
   const retry = options.retry ?? "retry the uninstall";
@@ -419,12 +425,26 @@ export async function removeEmailRoutesPhase(
             zoneId: target.zoneId,
             workerName: workers,
             previous: target.previous,
+            ...(options.appWorkersMayBeGone === true
+              ? {
+                  workersGone: async () => {
+                    const listed = new Set((await cf().workers.listScripts()).map((s) => s.id));
+                    return workers.every((w) => !listed.has(w));
+                  },
+                }
+              : {}),
           });
-          log.info(
-            outcome === "restored"
-              ? `Put the catch-all (${route.name}) back as it was before the install: ${describeCatchAll(target.previous ?? DEFAULT_CATCH_ALL)}.`
-              : `The catch-all (${route.name}) no longer delivers to ${workerLabel}, so it was left alone.`,
-          );
+          if (outcome === "unreadable") {
+            log.warn(
+              `Cloudflare could not read the catch-all (${route.name}), so it was left as it is; Cloudflare answers that way when the catch-all delivers to a Worker that no longer exists. Check the catch-all under Email Routing in the Cloudflare dashboard.`,
+            );
+          } else {
+            log.info(
+              outcome === "restored"
+                ? `Put the catch-all (${route.name}) back as it was before the install: ${describeCatchAll(target.previous ?? DEFAULT_CATCH_ALL)}.`
+                : `The catch-all (${route.name}) no longer delivers to ${workerLabel}, so it was left alone.`,
+            );
+          }
         } catch (error) {
           denied(error, `reset the catch-all ${route.name}`, EMAIL_ROUTING_PERMISSION.rules);
         }

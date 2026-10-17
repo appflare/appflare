@@ -21,6 +21,7 @@ import { workerSecretValues } from "../secret-keys";
 import { isNotFound, JobError, type JobSteps } from "../steps";
 import { settleUnit } from "../units/result";
 import type { ArtifactHost } from "../units/units";
+import { assetFilesOf } from "../units/upload-retry";
 import {
   activeVersionId,
   canarySkipReason,
@@ -42,6 +43,7 @@ import {
   uploadAssetsPhase,
 } from "./phases";
 import { type ConsumerPlan, planQueueConsumers } from "./queue-consumers";
+import { CRON_REFUSED_NEXT, CRON_REFUSED_UNDO } from "./remove-failed";
 import { putWorkflowsPhase, type WorkflowTarget, workflowsOf } from "./workflows";
 
 /**
@@ -218,6 +220,7 @@ export async function deployOtherWorkerPhase(
           modules: own.worker.modules,
           metadata,
           target: "script",
+          ...assetFilesOf(own.assets.files, assetsJwt),
         }),
         log,
       );
@@ -304,12 +307,7 @@ export async function deployOtherWorkerPhase(
   if (crons.length > 0) {
     await run(`set cron triggers${label}`, async ({ log, cf }) => {
       // Recorded with the Worker, not as rows of their own: they go when it does.
-      await putSchedulesChecked(
-        cf(),
-        name,
-        crons,
-        `The Worker "${name}" is uploaded without them; uninstall this install to remove it.`,
-      );
+      await putSchedulesChecked(cf(), name, crons, CRON_REFUSED_UNDO, CRON_REFUSED_NEXT);
       log.info(`Set ${crons.length} cron trigger(s) on Worker "${name}": ${crons.join(", ")}.`);
       return {};
     });
@@ -507,6 +505,7 @@ export async function prepareOtherWorkerPhase(
         modules: own.worker.modules,
         metadata,
         target: "version",
+        ...assetFilesOf(own.assets.files, update.assetsJwt),
       }),
       log,
     );
@@ -595,6 +594,7 @@ export async function promoteOtherWorkerPhase(
         modules: update.worker.manifest.worker.modules,
         metadata: pending === null ? base : { ...base, migrations: pending },
         target: "script",
+        ...assetFilesOf(update.worker.manifest.assets.files, update.assetsJwt),
       }),
       log,
     );
@@ -673,6 +673,7 @@ export async function reconfigureOtherWorkerPhase(
           },
         },
         target: "version",
+        ...assetFilesOf(own.assets.files, assetsJwt),
       }),
       log,
     );

@@ -39,6 +39,7 @@ async function world(
   const account = fakeAccount(null);
   const email = fakeEmailRouting(ACC, emailOver);
   const scripts = new Set<string>();
+  email.world.workerExists = (name) => scripts.has(name);
   const order: string[] = [];
   const fetch = async (input: string, init?: RequestInit): Promise<Response> => {
     const request = new Request(input, init);
@@ -350,11 +351,11 @@ describe("uninstall with Email Routing", () => {
   async function uninstallAfterInstall(
     config: CatalogEmailRouting,
     emailOver: Partial<EmailWorld> = {},
-    between?: (w: EmailWorld) => void,
+    between?: (w: EmailWorld, scripts: Set<string>) => void,
   ) {
     const installed = await install(config, emailOver);
     expect(installed.job?.status).toBe("succeeded");
-    between?.(installed.email.world);
+    between?.(installed.email.world, installed.scripts);
     installed.order.length = 0;
     let params: UninstallJobParams | null = null;
     const { jobId } = await startUninstallCore(
@@ -479,5 +480,58 @@ describe("uninstall with Email Routing", () => {
     );
     expect(r.job?.status).toBe("succeeded");
     expect(r.logs.join("\n")).toContain("The routing rule for inbox@example.com was already gone.");
+  });
+
+  it("uninstalls an app whose Worker was deleted by hand, and cleans up the rest", async () => {
+    // Cloudflare cannot read a catch-all that delivers to a deleted Worker
+    // (404, code 2016); with none of the app's Workers left in the account,
+    // it can only have been the app's, so the uninstall puts it back.
+    const r = await uninstallAfterInstall(
+      { rules: ["inbox"], catchAll: true },
+      {},
+      (_, scripts) => {
+        scripts.delete("cut");
+      },
+    );
+    expect(r.job?.status).toBe("succeeded");
+    const { world } = r.email;
+    expect(world.rules).toEqual([]);
+    expect(world.catchAll).toEqual({
+      enabled: false,
+      matchers: [{ type: "all" }],
+      actions: [{ type: "drop" }],
+    });
+    expect(world.routingEnabled).toBe(false);
+    expect(r.live).toEqual([]);
+    const logs = r.logs.join("\n");
+    expect(logs).toContain("Put the catch-all (*@example.com) back as it was before the install");
+    expect(logs).toContain('Worker "cut" was already gone.');
+    const status = await env.DB.prepare("SELECT status FROM installs WHERE id = ?1")
+      .bind(r.installId)
+      .first<{ status: string }>();
+    expect(status?.status).toBe("uninstalled");
+  });
+
+  it("leaves alone a catch-all it cannot read while the app's Worker is there", async () => {
+    // Pointed at the admin's own Worker since, which was deleted later: the
+    // catch-all cannot be read, and nothing says it is still the app's.
+    const elsewhere = {
+      enabled: true,
+      matchers: [{ type: "all" }],
+      actions: [{ type: "worker", value: ["their-own"] }],
+    };
+    const r = await uninstallAfterInstall({ rules: [], catchAll: true }, {}, (w) => {
+      w.catchAll = elsewhere;
+    });
+    expect(r.job?.status).toBe("succeeded");
+    expect(r.email.world.catchAll).toEqual(elsewhere);
+    expect(r.order).not.toContain(
+      `email PUT /client/v4/zones/${ZONE_ID}/email/routing/rules/catch_all`,
+    );
+    expect(r.email.world.routingEnabled).toBe(true);
+    expect(r.logs.join("\n")).toContain(
+      "Cloudflare could not read the catch-all (*@example.com), so it was left as it is",
+    );
+    expect(r.live).toEqual([]);
   });
 });

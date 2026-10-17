@@ -17,6 +17,7 @@ import { z } from "zod";
 import { requirementBadge } from "../../../capabilities/capabilities";
 import { CapabilityBadge } from "../../../capabilities/capability-badge";
 import { ANALYTICS_ENGINE_CAPABILITY_LINK } from "../../../capabilities/capability-rows";
+import { limitedCreates } from "../../../catalog/account-limits";
 import { cronTriggerCount } from "../../../catalog/cron-triggers";
 import { analyticsEngineRefusal } from "../../../catalog/requirement-checks";
 import { requirementSentence } from "../../../catalog/requirements";
@@ -491,8 +492,10 @@ function Review({
           }
           requirementsConfirmed={confirmed}
           cronTriggers={cronTriggerCount(review.crons)}
+          limitedResources={limitedCreates(review.creates)}
           accountPlan={review.accountPlan}
           planDetected={review.planDetected}
+          planKnown={review.planKnown}
           reviewedBuildId={build.id}
           capabilities={review.capabilities}
           prefill={start?.prefill ?? null}

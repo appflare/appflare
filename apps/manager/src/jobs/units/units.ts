@@ -1,5 +1,10 @@
 import { Buffer } from "node:buffer";
-import { type FetchLike, isAddressableObjectKey, type ScriptMetadata } from "@appflare/cf-api";
+import {
+  buildAssetsManifest,
+  type FetchLike,
+  isAddressableObjectKey,
+  type ScriptMetadata,
+} from "@appflare/cf-api";
 import {
   type AssetFile,
   assetFileSchema,
@@ -106,6 +111,7 @@ import {
   type SettleSandboxInput,
   settleSandboxInputSchema,
 } from "./sandbox-settle";
+import { uploadRetried } from "./upload-retry";
 
 /**
  * Job units: the pieces of a job that make many subrequests, each small
@@ -196,6 +202,18 @@ export const workerUploadInputSchema = z.object({
    * /workers/scripts/<name>/versions`, which serves no traffic yet.
    */
   target: z.enum(["script", "version"]),
+  /**
+   * The asset files the completion token in `metadata.assets` was made for
+   * (route, hash and size, as the upload session took them). Cloudflare
+   * takes a completion token once: when a retried step sends it again
+   * (an earlier attempt's upload went through, but its answer was lost),
+   * Cloudflare answers 400, code 100312, "Completion token has already been
+   * consumed", and the unit opens a new upload session with these files for
+   * a new token. Absent: no assets, or a caller that does not send them.
+   */
+  assetFiles: z
+    .array(z.object({ route: z.string().min(1), hash: z.string().min(1), size: z.number() }))
+    .optional(),
 });
 export type WorkerUploadInput = z.infer<typeof workerUploadInputSchema>;
 export interface WorkerUploadResult {
@@ -506,7 +524,7 @@ export function createJobUnits(env: UnitEnv, deps: UnitDeps = {}): JobUnitsServe
 
     uploadWorker: (input) =>
       parsed(workerUploadInputSchema, input, "uploadWorker", (upload) =>
-        runUnit(env, deps, upload.accountId, async ({ fetch, count, cf }) => {
+        runUnit(env, deps, upload.accountId, async ({ log, fetch, count, cf }) => {
           const api = cf();
           // No modules: a Worker of static assets only, uploaded as wrangler uploads one.
           const given =
@@ -522,11 +540,33 @@ export function createJobUnits(env: UnitEnv, deps: UnitDeps = {}): JobUnitsServe
           const modules = refs.map((module, i) =>
             uploadModule(module, contents[i] ?? new Uint8Array(0)),
           );
-          if (upload.target === "version") {
-            const result = await api.versions.uploadVersion(upload.workerName, {
-              metadata,
-              modules,
+          const send = <T>(call: (sent: ScriptMetadata) => Promise<T>) =>
+            uploadRetried(call, metadata, {
+              renewAssets: async () => {
+                if (upload.assetFiles === undefined || upload.assetFiles.length === 0) return null;
+                const session = await api.assets.createUploadSession(
+                  upload.workerName,
+                  buildAssetsManifest(upload.assetFiles),
+                );
+                const missing = session.buckets.reduce((n, b) => n + b.length, 0);
+                if (missing > 0) {
+                  throw new JobError(
+                    `the assets upload this step used was completed by an earlier attempt, and Cloudflare now asks for ${missing} of its files again; try again to upload them anew`,
+                  );
+                }
+                log.info(
+                  "Cloudflare had already taken this upload's assets token (an earlier attempt went through); uploading again with a new one.",
+                );
+                return session.jwt;
+              },
+              pause: (ms) =>
+                (deps.sleep ?? ((t: number) => new Promise((r) => setTimeout(r, t))))(ms),
+              log,
             });
+          if (upload.target === "version") {
+            const result = await send((sent) =>
+              api.versions.uploadVersion(upload.workerName, { metadata: sent, modules }),
+            );
             return {
               // A reply without an id reads as none, which the job reports.
               versionId: result.id ?? null,
@@ -535,11 +575,13 @@ export function createJobUnits(env: UnitEnv, deps: UnitDeps = {}): JobUnitsServe
               modules: modules.length,
             };
           }
-          const result = await api.workers.uploadScript(upload.workerName, {
-            metadata,
-            modules,
-            excludeScript: true,
-          });
+          const result = await send((sent) =>
+            api.workers.uploadScript(upload.workerName, {
+              metadata: sent,
+              modules,
+              excludeScript: true,
+            }),
+          );
           const versionId =
             hyphenateUuid(result.deployment_id) ??
             activeVersionId(await api.versions.listDeployments(upload.workerName));

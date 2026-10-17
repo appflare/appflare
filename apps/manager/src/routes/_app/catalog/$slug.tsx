@@ -9,6 +9,7 @@ import { createFileRoute, useLocation } from "@tanstack/react-router";
 import { useEffect, useRef, useState } from "react";
 import { z } from "zod";
 import { ANALYTICS_ENGINE_CAPABILITY_LINK } from "../../../capabilities/capability-rows";
+import { limitedCreates } from "../../../catalog/account-limits";
 import {
   type AppNeedsOf,
   accountNeeds,
@@ -445,8 +446,10 @@ function InstallPanel({
         sandboxFirst={needsSandbox && detail.sandbox.state === "ready-auto"}
         installer={installer}
         cronTriggers={detail.cronTriggers}
+        limitedResources={limitedCreates(detail.creates)}
         accountPlan={detail.accountPlan}
         planDetected={detail.capabilities.plan.source === "detected"}
+        planKnown={detail.capabilities.plan.source !== "default"}
         capabilities={detail.capabilities}
         prefill={startAgain?.prefill ?? null}
         planAskedAbove={checks.pending.some((check) => check.key === "plan")}

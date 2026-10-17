@@ -16,8 +16,8 @@ const ACCOUNT = "acc-123";
 const BASE = "https://api.cloudflare.com/client/v4";
 const A = `${BASE}/accounts/${ACCOUNT}`;
 
-function make(spec?: FakeResponseSpec) {
-  const fake = makeFakeFetch(spec);
+function make(spec?: FakeResponseSpec | ((index: number) => FakeResponseSpec)) {
+  const fake = makeFakeFetch(typeof spec === "function" ? (_req, i) => spec(i) : spec);
   const client = createClient({ accountId: ACCOUNT, token: TOKEN, fetch: fake.fetch });
   return { fake, client };
 }
@@ -427,6 +427,30 @@ describe("d1", () => {
     await client.d1.listDatabases();
     expect(fake.last().url.split("?")[0]).toBe(`${A}/d1/database`);
     expect(fake.last().query.get("page")).toBe("1");
+    expect(fake.calls).toHaveLength(1);
+  });
+
+  it("listDatabases reads every page until a short page or the total", async () => {
+    // The list reports total_count but no total_pages.
+    const page = (n: number, from: number) =>
+      Array.from({ length: n }, (_, i) => ({ uuid: `u${from + i}`, name: `db-${from + i}` }));
+    const { fake, client } = make((i) =>
+      i === 0
+        ? { result: page(1000, 0), result_info: { page: 1, per_page: 1000, total_count: 1012 } }
+        : { result: page(12, 1000), result_info: { page: 2, per_page: 1000, total_count: 1012 } },
+    );
+    const all = await client.d1.listDatabases();
+    expect(all).toHaveLength(1012);
+    expect(all.at(-1)?.name).toBe("db-1011");
+    expect(fake.calls.map((c) => c.query.get("page"))).toEqual(["1", "2"]);
+    expect(fake.calls[0]?.query.get("per_page")).toBe("1000");
+
+    const exact = make((i) => ({
+      result: page(1000, i * 1000),
+      result_info: { page: i + 1, per_page: 1000, total_count: 2000 },
+    }));
+    expect(await exact.client.d1.listDatabases()).toHaveLength(2000);
+    expect(exact.fake.calls).toHaveLength(2);
   });
 
   it("getDatabase / deleteDatabase -> /d1/database/{uuid}", async () => {

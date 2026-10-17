@@ -8,6 +8,9 @@ import type {
 
 const enc = encodeURIComponent;
 
+/** Cloudflare's own default page size for the database list (it takes 10 to 10,000). */
+const LIST_PAGE_SIZE = 1000;
+
 /** Restore either to an explicit bookmark or to a point in time. */
 export type RestoreArgs = { bookmark: string } | { timestamp: string };
 
@@ -22,9 +25,23 @@ export function createD1(http: HttpApi) {
       return http.result("POST", http.acct("/d1/database"), { json: { name } });
     },
 
-    /** `GET /d1/database` (paginated). */
-    listDatabases(): Promise<D1Database[]> {
-      return http.list("GET", http.acct("/d1/database"));
+    /**
+     * `GET /d1/database?page=&per_page=`: every database in the account. The
+     * list reports `total_count` rather than `total_pages`, so it is read page
+     * by page until a short page or the total is reached.
+     */
+    async listDatabases(): Promise<D1Database[]> {
+      const all: D1Database[] = [];
+      for (let page = 1; page <= 1000; page++) {
+        const envelope = await http.send("GET", http.acct("/d1/database"), {
+          query: { page, per_page: LIST_PAGE_SIZE },
+        });
+        const rows = Array.isArray(envelope.result) ? (envelope.result as D1Database[]) : [];
+        all.push(...rows);
+        const total = envelope.result_info?.total_count;
+        if (rows.length < LIST_PAGE_SIZE || (total !== undefined && all.length >= total)) break;
+      }
+      return all;
     },
 
     /** `GET /d1/database/{uuid}`. */

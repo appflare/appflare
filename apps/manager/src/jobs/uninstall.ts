@@ -481,6 +481,8 @@ export async function runUninstall(ctx: JobContext): Promise<void> {
     // several Workers may receive mail with another of them.
     await removeEmailRoutesPhase(steps, started.emailRoutes ?? [], workerName, {
       otherWorkers: (started.otherWorkers ?? []).map((w) => w.name),
+      // Its Workers may have been deleted outside Appflare.
+      appWorkersMayBeGone: true,
     });
 
     // A run started before external domains existed carries none.

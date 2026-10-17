@@ -28,9 +28,7 @@ export function runCronTriggerCount(
       maxWorkers: input.maxWorkers,
     });
     if (scan.kind === "counted") {
-      log.info(
-        `Read the cron triggers of ${scan.read} Worker(s) with a scheduled handler: ${scan.total} in use.`,
-      );
+      log.info(`Read the cron triggers of ${scan.read} Worker(s): ${scan.total} in use.`);
     }
     return scan;
   });
