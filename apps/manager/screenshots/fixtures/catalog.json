@@ -82,16 +82,25 @@
     },
     {
       "slug": "emdash",
+      "repo": "emdash-cms/emdash",
       "name": "EmDash",
       "summary": "A full-stack TypeScript CMS built on Astro, the spiritual successor to WordPress: this is its blog template, with posts, pages, categories and tags, search, RSS and an admin editor, on D1 and R2.",
       "tagline": "Create a blog with built-in search and an editor",
+      "features": [
+        "Publish posts and pages from a rich text editor",
+        "Organize posts with categories and tags",
+        "Let readers search the full text of your posts",
+        "Publish an RSS feed readers can subscribe to",
+        "Save drafts and schedule posts to go live later"
+      ],
+      "alternativeTo": ["WordPress"],
       "addedAt": "2026-09-27T06:14:13+03:00",
-      "version": "0.0.0-20260926.e3b39ac",
+      "version": "1.3.0",
       "artifacts": {
-        "zip": "https://github.com/appflare/catalog/releases/download/emdash@0.0.0-20260926.e3b39ac/emdash-0.0.0-20260926.e3b39ac.zip",
-        "manifest": "https://github.com/appflare/catalog/releases/download/emdash@0.0.0-20260926.e3b39ac/manifest.json",
-        "sig": "https://github.com/appflare/catalog/releases/download/emdash@0.0.0-20260926.e3b39ac/manifest.sig",
-        "digest": "ca924df42cbd11cecca9de7fb26a2cdd4fa16034cca69101f828a5dea9838a6e"
+        "zip": "https://github.com/appflare/catalog/releases/download/emdash@1.3.0/emdash-1.3.0.zip",
+        "manifest": "https://github.com/appflare/catalog/releases/download/emdash@1.3.0/manifest.json",
+        "sig": "https://github.com/appflare/catalog/releases/download/emdash@1.3.0/manifest.sig",
+        "digest": "23ca4f66c9058988d93d0d66efb8ee6016746a1145577ed756510ce8a17679fe"
       },
       "tier": "artifact",
       "plan": "free",
@@ -123,16 +132,11 @@
           }
         ]
       },
-      "services": ["d1", "r2"],
+      "services": ["kv", "d1", "r2", "cron", "images"],
       "categories": ["cms"],
       "license": "MIT",
-      "revision": 2,
-      "catalogManifest": {
-        "url": "https://appflare.github.io/catalog/apps/emdash/manifest.json",
-        "sha256": "a8f31f67a27d79db612c98116a899636e131dd7d3b9197803822dd7fa96a019f",
-        "keyId": "catalog-2026-09",
-        "signature": "DApwLC5X+wpLrGUkz+FLKYHuHJX4zF3j3Qw/YJKEB8UhmH6ObVWcCCQuiOOKLWhJnlIdMy411bMPmgm+AibeAQ=="
-      }
+      "revision": 5,
+      "accessOffer": "offered"
     },
     {
       "slug": "formzero",

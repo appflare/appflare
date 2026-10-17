@@ -485,12 +485,13 @@ const shots = [
   },
   {
     // The front page of the site: the whole viewport, the sidebar with the
-    // logo and the list of apps included.
+    // logo and the list of apps included. The usage chart fills the fold.
     name: "landing-home",
     path: "/",
     expected: "Needs attention",
     sidebar: true,
     height: 900,
+    wait: CHART_WAIT,
   },
   {
     name: "catalog-phone",

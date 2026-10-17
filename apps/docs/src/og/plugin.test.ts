@@ -7,7 +7,7 @@ describe("the docs' screenshots for the cards", () => {
     const pictures = readDocsScreenshots();
     expect(pictures["/screenshots/home-dashboard.png"]).toMatchObject({
       width: 2352,
-      height: 2752,
+      height: 2790,
     });
     for (const [path, picture] of Object.entries(pictures)) {
       expect(path).toMatch(/^\/screenshots\/[\w.-]+\.png$/);

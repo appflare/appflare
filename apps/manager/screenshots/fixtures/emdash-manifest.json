@@ -5,8 +5,17 @@
     "name": "EmDash",
     "summary": "A full-stack TypeScript CMS built on Astro, the spiritual successor to WordPress: this is its blog template, with posts, pages, categories and tags, search, RSS and an admin editor, on D1 and R2.",
     "tagline": "Create a blog with built-in search and an editor",
+    "features": [
+      "Publish posts and pages from a rich text editor",
+      "Organize posts with categories and tags",
+      "Let readers search the full text of your posts",
+      "Publish an RSS feed readers can subscribe to",
+      "Save drafts and schedule posts to go live later"
+    ],
+    "alternativeTo": ["WordPress"],
     "homepage": "https://emdashcms.com",
     "repo": "emdash-cms/templates",
+    "upstreamRepo": "emdash-cms/emdash",
     "license": "MIT",
     "categories": ["cms"],
     "authors": [
@@ -19,26 +28,42 @@
     "maintainers": ["MendyLanda"],
     "source": {
       "ref": "main",
-      "sha": "e3b39ac4e205e05f01410bd8f3e27680cba189a0"
+      "sha": "a7bb43df40b2a1dbc63495579be612837e95aa2e",
+      "version": "1.3.0"
     },
     "install": {
+      "tier": "artifact",
       "packageManager": "pnpm",
       "wranglerConfig": "blog-cloudflare/wrangler.jsonc",
+      "fixedWorkerName": false,
+      "health": {
+        "path": "/",
+        "mode": "no-server-errors"
+      },
       "buildCommand": "pnpm --dir blog-cloudflare run build",
       "installDirs": [
         {
           "path": "blog-cloudflare",
-          "lockfile": "none"
+          "lockfile": "none",
+          "devDependencies": true
         }
       ]
     },
     "plan": "free",
     "requires": ["r2"],
+    "secrets": [],
+    "vars": [],
     "postInstall": [
       {
         "type": "markdown",
         "content": "Open {{appUrl}}/_emdash/admin right away to run the setup wizard and create the admin account; until then anyone who opens it can. The site itself is at {{appUrl}}."
       }
-    ]
+    ],
+    "tokenPermissions": [],
+    "bump": {
+      "autoMerge": false
+    },
+    "revision": 5,
+    "openPath": "/_emdash/admin"
   }
 }
