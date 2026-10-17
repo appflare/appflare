@@ -383,13 +383,26 @@ describe("startUpdateCore: what an update needs first", () => {
 
   it("does not offer it for a database the install already has", async () => {
     await seedInstall({
-      resources: [ADMIN_SECRET, { kind: "d1", binding: "DB", name: "cut-db" }],
+      resources: [ADMIN_SECRET, { kind: "d1", binding: "DB", name: "cut-db", cfId: "d1-1" }],
     });
     const fixture = await buildArtifactFixture({
       version: "1.1.0",
       bindings: [{ type: "d1", name: "DB" }],
     });
     expect((await start(fixture, { offerChoices: true })).result).toEqual({ jobId: "job1" });
+  });
+
+  it("offers it for a database whose create never recorded an id, which the update creates", async () => {
+    await seedInstall({
+      resources: [ADMIN_SECRET, { kind: "d1", binding: "DB", name: "cut-db", cfId: null }],
+    });
+    const fixture = await buildArtifactFixture({
+      version: "1.1.0",
+      bindings: [{ type: "d1", name: "DB" }],
+    });
+    expect((await start(fixture, { offerChoices: true })).result).toMatchObject({
+      limitedCreates: { d1: 1 },
+    });
   });
 
   it("does not offer it on a plan set as free: the job counts whatever is ticked", async () => {

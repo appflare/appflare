@@ -115,6 +115,8 @@ describe("classifyJobError", () => {
     expect(failedPhase("remove gateway binding SNAPSHOT_ASSETS")).toBe("domains");
     expect(failedPhase("restore catch-all *@snapshot.example.com")).toBe("email_routing");
     expect(failedPhase("forget email route bookmark@example.com")).toBe("email_routing");
+    expect(failedPhase("skip Worker shop-installer")).toBe("delete");
+    expect(failedPhase("skip Worker snapshot-assets")).toBe("delete");
   });
 
   it("recognises artifact integrity and fetch failures", () => {

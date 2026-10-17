@@ -356,8 +356,9 @@ export type StartUpdateResult = { jobId: string } | UpdateNeeds;
  */
 /**
  * Of `bound` (the new version's resources of a limited kind), how many of
- * each kind the install has no row for, which the update creates; null when
- * it creates none.
+ * each kind the install has no created row for (a row whose create never
+ * recorded an id is created again), which the update creates; null when it
+ * creates none.
  */
 async function newLimitedResources(
   db: D1Database,
@@ -365,7 +366,7 @@ async function newLimitedResources(
   bound: ReadonlyArray<{ kind: string; binding: string }>,
 ): Promise<Partial<Record<LimitedKind, number>> | null> {
   const rows = await createDb(db)
-    .select({ kind: resources.kind, binding: resources.binding })
+    .select({ kind: resources.kind, binding: resources.binding, cfId: resources.cf_id })
     .from(resources)
     .where(
       and(
@@ -375,7 +376,9 @@ async function newLimitedResources(
       ),
     );
   const counts = limitedCreates(
-    bound.filter((b) => !rows.some((r) => r.kind === b.kind && r.binding === b.binding)),
+    bound.filter(
+      (b) => !rows.some((r) => r.cfId !== null && r.kind === b.kind && r.binding === b.binding),
+    ),
   );
   return hasLimited(counts) ? counts : null;
 }

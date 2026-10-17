@@ -99,10 +99,11 @@ const PHASE_PATTERNS: readonly [RegExp, FailedPhase][] = [
   // A pause or resume reads the app's Workers before it changes anything;
   // "read Worker <name>" carries a Worker name too.
   [/^read Worker \S+$|^check the app's Workers$/, "preflight"],
-  // Uninstall steps that carry a domain, binding or address, which may
+  // Uninstall steps that carry a domain, binding, address or Worker name, which may
   // contain any word a later pattern looks for.
   [/^remove (external|wildcard) domain |^remove gateway binding /, "domains"],
   [/^(remove|forget) email route |^restore catch-all /, "email_routing"],
+  [/^skip Worker /, "delete"],
   [/^D1 .*: (apply |seed$)|migration/i, "d1_migrations"],
   [/^canary (check|wait)|^skip canary$|version previews/i, "canary"],
   [/^health check|^skip health check$/i, "health"],
@@ -123,7 +124,7 @@ const PHASE_PATTERNS: readonly [RegExp, FailedPhase][] = [
     "promote",
   ],
   [/^upload Worker|^read current bindings$|^record (new|Worker) version$/i, "upload"],
-  [/^(delete|empty) |^remove consumer|resources deleted$|^skip Worker /i, "delete"],
+  [/^(delete|empty) |^remove consumer|resources deleted$/i, "delete"],
   [
     /^(start|preflight checks|plan update|catalog keys|verify .*|load .* manifest|check (Worker names?|release shape|R2 is enabled|[A-Za-z0-9 ]+ limit|Workflow .*)|read current deployment)$/i,
     "preflight",

@@ -20,7 +20,8 @@ Each app's catalog card shows **Free plan** or **Workers Paid**.
 When the account's Workers plan (detected, or chosen in
 **Settings > Your account > What this account can run**) is Workers Paid, these
 counts are skipped, except Hyperdrive configurations, which are counted against
-Workers Paid's 25. While Appflare does not know the plan, the install form and the
+Workers Paid's 25 (an account that already has more had its limit raised, and is
+not counted). While Appflare does not know the plan, the install form and the
 update dialog offer **This account is on Workers Paid** for an app that sets cron
 triggers or creates D1 databases, Hyperdrive configurations or Vectorize indexes,
 and ticking it applies Workers Paid's limits to that install or update. On a plan detected or chosen as Workers Free

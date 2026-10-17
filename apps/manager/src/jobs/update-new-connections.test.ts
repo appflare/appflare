@@ -651,6 +651,29 @@ describe("a version that connects to a database elsewhere", () => {
       expect(recorded).not.toContain(DB_PASSWORD);
     });
 
+    it("counts the replacement against the account's limit before anything changes", async () => {
+      const w = await world(WITH_DATABASE, seeded);
+      w.side.state.hyperdrive.push(
+        { id: "hd-9", name: "cut-hyperdrive", body: {} },
+        ...Array.from({ length: 9 }, (_, i) => ({
+          id: `hd-other-${i}`,
+          name: `other-${i}`,
+          body: {},
+        })),
+      );
+      const { params } = await start(
+        w,
+        { offerChoices: true, hyperdrive: { HYPERDRIVE: CONNECTION } },
+        "job2",
+      );
+      if (params === null) throw new Error("the update did not start");
+      const r = await run(w, params);
+      expect(r.job?.error).toMatch(
+        /^check Hyperdrive configuration limit: this app needs a new Hyperdrive configuration and the account already has 10; Workers Free allows 10 per account/,
+      );
+      expect(w.side.state.hyperdrive).toHaveLength(10);
+    });
+
     it("deletes the configuration it made when the new version never serves", async () => {
       const w = await world(WITH_DATABASE, seeded, {
         previews: [{ status: 500, body: "boom" }],

@@ -947,9 +947,14 @@ export async function runUpdate(ctx: JobContext): Promise<void> {
     }
 
     // The account's limits for the D1 databases, Hyperdrive configurations
-    // and Vectorize indexes this version creates, as at install.
+    // and Vectorize indexes this version creates, as at install. A replaced
+    // database's new configuration counts too: the old one is kept until the
+    // version serves.
     await checkAccountLimitsPhase(steps, {
-      wanted: limitedCreates(toCreate),
+      wanted: limitedCreates([
+        ...toCreate,
+        ...replacingDatabases.map(() => ({ kind: "hyperdrive" })),
+      ]),
       freeLimits:
         manifest.catalog.plan !== "paid" &&
         freeLimitsApply({
