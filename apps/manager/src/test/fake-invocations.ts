@@ -2,6 +2,7 @@ import { NonRetryableError } from "cloudflare:workflows";
 import type { FetchLike } from "@appflare/cf-api";
 import { FREE_PLAN_SUBREQUESTS } from "@appflare/schema";
 import type { StepConfig, StepContext, StepRunner } from "../jobs/run-job";
+import { refuseLongStepName } from "./fake-step";
 
 /**
  * Test-only Workflow engine that keeps Workers Free's subrequest limit per
@@ -86,6 +87,7 @@ export function fakeEngine(
       configOrCallback: StepConfig | ((ctx?: StepContext) => Promise<T>),
       maybeCallback?: (ctx?: StepContext) => Promise<T>,
     ): Promise<T> {
+      refuseLongStepName(name);
       const k = key(name);
       const seen = recorded.get(k);
       if (seen !== undefined) {
@@ -111,6 +113,7 @@ export function fakeEngine(
       }
     },
     async sleep(name: string, duration: string | number): Promise<void> {
+      refuseLongStepName(name);
       const k = key(name);
       if (slept.has(k)) return;
       slept.add(k);

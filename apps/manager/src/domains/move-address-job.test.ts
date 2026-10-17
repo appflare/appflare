@@ -24,6 +24,7 @@ import { fakeStep } from "../test/fake-step";
 import { changeManagerAddress, moveManagerAddress } from "./manager-address.server";
 import {
   type MoveAddressJobParams,
+  minutesWaited,
   nextProbeDelaySeconds,
   runMoveAddress,
 } from "./move-address-job";
@@ -181,15 +182,15 @@ describe("the move job", () => {
     expect(await setting(SETTING.managerHostname)).toBe(HOST);
   });
 
-  it("fails after 15 minutes without an answer, and leaves the domain attached", async () => {
-    const w = fakeWorld({ health: { kind: "edge-1042" } });
+  it("fails after 15 minutes when something else answers, and leaves the domain attached", async () => {
+    const w = fakeWorld({ health: { kind: "serve", version: "1.3.9" } });
     await addPasskey("pk1");
     const { started, step, error, elapsedMs } = await moveAndRun(w);
     expect(error).not.toBeNull();
     expect(w.world.probes).toHaveLength(24);
     expect(step.sleeps).toHaveLength(23);
     expect(elapsedMs).toBeLessThanOrEqual(15 * 60_000);
-    const message = `${HOST} never answered as this Appflare within 15 minutes (last answer: HTTP 404, error code 1042), so Appflare stays at its current address. ${HOST} stays attached to Appflare's Worker. Start the move again from [Appflare's address settings](/settings/domains#address). A new domain's certificate sometimes takes longer; a new move waits another 15 minutes.`;
+    const message = `${HOST} never answered as this Appflare within 15 minutes (last answer: Appflare 1.3.9, not 1.4.0), so Appflare stays at its current address. ${HOST} stays attached to Appflare's Worker. Start the move again from [Appflare's address settings](/settings/domains#address). Waiting longer would not change that answer: see what serves the name, then start the move again.`;
     expect(await job(started.jobId)).toMatchObject({ status: "failed", error: message });
     expect((await logLines(started.jobId)).at(-1)).toBe(message);
     // A line about once a minute while it waited.
@@ -203,6 +204,72 @@ describe("the move job", () => {
     expect(await setting("notification_manager_url")).toBe("https://appflare.ada.workers.dev");
     expect(await passkeyHosts()).toEqual([]);
     expect(await setting(`manager_domain_attached_by:${HOST}`)).toBe("appflare");
+  });
+
+  it("keeps waiting up to an hour while the answer says the address is still on its way", async () => {
+    const w = fakeWorld({ health: { kind: "edge-1042" } });
+    const { started, step, error, elapsedMs } = await moveAndRun(w);
+    expect(error).not.toBeNull();
+    // 24 probes in the first 15 minutes, then one every 5 minutes.
+    expect(w.world.probes).toHaveLength(33);
+    expect(step.sleepDurations.slice(23)).toEqual(Array(9).fill("300 seconds"));
+    expect(elapsedMs).toBeLessThanOrEqual(60 * 60_000);
+    expect(elapsedMs).toBeGreaterThan(55 * 60_000);
+    const lines = await logLines(started.jobId);
+    expect(lines.filter((l) => l.startsWith("Still not answering after 15 minutes"))).toEqual([
+      "Still not answering after 15 minutes, and the answer says the certificate or the address is still on its way. Appflare keeps waiting, up to 60 minutes in all, and checks every 5 minutes.",
+    ]);
+    expect((await job(started.jobId))?.error).toBe(
+      `${HOST} never answered as this Appflare within 60 minutes (last answer: HTTP 404, error code 1042), so Appflare stays at its current address. ${HOST} stays attached to Appflare's Worker. Start the move again from [Appflare's address settings](/settings/domains#address). A new domain's certificate sometimes takes longer; a new move waits again.`,
+    );
+    expect(await addressRows()).toEqual({});
+  });
+
+  it("says how long it really waited when the longer wait ends before the hour", async () => {
+    // The certificate arrives after 27 probes, but on the address answers another version.
+    const w = fakeWorld({ certificateAfter: 27, health: { kind: "serve", version: "1.3.9" } });
+    const { started, error, elapsedMs } = await moveAndRun(w);
+    expect(error).not.toBeNull();
+    expect(w.world.probes).toHaveLength(28);
+    const minutes = Math.round(elapsedMs / 60_000);
+    expect(minutes).toBeGreaterThan(15);
+    expect(minutes).toBeLessThan(60);
+    expect((await job(started.jobId))?.error).toMatch(
+      new RegExp(
+        `^${HOST.replaceAll(".", "\\.")} never answered as this Appflare within ${minutes} minutes \\(last answer: Appflare 1\\.3\\.9, not `,
+      ),
+    );
+  });
+
+  it("switches when a slow certificate arrives after the first 15 minutes", async () => {
+    const w = fakeWorld({ certificateAfter: 27 });
+    const { started, error } = await moveAndRun(w);
+    expect(error).toBeNull();
+    expect(w.world.probes).toHaveLength(28);
+    expect((await job(started.jobId))?.status).toBe("succeeded");
+    expect(await setting(SETTING.managerHostname)).toBe(HOST);
+  });
+
+  it("retries the switch while another change holds the address, then says so", async () => {
+    const w = fakeWorld();
+    const d = deps(w);
+    const started = await moveManagerAddress(d, { zoneId: "z-a", hostname: HOST });
+    const params = d.started[0];
+    if (!started.ok || params === undefined) throw new Error("the move did not start");
+    // A request that ended before it let go of the lock.
+    await env.DB.prepare(
+      "INSERT INTO settings (key, value, updated_at) VALUES ('manager_address_lock', 'gone', ?1)",
+    )
+      .bind(Date.now() + 60 * 60_000)
+      .run();
+    const { step } = await runMove(w, params);
+    expect(step.retried["Switching the address"]).toBe(5);
+    const config = step.configs[step.names.indexOf("Switching the address")];
+    expect(config?.retries).toEqual({ limit: 4, delay: "30 seconds", backoff: "exponential" });
+    expect((await job(started.jobId))?.error).toMatch(
+      /^Switching the address: Appflare's address is already being changed\. Try again in a minute\. Appflare stays at its current address\./,
+    );
+    expect(await setting(SETTING.managerHostname)).toBeNull();
   });
 
   it("says the replaced DNS records are gone when such a domain never answers", async () => {
@@ -317,7 +384,7 @@ describe("the move job", () => {
       env.DB.batch = batch;
     }
     // Each attempt of the step moved Access and back again.
-    expect(result.step.retried["Switching the address"]).toBe(4);
+    expect(result.step.retried["Switching the address"]).toBe(5);
     expect(w.world.apps.map((a) => a.domain)).toEqual([WORKERS_DEV, `${WORKERS_DEV}/api/health`]);
     expect((await job(started.jobId))?.error).toContain(
       "Switching the address: D1 batch failed. Appflare stays at its current address.",
@@ -533,5 +600,19 @@ describe("the wait's schedule", () => {
 
   it("stops when the clock passes 15 minutes, however few probes ran", () => {
     expect(nextProbeDelaySeconds(2, 14 * 60_000 + 58_000)).toBeNull();
+  });
+
+  it("goes on every 5 minutes up to the hour while the address is still on its way", () => {
+    expect(nextProbeDelaySeconds(2, 14 * 60_000 + 58_000, true)).toBe(300);
+    expect(nextProbeDelaySeconds(30, 55 * 60_000, true)).toBe(300);
+    expect(nextProbeDelaySeconds(31, 55 * 60_000 + 1, true)).toBeNull();
+  });
+
+  it("reports the 15 minutes, or the longer wait's own minutes within the hour", () => {
+    expect(minutesWaited(false, 14 * 60_000, 14 * 60_000)).toBe(15);
+    expect(minutesWaited(true, 35 * 60_000 + 10_000, 35 * 60_000)).toBe(35);
+    // A clock that stood still: the sleeps say how long it was.
+    expect(minutesWaited(true, 0, 40 * 60_000)).toBe(40);
+    expect(minutesWaited(true, 62 * 60_000, 60 * 60_000)).toBe(60);
   });
 });

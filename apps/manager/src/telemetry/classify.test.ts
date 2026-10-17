@@ -1,7 +1,22 @@
 import { describe, expect, it } from "vitest";
 import { ACCESS_MESSAGES, INSTALL_ACCESS_MESSAGES } from "../access/messages";
 import { PROTECT_MESSAGES } from "../access/protect.server";
-import { CF_MESSAGE_MAX, classifyJobError, failedPhase, splitJobError } from "./classify";
+import { CONNECTION_MESSAGES } from "../cloudflare/connection-errors";
+import { SIGN_IN_WORDS } from "../cloudflare/sign-in-words";
+import { ADDRESS_ANSWERS, addressAnswerOf } from "../domains/address-answer";
+import { ADDRESS_MESSAGES } from "../domains/manager-address.server";
+import { MOVE_FAILURES, MOVE_STEPS } from "../domains/move-address-lines";
+import { accountWorkersProblem, entryBudgetProblem } from "../jobs/entry-budget";
+import { r2NotEnabledMessage } from "../jobs/install/r2-enablement";
+import {
+  CF_MESSAGE_MAX,
+  classifyJobError,
+  ERROR_CATEGORIES,
+  FAILURE_REASONS,
+  failedPhase,
+  PREFLIGHT_REASONS,
+  splitJobError,
+} from "./classify";
 
 /** Error texts as the jobs write them (`<step>: <message>`). */
 describe("classifyJobError", () => {
@@ -13,6 +28,7 @@ describe("classifyJobError", () => {
     ).toEqual({
       errorCategory: "cloudflare_permission",
       failedPhase: "resources",
+      failureReason: null,
       cfStatus: 403,
       cfCode: 10000,
       cfMessage: "Authentication error",
@@ -27,6 +43,7 @@ describe("classifyJobError", () => {
     ).toEqual({
       errorCategory: "cloudflare_unavailable",
       failedPhase: "promote",
+      failureReason: null,
       cfStatus: 503,
       cfCode: null,
       cfMessage: null,
@@ -78,6 +95,18 @@ describe("classifyJobError", () => {
       cfStatus: 403,
       cfCode: 7406,
     });
+    // Cloudflare's refusal at the limit alone: no reason, as the job failed after the preflight.
+    expect(
+      classifyJobError(
+        "create D1 database cut-db: Cloudflare API request failed: POST /accounts/abc/d1/database -> 403: [7406] System limit reached: databases per account (10)",
+      ),
+    ).toMatchObject({
+      errorCategory: "plan_limit",
+      failedPhase: "resources",
+      failureReason: null,
+      cfStatus: 403,
+      cfCode: 7406,
+    });
     // Without Cloudflare's answer, the sentence alone names the limit.
     expect(
       classifyJobError(
@@ -93,12 +122,25 @@ describe("classifyJobError", () => {
       classifyJobError(
         "check the app's Workers: the app's Worker \"cut\" is gone from the account (it was deleted outside Appflare), so the app cannot run again. Uninstall the app to remove what is left of it",
       ),
-    ).toMatchObject({ errorCategory: "preflight", failedPhase: "preflight" });
+    ).toMatchObject({
+      errorCategory: "preflight",
+      failedPhase: "preflight",
+      failureReason: "deleted_outside",
+    });
+    expect(
+      classifyJobError(
+        'read Worker cut: every Worker of the app ("cut", "cut-api") is gone from the account (they were deleted outside Appflare), so there is nothing of it to pause. Uninstall the app to remove what is left of it',
+      ),
+    ).toMatchObject({
+      errorCategory: "preflight",
+      failedPhase: "preflight",
+      failureReason: "deleted_outside",
+    });
     expect(
       classifyJobError(
         "read Pipelines streams: The Pipelines stream of EVENTS (id streams-1), which an earlier update made, is gone from the account; uninstall the app and install this version instead",
-      ).errorCategory,
-    ).toBe("preflight");
+      ),
+    ).toMatchObject({ errorCategory: "preflight", failureReason: "deleted_outside" });
   });
 
   it("knows the uninstall's steps for Email Routing and domains", () => {
@@ -173,12 +215,18 @@ describe("classifyJobError", () => {
       errorCategory: "timeout",
       failedPhase: "health",
     });
+    // A job whose Workflow instance ended without recording its end.
     expect(classifyJobError("the job's Workflow instance no longer exists")).toEqual({
-      errorCategory: "unknown",
+      errorCategory: "job_stopped",
       failedPhase: "other",
+      failureReason: null,
       cfStatus: null,
       cfCode: null,
       cfMessage: null,
+    });
+    expect(classifyJobError("finish: something nobody wrote down")).toMatchObject({
+      errorCategory: "unknown",
+      failedPhase: "record",
     });
     expect(classifyJobError(null).errorCategory).toBe("unknown");
   });
@@ -193,6 +241,7 @@ describe("Cloudflare's message", () => {
     ).toEqual({
       errorCategory: "cloudflare_rejected",
       failedPhase: "d1_migrations",
+      failureReason: null,
       cfStatus: 400,
       cfCode: 7500,
       cfMessage: "incomplete input: SQLITE_ERROR",
@@ -371,6 +420,7 @@ describe("Cloudflare Access failures", () => {
     expect(classifyJobError(`protect with Cloudflare Access: ${conflict}`)).toEqual({
       errorCategory: "access_conflict",
       failedPhase: "access",
+      failureReason: null,
       cfStatus: null,
       cfCode: null,
       cfMessage: null,
@@ -437,5 +487,308 @@ describe("failedPhase", () => {
     expect(failedPhase("record Worker name")).toBe("record");
     expect(failedPhase("finish")).toBe("record");
     expect(failedPhase("something new")).toBe("other");
+  });
+});
+
+describe("a move of Appflare's address that never answered", () => {
+  const HOST = "appflare.example.com";
+  const failure = (last: string, stillComing = false) =>
+    MOVE_FAILURES.neverAnswered(HOST, last, false, { minutes: 15, stillComing });
+
+  it("fails in the address phase and says what answered instead, as a fixed word", () => {
+    expect(classifyJobError(failure("HTTP 404, error code 1042", true))).toEqual({
+      errorCategory: "address_not_serving",
+      failedPhase: "address",
+      failureReason: "address_not_attached",
+      cfStatus: null,
+      cfCode: null,
+      cfMessage: null,
+    });
+    for (const [last, reason] of [
+      ["no connection (connection refused)", "address_no_connection"],
+      ["HTTP 526, error code 526", "address_certificate"],
+      ["HTTP 530", "address_not_attached"],
+      ["Cloudflare Access asked for a sign-in", "address_access_sign_in"],
+      ["HTTP 301", "address_redirect"],
+      ["HTTP 403", "address_http_error"],
+      ["HTTP 200 from something that is not Appflare", "address_not_appflare"],
+      ["another Appflare, not this one (its handoff proof differs)", "address_other_appflare"],
+      ["Appflare 0.4.3, not 0.5.0", "address_other_version"],
+    ] as const) {
+      expect(classifyJobError(failure(last)).failureReason).toBe(reason);
+      expect(addressAnswerOf(last)).toBe(reason);
+    }
+  });
+
+  it("never reads a hostname as the step", () => {
+    const text = MOVE_FAILURES.neverAnswered("assets.example.com", "HTTP 526", true, {
+      minutes: 60,
+      stillComing: true,
+    });
+    expect(classifyJobError(text)).toMatchObject({
+      errorCategory: "address_not_serving",
+      failedPhase: "address",
+      failureReason: "address_certificate",
+    });
+  });
+
+  it("knows the move's steps, with or without a count after them", () => {
+    for (const step of [
+      MOVE_STEPS.wait,
+      `${MOVE_STEPS.wait} (check 3)`,
+      `${MOVE_STEPS.wait} (wait 12)`,
+      MOVE_STEPS.switch,
+      `${MOVE_STEPS.switch} (again)`,
+      MOVE_STEPS.detach,
+    ]) {
+      expect(failedPhase(step), step).toBe("address");
+    }
+    expect(failedPhase(MOVE_STEPS.access)).toBe("access");
+    // Only the move's own words: another job's step that starts alike is not the move's.
+    expect(failedPhase(`${MOVE_STEPS.switch} snapshot`)).not.toBe("address");
+  });
+
+  it("tells the move's other failures apart", () => {
+    expect(
+      classifyJobError(
+        MOVE_FAILURES.stopped("Switching the address", ADDRESS_MESSAGES.busy, HOST, false),
+      ),
+    ).toMatchObject({ errorCategory: "busy", failedPhase: "address", failureReason: null });
+    expect(
+      classifyJobError(
+        MOVE_FAILURES.stopped("Switching the address", "D1_ERROR: database is locked", HOST, false),
+      ),
+    ).toMatchObject({ errorCategory: "manager_database", failedPhase: "address" });
+    expect(
+      classifyJobError(
+        `${MOVE_FAILURES.stopped("Waiting for the certificate and the new address (check 3)", "D1_ERROR: x", HOST, false)}`,
+      ),
+    ).toMatchObject({ failedPhase: "address" });
+  });
+});
+
+describe("pausing and resuming an app", () => {
+  it("fails in the pause phase, whatever its Workers are called", () => {
+    for (const step of [
+      "read what Worker my-assets serves",
+      "undo: read what Worker cut-installer serves",
+      "read what Worker access-snapshot serves",
+      "upload the stand-in of Worker cut",
+      "upload the stand-ins of Workers cut, cut-api",
+      "pause delivery of queue cut-events",
+      "list running instances of Workflow cut-jobs",
+      "pause instances of Workflow cut-jobs (1-6 of 40)",
+      "serve the stand-in of Worker set-secret-assets",
+      "stop container instances of sandbox",
+      "undo: serve the app's version of Worker cut",
+      "allow container instances of sandbox",
+      "resume delivery of queue cut-events",
+      "resume instances of Workflow cut-jobs",
+      "wait for a fresh invocation before serve the stand-in of Worker cut",
+      "serve the stand-in of Worker cut (again)",
+    ]) {
+      expect(failedPhase(step), step).toBe("pause");
+    }
+  });
+
+  it("counts the reads before anything changes as the preflight, whatever the Workers are called", () => {
+    for (const step of [
+      "read the app's Durable Objects",
+      "read Worker my-assets",
+      "read Worker cut-installer",
+      "read Worker snapshot-email-routing",
+      "check the app's Workers",
+      "read Worker cut (again)",
+    ]) {
+      expect(failedPhase(step), step).toBe("preflight");
+    }
+  });
+
+  it("names the Workflows engine's refusal of a long step name", () => {
+    const step = `upload the stand-ins of Workers ${Array(10).fill("cloudflare-os-homeassistant").join(", ")}`;
+    expect(
+      classifyJobError(
+        `${step}: Step name "${step}" exceeds max length (256 chars) or invalid characters found`,
+      ),
+    ).toMatchObject({ errorCategory: "workflow_limit", failedPhase: "pause" });
+    expect(
+      classifyJobError(
+        "the job's Workflow instance failed: The limit of 1024 steps has been reached. This limit can be changed in your worker configuration.",
+      ),
+    ).toMatchObject({ errorCategory: "workflow_limit" });
+  });
+
+  it("knows a stand-in nobody recorded and a pause that is not for now", () => {
+    expect(
+      classifyJobError(
+        'read Worker cut: Worker "cut" serves a stand-in of an earlier pause that Appflare has no record of; deploy the app\'s own version from the Cloudflare dashboard',
+      ),
+    ).toMatchObject({
+      errorCategory: "external_change",
+      failedPhase: "preflight",
+      failureReason: "changed_outside",
+    });
+    expect(classifyJobError("start: the app is already paused")).toMatchObject({
+      errorCategory: "install_state",
+      failedPhase: "preflight",
+      failureReason: "install_state",
+    });
+  });
+});
+
+describe("failures that no category named before", () => {
+  it("each have one", () => {
+    const cases: Array<[string, string]> = [
+      [`check account: ${SIGN_IN_WORDS.values().next().value}`, "cloudflare_permission"],
+      [`create r2 media: ${CONNECTION_MESSAGES.needsReconnect}`, "connection"],
+      [`create r2 media: ${r2NotEnabledMessage("media")}`, "account_setup"],
+      [
+        "snapshot: a gradual deployment is in progress on cut; finish or roll it back first",
+        "external_change",
+      ],
+      [
+        "wait for the sandbox Worker to settle: Appflare is not connected to a sandbox Worker",
+        "sandbox_unavailable",
+      ],
+      ["upload assets: Cloudflare did not return an upload token", "cloudflare_unexpected"],
+      [
+        "create hyperdrive DB: Cloudflare could not set up Hyperdrive for DB: bad host",
+        "database_connection",
+      ],
+      ["empty r2 media page 1: one run deletes at most 1000 objects", "delete_incomplete"],
+      ["set secret API_KEY: No value was provided for API_KEY", "input_missing"],
+      ["upload Worker version: an upload without modules", "internal"],
+      [
+        "add custom domain app.example.com: app.example.com already serves another Worker",
+        "name_conflict",
+      ],
+      [
+        'create Workflow cut-jobs: the Workflow "cut-jobs" runs on a schedule, which needs the Workers Paid plan',
+        "plan_limit",
+      ],
+    ];
+    for (const [text, category] of cases) {
+      expect(classifyJobError(text).errorCategory, text).toBe(category);
+    }
+  });
+});
+
+describe("a failed preflight", () => {
+  it("names the check that refused, from a fixed list", () => {
+    const cases: Array<[string, string]> = [
+      [
+        "preflight checks: this app needs Workers Paid; confirm the account is on Workers Paid to install it",
+        "plan_paid_required",
+      ],
+      [
+        "preflight checks: this app needs Email Routing; confirm the account meets these requirements to install it",
+        "requirements_unconfirmed",
+      ],
+      ["preflight checks: the Cloudflare account is not known yet", "account_unknown"],
+      [`preflight checks: ${CONNECTION_MESSAGES.notConfigured}`, "connection_needed"],
+      [`preflight checks: ${accountWorkersProblem(100, 1, "free")}`, "account_limit"],
+      [
+        `preflight checks: ${entryBudgetProblem({ steps: 2000, subrequests: 0, unitCalls: 0, waits: 0 }, false, 30)}`,
+        "job_too_big",
+      ],
+      ['preflight checks: another install already uses the Worker name "cut"', "name_taken"],
+      [
+        "check Worker name: a Worker named cut already exists in this account; Appflare does not adopt existing Workers",
+        "name_taken",
+      ],
+      [`check R2 is enabled: ${r2NotEnabledMessage("media")}`, "r2_not_enabled"],
+      [
+        "check cron trigger limit: The app needs 2 cron triggers and the account's other Workers already use 4; Workers Free allows 5 per account",
+        "cron_limit",
+      ],
+      [
+        "verify artifact manifest: manifest.json digest abc123 does not match the catalog index (def456)",
+        "manifest_invalid",
+      ],
+      [
+        "load artifact manifest: GET github.com/appflare/catalog/x.json -> 404",
+        "artifact_unavailable",
+      ],
+      [
+        'catalog keys: the catalog "community" this app comes from was removed from Appflare; add it again to install or update its apps',
+        "catalog_removed",
+      ],
+      [
+        "check Worker names: Cloudflare API request failed: GET /accounts/abc/workers/scripts -> 403: [10000] Authentication error",
+        "token_permission_missing",
+      ],
+      [
+        "check Worker names: Cloudflare API request failed: GET /accounts/abc/workers/scripts -> 503",
+        "cloudflare_unavailable",
+      ],
+      ["preflight checks: the app needs a zone", "preflight_other"],
+    ];
+    for (const [text, reason] of cases) {
+      expect(classifyJobError(text).failureReason, text).toBe(reason);
+      expect(classifyJobError(text).failedPhase, text).toBe("preflight");
+    }
+  });
+
+  it("names the account's limits by the step that counts them", () => {
+    const paidCopy =
+      "If it is already on Workers Paid, choose that plan under [Workers plan in Your account](/settings/account#capability-workers-plan). Then try again.";
+    const cases: Array<[string, string]> = [
+      // The jobs' own errors (jobs/install.test.ts, jobs/update.test.ts).
+      [
+        `check D1 database limit: this app needs a new D1 database and the account already has 10; Workers Free allows 10 per account, so this would make 11. Delete D1 databases the account no longer uses (for example by uninstalling an app that has one without keeping its data), or upgrade the account to Workers Paid (50,000 per account). ${paidCopy}`,
+        "account_limit",
+      ],
+      [
+        "check Hyperdrive configuration limit: this app needs a new Hyperdrive configuration and the account already has 25; Workers Paid allows 25 per account, so this would make 26. Delete Hyperdrive configurations the account no longer uses (for example by uninstalling an app that connects to a database). Then try again.",
+        "account_limit",
+      ],
+      [
+        "check Vectorize index limit: this app needs 2 new Vectorize indexes and the account already has 99; Workers Free allows 100 per account, so this would make 101. Delete Vectorize indexes the account no longer uses, or upgrade the account to Workers Paid (50,000 per account). Then try again.",
+        "account_limit",
+      ],
+      [
+        `check cron trigger limit: this app needs 2 cron triggers and the account's other Workers already use 4 (second-brain: 2, appflare: 1, flaremo: 1); Workers Free allows 5 per account, so this would make 6. Remove a cron trigger from another Worker (for example by uninstalling an app that uses one), or upgrade the account to Workers Paid (1,000 per account). ${paidCopy}`,
+        "cron_limit",
+      ],
+      [
+        `check cron trigger limit: this version needs 3 cron triggers and the account's other Workers already use 3 (second-brain: 2, appflare: 1); Workers Free allows 5 per account, so this would make 6. Remove a cron trigger from another Worker (for example by uninstalling an app that uses one), or upgrade the account to Workers Paid (1,000 per account). ${paidCopy}`,
+        "cron_limit",
+      ],
+      // A count that ran out of its invocation's requests and ran again.
+      [
+        "check D1 database limit (again): Cloudflare API request failed: GET /accounts/abc/d1/database -> 403: [7406] System limit reached: databases per account (10)",
+        "account_limit",
+      ],
+      // Without the step, the message alone.
+      [
+        "preflight checks: this app needs a new D1 database and the account already has 10; Workers Free allows 10 per account, so this would make 11.",
+        "account_limit",
+      ],
+      [
+        "preflight checks: this app needs 2 cron triggers and the account's other Workers already use 4; Workers Free allows 5 per account, so this would make 6.",
+        "cron_limit",
+      ],
+    ];
+    for (const [text, reason] of cases) {
+      expect(classifyJobError(text).failureReason, text).toBe(reason);
+      expect(classifyJobError(text).failedPhase, text).toBe("preflight");
+      expect(classifyJobError(text).errorCategory, text).toBe("plan_limit");
+    }
+  });
+
+  it("carries no reason when the job failed later", () => {
+    expect(
+      classifyJobError(
+        "set secret API_KEY: Cloudflare API request failed: PUT /x -> 403: [10000] no",
+      ),
+    ).toMatchObject({ failedPhase: "secrets", failureReason: null });
+  });
+});
+
+describe("the fixed lists", () => {
+  it("never repeat a value", () => {
+    for (const list of [ERROR_CATEGORIES, FAILURE_REASONS, PREFLIGHT_REASONS, ADDRESS_ANSWERS]) {
+      expect(new Set<string>(list).size).toBe(list.length);
+    }
   });
 });

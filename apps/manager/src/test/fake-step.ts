@@ -1,5 +1,6 @@
 import { NonRetryableError } from "cloudflare:workflows";
 import type { StepConfig, StepContext, StepRunner } from "../jobs/run-job";
+import { MAX_STEP_NAME_LENGTH } from "../jobs/step-names";
 
 /**
  * Test-only `WorkflowStep` stand-in: runs each step callback inline, retrying
@@ -9,7 +10,8 @@ import type { StepConfig, StepContext, StepRunner } from "../jobs/run-job";
  * fake clock. Results go through a JSON round trip, as the engine persists
  * them, so a non-JSON step result fails the test. A step named in `failing`
  * fails on every attempt without running, as one whose database never
- * answers would.
+ * answers would. A step or sleep name longer than the engine takes fails
+ * as the engine fails it ({@link refuseLongStepName}).
  */
 export interface FakeStep extends StepRunner {
   names: string[];
@@ -45,6 +47,7 @@ export function fakeStep(
       configOrCallback: StepConfig | ((ctx?: StepContext) => Promise<T>),
       maybeCallback?: (ctx?: StepContext) => Promise<T>,
     ): Promise<T> {
+      refuseLongStepName(name);
       names.push(name);
       const callback = typeof configOrCallback === "function" ? configOrCallback : maybeCallback;
       const config = typeof configOrCallback === "function" ? undefined : configOrCallback;
@@ -64,10 +67,20 @@ export function fakeStep(
       }
     },
     async sleep(name: string, duration: string | number): Promise<void> {
+      refuseLongStepName(name);
       sleeps.push(name);
       sleepDurations.push(duration);
       options.onSleep?.(name, duration);
     },
   };
   return runner as FakeStep;
+}
+
+/** The Workflows engine's refusal of a step or sleep name over 256 characters. */
+export function refuseLongStepName(name: string): void {
+  if (name.length > MAX_STEP_NAME_LENGTH) {
+    throw new Error(
+      `Step name "${name}" exceeds max length (${MAX_STEP_NAME_LENGTH} chars) or invalid characters found`,
+    );
+  }
 }

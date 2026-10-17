@@ -8,6 +8,13 @@ import { settingsPlace } from "../components/settings-links";
 /** How long the job waits for the new address to answer as this Appflare. */
 export const MOVE_WAIT_MINUTES = 15;
 export const MOVE_WAIT_MS = MOVE_WAIT_MINUTES * 60_000;
+/**
+ * How long it waits in all while the answer says the certificate or the
+ * address is still on its way (`answerStillComing`, ./address-answer.ts):
+ * some take longer than 15 minutes.
+ */
+export const MOVE_LONG_WAIT_MINUTES = 60;
+export const MOVE_LONG_WAIT_MS = MOVE_LONG_WAIT_MINUTES * 60_000;
 
 /** The job's steps, as its log and its failure messages name them. */
 export const MOVE_STEPS = {
@@ -29,6 +36,8 @@ export const MOVE_LINES = {
     `${MOVE_STEPS.wait}: https://${hostname}/api/health must answer as Appflare ${version}.`,
   notYet: (last: string) =>
     `Not answering yet; certificates can take a few minutes (last answer: ${last}).`,
+  longWait: () =>
+    `Still not answering after ${MOVE_WAIT_MINUTES} minutes, and the answer says the certificate or the address is still on its way. Appflare keeps waiting, up to ${MOVE_LONG_WAIT_MINUTES} minutes in all, and checks every 5 minutes.`,
   answers: (hostname: string) => `${hostname} answers as this Appflare.`,
   access: (hostname: string) => `${MOVE_STEPS.access} to ${hostname}.`,
   accessMoved: (hostname: string) => `Cloudflare Access now protects ${hostname}.`,
@@ -52,8 +61,17 @@ function staysAttached(hostname: string, replacedRecords: boolean): string {
 
 export const MOVE_FAILURES = {
   /** The new address never answered as this Appflare within the wait. */
-  neverAnswered: (hostname: string, last: string, replacedRecords: boolean) =>
-    `${hostname} never answered as this Appflare within ${MOVE_WAIT_MINUTES} minutes (last answer: ${last}), so Appflare stays at its current address. ${staysAttached(hostname, replacedRecords)} A new domain's certificate sometimes takes longer; a new move waits another ${MOVE_WAIT_MINUTES} minutes.`,
+  neverAnswered: (
+    hostname: string,
+    last: string,
+    replacedRecords: boolean,
+    wait: { minutes: number; stillComing: boolean },
+  ) =>
+    `${hostname} never answered as this Appflare within ${wait.minutes} minutes (last answer: ${last}), so Appflare stays at its current address. ${staysAttached(hostname, replacedRecords)} ${
+      wait.stillComing
+        ? "A new domain's certificate sometimes takes longer; a new move waits again."
+        : "Waiting longer would not change that answer: see what serves the name, then start the move again."
+    }`,
   /** A step failed before the switch. */
   stopped: (step: string, message: string, hostname: string, replacedRecords: boolean) =>
     `${step}: ${sentence(message)} Appflare stays at its current address. ${staysAttached(hostname, replacedRecords)}`,

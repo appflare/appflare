@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { MOVE_FAILURES } from "../domains/move-address-lines";
 import {
   type HeartbeatInput,
   heartbeatProperties,
@@ -248,6 +249,7 @@ describe("jobEvents", () => {
       duration_s: 60,
       error_category: null,
       failed_phase: null,
+      failure_reason: null,
       cf_status: null,
       cf_code: null,
       cf_message: null,
@@ -318,6 +320,53 @@ describe("jobEvents", () => {
     for (const secret of ["STRIPE_KEY", "acc-1", "my-links", "/accounts/", "PUT"]) {
       expect(text).not.toContain(secret);
     }
+  });
+
+  it("says which preflight check refused, and what a new address answered, as fixed words only", async () => {
+    const move = MOVE_FAILURES.neverAnswered(
+      "intranet.example.com",
+      "HTTP 526, error code 526",
+      false,
+      { minutes: 60, stillComing: true },
+    );
+    const events = await jobEvents(
+      [
+        job({
+          status: "failed",
+          error: 'preflight checks: another install already uses the Worker name "my-links"',
+        }),
+        job({
+          id: "02",
+          kind: "move_address",
+          appSlug: null,
+          buildKind: null,
+          status: "failed",
+          error: move,
+        }),
+      ],
+      window,
+      {},
+      "id",
+      true,
+      versions,
+    );
+    const finished = events.filter((e) => e.event === "job finished").map((e) => e.properties);
+    expect(finished).toEqual([
+      expect.objectContaining({
+        kind: "install",
+        error_category: "name_conflict",
+        failed_phase: "preflight",
+        failure_reason: "name_taken",
+      }),
+      expect.objectContaining({
+        kind: "move_address",
+        error_category: "address_not_serving",
+        failed_phase: "address",
+        failure_reason: "address_certificate",
+      }),
+    ]);
+    const text = JSON.stringify(events);
+    for (const secret of ["my-links", "intranet", "526"]) expect(text).not.toContain(secret);
   });
 
   it("names self-updates, rollbacks, restores, custom apps and Appflare rollbacks", async () => {

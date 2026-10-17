@@ -663,6 +663,118 @@ describe("pause job: failures", () => {
   });
 });
 
+/**
+ * An app of 17 Workers, named as an install names them
+ * (`<install Worker>-<name>`): the Workers of Cloudflare OS.
+ */
+const MANY = [
+  "cloudflare-os",
+  ...[
+    "workshop",
+    "context",
+    "scheduler",
+    "cloudflare",
+    "confluence",
+    "github",
+    "google",
+    "homeassistant",
+    "linear",
+    "mcp",
+    "mcpportal",
+    "notion",
+    "slack",
+    "spotify",
+    "supabase",
+    "zoominfo",
+  ].map((name) => `cloudflare-os-${name}`),
+];
+
+/** Each of {@link MANY} serving `real-<name>`, with a service binding to the next. */
+function manyWorkers(): Fake {
+  return world({
+    scripts: new Map(
+      MANY.map((w) => [
+        w,
+        fakeScript(`real-${w}`, { bindings: [{ type: "service", name: "NEXT" }] }),
+      ]),
+    ),
+    namespaces: [],
+    queues: new Map(),
+    workflows: new Map(),
+  });
+}
+
+describe("pause job: an app of 17 Workers", () => {
+  it("pauses and resumes every Worker on Workers Paid, in steps whose names the engine takes", async () => {
+    await writeAccountPlan(createDb(env.DB), "paid");
+    await seedApp({ workers: MANY, queues: false, workflow: false });
+    const fake = manyWorkers();
+    const step = fakeStep();
+    const { jobId, error } = await pause(fake, {}, { step });
+    expect(error).toBeNull();
+    expect(await job(jobId)).toMatchObject({ status: "succeeded" });
+    // Ten stand-ins a step on Workers Paid: the first step lists more Worker
+    // names than a step name may hold, and its name is cut.
+    const uploads = step.names.filter((n) => n.startsWith("upload"));
+    expect(uploads).toHaveLength(2);
+    expect(uploads[0]).toMatch(/^upload the stand-ins of Workers cloudflare-os, .* … [0-9a-f]{8}$/);
+    expect(uploads[0]).toHaveLength(256);
+    expect(uploads[1]).toBe(`upload the stand-ins of Workers ${MANY.slice(10).join(", ")}`);
+    expect(step.names.every((n) => n.length <= 256)).toBe(true);
+    expect(fake.world.deploys.map((d) => d.script)).toEqual(MANY);
+    for (const w of MANY) expect(servingOf(fake.world, w)).toMatch(/^standin-/);
+
+    const resumed = await resume(fake);
+    expect(resumed.error).toBeNull();
+    for (const w of MANY) expect(servingOf(fake.world, w)).toBe(`real-${w}`);
+    expect(await findOpenPause(createDb(env.DB), "i1")).toBeNull();
+  });
+
+  it("pauses and resumes every Worker on Workers Free, spread over fresh allowances of requests", async () => {
+    await seedApp({ workers: MANY, queues: false, workflow: false });
+    const fake = manyWorkers();
+    const engine = fakeEngine();
+    const { jobId, error } = await pause(fake, {}, { engine });
+    expect(error).toBeNull();
+    expect(await job(jobId)).toMatchObject({ status: "succeeded" });
+    expect(engine.invocations.length).toBeGreaterThan(1);
+    expect(Math.max(...engine.invocations)).toBeLessThanOrEqual(50);
+    // Every Worker switches within one invocation, back to back.
+    const serves = engine.ran.filter((r) => r.name.startsWith("serve the stand-in"));
+    expect(serves).toHaveLength(17);
+    expect(new Set(serves.map((r) => r.invocation)).size).toBe(1);
+    for (const w of MANY) expect(servingOf(fake.world, w)).toMatch(/^standin-/);
+
+    const back = fakeEngine();
+    const resumed = await resume(fake, {}, { engine: back });
+    expect(resumed.error).toBeNull();
+    expect(Math.max(...back.invocations)).toBeLessThanOrEqual(50);
+    for (const w of MANY) expect(servingOf(fake.world, w)).toBe(`real-${w}`);
+  });
+
+  it("puts every switched Worker back when one cannot switch, and the next pause succeeds", async () => {
+    await writeAccountPlan(createDb(env.DB), "paid");
+    await seedApp({ workers: MANY, queues: false, workflow: false });
+    const fake = manyWorkers();
+    const ninth = MANY[8] as string;
+    fake.world.failAlways.set(`POST /workers/scripts/${ninth}/deployments`, 400);
+    const failed = await pause(fake);
+    expect(failed.error).toBeInstanceOf(NonRetryableError);
+    expect((await job(failed.jobId))?.error).toMatch(
+      new RegExp(`^serve the stand-in of Worker ${ninth}: Cloudflare API request failed: `),
+    );
+    // Eight Workers had switched: each serves the app's version again.
+    expect(fake.world.deploys.filter((d) => d.versionId.startsWith("standin-"))).toHaveLength(8);
+    for (const w of MANY) expect(servingOf(fake.world, w)).toBe(`real-${w}`);
+    expect(await findOpenPause(createDb(env.DB), "i1")).toBeNull();
+
+    fake.world.failAlways.clear();
+    const again = await pause(fake);
+    expect(again.error).toBeNull();
+    for (const w of MANY) expect(servingOf(fake.world, w)).toMatch(/^standin-/);
+  });
+});
+
 describe("pause job: a pause carried on", () => {
   /**
    * A first pause switches the Worker to its stand-in, then fails, and can

@@ -11,6 +11,7 @@ import { detachMessage } from "../installs/custom-domains.server";
 import type { JobContext, StepConfig, StepRunner } from "../jobs/run-job";
 import { StepLog } from "../jobs/step-log";
 import { createJobSteps, errorMessage, JobError, type JobSteps } from "../jobs/steps";
+import { answerStillComing } from "./address-answer";
 import {
   completeAddressMove,
   detachQuietly,
@@ -18,7 +19,15 @@ import {
   readManagerDomain,
 } from "./manager-address.server";
 import { identityVerdict } from "./manager-identity";
-import { MOVE_FAILURES, MOVE_LINES, MOVE_STEPS, MOVE_WAIT_MS } from "./move-address-lines";
+import {
+  MOVE_FAILURES,
+  MOVE_LINES,
+  MOVE_LONG_WAIT_MINUTES,
+  MOVE_LONG_WAIT_MS,
+  MOVE_STEPS,
+  MOVE_WAIT_MINUTES,
+  MOVE_WAIT_MS,
+} from "./move-address-lines";
 
 /**
  * The `move_address` job: Appflare moves to a custom domain that the
@@ -31,7 +40,12 @@ import { MOVE_FAILURES, MOVE_LINES, MOVE_STEPS, MOVE_WAIT_MS } from "./move-addr
  *    manager installed from the browser its handoff proof). A new domain's
  *    certificate commonly takes one to several minutes, so the job probes
  *    with a growing wait between probes (`step.sleep`) for up to 15 minutes,
- *    and logs a line about once a minute while it waits.
+ *    and logs a line about once a minute while it waits. When the last answer
+ *    then still says the certificate or the address is on its way (no
+ *    connection, Cloudflare's 525 or 526, or a page Cloudflare shows while it
+ *    attaches a hostname), it keeps probing every 5 minutes, up to an hour in
+ *    all; any other answer (Access asks for a sign-in, something else
+ *    answers) would not change by waiting, and ends the wait at 15 minutes.
  * 2. Moving Cloudflare Access (when it is on): checked again, since the
  *    token or the applications may have changed during the wait.
  * 3. Switching the address: the rows, Access, the passkeys and the
@@ -42,12 +56,19 @@ import { MOVE_FAILURES, MOVE_LINES, MOVE_STEPS, MOVE_WAIT_MS } from "./move-addr
  * detaching it would not bring back DNS records it replaced, and the admin
  * starts the move again from the Domains settings, which uses it.
  *
- * Subrequests, all in this job's invocation (no sleep reaches the 5 minutes
- * that start a fresh one): at most 24 probes, 1 Access check, up to 4 Access
- * updates and 1 workers.dev subdomain read in the switch, up to 2 calls to
- * detach, and the notification call: 33 fetches. D1: the start, a log write
- * at most once a minute of the wait (16), the switch, the end. D1 binding
- * calls did not count toward the limit when it was measured.
+ * Subrequests: in the first 15 minutes no sleep reaches the 5 minutes that
+ * start a fresh invocation, so they share one: at most 24 probes, then (when
+ * the address answers then) 1 Access check, up to 4 Access updates and 1
+ * workers.dev subdomain read in the switch, up to 2 calls to detach, and the
+ * notification call: 33 fetches. Each 5-minute sleep of the longer wait
+ * starts a fresh invocation, where the job replays what it did without a
+ * request and makes one probe, or that probe and the rest. D1: the start, a
+ * log write at most once a minute of the wait, the switch, the end. D1
+ * binding calls did not count toward the limit when it was measured.
+ *
+ * The switch takes the address lock. A request the browser cancelled can
+ * leave the lock for its 5 minutes, so the switch retries for longer than
+ * that before it gives up.
  */
 
 export const moveAddressJobParams = z.object({
@@ -84,15 +105,26 @@ function scheduledMs(attempt: number): number {
   return total;
 }
 
+/** Between probes once the first 15 minutes have passed: a sleep this long starts a fresh invocation. */
+const LONG_DELAY_SECONDS = 300;
+
 /**
  * The wait before the next probe, or null when it would pass the 15
- * minutes. `elapsedMs` (since the first probe) never counts less than the
- * waits already scheduled, so the wait also ends when the clock stands still.
+ * minutes, or with `stillComing` (the last answer says the certificate or
+ * the address is on its way) the hour. `elapsedMs` (since the first probe)
+ * never counts less than the waits already scheduled, so the wait also ends
+ * when the clock stands still.
  */
-export function nextProbeDelaySeconds(attempt: number, elapsedMs: number): number | null {
+export function nextProbeDelaySeconds(
+  attempt: number,
+  elapsedMs: number,
+  stillComing = false,
+): number | null {
   const delay = moveProbeDelaySeconds(attempt);
   const elapsed = Math.max(elapsedMs, scheduledMs(attempt));
-  return elapsed + delay * 1000 > MOVE_WAIT_MS ? null : delay;
+  if (elapsed + delay * 1000 <= MOVE_WAIT_MS) return delay;
+  if (!stillComing) return null;
+  return elapsed + LONG_DELAY_SECONDS * 1000 > MOVE_LONG_WAIT_MS ? null : LONG_DELAY_SECONDS;
 }
 
 /** A "not answering yet" line at most this often. */
@@ -109,13 +141,35 @@ interface ProbeResult {
 /** A probe is one fetch that never throws; a failed log write is its only retry. */
 const PROBE_STEP: StepConfig = { retries: { limit: 1, delay: "2 seconds" } };
 
+/**
+ * The switch: 30 s, 1, 2 and 4 minutes between tries, 7.5 minutes in all,
+ * longer than the address lock a cancelled request may leave behind.
+ */
+const SWITCH_STEP: StepConfig = {
+  retries: { limit: 4, delay: "30 seconds", backoff: "exponential" },
+};
+
+/**
+ * The minutes a wait that gave up reports: the 15 minutes, or for the longer
+ * wait the time it really took (the clock, or the sleeps when the clock says
+ * less), since an answer that stops looking like a certificate on its way
+ * ends it before the hour.
+ */
+export function minutesWaited(longWait: boolean, elapsedMs: number, sleptMs: number): number {
+  if (!longWait) return MOVE_WAIT_MINUTES;
+  const minutes = Math.round(Math.max(elapsedMs, sleptMs) / 60_000);
+  return Math.min(Math.max(minutes, MOVE_WAIT_MINUTES), MOVE_LONG_WAIT_MINUTES);
+}
+
 async function waitForAddress(
   steps: JobSteps,
   step: StepRunner,
   target: { hostname: string; version: string; handoffHash: string | null },
-): Promise<{ ok: true } | { ok: false; last: string }> {
+): Promise<{ ok: true } | { ok: false; last: string; minutes: number }> {
   let firstAt: number | null = null;
   let loggedAt: number | null = null;
+  let longWait = false;
+  let sleptMs = 0;
   for (let attempt = 1; ; attempt++) {
     const probed = await steps.run(
       `${MOVE_STEPS.wait} (check ${attempt})`,
@@ -130,6 +184,13 @@ async function waitForAddress(
         }
         const due = loggedAt !== null && at - loggedAt >= LOG_EVERY_MS;
         if (due) log.info(MOVE_LINES.notYet(last));
+        // The first probe past the 15 minutes says the wait goes on.
+        const longer =
+          !longWait &&
+          firstAt !== null &&
+          nextProbeDelaySeconds(attempt, at - firstAt) === null &&
+          nextProbeDelaySeconds(attempt, at - firstAt, answerStillComing(last)) !== null;
+        if (longer) log.info(MOVE_LINES.longWait());
         return { at, last, logged: attempt === 1 || due };
       },
       PROBE_STEP,
@@ -137,8 +198,17 @@ async function waitForAddress(
     firstAt ??= probed.at;
     if (probed.logged) loggedAt = probed.at;
     if (probed.last === null) return { ok: true };
-    const delay = nextProbeDelaySeconds(attempt, probed.at - firstAt);
-    if (delay === null) return { ok: false, last: probed.last };
+    const stillComing = answerStillComing(probed.last);
+    const delay = nextProbeDelaySeconds(attempt, probed.at - firstAt, stillComing);
+    if (delay === null) {
+      return {
+        ok: false,
+        last: probed.last,
+        minutes: minutesWaited(longWait, probed.at - firstAt, sleptMs),
+      };
+    }
+    if (delay === LONG_DELAY_SECONDS) longWait = true;
+    sleptMs += delay * 1000;
     await step.sleep(`${MOVE_STEPS.wait} (wait ${attempt})`, `${delay} seconds`);
   }
 }
@@ -185,7 +255,10 @@ export async function runMoveAddress(ctx: JobContext): Promise<void> {
       handoffHash: handoffHashOf(env.APPFLARE_HANDOFF),
     });
     if (!waited.ok) {
-      reason = MOVE_FAILURES.neverAnswered(hostname, waited.last, replacedRecords);
+      reason = MOVE_FAILURES.neverAnswered(hostname, waited.last, replacedRecords, {
+        minutes: waited.minutes,
+        stillComing: answerStillComing(waited.last),
+      });
     } else {
       // 2. Access, checked again before anything changes.
       await run(MOVE_STEPS.access, async ({ log, cf }) => {
@@ -199,22 +272,26 @@ export async function runMoveAddress(ctx: JobContext): Promise<void> {
       });
 
       // 3. The switch.
-      await run(MOVE_STEPS.switch, async ({ log, cf }) => {
-        const done = await asJobError(() =>
-          completeAddressMove(
-            { db: env.DB, api: cf(), now: () => new Date(now()) },
-            {
-              hostname,
-              domainId: params.domainId,
-              zoneId: params.zoneId,
-              workerName: started.workerName,
-            },
-          ),
-        );
-        if (done.accessMoved) log.info(MOVE_LINES.accessMoved(hostname));
-        log.info(MOVE_LINES.switched(hostname, done.from));
-        return { from: done.from };
-      });
+      await run(
+        MOVE_STEPS.switch,
+        async ({ log, cf }) => {
+          const done = await asJobError(() =>
+            completeAddressMove(
+              { db: env.DB, api: cf(), now: () => new Date(now()) },
+              {
+                hostname,
+                domainId: params.domainId,
+                zoneId: params.zoneId,
+                workerName: started.workerName,
+              },
+            ),
+          );
+          if (done.accessMoved) log.info(MOVE_LINES.accessMoved(hostname));
+          log.info(MOVE_LINES.switched(hostname, done.from));
+          return { from: done.from };
+        },
+        SWITCH_STEP,
+      );
       switched = true;
 
       // 4. The domain a change leaves.

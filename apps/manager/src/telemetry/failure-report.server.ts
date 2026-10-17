@@ -231,6 +231,7 @@ export function failureReportProperties(input: {
         : Math.max(0, Math.round((row.finishedAt - row.startedAt) / 1000)),
     error_category: failure.errorCategory,
     failed_phase: failure.failedPhase,
+    failure_reason: failure.failureReason,
     failed_step: step.length > 0 ? redactReportText(step, input.names) : null,
     error: row.error === null ? null : redactReportText(row.error, input.names),
     cf_status: failure.cfStatus,

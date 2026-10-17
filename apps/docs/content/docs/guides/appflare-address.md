@@ -86,12 +86,18 @@ When the move is done, a dialog says **Appflare now lives at** the new address. 
 
 ### If it takes long
 
-The job waits up to 15 minutes. If the new address never answers as this Appflare in
-that time, the job fails and says so: Appflare stays at its current address, and the
-name stays attached to Appflare's Worker. Appflare never removes it after a failed
-move. If the move replaced DNS records, the job says that they are gone. A new
-certificate sometimes takes longer; start the move again from **Settings > Domains >
-Appflare's address**, which waits another 15 minutes.
+The job waits up to 15 minutes. If the new address still has no certificate by then,
+or Cloudflare still shows the page it shows while it attaches a name to a Worker, the
+job keeps waiting, checking every 5 minutes, for up to an hour in all. Any other answer
+(Cloudflare Access asks for a sign-in, or something else answers at the name) would not
+change by waiting, so the job stops at 15 minutes.
+
+If the new address never answers as this Appflare in that time, the job fails and says
+so, with the last answer it got: Appflare stays at its current address, and the name
+stays attached to Appflare's Worker. Appflare never removes it after a failed move. If
+the move replaced DNS records, the job says that they are gone. Start the move again
+from **Settings > Domains > Appflare's address** once the name serves, which waits
+again.
 
 A notification channel that wants **Appflare's move finished** hears when the move
 succeeds, with a link to the new address, or fails, with a link to the job. See

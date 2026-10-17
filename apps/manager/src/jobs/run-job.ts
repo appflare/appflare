@@ -16,6 +16,7 @@ import { runResume } from "./resume";
 import { runRollback } from "./rollback";
 import { runSelfUpdate } from "./self-update";
 import { runSourceBuild } from "./source-build";
+import { withBoundedStepNames } from "./step-names";
 import { runUninstall } from "./uninstall";
 import type { JobUnitsApi } from "./units/units";
 import { runUpdate } from "./update";
@@ -167,7 +168,8 @@ export async function runJob(
   const budget = new InvocationBudget();
   const ctx: JobContext = {
     params: parsed.data,
-    step,
+    // A name the engine would refuse ends the job, whatever it names.
+    step: withBoundedStepNames(step),
     env: countedEnv(env, budget),
     deps,
     budget,

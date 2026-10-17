@@ -83,15 +83,24 @@ self-update, and manager rollback, one event when it starts and one when it ends
   automatic updates and automatic pauses); a manager rollback
   carries its kind only, never the versions it moves between. Nothing about a
   repository is sent: not its address, owner, name, branch or commit;
-- when it ends: whether it succeeded, how long it took, and for a failure, its
-  error category (such as `cloudflare_permission`, `plan_limit`, `d1_migration` or
-  `access_conflict`), the phase it failed in (such as `resources`, `upload`,
-  `health` or `access`), and, for a failed Cloudflare API request, the HTTP status
-  and Cloudflare's numeric error code. When the failure is in the Cloudflare
-  categories (`cloudflare_permission`, `cloudflare_rate_limited`,
-  `cloudflare_unavailable`, `cloudflare_rejected`), it also carries an excerpt of
-  Cloudflare's own error message (`cf_message`, at most 200 characters, such as
-  `incomplete input: SQLITE_ERROR`). The excerpt starts after Cloudflare's error
+- when it ends: whether it succeeded, how long it took, and for a failure, its error
+  category (one of `cloudflare_permission`, `cloudflare_rate_limited`,
+  `cloudflare_unavailable`, `cloudflare_rejected`, `plan_limit`, `subrequest_limit`,
+  `artifact_integrity`, `artifact_fetch`, `d1_migration`, `name_conflict`,
+  `preflight`, `sandbox_build`, `installer`, `canary`, `access_conflict`,
+  `address_not_serving`, `account_setup`, `connection`, `external_change`,
+  `install_state`, `input_missing`, `sandbox_unavailable`, `cloudflare_unexpected`,
+  `database_connection`, `delete_incomplete`, `busy`, `workflow_limit`, `job_stopped`,
+  `manager_database`, `internal`, `timeout`, `cancelled`, or `unknown` for a
+  failure none of these names), the phase it failed in (one of `preflight`,
+  `resources`, `assets`, `upload`, `canary`, `d1_migrations`, `secrets`, `crons`,
+  `domains`, `email_routing`, `promote`, `snapshot`, `health`, `access`, `address`,
+  `pause`, `sandbox`, `installer`, `delete`, `record`, or `other`), and, for a
+  failed Cloudflare API request, the HTTP status and Cloudflare's numeric error code.
+  When the failure is in the Cloudflare categories (`cloudflare_permission`,
+  `cloudflare_rate_limited`, `cloudflare_unavailable`, `cloudflare_rejected`), it
+  also carries an excerpt of Cloudflare's own error message (`cf_message`, at most
+  200 characters, such as `incomplete input: SQLITE_ERROR`). The excerpt starts after Cloudflare's error
   code, so it never holds the request's method or path. It ends at the closing
   bracket when Appflare put Cloudflare's message in brackets, and otherwise at the
   first semicolon that does not start another of Cloudflare's errors, or at a line
@@ -109,6 +118,23 @@ self-update, and manager rollback, one event when it starts and one when it ends
   `Intranet Portal`, cannot be told apart from Cloudflare's own words, so it stays
   in the excerpt unless Appflare recorded it. If Appflare cannot read the names it
   recorded when it reports, the excerpt is left out.
+- for some failures, a reason (`failure_reason`), always one word from a fixed list
+  and never the error's text:
+  - when a check refused the job before anything was created (phase or category
+    `preflight`), which check: `plan_paid_required`, `cost_unconfirmed`,
+    `requirements_unconfirmed`, `token_permission_missing`, `connection_needed`,
+    `account_unknown`, `account_limit`, `cron_limit`, `job_too_big`, `name_taken`,
+    `r2_not_enabled`, `zero_trust_missing`, `workers_dev_missing`,
+    `email_zone_unusable`, `sandbox_required`, `release_mismatch`,
+    `manifest_invalid`, `artifact_unavailable`, `catalog_removed`,
+    `app_unsupported`, `input_missing`, `install_state`, `deployment_in_progress`,
+    `deleted_outside`, `changed_outside`, `cloudflare_unavailable`, `cloudflare_rejected`, or `preflight_other` for a
+    check not in this list;
+  - when Appflare's new address never answered as this Appflare, what answered
+    instead: `address_no_connection`, `address_certificate`, `address_not_attached`,
+    `address_access_sign_in`, `address_redirect`, `address_http_error`,
+    `address_not_appflare`, `address_other_appflare`, `address_other_version`, or
+    `address_other`. The address itself is never sent.
 
 ### Setup and use (manager)
 
@@ -173,8 +199,8 @@ A report contains:
 - the kind of job, the app's catalog slug and version (with the same rules as the
   job events above, so `custom` for an app from a custom catalog or a repository),
   the Appflare version, and the Workers plan;
-- the step the job stopped at, its error, the error category and phase, and every
-  Cloudflare error code in the log;
+- the step the job stopped at, its error, the error category, phase and reason, and
+  every Cloudflare error code in the log;
 - the job's log (its last 400 lines at most);
 - a note, if the admin writes one;
 - the same random id as the anonymous report, and whether the anonymous report is on.

@@ -11,6 +11,7 @@ import type { InstallProbeHeaders } from "./install/health";
 import { countedUnits, FRESH_INVOCATION_SLEEP, InvocationBudget } from "./invocation-budget";
 import type { JobContext, StepConfig } from "./run-job";
 import { StepLog } from "./step-log";
+import { withBoundedStepNames } from "./step-names";
 import { type JobUnitsAccess, jobUnits } from "./units/client";
 
 export { errorMessage, isNotFound, JobError, toStepError } from "./errors";
@@ -111,7 +112,9 @@ export const FRESH_INVOCATION_NOTE =
   "Waiting 5 minutes before the next step: on Workers Free, Cloudflare lets a job make 50 requests at a time, and this app's Workers need more. The job carries on by itself with a fresh allowance.";
 
 export function createJobSteps(ctx: JobContext, jobId: string): JobSteps {
-  const { step, env, deps } = ctx;
+  const { env, deps } = ctx;
+  // Bounded here too, for a job handler run without `runJob` (bounding twice changes nothing).
+  const step = withBoundedStepNames(ctx.step);
   const db = env.DB;
   const now = deps.now ?? Date.now;
   // Counted per run of the job: a job resumed after a long sleep runs again

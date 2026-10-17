@@ -395,6 +395,7 @@ export async function jobEvents(
               : Math.max(0, Math.round((row.finishedAt - row.startedAt) / 1000)),
           error_category: failure?.errorCategory ?? null,
           failed_phase: failure?.failedPhase ?? null,
+          failure_reason: failure?.failureReason ?? null,
           cf_status: failure?.cfStatus ?? null,
           cf_code: failure?.cfCode ?? null,
           cf_message: failure?.cfMessage ?? null,
