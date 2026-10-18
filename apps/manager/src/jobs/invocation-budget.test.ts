@@ -205,8 +205,9 @@ describe("a job spread over invocations", () => {
     expect(r.engine.sleeps.map((s) => s.name)).toEqual(["fresh invocation before step 6 again"]);
     const sixth = r.engine.ran.filter((s) => s.name.startsWith("step 6"));
     expect(sixth).toEqual([
-      { name: "step 6", invocation: 0 },
-      { name: "step 6 (again)", invocation: 1 },
+      // The 16th request was the 51st of the invocation, which failed.
+      { name: "step 6", invocation: 0, requests: 16 },
+      { name: "step 6 (again)", invocation: 1, requests: 20 },
     ]);
     expect(r.engine.invocations).toEqual([51, 23]);
   });

@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { createClient } from "./client";
 import { CloudflareApiError } from "./errors";
 import { type FakeHandler, type FakeResponseSpec, makeFakeFetch } from "./fake-fetch";
+import { UNREADABLE_CONTAINER_APPLICATIONS } from "./namespaces/containers";
 
 const TOKEN = "cf-token-DO-NOT-LEAK-123";
 const ACCOUNT = "acc-123";
@@ -23,6 +24,29 @@ describe("containers", () => {
     expect(fake.last().method).toBe("GET");
     expect(fake.last().path).toBe(`/client/v4/accounts/${ACCOUNT}/containers/applications`);
     expect(fake.last().query.get("name")).toBe("appflare-sandbox-standard-1");
+  });
+
+  it("listApplications reads the list in one call, without page parameters", async () => {
+    const many = Array.from({ length: 120 }, (_, i) => ({ id: `app${i}`, name: `a${i}` }));
+    const { fake, client } = make({ result: many });
+    expect(await client.containers.listApplications()).toEqual(many);
+    expect(fake.calls).toHaveLength(1);
+    expect(fake.last().query.get("page")).toBeNull();
+    expect(fake.last().query.get("name")).toBeNull();
+  });
+
+  it("listApplications throws on an answer without the list", async () => {
+    for (const result of [null, {}, "none"]) {
+      const { client } = make({ result });
+      const error = await client.containers.listApplications().catch((e: unknown) => e);
+      expect(error).toBeInstanceOf(Error);
+      expect((error as Error).name).toBe(UNREADABLE_CONTAINER_APPLICATIONS);
+      expect((error as Error).message).toBe(
+        "Cloudflare's answer for the container applications holds no list",
+      );
+    }
+    // An empty list is an answer: the account has none.
+    expect(await make({ result: [] }).client.containers.listApplications()).toEqual([]);
   });
 
   it("getApplication -> GET /containers/applications/{id}", async () => {

@@ -280,17 +280,14 @@ export async function runInstall(ctx: JobContext): Promise<void> {
   /** Resource names recorded before their create, resolved if the job fails. */
   const reserved: NameReservation[] = [];
   try {
-    await run("start", async ({ log, orm }) => {
-      await orm
-        .update(jobs)
-        .set({ status: "running", started_at: new Date(now()) })
-        .where(eq(jobs.id, params.jobId));
+    const started = await steps.start(async ({ log }) => {
       log.info(
         `Installing ${appSlugLabel(params.slug)} ${params.version} as Worker "${params.workerName}".`,
       );
       if (params.cleanupJob !== undefined) log.info(CLEANUP_WAIT_NOTE);
       return {};
     });
+    if (started === null) return;
     if (params.cleanupJob !== undefined) await awaitCleanupPhase(steps, step, params.cleanupJob);
     if (params.sandboxEnableJob !== undefined) {
       await awaitSandboxEnabledPhase(steps, step, env, params.sandboxEnableJob);

@@ -204,6 +204,15 @@ beforeEach(async () => {
   await createMigrator(migrations).ensure(env.DB);
 });
 
+/** The queued job row an uninstall starts from, as starting one records it. */
+async function queueUninstall(jobId: string, installId: string): Promise<void> {
+  await env.DB.prepare(
+    "INSERT INTO jobs (id, install_id, kind, status) VALUES (?1, ?2, 'uninstall', 'queued')",
+  )
+    .bind(jobId, installId)
+    .run();
+}
+
 describe("installing a sandbox tier app", () => {
   it("builds the pin in the sandbox Worker, reads the build through it, and records provenance", async () => {
     const r = await install({});
@@ -539,6 +548,7 @@ describe("installing a sandbox tier app", () => {
     expect(r.row?.build_kind).toBe("artifact");
     const sandbox = r.sandbox;
     if (sandbox === undefined) throw new Error("no sandbox");
+    await queueUninstall("job-u", r.installId);
     await runUninstall({
       params: { kind: "uninstall", jobId: "job-u", installId: r.installId, deleteResources: [] },
       step: fakeStep(),
@@ -737,6 +747,7 @@ describe("updating and uninstalling a sandbox tier app", () => {
     await seedSandboxInstall();
     const sandbox = fakeSandbox(await sandboxApp());
     const account = fakeAccount(null);
+    await queueUninstall("job2", INSTALL_ID);
     await runUninstall({
       params: { kind: "uninstall", jobId: "job2", installId: INSTALL_ID, deleteResources: [] },
       step: fakeStep(),

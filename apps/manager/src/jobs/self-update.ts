@@ -128,11 +128,7 @@ export async function runSelfUpdate(ctx: JobContext): Promise<void> {
   let uploadedVersionId: string | null = null;
 
   try {
-    const started = await run("start", async ({ log, orm }) => {
-      await orm
-        .update(jobs)
-        .set({ status: "running", started_at: new Date(now()) })
-        .where(eq(jobs.id, params.jobId));
+    const started = await steps.start(async ({ log, orm }) => {
       if (runningVersion(env) !== params.fromVersion) {
         throw new JobError(
           `Appflare ${runningVersion(env) ?? "(unknown version)"} is running, not ${params.fromVersion} as when this update was started`,
@@ -152,6 +148,7 @@ export async function runSelfUpdate(ctx: JobContext): Promise<void> {
         releaseTokenSecret: await releaseTokenSecret(env),
       };
     });
+    if (started === null) return;
     steps.setAccountId(started.accountId);
     const { workerName } = started;
     releaseSecret = started.releaseTokenSecret ?? null;

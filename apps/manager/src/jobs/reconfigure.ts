@@ -406,11 +406,7 @@ export async function runReconfigure(ctx: JobContext): Promise<void> {
   let snapshotOthers: Record<string, string> = {};
 
   try {
-    const started = await run("start", async ({ log, orm }) => {
-      await orm
-        .update(jobs)
-        .set({ status: "running", started_at: new Date(now()) })
-        .where(eq(jobs.id, params.jobId));
+    const started = await steps.start(async ({ log, orm }) => {
       const [install] = await orm
         .select()
         .from(installs)
@@ -519,6 +515,7 @@ export async function runReconfigure(ctx: JobContext): Promise<void> {
           })),
       };
     });
+    if (started === null) return;
     steps.setAccountId(started.accountId);
     const { workerName, workersDev } = started;
 

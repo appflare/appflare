@@ -225,6 +225,15 @@ beforeEach(async () => {
   await paidAccount();
 });
 
+/** The queued job row an uninstall starts from, as starting one records it. */
+async function queueUninstall(jobId: string, installId: string): Promise<void> {
+  await env.DB.prepare(
+    "INSERT INTO jobs (id, install_id, kind, status) VALUES (?1, ?2, 'uninstall', 'queued')",
+  )
+    .bind(jobId, installId)
+    .run();
+}
+
 describe("building a repository for review", () => {
   it("resolves the branch first, builds that commit, and records the verified build", async () => {
     const fixture = await repositoryBuild(COMMIT, VERSION);
@@ -931,6 +940,7 @@ describe("installing a build from a repository again", () => {
     });
 
     // Uninstalling the new install deletes its builds and the one it was installed from.
+    await queueUninstall("job-u", started.installId);
     await runUninstall({
       params: {
         kind: "uninstall",
@@ -1062,6 +1072,7 @@ describe("installing a build from a repository again", () => {
     expect(failed.account.state.kv.map((k) => k.title)).toEqual(["cut-cut-kv"]);
 
     // The last install's uninstall deletes the build at last.
+    await queueUninstall("job-u", third.installId);
     await runUninstall({
       params: {
         kind: "uninstall",
@@ -1093,6 +1104,7 @@ describe("installing a build from a repository again", () => {
     )
       .bind(second.installId)
       .all<{ id: string }>();
+    await queueUninstall("job-u", second.installId);
     await runUninstall({
       params: {
         kind: "uninstall",

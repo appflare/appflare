@@ -1,5 +1,5 @@
 import { env } from "cloudflare:workers";
-import { CloudflareApiError } from "@appflare/cf-api";
+import { CloudflareApiError, UNREADABLE_CONTAINER_APPLICATIONS } from "@appflare/cf-api";
 import { createServerFn } from "@tanstack/react-start";
 import { CfTokenNotConfiguredError, getCfClient } from "../cloudflare/client.server";
 import { createDb } from "../db/client";
@@ -25,8 +25,18 @@ export const getDangerZoneState = createServerFn({ method: "GET" }).handler(
 );
 
 /**
+ * Cloudflare answered a list without the list (`@appflare/cf-api` throws
+ * these by name): its message names the list, and nothing of the account.
+ */
+const UNREADABLE_LISTS = new Set([
+  UNREADABLE_CONTAINER_APPLICATIONS,
+  "UnreadableDurableObjectNamespaces",
+]);
+
+/**
  * Owner only: what "Remove Appflare from this account" would delete and
- * keep, read from the account now, and the jobs that would block it.
+ * keep, read from the account now, and the jobs that would block it. A
+ * refusal it can explain reaches the owner with its message.
  */
 export const getRemovalReview = createServerFn({ method: "GET" }).handler(
   async (): Promise<RemovalReview> => {
@@ -40,7 +50,8 @@ export const getRemovalReview = createServerFn({ method: "GET" }).handler(
       if (
         error instanceof DangerError ||
         error instanceof CfTokenNotConfiguredError ||
-        error instanceof CloudflareApiError
+        error instanceof CloudflareApiError ||
+        (error instanceof Error && UNREADABLE_LISTS.has(error.name))
       ) {
         throw new Error(error.message);
       }

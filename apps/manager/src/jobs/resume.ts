@@ -10,9 +10,14 @@ import { periodEnd } from "../usage/math";
 import { recordActivity } from "../usage/store/activity.server";
 import { effectiveSpendSettings, writeAppSpendSettings } from "../usage/store/app-settings.server";
 import { closePause, findOpenPause, recordPauseProgress } from "../usage/store/pauses.server";
-import { servingVersionOf } from "./pause/cloudflare";
 import { type ResumeJobParams, resumeJobParams } from "./pause/params";
-import { instancesPerStep, restorePhases, workersGoneMessage } from "./pause/phases";
+import {
+  instancesPerStep,
+  type RecordedWorkerState,
+  readRecordedWorker,
+  restorePhases,
+  workersGoneMessage,
+} from "./pause/phases";
 import { parsePausedContainers, parsePausedQueues, parsePausedWorkflows } from "./pause/records";
 import type { JobContext } from "./run-job";
 import { StepLog } from "./step-log";
@@ -45,11 +50,7 @@ export async function runResume(ctx: JobContext): Promise<void> {
   let notice: { pauseId: string; pausedBy: string; capSetAsideUntil: number | null } | null = null;
 
   try {
-    const started = await run("start", async ({ log, orm }) => {
-      await orm
-        .update(jobs)
-        .set({ status: "running", started_at: new Date(now()) })
-        .where(eq(jobs.id, params.jobId));
+    const started = await steps.start(async ({ log, orm }) => {
       const [install] = await orm
         .select({ status: installs.status })
         .from(installs)
@@ -85,21 +86,24 @@ export async function runResume(ctx: JobContext): Promise<void> {
         recorded,
       };
     });
+    if (started === null) return;
     pauseId = started.pauseId;
     steps.setAccountId(started.accountId);
     if (!started.accountPaid) steps.spreadOverInvocations();
 
+    // Each Worker read in a step of its own, before anything changes, and
+    // not again when it is put back.
+    const read: Record<string, RecordedWorkerState> = {};
+    for (const [script, versionId] of Object.entries(started.recorded.workerVersions)) {
+      read[script] = await readRecordedWorker(steps, script, versionId);
+    }
     // Every Worker the pause recorded was deleted outside Appflare: nothing
     // is put back for an app that cannot run, and the pause stays open
-    // until the app is uninstalled.
+    // until the app is uninstalled. Decided from the reads, with no request.
     const workers = Object.keys(started.recorded.workerVersions);
     if (workers.length > 0) {
-      await run("check the app's Workers", async ({ log, cf }) => {
-        const api = cf();
-        const gone: string[] = [];
-        for (const script of workers) {
-          if ((await servingVersionOf(api, script)) === null) gone.push(script);
-        }
+      await run("check the app's Workers", async ({ log }) => {
+        const gone = workers.filter((script) => read[script] === "gone");
         if (gone.length === workers.length) throw new JobError(workersGoneMessage(gone, "resume"));
         if (gone.length > 0) {
           log.warn(
@@ -112,6 +116,7 @@ export async function runResume(ctx: JobContext): Promise<void> {
 
     await restorePhases(steps, started.recorded, {
       perStep: instancesPerStep(started.accountPaid),
+      read,
     });
 
     const finished = await run("finish", async ({ log, orm }) => {

@@ -172,11 +172,7 @@ export async function runPause(ctx: JobContext): Promise<void> {
   let finished: { pauseId: string; pausedBy: string; cause: PauseCause } | null = null;
 
   try {
-    const started = await run("start", async ({ log, orm }) => {
-      await orm
-        .update(jobs)
-        .set({ status: "running", started_at: new Date(now()) })
-        .where(eq(jobs.id, params.jobId));
+    const started = await steps.start(async ({ log, orm }) => {
       const [install] = await orm
         .select({
           status: installs.status,
@@ -252,6 +248,7 @@ export async function runPause(ctx: JobContext): Promise<void> {
         recorded: recordedOf(pause),
       };
     });
+    if (started === null) return;
     if (started.refused !== null) {
       alreadyPaused = true;
       throw new JobError(started.refused);

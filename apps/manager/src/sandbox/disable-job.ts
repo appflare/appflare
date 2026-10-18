@@ -82,11 +82,7 @@ export async function runSandboxDisable(ctx: JobContext): Promise<void> {
   const { run } = steps;
 
   try {
-    const started = await run("start", async ({ log, orm, cf }) => {
-      await orm
-        .update(jobs)
-        .set({ status: "running", started_at: new Date(now()) })
-        .where(eq(jobs.id, params.jobId));
+    const started = await steps.start(async ({ log, orm, cf }) => {
       const settings = await readSettings(orm, [SETTING.accountId, SETTING.workerName]);
       if (!settings.account_id) throw new JobError("the Cloudflare account is not known yet");
       if (!settings.worker_name) throw new JobError("Appflare does not know its own Worker yet");
@@ -112,6 +108,7 @@ export async function runSandboxDisable(ctx: JobContext): Promise<void> {
       );
       return { accountId: settings.account_id, workerName: settings.worker_name };
     });
+    if (started === null) return;
     steps.setAccountId(started.accountId);
 
     // 1. Its container applications, found while its namespaces exist.

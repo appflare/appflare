@@ -1,10 +1,12 @@
 import { NonRetryableError } from "cloudflare:workflows";
 import { type CloudflareClient, createClient, type FetchLike } from "@appflare/cf-api";
+import { and, eq, inArray } from "drizzle-orm";
 import { probeCredentials, zoneNamesVia } from "../access/probe-credentials.server";
 import { apiBaseOption } from "../cloudflare/api-base";
 import { type CloudflareConnection, cloudflareConnection } from "../cloudflare/connection.server";
 import { inConnectionWordsOf } from "../cloudflare/sign-in-words.server";
 import { createDb, type Database } from "../db/client";
+import { jobs } from "../db/schema";
 import { errorMessage, JobError, toStepError } from "./errors";
 import { isSubrequestLimitError } from "./install/budget";
 import type { InstallProbeHeaders } from "./install/health";
@@ -70,6 +72,19 @@ export interface JobSteps {
     body: (tools: StepTools) => Promise<T>,
     config?: StepConfig,
   ): Promise<T>;
+  /**
+   * The job's "start" step: marks the job running, then runs `body`. Only a
+   * job still waiting to start, or one this step's own earlier try marked
+   * running, gets that far. A job already ended (reconcile marks it failed
+   * when Cloudflare reports its instance missing, and the instance may turn
+   * up later) stops here with one line in its log and changes nothing else,
+   * and one whose row is gone stops without the line: the result is `null`,
+   * and the caller returns at once.
+   */
+  start<T extends object>(
+    body: (tools: StepTools) => Promise<T>,
+    options?: { endedLine?: string },
+  ): Promise<T | null>;
   /** The step running now, or the phase to blame when a failure happens between steps. */
   current: string;
   /** Cloudflare calls need the account id, which an early step reads from settings. */
@@ -107,9 +122,16 @@ export interface JobSteps {
  */
 export const OWN_LIMIT_NOTE = "The job's own requests used up what this run of it may make.";
 
+/** The job log's line when a job had already ended before its instance started. */
+export const JOB_ALREADY_ENDED_LINE =
+  "This job had already ended before Cloudflare started it, so it stops here and changes nothing.";
+
 /** The job log's line when a job waits for a fresh invocation. */
 export const FRESH_INVOCATION_NOTE =
   "Waiting 5 minutes before the next step: on Workers Free, Cloudflare lets a job make 50 requests at a time, and this app's Workers need more. The job carries on by itself with a fresh allowance.";
+
+/** What the start step returns for a job that had already ended. */
+const ENDED_MARK = "jobAlreadyEnded";
 
 export function createJobSteps(ctx: JobContext, jobId: string): JobSteps {
   const { env, deps } = ctx;
@@ -218,6 +240,29 @@ export function createJobSteps(ctx: JobContext, jobId: string): JobSteps {
       accountId = id;
     },
     accountId: knownAccount,
+    async start(body, options = {}) {
+      // The marker is a key no body returns, and a result recorded before
+      // this guard existed (the body's own value) still reads as started.
+      const started = await steps.run("start", async (tools): Promise<object> => {
+        const claimed = await tools.orm
+          .update(jobs)
+          .set({ status: "running", started_at: new Date(now()) })
+          .where(and(eq(jobs.id, jobId), inArray(jobs.status, ["queued", "running"])))
+          .returning({ id: jobs.id });
+        if (claimed.length === 0) {
+          // A job whose row is gone (reconcile deletes the row of a sandbox
+          // enable it found stranded) has no log to write the line to.
+          const [row] = await tools.orm
+            .select({ id: jobs.id })
+            .from(jobs)
+            .where(eq(jobs.id, jobId));
+          if (row !== undefined) tools.log.info(options.endedLine ?? JOB_ALREADY_ENDED_LINE);
+          return { [ENDED_MARK]: true };
+        }
+        return body(tools);
+      });
+      return ENDED_MARK in started ? null : (started as Awaited<ReturnType<typeof body>>);
+    },
     async run(name, body, config = API_STEP) {
       const unique = uniqueName(name);
       if (budget.needsFresh()) await freshInvocation(unique);

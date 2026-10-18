@@ -395,11 +395,7 @@ export async function runUpdate(ctx: JobContext): Promise<void> {
   } | null = null;
 
   try {
-    const started = await run("start", async ({ log, orm }) => {
-      await orm
-        .update(jobs)
-        .set({ status: "running", started_at: new Date(now()) })
-        .where(eq(jobs.id, params.jobId));
+    const begun = await steps.start(async ({ log, orm }) => {
       const [install] = await orm
         .select()
         .from(installs)
@@ -564,6 +560,9 @@ export async function runUpdate(ctx: JobContext): Promise<void> {
         ) as WorkflowTarget[] | undefined,
       };
     });
+    if (begun === null) return;
+    // Named again, for the functions declared below that read it.
+    const started = begun;
     steps.setAccountId(started.accountId);
     const { workerName, workersDev } = started;
 

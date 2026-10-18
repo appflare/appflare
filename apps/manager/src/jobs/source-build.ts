@@ -142,12 +142,7 @@ export async function runSourceBuild(ctx: JobContext): Promise<void> {
   const { run, now } = steps;
 
   try {
-    await run("start", async ({ log, orm }) => {
-      const at = new Date(now());
-      await orm
-        .update(jobs)
-        .set({ status: "running", started_at: at })
-        .where(eq(jobs.id, params.jobId));
+    const started = await steps.start(async ({ log }) => {
       log.info(
         params.origin === "repository"
           ? `Building ${params.repo} at ${params.ref ?? "its default branch"} for review. Not from the catalog, not checked.`
@@ -155,6 +150,7 @@ export async function runSourceBuild(ctx: JobContext): Promise<void> {
       );
       return {};
     });
+    if (started === null) return;
     if (params.sandboxEnableJob !== undefined) {
       await awaitSandboxEnabledPhase(steps, step, env, params.sandboxEnableJob);
     }

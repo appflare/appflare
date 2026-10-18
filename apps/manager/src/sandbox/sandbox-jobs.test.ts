@@ -653,6 +653,32 @@ describe("enable sandbox builds", () => {
     );
   });
 
+  it("creates no container application when Cloudflare's list of them holds no list", async () => {
+    // The account check reads the list first.
+    const checked = await enable({ appsUnreadable: () => true });
+    expect(checked.job?.status).toBe("failed");
+    expect(checked.job?.error).toBe(
+      "check account: the account check failed: no usable answer (UnreadableContainerApplications)",
+    );
+    expect(checked.world.order).not.toContain("POST /containers/applications");
+  });
+
+  it("never creates an application again when its own read holds no list", async () => {
+    // Not the first application's name, which the account check reads by.
+    const second = SANDBOX_CONTAINERS[1];
+    if (second === undefined) throw new Error("no container");
+    const r = await enable({
+      ...enabledAt("0.1.0"),
+      appsUnreadable: (name) => name === second.name,
+    });
+    expect(r.job?.status).toBe("failed");
+    expect(r.job?.error).toBe(
+      `container application ${second.name}: Cloudflare's answer for the container applications holds no list`,
+    );
+    expect(r.world.order).not.toContain("POST /containers/applications");
+    expect(r.world.state.apps).toHaveLength(SANDBOX_CONTAINERS.length);
+  });
+
   it("still refuses an application backing another Worker's namespace, or one it cannot check", async () => {
     const theirs = app(2, "0.1.0", {
       id: "theirs",
@@ -850,6 +876,24 @@ describe("disable sandbox builds", () => {
     );
     expect(world.state.deletes).toEqual([]);
     expect(world.state.worker).not.toBeNull();
+  });
+
+  it("stops before deleting anything when Cloudflare's list of container applications holds no list", async () => {
+    const release = await sandboxRelease(VERSION);
+    const world = fakeSandboxAccount(
+      release,
+      { ...enabledAt(VERSION), appsUnreadable: () => true },
+      { previews: [healthy], ...connected },
+    );
+    const { params } = await start(world, { action: "disable", confirm: "appflare-sandbox" });
+    const r = await runJob(world, params, release);
+    expect(r.job?.status).toBe("failed");
+    expect(r.job?.error).toBe(
+      "find container applications: Cloudflare's answer for the container applications holds no list",
+    );
+    expect(world.state.deletes).toEqual([]);
+    expect(world.state.worker).not.toBeNull();
+    expect(world.state.apps).toHaveLength(SANDBOX_CONTAINERS.length);
   });
 
   it("records the sandbox Worker as deleted once it is gone, until the disconnect finishes", async () => {

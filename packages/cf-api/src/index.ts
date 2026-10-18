@@ -81,6 +81,7 @@ export type {
   AssetBucketResult,
 } from "./namespaces/assets";
 export type { SubscriptionsPage } from "./namespaces/billing";
+export { UNREADABLE_CONTAINER_APPLICATIONS } from "./namespaces/containers";
 export type {
   CreateCustomHostnameArgs,
   CustomHostname,

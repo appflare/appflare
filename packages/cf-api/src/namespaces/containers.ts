@@ -9,6 +9,9 @@ import type {
 
 const enc = encodeURIComponent;
 
+/** The `name` of the error {@link createContainers}' `listApplications` throws on an answer without the list. */
+export const UNREADABLE_CONTAINER_APPLICATIONS = "UnreadableContainerApplications";
+
 /**
  * Cloudflare Containers: the container applications that back a Worker's
  * container-enabled Durable Object classes, and their rollouts. Paths and
@@ -27,13 +30,23 @@ export function createContainers(http: HttpApi) {
      * applications, filtered by name on the server. On an account without
      * Workers Paid Cloudflare answers 401 (code 1000, "…requires the Workers
      * Paid plan…"); a token without a Containers permission gets 403 (code
-     * 10000) first, whatever the plan.
+     * 10000) first, whatever the plan. The list comes whole: wrangler's
+     * client sends no page parameters for it (only the dashboard's own
+     * `/containers/dash/applications` pages). An answer without the list
+     * throws rather than read as "no applications": a caller would create
+     * one that exists, or leave one behind.
      */
     async listApplications(opts: { name?: string } = {}): Promise<ContainerApplication[]> {
       const result = await http.result<unknown>("GET", apps(), {
         query: { name: opts.name },
       });
-      return Array.isArray(result) ? (result as ContainerApplication[]) : [];
+      if (!Array.isArray(result)) {
+        throw Object.assign(
+          new Error("Cloudflare's answer for the container applications holds no list"),
+          { name: UNREADABLE_CONTAINER_APPLICATIONS },
+        );
+      }
+      return result as ContainerApplication[];
     },
 
     /** `GET /containers/applications/{id}`: one application, with its `health`. */

@@ -1,4 +1,8 @@
-import { CloudflareApiError, type CloudflareClient } from "@appflare/cf-api";
+import {
+  CloudflareApiError,
+  type CloudflareClient,
+  UNREADABLE_CONTAINER_APPLICATIONS,
+} from "@appflare/cf-api";
 import { isNotFound, type JobSteps } from "../steps";
 
 /**
@@ -98,9 +102,14 @@ export async function findContainersPhase(
     } catch (error) {
       // Off Workers Paid no container can run, so a Containers API that
       // fails (it answered 500 once on Workers Free) never stops the uninstall.
-      if (accountPaid || !(error instanceof CloudflareApiError)) throw error;
+      const unreadable = error instanceof Error && error.name === UNREADABLE_CONTAINER_APPLICATIONS;
+      if (accountPaid || !(error instanceof CloudflareApiError || unreadable)) throw error;
+      const answered =
+        error instanceof CloudflareApiError
+          ? `Cloudflare answered ${error.status} when asked for the account's container applications.`
+          : "Cloudflare's answer for the account's container applications held no list.";
       log.warn(
-        `Cloudflare answered ${error.status} when asked for the account's container applications. Containers run only on Workers Paid, which this account is not on as far as Appflare knows; if ${DASHBOARD_PLACE} lists one for this app, delete it there.`,
+        `${answered} Containers run only on Workers Paid, which this account is not on as far as Appflare knows; if ${DASHBOARD_PLACE} lists one for this app, delete it there.`,
       );
       return { apps: none };
     }

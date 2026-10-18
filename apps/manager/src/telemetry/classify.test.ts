@@ -577,9 +577,9 @@ describe("a move of Appflare's address that never answered", () => {
 describe("pausing and resuming an app", () => {
   it("fails in the pause phase, whatever its Workers are called", () => {
     for (const step of [
-      "read what Worker my-assets serves",
+      "undo: read what Worker my-assets serves",
       "undo: read what Worker cut-installer serves",
-      "read what Worker access-snapshot serves",
+      "undo: read what Worker access-snapshot serves",
       "upload the stand-in of Worker cut",
       "upload the stand-ins of Workers cut, cut-api",
       "pause delivery of queue cut-events",
@@ -606,6 +606,9 @@ describe("pausing and resuming an app", () => {
       "read Worker snapshot-email-routing",
       "check the app's Workers",
       "read Worker cut (again)",
+      "read what Worker my-assets serves",
+      "read what Worker access-snapshot serves",
+      "wait for a fresh invocation before read what Worker cut serves",
     ]) {
       expect(failedPhase(step), step).toBe("preflight");
     }

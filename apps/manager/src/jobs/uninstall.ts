@@ -242,11 +242,7 @@ export async function runUninstall(ctx: JobContext): Promise<void> {
   const { run, now } = steps;
 
   try {
-    const started = await run("start", async ({ log, orm }) => {
-      await orm
-        .update(jobs)
-        .set({ status: "running", started_at: new Date(now()) })
-        .where(eq(jobs.id, params.jobId));
+    const started = await steps.start(async ({ log, orm }) => {
       const [install] = await orm
         .select({ workerName: installs.worker_name, buildKind: installs.build_kind })
         .from(installs)
@@ -452,6 +448,7 @@ export async function runUninstall(ctx: JobContext): Promise<void> {
           ).some((job) => sandboxBuildOfInput(job.input) !== null),
       };
     });
+    if (started === null) return;
     steps.setAccountId(started.accountId);
     const { workerName } = started;
     // An app of several Workers may need more requests than one invocation
@@ -915,11 +912,7 @@ async function runDeleteRetained(ctx: JobContext, params: UninstallJobParams): P
   const steps = createJobSteps(ctx, params.jobId);
   const { run, now } = steps;
   try {
-    const started = await run("start", async ({ log, orm }) => {
-      await orm
-        .update(jobs)
-        .set({ status: "running", started_at: new Date(now()) })
-        .where(eq(jobs.id, params.jobId));
+    const started = await steps.start(async ({ log, orm }) => {
       const [install] = await orm
         .select({ workerName: installs.worker_name, status: installs.status })
         .from(installs)
@@ -998,6 +991,7 @@ async function runDeleteRetained(ctx: JobContext, params: UninstallJobParams): P
         heldElsewhere: held.size,
       };
     });
+    if (started === null) return;
     steps.setAccountId(started.accountId);
 
     await deleteDataResourcesPhase(steps, started.targets, "retained");

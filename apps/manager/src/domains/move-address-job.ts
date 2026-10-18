@@ -1,5 +1,5 @@
 import { NonRetryableError } from "cloudflare:workflows";
-import { and, eq, inArray } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import { z } from "zod";
 import { AccessToggleError, checkAccessMove } from "../access/toggle.server";
 import { requireConnection } from "../cloudflare/connection.server";
@@ -228,34 +228,25 @@ export async function runMoveAddress(ctx: JobContext): Promise<void> {
   let reason: string;
 
   try {
-    const started = await run("start", async ({ log, orm }) => {
-      // Only a job still waiting to start (or this step's own earlier try):
-      // one already marked failed, as reconcile does when Cloudflare reports
-      // the instance missing, may have a new move started in its place.
-      const claimed = await orm
-        .update(jobs)
-        .set({ status: "running", started_at: new Date(now()) })
-        .where(and(eq(jobs.id, params.jobId), inArray(jobs.status, ["queued", "running"])))
-        .returning({ id: jobs.id });
-      if (claimed.length === 0) {
-        log.info(MOVE_LINES.alreadyEnded());
-        return { ended: true as const };
-      }
-      const settings = await readSettings(orm, [SETTING.accountId, SETTING.workerName]);
-      if (!settings.account_id) throw new JobError("the Cloudflare account is not known yet");
-      if (!settings.worker_name) throw new JobError("Appflare does not know its own Worker yet");
-      // An API token, or a stored grant that does not need reconnecting.
-      await requireConnection(env);
-      log.info(MOVE_LINES.start(hostname, params.from?.hostname ?? null));
-      return {
-        ended: false as const,
-        accountId: settings.account_id,
-        workerName: settings.worker_name,
-        replacedRecords: (await readAttachedBy(env.DB, hostname)) === "appflare-replaced-records",
-      };
-    });
+    // A move already marked failed may have a new move started in its place.
+    const started = await steps.start(
+      async ({ log, orm }) => {
+        const settings = await readSettings(orm, [SETTING.accountId, SETTING.workerName]);
+        if (!settings.account_id) throw new JobError("the Cloudflare account is not known yet");
+        if (!settings.worker_name) throw new JobError("Appflare does not know its own Worker yet");
+        // An API token, or a stored grant that does not need reconnecting.
+        await requireConnection(env);
+        log.info(MOVE_LINES.start(hostname, params.from?.hostname ?? null));
+        return {
+          accountId: settings.account_id,
+          workerName: settings.worker_name,
+          replacedRecords: (await readAttachedBy(env.DB, hostname)) === "appflare-replaced-records",
+        };
+      },
+      { endedLine: MOVE_LINES.alreadyEnded() },
+    );
     // Ended before it began: nothing ran, and nothing more is recorded.
-    if (started.ended) return;
+    if (started === null) return;
     steps.setAccountId(started.accountId);
     replacedRecords = started.replacedRecords;
 

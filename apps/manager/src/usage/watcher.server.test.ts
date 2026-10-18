@@ -1,7 +1,7 @@
 import { reset } from "cloudflare:test";
 import { env } from "cloudflare:workers";
 
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { writeAccountPlan } from "../account/plan.server";
 import { createDb } from "../db/client";
 import { createMigrator } from "../db/migrate";
@@ -13,7 +13,7 @@ import {
   type UsageEventOutcome,
 } from "../notifications/usage-events.server";
 import { ACC, TOKEN } from "../test/fake-account";
-import { fakeCloudflare } from "../test/fake-cloudflare";
+import { type FakeRoute, fakeCloudflare } from "../test/fake-cloudflare";
 import { addChannel, SLACK_URL } from "../test/notification-fixtures";
 import { ACCOUNT_DAY_READ, HOUR, LEVEL_PRODUCTS } from "./collect";
 import { WATCHED_APPS_SQL } from "./collect.server";
@@ -103,20 +103,20 @@ async function seedRecordedApp(id = "notes", installedAt?: number) {
 function world(
   answers: Readonly<Record<string, readonly AnswerRow[]>>,
   opts: {
-    namespaces?: Array<{ id: string; script: string }>;
+    namespaces?: Array<{ id: string; script: string }> | FakeRoute;
+    /** The answer to the container applications list. */
+    containers?: FakeRoute;
     refuse?: { message: string; code?: string; datasets?: readonly string[] };
   } = {},
 ) {
+  const namespaces = opts.namespaces ?? [
+    { id: RECORDED_IDS.durableObject, script: RECORDED_IDS.worker },
+  ];
   const rest = fakeCloudflare({
-    [`GET ${A}/workers/durable_objects/namespaces`]: {
-      result: (
-        opts.namespaces ?? [{ id: RECORDED_IDS.durableObject, script: RECORDED_IDS.worker }]
-      ).map((n) => ({
-        ...n,
-        class: "Store",
-      })),
-    },
-    [`GET ${A}/containers/applications`]: { result: [] },
+    [`GET ${A}/workers/durable_objects/namespaces`]: Array.isArray(namespaces)
+      ? { result: namespaces.map((n) => ({ ...n, class: "Store" })) }
+      : namespaces,
+    [`GET ${A}/containers/applications`]: opts.containers ?? { result: [] },
   });
   const graphql = fakeGraphQL(answers, rest.fetch, opts.refuse);
   const events: UsageEvent[] = [];
@@ -340,6 +340,44 @@ describe("watchSpend: a read that fails", () => {
     // Only the app fully read counts as checked now.
     expect((await readUsageState(db(), "other")).lastCheckedAt).toBe(NOW);
     expect((await readUsageState(db(), "notes")).lastCheckedAt).toBeNull();
+  });
+});
+
+describe("watchSpend: an account list that fails", () => {
+  it("leaves out only containers when the container applications are not listed", async () => {
+    await writeAccountPlan(db(), "paid");
+    await seedRecordedApp();
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const w = world(RECORDED, { containers: { result: { applications: [] } } });
+    const report = await watchSpend(watchEnv(), {}, w.deps());
+    expect(report).toMatchObject({ status: "watching" });
+    expect(warn).toHaveBeenCalledWith("spend watcher: container applications not listed", {
+      error: expect.stringContaining("container applications"),
+    });
+    warn.mockRestore();
+    // The namespaces were read: Durable Objects and their alarms are.
+    expect(await hourly("notes", "do_storage")).toHaveLength(5);
+    expect(w.graphql.some((s) => s.filter.type === "alarm")).toBe(true);
+    // Containers are not, so the app does not count as checked.
+    expect((await readUsageState(db(), "notes")).lastCheckedAt).toBeNull();
+  });
+
+  it("leaves out Durable Objects, their alarms and containers when the namespaces are not listed", async () => {
+    await writeAccountPlan(db(), "paid");
+    await seedRecordedApp();
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const w = world(RECORDED, {
+      namespaces: { status: 500, errors: [{ code: 10000, message: "internal error" }] },
+    });
+    const report = await watchSpend(watchEnv(), {}, w.deps());
+    expect(report).toMatchObject({ status: "watching" });
+    expect(warn).toHaveBeenCalledWith("spend watcher: Durable Object namespaces not listed", {
+      error: expect.any(String),
+    });
+    warn.mockRestore();
+    expect(await hourly("notes", "do_storage")).toEqual([]);
+    expect(await hourly("notes", "workers_requests")).toHaveLength(5);
+    expect(w.rest.some((c) => c.key === `GET ${A}/containers/applications`)).toBe(false);
   });
 });
 

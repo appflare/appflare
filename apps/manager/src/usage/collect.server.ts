@@ -3,7 +3,7 @@ import { sql } from "drizzle-orm";
 import type { AccountPlan } from "../account/plan";
 import { type Read, read } from "../db/batch";
 import type { Database } from "../db/client";
-import type { AppResources, CollectedHour } from "./collect";
+import type { AppResources, CollectedHour, CollectSource } from "./collect";
 import type { HourlyUsage } from "./store/series.server";
 
 /**
@@ -130,21 +130,40 @@ function status(error: unknown): number | null {
   return error instanceof CloudflareApiError ? error.status : null;
 }
 
+/** What {@link addAccountResources} could not list: its name, the sources it leaves unread, and why. */
+export interface AccountResourcesUnread {
+  what: "Durable Object namespaces" | "container applications";
+  unread: CollectSource[];
+  error: unknown;
+}
+
 /**
  * Fills in each app's Durable Object namespaces (the account's namespaces
  * whose script is one of the app's Workers) and, on Workers Paid, the
  * container applications behind them. One list call each; containers only
- * when some app has a namespace.
+ * when some app has a namespace. A list that fails leaves out only the
+ * products it covers for this check: without the namespaces, Durable
+ * Objects, their alarms and containers; without the container
+ * applications, containers alone (the namespaces read stay filled in).
  */
 export async function addAccountResources(
   api: CloudflareClient,
   apps: readonly WatchedApp[],
   plan: AccountPlan,
-): Promise<void> {
+): Promise<AccountResourcesUnread | null> {
   const byScript = new Map<string, WatchedApp>();
   for (const app of apps) for (const w of app.resources.workers) byScript.set(w, app);
-  if (byScript.size === 0) return;
-  const namespaces = await api.workers.listDurableObjectNamespaces();
+  if (byScript.size === 0) return null;
+  let namespaces: Awaited<ReturnType<typeof api.workers.listDurableObjectNamespaces>>;
+  try {
+    namespaces = await api.workers.listDurableObjectNamespaces();
+  } catch (error) {
+    return {
+      what: "Durable Object namespaces",
+      unread: ["durableObjects", "containers", "alarms"],
+      error,
+    };
+  }
   const byNamespace = new Map<string, WatchedApp>();
   for (const ns of namespaces) {
     const app = ns.script === undefined ? undefined : byScript.get(ns.script);
@@ -153,20 +172,21 @@ export async function addAccountResources(
     byNamespace.set(ns.id, app);
   }
   // Containers exist only on Workers Paid, always behind a Durable Object.
-  if (plan !== "paid" || byNamespace.size === 0) return;
+  if (plan !== "paid" || byNamespace.size === 0) return null;
   let applications: Awaited<ReturnType<typeof api.containers.listApplications>>;
   try {
     applications = await api.containers.listApplications();
   } catch (error) {
     // No Containers on the account (401) or the token may not read them (403).
     const s = status(error);
-    if (s === 401 || s === 403) return;
-    throw error;
+    if (s === 401 || s === 403) return null;
+    return { what: "container applications", unread: ["containers"], error };
   }
   for (const application of applications) {
     const app = byNamespace.get(application.durable_objects?.namespace_id ?? "");
     if (app !== undefined) app.resources.containers.push(application.id);
   }
+  return null;
 }
 
 /** Two numbers are the same reading (stored values pass through floating point). */

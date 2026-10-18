@@ -147,11 +147,7 @@ export async function runSandboxEnable(ctx: JobContext): Promise<void> {
   });
 
   try {
-    const started = await run("start", async ({ log, orm }) => {
-      await orm
-        .update(jobs)
-        .set({ status: "running", started_at: new Date(now()) })
-        .where(eq(jobs.id, params.jobId));
+    const started = await steps.start(async ({ log, orm }) => {
       const settings = await readSettings(orm, [SETTING.accountId, SETTING.workerName]);
       if (!settings.account_id) throw new JobError("the Cloudflare account is not known yet");
       if (!settings.worker_name) throw new JobError("Appflare does not know its own Worker yet");
@@ -172,6 +168,7 @@ export async function runSandboxEnable(ctx: JobContext): Promise<void> {
         releaseTokenSecret: await releaseTokenSecret(env),
       };
     });
+    if (started === null) return;
     steps.setAccountId(started.accountId);
     releaseSecret = started.releaseTokenSecret ?? null;
 

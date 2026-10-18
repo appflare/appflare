@@ -80,6 +80,11 @@ export interface SandboxAccountState {
   buckets: Set<string>;
   objects: Record<string, string[]>;
   apps: FakeContainerApp[];
+  /**
+   * Whether the container application list, read with this name filter
+   * (null without one), answers success without its list (`result: null`).
+   */
+  appsUnreadable?: (name: string | null) => boolean;
   rollouts: Record<
     string,
     { appId: string; body: Record<string, unknown>; reads: number; status: string }
@@ -343,6 +348,7 @@ export function fakeSandboxAccount(
       }
       case "GET /containers/applications": {
         const name = url.searchParams.get("name");
+        if (state.appsUnreadable?.(name) === true) return ok(null);
         return ok(state.apps.filter((a) => name === null || a.name === name).map(appView));
       }
       case "POST /containers/applications": {

@@ -129,17 +129,14 @@ export async function runSelfDeployingInstall(
   const stage = selfDeployingStage(params.installId);
 
   try {
-    await run("start", async ({ log, orm }) => {
-      await orm
-        .update(jobs)
-        .set({ status: "running", started_at: new Date(now()) })
-        .where(eq(jobs.id, params.jobId));
+    const started = await steps.start(async ({ log }) => {
       log.info(
         `Installing ${params.slug} ${params.version} with its own installer, as stage ${stage}.`,
       );
       if (params.cleanupJob !== undefined) log.info(CLEANUP_WAIT_NOTE);
       return {};
     });
+    if (started === null) return;
     // "Install again": what the failed install left is removed first.
     if (params.cleanupJob !== undefined) await awaitCleanupPhase(steps, step, params.cleanupJob);
     if (params.sandboxEnableJob !== undefined) {
@@ -324,11 +321,7 @@ export async function runSelfDeployingUpdate(
   let logsBefore: WorkersLogsBefore | null = null;
 
   try {
-    const started = await run("start", async ({ log, orm }) => {
-      await orm
-        .update(jobs)
-        .set({ status: "running", started_at: new Date(now()) })
-        .where(eq(jobs.id, params.jobId));
+    const started = await steps.start(async ({ log, orm }) => {
       const [install] = await orm
         .select()
         .from(installs)
@@ -382,6 +375,7 @@ export async function runSelfDeployingUpdate(
         recorded,
       };
     });
+    if (started === null) return;
     steps.setAccountId(started.accountId);
     const input = started.input;
 
@@ -548,11 +542,7 @@ export async function runSelfDeployingUninstall(
   const { run, now } = steps;
 
   try {
-    const started = await run("start", async ({ log, orm }) => {
-      await orm
-        .update(jobs)
-        .set({ status: "running", started_at: new Date(now()) })
-        .where(eq(jobs.id, params.jobId));
+    const started = await steps.start(async ({ log, orm }) => {
       const [install] = await orm
         .select()
         .from(installs)
@@ -587,6 +577,7 @@ export async function runSelfDeployingUninstall(
         accountPaid: (await readAccountPlan(orm)) === "paid",
       };
     });
+    if (started === null) return;
     steps.setAccountId(started.accountId);
     const catalog = recordedCatalog(started.catalogText);
     /** Whether the installer's destroy command ran and left none of the app's Workers. */

@@ -160,9 +160,13 @@ const PHASE_PATTERNS: readonly [RegExp, FailedPhase][] = [
     "access",
   ],
   // A pause or resume reads the app's Workers (and a pause its Durable
-  // Objects) before it changes anything; "read Worker <name>" carries a
-  // Worker name too.
-  [/^read Worker \S+$|^read the app's Durable Objects$|^check the app's Workers$/, "preflight"],
+  // Objects) before it changes anything; "read Worker <name>" and "read
+  // what Worker <name> serves" carry a Worker name too. The undo of a
+  // pause reads them again ("undo: read what …"), in the pause phase.
+  [
+    /^read Worker \S+$|^read what Worker \S+ serves$|^read the app's Durable Objects$|^check the app's Workers$/,
+    "preflight",
+  ],
   // Then, anchored at their fixed start: the steps of moving Appflare's
   // address and of pausing and resuming an app carry hostnames and Worker,
   // queue and Workflow names, which may contain any word a later pattern
@@ -172,7 +176,7 @@ const PHASE_PATTERNS: readonly [RegExp, FailedPhase][] = [
     "address",
   ],
   [
-    /^(undo: )?(read what Worker \S+ serves$|upload the stand-ins? of Workers? |find the app's queues$|(pause|resume) delivery of |list running instances of Workflow |(pause|resume) instances of Workflow |serve the stand-in of Worker |serve the app's version of Worker |(stop|allow) container instances of )/,
+    /^(undo: read what Worker \S+ serves$|(undo: )?(upload the stand-ins? of Workers? |find the app's queues$|(pause|resume) delivery of |list running instances of Workflow |(pause|resume) instances of Workflow |serve the stand-in of Worker |serve the app's version of Worker |(stop|allow) container instances of ))/,
     "pause",
   ],
   // Uninstall steps that carry a domain, binding, address or Worker name, which may

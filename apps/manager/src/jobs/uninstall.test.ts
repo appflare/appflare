@@ -95,8 +95,9 @@ interface World {
    * The account's container applications by id, each backing a Durable
    * Object namespace; `"refused"` when the token cannot read Containers.
    * Absent: an account on Workers Free, which Cloudflare refuses Containers.
+   * `"unreadable"`: an answer without the list.
    */
-  containers?: Map<string, { name: string; namespaceId: string }> | "refused";
+  containers?: Map<string, { name: string; namespaceId: string }> | "refused" | "unreadable";
   /** Durable Object namespaces; each is listed only while its Worker exists. */
   doNamespaces?: Array<{ id: string; script: string; class: string }>;
   /** Zone objects of wildcard domains: `<zone>/routes/<id>` and `<zone>/dns_records/<id>`. */
@@ -190,6 +191,7 @@ function fakeWorld(over: Partial<World> = {}) {
         );
       }
       if (world.containers === "refused") return fail(403, "Authentication error");
+      if (world.containers === "unreadable") return ok(null);
       return ok(
         [...world.containers].map(([id, a]) => ({
           id,
@@ -200,7 +202,7 @@ function fakeWorld(over: Partial<World> = {}) {
     }
     m = /^DELETE \/containers\/applications\/([^/]+)$/.exec(key);
     if (m?.[1]) {
-      if (world.containers === undefined || world.containers === "refused") return fail(403, "no");
+      if (!(world.containers instanceof Map)) return fail(403, "no");
       return world.containers.delete(m[1]) ? ok(null) : gone();
     }
     if (key === "GET /workers/durable_objects/namespaces") {
@@ -2236,6 +2238,28 @@ describe("uninstall job: what outlives the Worker", () => {
     expect(paid.world.containers).toEqual(
       new Map([["ca-2", { name: "other-box", namespaceId: "ns-other" }]]),
     );
+  });
+
+  it("fails on Workers Paid when Cloudflare's list of container applications holds no list, but not on Workers Free", async () => {
+    await seedInstall();
+    await writeSettings(createDb(env.DB), { [SETTING.accountPlan]: "paid" });
+    const paid = containerWorld({ containers: "unreadable" });
+    const p = await uninstall({ installId: "i1", deleteResources: [] }, paid);
+    expect(p.job?.status).toBe("failed");
+    expect(p.job?.error).toBe(
+      "check container applications: Cloudflare's answer for the container applications holds no list",
+    );
+    expect(p.install?.status).not.toBe("uninstalled");
+
+    await env.DB.prepare("UPDATE installs SET status = 'installed' WHERE id = 'i1'").run();
+    await writeSettings(createDb(env.DB), { [SETTING.accountPlan]: "free" });
+    const free = containerWorld({ containers: "unreadable" });
+    const r = await uninstall({ installId: "i1", deleteResources: [] }, free);
+    expect(r.error).toBeNull();
+    expect(r.install?.status).toBe("uninstalled");
+    expect(r.logs.filter((l) => l.level === "warn").map((l) => l.message)).toEqual([
+      "Cloudflare's answer for the account's container applications held no list. Containers run only on Workers Paid, which this account is not on as far as Appflare knows; if Workers > Containers in the Cloudflare dashboard lists one for this app, delete it there.",
+    ]);
   });
 
   it("only notes a token that cannot read Containers on Workers Free, where none runs", async () => {

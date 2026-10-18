@@ -435,13 +435,11 @@ export async function watchSpend(
 
     // The account's Durable Object namespaces and containers: without
     // them, those products are left out for this check (not the rest).
-    let unread: CollectSource[] = [];
-    try {
-      await addAccountResources(api, apps, plan);
-    } catch (error) {
-      unread = ["durableObjects", "containers", "alarms"];
-      console.warn("spend watcher: Durable Object namespaces not listed", {
-        error: message(error),
+    const notListed = await addAccountResources(api, apps, plan);
+    const unread: CollectSource[] = notListed?.unread ?? [];
+    if (notListed !== null) {
+      console.warn(`spend watcher: ${notListed.what} not listed`, {
+        error: message(notListed.error),
       });
     }
     const targets: CollectTarget[] = apps.map((a) => {
