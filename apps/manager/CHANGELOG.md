@@ -1,5 +1,27 @@
 # @appflare/manager
 
+## 0.5.1
+
+### Patch Changes
+
+- f2b836a: Changed: Moving Appflare to a new address keeps waiting up to an hour while the certificate is still being issued.
+- f091a4e: Fixed: A move to the domain chosen at install no longer fails when Cloudflare never started its job; Appflare starts it again by itself.
+- f2b836a: Changed: The Anonymous report now names why a job failed in more cases, as a word from a fixed list, never your text.
+- 973e0ac: Fixed: When Cloudflare's list of container applications comes back unreadable, sandbox and app jobs and the removal review stop and say so instead of reading it as no applications.
+- c0a1cfa: Fixed: On Workers Free, an install stops before changing anything when the account has no room for its cron triggers, D1 databases, Hyperdrive or Vectorize, and removes itself if its cron triggers are refused later.
+- 973e0ac: Fixed: A job marked failed because Cloudflare reported it missing no longer runs, or changes the app, if Cloudflare starts it later after all.
+- f2b836a: Fixed: Pausing or resuming an app of many Workers could fail, or take 5 minutes longer on Workers Free.
+- f091a4e: Fixed: Removing Appflare and disabling sandbox builds find the sandbox Worker's container applications by what they back, so ones a newer release added, or a stopped removal left, go too.
+- f091a4e: Fixed: Enabling sandbox builds replaces container applications a deleted sandbox Worker left behind, instead of asking you to delete them.
+- c0a1cfa: Fixed: An app whose Worker was deleted in the Cloudflare dashboard can be uninstalled again, and pausing or resuming it says why it cannot.
+- c0a1cfa: Fixed: An install could fail with "Completion token has already been consumed" after Cloudflare was slow to answer its upload.
+- c0a1cfa: Fixed: An app whose startup was too slow for Cloudflare once is uploaded again; if it happens twice, the message says trying again often works.
+- Updated dependencies [973e0ac]
+- Updated dependencies [c0a1cfa]
+- Updated dependencies [f091a4e]
+- Updated dependencies [f091a4e]
+  - @appflare/cf-api@0.4.1
+
 ## 0.5.0
 
 After updating, reconnect Cloudflare once when Appflare asks, so it can read usage (Account Analytics: Read).

@@ -1,5 +1,15 @@
 # @appflare/installer
 
+## 0.1.4
+
+### Patch Changes
+
+- Updated dependencies [973e0ac]
+- Updated dependencies [c0a1cfa]
+- Updated dependencies [f091a4e]
+- Updated dependencies [f091a4e]
+  - @appflare/cf-api@0.4.1
+
 ## 0.1.3
 
 - Updated dependencies.

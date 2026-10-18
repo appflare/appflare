@@ -1,5 +1,14 @@
 # @appflare/cf-api
 
+## 0.4.1
+
+### Patch Changes
+
+- 973e0ac: Fixed: `client.containers.listApplications()` throws on an answer without the list instead of returning none.
+- c0a1cfa: Fixed: `client.d1.listDatabases()` returns every database in an account of more than one page, reading 1,000 per page until a short page or the reported total.
+- f091a4e: Fixed: `client.workers.listDurableObjectNamespaces()` returns every namespace in an account of more than one page, and throws on an answer without the list instead of returning none.
+- f091a4e: Added: `client.workers.getDurableObjectNamespace(id)` reads one Durable Object namespace; one that no longer exists answers 404.
+
 ## 0.4.0
 
 ### Added
