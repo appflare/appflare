@@ -749,13 +749,14 @@ async function switchAddress(
  */
 export function clearPendingStatement(db: D1Database): D1PreparedStatement {
   return db
-    .prepare("DELETE FROM settings WHERE key IN (?1, ?2, ?3, ?4, ?5)")
+    .prepare("DELETE FROM settings WHERE key IN (?1, ?2, ?3, ?4, ?5, ?6)")
     .bind(
       SETTING.managerPendingHostname,
       SETTING.managerPendingZoneId,
       SETTING.managerPendingJobId,
       SETTING.managerPendingFailedAt,
       SETTING.managerPendingFailure,
+      SETTING.managerPendingLostStarts,
     );
 }
 

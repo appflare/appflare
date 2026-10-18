@@ -1,13 +1,14 @@
-import type {
-  ContainerApplication,
-  ContainerApplicationConfiguration,
-  ContainerRollout,
-  CreateContainerApplicationArgs,
-  CreateContainerRolloutArgs,
-  DurableObjectNamespace,
-  ModifyContainerApplicationArgs,
-  ScriptMetadata,
-  WorkerBinding,
+import {
+  CloudflareApiError,
+  type ContainerApplication,
+  type ContainerApplicationConfiguration,
+  type ContainerRollout,
+  type CreateContainerApplicationArgs,
+  type CreateContainerRolloutArgs,
+  type DurableObjectNamespace,
+  type ModifyContainerApplicationArgs,
+  type ScriptMetadata,
+  type WorkerBinding,
 } from "@appflare/cf-api";
 import {
   type ArtifactManifest,
@@ -261,12 +262,15 @@ export type ContainerChange =
       modify: ModifyContainerApplicationArgs;
       rollout: CreateContainerRolloutArgs;
     }
-  | { kind: "conflict"; message: string };
+  /** Bound to another namespace (`boundTo`); see {@link containerChange}. */
+  | { kind: "conflict"; message: string; boundTo: string };
 
 /**
  * Compares an existing application (and its active rollout, if any) with
  * what the release needs. An application bound to another namespace is not
- * Appflare's to change (wrangler refuses it the same way).
+ * Appflare's to change (wrangler refuses it the same way); the job replaces
+ * it only once Cloudflare says that namespace no longer exists
+ * (`orphanedNamespace`).
  */
 export function containerChange(
   container: SandboxContainer,
@@ -286,6 +290,7 @@ export function containerChange(
   if (boundTo !== undefined && boundTo !== namespaceId) {
     return {
       kind: "conflict",
+      boundTo,
       message: `the container application ${container.name} backs another Durable Object namespace (${boundTo}), not the sandbox Worker's ${container.class_name} (${namespaceId}); delete it in the Cloudflare dashboard (Workers > Containers), then try again`,
     };
   }
@@ -314,6 +319,49 @@ export function containerChange(
   }
   if (!sameSize) return { kind: "patch", modify: { max_instances: container.max_instances } };
   return { kind: "none" };
+}
+
+/** Cloudflare's code for a Durable Object namespace that does not exist. */
+export const NAMESPACE_NOT_FOUND_CODE = 10066;
+
+/**
+ * What reading a Durable Object namespace
+ * (`GET /workers/durable_objects/namespaces/{id}`) says of it: it exists;
+ * it is gone, only on Cloudflare's "not found" (404, code 10066, recorded
+ * live), as when the sandbox Worker that made an application was deleted
+ * and the application outlived it; or neither, with Cloudflare's answer,
+ * since nothing is deleted on a guess.
+ */
+export type NamespaceState =
+  | { state: "exists" }
+  | { state: "gone" }
+  | { state: "unknown"; answer: string };
+
+export async function readNamespaceState(
+  api: { workers: { getDurableObjectNamespace(id: string): Promise<unknown> } },
+  namespaceId: string,
+): Promise<NamespaceState> {
+  try {
+    await api.workers.getDurableObjectNamespace(namespaceId);
+    return { state: "exists" };
+  } catch (error) {
+    if (
+      error instanceof CloudflareApiError &&
+      error.status === 404 &&
+      error.errors.some((e) => e.code === NAMESPACE_NOT_FOUND_CODE)
+    ) {
+      return { state: "gone" };
+    }
+    return { state: "unknown", answer: error instanceof Error ? error.message : String(error) };
+  }
+}
+
+/** Whether an application's Durable Object namespace no longer exists (`readNamespaceState`). */
+export async function orphanedNamespace(
+  api: { workers: { getDurableObjectNamespace(id: string): Promise<unknown> } },
+  namespaceId: string,
+): Promise<boolean> {
+  return (await readNamespaceState(api, namespaceId)).state === "gone";
 }
 
 /** One application's state while the job waits for it. */

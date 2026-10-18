@@ -2,6 +2,7 @@ import { reset } from "cloudflare:test";
 import { env } from "cloudflare:workers";
 import { beforeEach, describe, expect, it } from "vitest";
 import { SETTING } from "../db/settings";
+import { INSTANCE_NEVER_STARTED } from "../jobs/reconcile.server";
 import {
   deps,
   fakeWorld,
@@ -16,6 +17,7 @@ import {
 import { completeAddressMove, readManagerAddress } from "./manager-address.server";
 import { identityVerdict } from "./manager-identity";
 import {
+  LOST_STARTS_RETRIED,
   movePendingAddress,
   type PendingMove,
   passkeyMoveNotice,
@@ -80,6 +82,15 @@ async function failJob(id: string) {
     "UPDATE jobs SET status = 'failed', error = 'Moving Cloudflare Access: refused.' WHERE id = ?1",
   )
     .bind(id)
+    .run();
+}
+
+/** The job failed as reconcile fails a job whose Workflow instance Cloudflare never started. */
+async function neverStarted(id: string) {
+  await env.DB.prepare(
+    "UPDATE jobs SET status = 'failed', started_at = NULL, error = ?2 WHERE id = ?1",
+  )
+    .bind(id, INSTANCE_NEVER_STARTED)
     .run();
 }
 
@@ -194,6 +205,65 @@ describe("movePendingAddress", () => {
       failure: "Moving Cloudflare Access: refused.",
     });
     expect(address.pending?.failedAt).not.toBeNull();
+  });
+
+  it("starts the move again when Cloudflare never started its Workflow instance, up to three times", async () => {
+    const w = installedFor();
+    await pending(w);
+    const d = moveDeps(w);
+    let jobId = await started(await movePendingAddress(d));
+    for (let lost = 1; lost <= LOST_STARTS_RETRIED; lost++) {
+      await neverStarted(jobId);
+      const again = await movePendingAddress(d);
+      expect(again).toEqual({ status: "started", jobId: expect.any(String), restarted: true });
+      expect(pendingMoveLog(again)).toContain("Cloudflare never started");
+      jobId = await started(again);
+      expect(await jobRow(jobId)).toMatchObject({ status: "queued", started_by: "schedule" });
+      expect((await readPendingAddress(env.DB))?.failedAt).toBeNull();
+    }
+    expect(d.started).toHaveLength(LOST_STARTS_RETRIED + 1);
+    // The fourth lost start stands: the pending address is marked failed.
+    await neverStarted(jobId);
+    const failed = await movePendingAddress(d);
+    expect(failed).toEqual({
+      status: "move-failed",
+      hostname: HOST,
+      reason: INSTANCE_NEVER_STARTED,
+    });
+    expect(await movePendingAddress(d)).toEqual({ status: "failed" });
+    expect(d.started).toHaveLength(LOST_STARTS_RETRIED + 1);
+    // Try again by an admin starts the count afresh.
+    const retried = await retryPendingMove({ ...d, api: w.api });
+    if (!retried.ok) throw new Error("not started");
+    await neverStarted(retried.jobId);
+    expect(await movePendingAddress(d)).toMatchObject({ status: "started", restarted: true });
+  });
+
+  it("does not start again a move whose job started and then lost its instance", async () => {
+    const w = installedFor();
+    await pending(w);
+    const d = moveDeps(w);
+    const jobId = await started(await movePendingAddress(d));
+    await env.DB.prepare(
+      "UPDATE jobs SET status = 'failed', started_at = 1, error = ?2 WHERE id = ?1",
+    )
+      .bind(jobId, INSTANCE_NEVER_STARTED)
+      .run();
+    expect(await movePendingAddress(d)).toMatchObject({ status: "move-failed" });
+    expect(await movePendingAddress(d)).toEqual({ status: "failed" });
+    expect(d.started).toHaveLength(1);
+  });
+
+  it("starts a move that Cloudflare never started once when two looks see it at the same moment", async () => {
+    const w = installedFor();
+    await pending(w);
+    const d = moveDeps(w);
+    await neverStarted(await started(await movePendingAddress(d)));
+    const results = await Promise.all([movePendingAddress(d), movePendingAddress(d)]);
+    expect(results.map((r) => r.status).sort()).toEqual(["busy", "started"]);
+    expect(d.started).toHaveLength(2);
+    // Counted once: the look that lost the race wrote nothing.
+    expect(await readPendingAddress(env.DB)).toMatchObject({ failedAt: null, lostStarts: 1 });
   });
 
   it("marks a refusal to start as failed too, and tries nothing more", async () => {

@@ -1,10 +1,5 @@
 import { CloudflareApiError, type CloudflareClient, R2_NOT_ENABLED_CODE } from "@appflare/cf-api";
-import {
-  SANDBOX_BUCKET_BINDING,
-  SANDBOX_BUCKET_NAME,
-  SANDBOX_CONTAINERS,
-  SANDBOX_WORKER_NAME,
-} from "@appflare/schema";
+import { SANDBOX_BUCKET_BINDING, SANDBOX_BUCKET_NAME, SANDBOX_WORKER_NAME } from "@appflare/schema";
 import { and, asc, count, eq, inArray, isNotNull, isNull, ne } from "drizzle-orm";
 import { readAccessConfig } from "../access/config";
 import { listInstallAccess } from "../access/install-access.server";
@@ -23,6 +18,7 @@ import {
   WILDCARD_DOMAIN_KIND,
 } from "../installs/resource-kinds";
 import { reconcileJobs, type WorkflowLookup } from "../jobs/reconcile.server";
+import { findSandboxContainerApps, type LeftContainerApp } from "../sandbox/container-apps";
 import { DangerError } from "./errors";
 
 /**
@@ -31,9 +27,11 @@ import { DangerError } from "./errors";
  * the manager Worker with the D1 database and KV namespace it binds, the
  * external domains gateway as its setting records it, the sandbox Worker and
  * its build bucket, and the Cloudflare Access applications that protect the
- * manager. Eight read calls at most: the account, the manager's bindings, the
- * sandbox Worker's bindings, its four container applications by name, and
- * one page of the bucket list.
+ * manager. Six read calls (a page more of namespaces per thousand, and one
+ * per container application an earlier sandbox Worker left behind): the
+ * account, the manager's bindings, the sandbox Worker's bindings, one page
+ * of the bucket list, the account's container applications and its Durable
+ * Object namespaces.
  *
  * Apps Appflare protects with Cloudflare Access keep their Access
  * applications and the "Appflare users" policy: deleting them would open the
@@ -73,12 +71,17 @@ export interface SandboxTargets {
   /** Self-deploying apps whose installer token the sandbox Worker holds. */
   appTokens: number;
   /**
-   * The sandbox Worker's container applications (found by their names; they
-   * outlive the Worker), deleted with it. Empty when there are none or the
-   * Worker by that name is not Appflare's; null when the token cannot see
-   * Containers (no Containers group), so they must be deleted by hand.
+   * The sandbox Worker's container applications (they outlive the Worker),
+   * deleted with it: every one backing its Durable Object namespaces, and
+   * any by its prefix whose namespace Cloudflare reports gone, left behind
+   * by an earlier one (`findSandboxContainerApps`). Empty when there are
+   * none or the Worker by that name is not Appflare's; null when the token
+   * cannot see Containers (no Containers group), so they must be deleted by
+   * hand.
    */
   containerApps: Array<{ id: string; name: string }> | null;
+  /** Applications by the sandbox prefix not shown to be its: left, with why. */
+  containerAppsLeft: LeftContainerApp[];
 }
 
 export interface RemovalTargets {
@@ -142,26 +145,26 @@ async function hasBuildBucket(api: CloudflareClient): Promise<boolean> {
 }
 
 /**
- * The sandbox Worker's container applications, by their exact names (one
- * read call each); null when Cloudflare refuses Containers to the token (403
- * without the Containers group, 401 on an account no longer on Workers Paid).
+ * The sandbox Worker's container applications, read while it still exists
+ * (its namespaces go with it); null when Cloudflare refuses Containers to
+ * the token (403 without the Containers group, 401 on an account no longer
+ * on Workers Paid).
  */
 async function sandboxContainerApps(
   api: CloudflareClient,
-): Promise<Array<{ id: string; name: string }> | null> {
-  const found: Array<{ id: string; name: string }> = [];
-  for (const { name } of SANDBOX_CONTAINERS) {
-    try {
-      const apps = await api.containers.listApplications({ name });
-      found.push(...apps.filter((a) => a.name === name).map((a) => ({ id: a.id, name })));
-    } catch (error) {
-      if (error instanceof CloudflareApiError && (error.status === 401 || error.status === 403)) {
-        return null;
-      }
-      throw error;
+): Promise<Pick<SandboxTargets, "containerApps" | "containerAppsLeft">> {
+  try {
+    const found = await findSandboxContainerApps(api);
+    return {
+      containerApps: found.apps.map((a) => ({ id: a.id, name: a.name })),
+      containerAppsLeft: found.left,
+    };
+  } catch (error) {
+    if (error instanceof CloudflareApiError && (error.status === 401 || error.status === 403)) {
+      return { containerApps: null, containerAppsLeft: [] };
     }
+    throw error;
   }
-  return found;
 }
 
 export async function findRemovalTargets(
@@ -213,7 +216,9 @@ export async function findRemovalTargets(
       bucket: await hasBuildBucket(api),
       appTokens,
       // Another Worker's applications by those names are left alone with it.
-      containerApps: worker === "other" ? [] : await sandboxContainerApps(api),
+      ...(worker === "other"
+        ? { containerApps: [], containerAppsLeft: [] }
+        : await sandboxContainerApps(api)),
     },
     accessAppIds:
       access === null

@@ -8,6 +8,7 @@ import { ADDRESS_MESSAGES } from "../domains/manager-address.server";
 import { MOVE_FAILURES, MOVE_STEPS } from "../domains/move-address-lines";
 import { accountWorkersProblem, entryBudgetProblem } from "../jobs/entry-budget";
 import { r2NotEnabledMessage } from "../jobs/install/r2-enablement";
+import { INSTANCE_NEVER_STARTED } from "../jobs/reconcile.server";
 import {
   CF_MESSAGE_MAX,
   classifyJobError,
@@ -223,6 +224,12 @@ describe("classifyJobError", () => {
       cfStatus: null,
       cfCode: null,
       cfMessage: null,
+    });
+    // A job whose Workflow instance Cloudflare never started.
+    expect(classifyJobError(INSTANCE_NEVER_STARTED)).toMatchObject({
+      errorCategory: "job_stopped",
+      failedPhase: "other",
+      failureReason: null,
     });
     expect(classifyJobError("finish: something nobody wrote down")).toMatchObject({
       errorCategory: "unknown",

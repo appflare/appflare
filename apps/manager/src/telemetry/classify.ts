@@ -382,11 +382,12 @@ const WORKFLOW_LIMIT =
  * Last, when neither the message nor the phase says more: the manager's own
  * database refusing (an app's D1 migration is `d1_migration` by its phase
  * before this), and a job whose Workflow instance ended without recording
- * the end of the job (jobs/reconcile.server.ts).
+ * the end of the job, or never started (jobs/reconcile.server.ts).
  */
 function fallbackCategory(text: string, message: string): ErrorCategory | null {
   if (/\bD1_[A-Z_]+\b|\bSQLITE_[A-Z_]+\b/.test(message)) return "manager_database";
   if (/^the job's Workflow instance (failed|no longer exists)/.test(text)) return "job_stopped";
+  if (/^Cloudflare never started the job's Workflow instance/.test(text)) return "job_stopped";
   return null;
 }
 

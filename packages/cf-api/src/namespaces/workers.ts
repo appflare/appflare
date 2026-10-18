@@ -15,6 +15,9 @@ import type {
 
 const enc = encodeURIComponent;
 
+/** Durable Object namespaces read per page. */
+const NAMESPACE_PAGE_SIZE = 1000;
+
 export interface UploadScriptArgs {
   metadata: ScriptMetadata;
   modules: WorkerModule[];
@@ -168,12 +171,43 @@ export function createWorkers(http: HttpApi) {
      * `GET /workers/durable_objects/namespaces` (paginated): every Durable
      * Object namespace of the account, with the Worker (`script`) and `class`
      * that implement it. Wrangler 4.136.2 reads it for the namespace of a
-     * container class the Worker does not bind.
+     * container class the Worker does not bind. The list reports
+     * `total_count` rather than `total_pages`, so it is read page by page
+     * while the total says more, or (without a total) until a page shorter
+     * than its `per_page` (Cloudflare caps it at 1,000). An answer without
+     * the list throws rather than read as "no namespaces": callers decide
+     * what is left behind from it.
      */
-    listDurableObjectNamespaces(): Promise<DurableObjectNamespace[]> {
-      return http.list("GET", http.acct("/workers/durable_objects/namespaces"), {
-        perPage: 1000,
-      });
+    async listDurableObjectNamespaces(): Promise<DurableObjectNamespace[]> {
+      const all: DurableObjectNamespace[] = [];
+      for (let page = 1; page <= 1000; page++) {
+        const envelope = await http.send("GET", http.acct("/workers/durable_objects/namespaces"), {
+          query: { page, per_page: NAMESPACE_PAGE_SIZE },
+        });
+        if (!Array.isArray(envelope.result)) {
+          throw Object.assign(new Error("the Durable Object namespaces answer holds no list"), {
+            name: "UnreadableDurableObjectNamespaces",
+          });
+        }
+        const rows = envelope.result as DurableObjectNamespace[];
+        all.push(...rows);
+        if (rows.length === 0) break;
+        const info = envelope.result_info;
+        const more =
+          info?.total_count !== undefined
+            ? all.length < info.total_count
+            : rows.length >= (info?.per_page ?? NAMESPACE_PAGE_SIZE);
+        if (!more) break;
+      }
+      return all;
+    },
+
+    /**
+     * `GET /workers/durable_objects/namespaces/{id}`: one namespace. One that
+     * does not exist (its Worker or class was deleted) answers 404, code 10066.
+     */
+    getDurableObjectNamespace(id: string): Promise<DurableObjectNamespace> {
+      return http.result("GET", http.acct(`/workers/durable_objects/namespaces/${enc(id)}`));
     },
 
     /** `GET /workers/subdomain` — the account's workers.dev subdomain. */

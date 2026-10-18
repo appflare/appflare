@@ -58,7 +58,10 @@ Enabling runs as a job, so its log shows each step:
    and turns its `workers.dev` URL and preview URLs off.
 4. It creates the container applications, running the release's image, and waits
    until Cloudflare has prepared their instances, which takes a minute or two. Prepared
-   instances do not run: no container starts until a build asks for one.
+   instances do not run: no container starts until a build asks for one. An application
+   by one of these names that a deleted sandbox Worker left behind (Cloudflare keeps
+   container applications when their Worker goes) backs a Durable Object namespace that no
+   longer exists; the job deletes it and creates it again, and says so in the log.
 5. It connects the manager to the sandbox Worker (see below).
 
 It creates:
@@ -117,8 +120,12 @@ first. It is also refused, before anything is deleted, when the manager could no
 disconnected at the end: while a gradual deployment of the manager is in progress, or
 when a newer version of the manager was uploaded but not deployed.
 
-The job deletes the sandbox Worker and its container applications, empties and deletes
-the `appflare-builds` bucket, and last removes the `SANDBOX` binding from the manager (a
+The job deletes the sandbox Worker and every container application backing its Durable
+Object namespaces, whichever release created them, along with any named
+`appflare-sandbox-…` whose namespace Cloudflare reports gone, left behind by an earlier
+sandbox Worker. One by such a name that cannot be shown to be the sandbox Worker's is
+left, with a warning in the log saying why. Then the job empties and deletes the
+`appflare-builds` bucket, and last removes the `SANDBOX` binding from the manager (a
 checked new version, as above), leaving the account as it was before. The binding goes
 last because removing it deploys the manager, which the job itself runs on. The
 [GitHub access tokens](/guides/install-from-a-repository/#private-repositories) are
@@ -350,6 +357,11 @@ under **Workers & Pages > Plans** in the dashboard, select **Check again** under
 
 **The token lacks Containers: Edit.** Edit Appflare's token in the dashboard, add
 Account > Containers > Edit, select **Check again**, and enable sandbox builds again.
+
+**A container application backs another Durable Object namespace.** An application by
+one of the sandbox Worker's names belongs to another Worker on the account. Appflare
+does not delete another Worker's application. If you no longer need it, delete it under
+**Workers > Containers** in the dashboard, then enable sandbox builds again.
 
 **The container applications are not ready yet.** Their containers took longer to start
 than the job waits (Docker Hub can be slow to serve the image). Enable sandbox builds

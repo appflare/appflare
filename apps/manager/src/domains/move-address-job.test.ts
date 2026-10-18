@@ -569,6 +569,51 @@ describe("the move job", () => {
     });
   });
 
+  it("stops without a change when its job was marked failed before it started", async () => {
+    const w = fakeWorld();
+    const d = deps(w);
+    const started = await moveManagerAddress(d, { zoneId: "z-a", hostname: HOST });
+    if (!started.ok) throw new Error("the move did not start");
+    const params = d.started.at(-1);
+    if (params === undefined) throw new Error("no job was started");
+    const before = await addressRows();
+    // As reconcile marks it when Cloudflare reports its instance missing.
+    await env.DB.prepare(
+      "UPDATE jobs SET status = 'failed', error = 'gone', finished_at = 5 WHERE id = ?1",
+    )
+      .bind(params.jobId)
+      .run();
+    const { step, error } = await runMove(w, params);
+    expect(error).toBeNull();
+    expect(step.names).toEqual(["start"]);
+    expect(w.world.probes).toEqual([]);
+    expect(await job(params.jobId)).toEqual({ status: "failed", error: "gone", finished_at: 5 });
+    const startedAt = await env.DB.prepare("SELECT started_at FROM jobs WHERE id = ?1")
+      .bind(params.jobId)
+      .first<{ started_at: number | null }>("started_at");
+    expect(startedAt).toBeNull();
+    expect(await addressRows()).toEqual(before);
+    expect(await logLines(params.jobId)).toEqual([
+      "This move had already ended before Cloudflare started it, so it stops here and changes nothing.",
+    ]);
+  });
+
+  it("carries on when its start step runs again after starting the job", async () => {
+    const w = fakeWorld();
+    const d = deps(w);
+    const started = await moveManagerAddress(d, { zoneId: "z-a", hostname: HOST });
+    if (!started.ok) throw new Error("the move did not start");
+    const params = d.started.at(-1);
+    if (params === undefined) throw new Error("no job was started");
+    await env.DB.prepare("UPDATE jobs SET status = 'running', started_at = 1 WHERE id = ?1")
+      .bind(params.jobId)
+      .run();
+    const { error } = await runMove(w, params);
+    expect(error).toBeNull();
+    expect((await job(params.jobId))?.status).toBe("succeeded");
+    expect((await addressRows()).manager_hostname).toBe(HOST);
+  });
+
   it("rejects a payload without its fields", async () => {
     const step = fakeStep();
     await expect(

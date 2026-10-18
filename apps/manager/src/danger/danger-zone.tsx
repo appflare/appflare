@@ -338,6 +338,12 @@ function RemovalReviewBody({ review }: { review: RemovalReview }) {
               Containers, or add that permission to the token first.
             </li>
           )}
+          {sandbox.containerAppsLeft.map((app) => (
+            <li key={app.id}>
+              The container application <Mono>{app.name}</Mono>: {app.reason}. If it is Appflare's,
+              delete it in the Cloudflare dashboard under Workers, Containers.
+            </li>
+          ))}
         </ul>
       </div>
       <Text variant="secondary">

@@ -118,17 +118,19 @@ describe("findRemovalTargets", () => {
             name: "appflare-sandbox-self-deploying-standard-2",
           },
         ],
+        containerAppsLeft: [],
       },
       accessAppIds: ["access-health", "access-app"],
       appAccessInstalls: [],
     });
-    // Reads only: one per container application, by name.
+    // Reads only: the container applications and namespaces in one list each.
     expect(account.calls).toEqual([
       "GET /a",
       `GET /a/workers/scripts/${MANAGER_WORKER}/bindings`,
       "GET /a/workers/scripts/appflare-sandbox/bindings",
       "GET /a/r2/buckets",
-      ...Array(4).fill("GET /a/containers/applications"),
+      "GET /a/containers/applications",
+      "GET /a/workers/durable_objects/namespaces",
     ]);
   });
 
@@ -144,6 +146,7 @@ describe("findRemovalTargets", () => {
       bucket: false,
       appTokens: 0,
       containerApps: [],
+      containerAppsLeft: [],
     });
   });
 });
@@ -154,8 +157,8 @@ describe("runRemoval", () => {
     const before = w.account.calls.length;
     const { outcome, steps } = await run(w);
     expect(outcome).toEqual({ kind: "complete", accessLeft: [], pageLost: false });
-    // After the eight reads that find the targets again.
-    const after = w.account.calls.slice(before + 8);
+    // After the six reads that find the targets again.
+    const after = w.account.calls.slice(before + 6);
     expect(after).toEqual([
       "GET /a/r2/buckets/appflare-builds/objects",
       "DELETE /a/r2/buckets/appflare-builds/objects/builds/b0.zip",
@@ -186,6 +189,122 @@ describe("runRemoval", () => {
     // The gateway's record goes with its last piece.
     const orm = createDb(env.DB);
     expect(await readSettings(orm, [SETTING.externalDomainsGateway])).toEqual({});
+  });
+
+  it("deletes every container application of the sandbox Worker, also of classes this version does not know", async () => {
+    // A sandbox Worker deployed by a newer release with a class of its own,
+    // an application an earlier sandbox Worker left behind, and another
+    // Worker's application by one of the sandbox's names.
+    const w = world({
+      moreNamespaces: [
+        { id: "ns-gpu", script: "appflare-sandbox", class: "GpuSandbox" },
+        { id: "ns-theirs", script: "someone-else", class: "Box" },
+      ],
+      moreApps: [
+        {
+          id: "app-gpu",
+          name: "appflare-sandbox-gpu",
+          durable_objects: { namespace_id: "ns-gpu" },
+        },
+        {
+          id: "app-left",
+          name: "appflare-sandbox-self-deploying-standard-1",
+          durable_objects: { namespace_id: "ns-gone" },
+        },
+        {
+          id: "app-theirs",
+          name: "appflare-sandbox-self-deploying-standard-2",
+          durable_objects: { namespace_id: "ns-theirs" },
+        },
+      ],
+    });
+    const targets = await findRemovalTargets(env.DB, w.api);
+    expect(targets.sandbox.containerApps?.map((a) => a.id)).toEqual([
+      "app-standard-1",
+      "app-standard-2",
+      "app-self-deploying-standard-1",
+      "app-self-deploying-standard-2",
+      "app-gpu",
+      "app-left",
+    ]);
+    expect(targets.sandbox.containerAppsLeft).toEqual([
+      {
+        id: "app-theirs",
+        name: "appflare-sandbox-self-deploying-standard-2",
+        reason: "it backs a Durable Object namespace of the Worker someone-else",
+      },
+    ]);
+    const { outcome, steps } = await run(w, targets);
+    expect(outcome.kind).toBe("complete");
+    expect(steps).toContainEqual({
+      label: "Delete the container application appflare-sandbox-self-deploying-standard-2",
+      status: "skipped",
+      detail:
+        "Left as it is: it backs a Durable Object namespace of the Worker someone-else. If it is Appflare's, delete it in the Cloudflare dashboard under Workers, Containers.",
+    });
+    const deletes = w.account.deletes();
+    expect(deletes).toContain("DELETE /a/containers/applications/app-gpu");
+    expect(deletes).toContain("DELETE /a/containers/applications/app-left");
+    expect(deletes).not.toContain("DELETE /a/containers/applications/app-theirs");
+    // Found while the sandbox Worker existed, deleted after it.
+    expect(deletes.indexOf("DELETE /a/containers/applications/app-gpu")).toBeGreaterThan(
+      deletes.indexOf("DELETE /a/workers/scripts/appflare-sandbox"),
+    );
+  });
+
+  it("run again after the sandbox Worker went, deletes the applications whose namespaces are gone", async () => {
+    // A removal that stopped between deleting the sandbox Worker and its
+    // applications: the four, and one of a class this version does not know.
+    const w = world({
+      sandbox: false,
+      moreApps: [
+        {
+          id: "app-gpu",
+          name: "appflare-sandbox-gpu",
+          durable_objects: { namespace_id: "ns-gpu" },
+        },
+        {
+          id: "app-unsure",
+          name: "appflare-sandbox-unsure",
+          durable_objects: { namespace_id: "ns-unsure" },
+        },
+        // Not named like the sandbox's: never looked at.
+        { id: "app-other", name: "their-box", durable_objects: { namespace_id: "ns-gone" } },
+      ],
+      fail: {
+        "GET /a/workers/durable_objects/namespaces/ns-unsure": {
+          status: 500,
+          code: 10013,
+          message: "internal error",
+        },
+      },
+    });
+    const targets = await findRemovalTargets(env.DB, w.api);
+    expect(targets.sandbox.worker).toBe("missing");
+    expect(targets.sandbox.containerApps?.map((a) => a.id)).toEqual([
+      "app-standard-1",
+      "app-standard-2",
+      "app-self-deploying-standard-1",
+      "app-self-deploying-standard-2",
+      "app-gpu",
+    ]);
+    expect(targets.sandbox.containerAppsLeft).toEqual([
+      {
+        id: "app-unsure",
+        name: "appflare-sandbox-unsure",
+        reason: expect.stringMatching(
+          /^Cloudflare did not confirm that the Durable Object namespace it backs \(ns-unsure\) is gone: .*internal error$/,
+        ),
+      },
+    ]);
+    expect(w.account.calls).not.toContain("GET /a/workers/durable_objects/namespaces/ns-gone");
+    const { outcome } = await run(w, targets);
+    expect(outcome.kind).toBe("complete");
+    const deletes = w.account.deletes();
+    expect(deletes).toContain("DELETE /a/containers/applications/app-gpu");
+    expect(deletes).toContain("DELETE /a/containers/applications/app-self-deploying-standard-1");
+    expect(deletes).not.toContain("DELETE /a/containers/applications/app-unsure");
+    expect(deletes).not.toContain("DELETE /a/containers/applications/app-other");
   });
 
   it("leaves the container applications when the token cannot use Containers", async () => {
@@ -255,6 +374,7 @@ describe("runRemoval", () => {
             name: "appflare-sandbox-self-deploying-standard-2",
           },
         ],
+        containerAppsLeft: [],
       },
       accessAppIds: ["access-health", "access-app"],
     });
@@ -377,7 +497,7 @@ describe("runRemoval", () => {
       const targets = await findRemovalTargets(env.DB, w.api);
       await run(w, {
         ...targets,
-        sandbox: { worker, bucket: true, appTokens: 0, containerApps: [] },
+        sandbox: { worker, bucket: true, appTokens: 0, containerApps: [], containerAppsLeft: [] },
       });
       expect(w.account.deletes().includes("DELETE /a/r2/buckets/appflare-builds")).toBe(deletes);
       expect(w.account.remainingObjects()).toBe(deletes ? 0 : 1);

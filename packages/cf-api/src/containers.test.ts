@@ -1,13 +1,13 @@
 import { describe, expect, it } from "vitest";
 import { createClient } from "./client";
 import { CloudflareApiError } from "./errors";
-import { type FakeResponseSpec, makeFakeFetch } from "./fake-fetch";
+import { type FakeHandler, type FakeResponseSpec, makeFakeFetch } from "./fake-fetch";
 
 const TOKEN = "cf-token-DO-NOT-LEAK-123";
 const ACCOUNT = "acc-123";
 const A = `https://api.cloudflare.com/client/v4/accounts/${ACCOUNT}`;
 
-function make(spec?: FakeResponseSpec) {
+function make(spec?: FakeResponseSpec | FakeHandler) {
   const fake = makeFakeFetch(spec);
   const client = createClient({ accountId: ACCOUNT, token: TOKEN, fetch: fake.fetch });
   return { fake, client };
@@ -127,5 +127,91 @@ describe("durable object namespaces", () => {
       `/client/v4/accounts/${ACCOUNT}/workers/durable_objects/namespaces`,
     );
     expect(fake.last().query.get("per_page")).toBe("1000");
+  });
+
+  it("listDurableObjectNamespaces reads every page until a short page or the total", async () => {
+    // The list reports total_count but no total_pages (seen live, 2026-10-18).
+    const page = (n: number, from: number) =>
+      Array.from({ length: n }, (_, i) => ({ id: `ns${from + i}`, script: "w", class: "C" }));
+    const { fake, client } = make((_req, i) =>
+      i === 0
+        ? { result: page(1000, 0), result_info: { page: 1, per_page: 1000, total_count: 1003 } }
+        : { result: page(3, 1000), result_info: { page: 2, per_page: 1000, total_count: 1003 } },
+    );
+    const all = await client.workers.listDurableObjectNamespaces();
+    expect(all).toHaveLength(1003);
+    expect(all.at(-1)?.id).toBe("ns1002");
+    expect(fake.calls.map((c) => c.query.get("page"))).toEqual(["1", "2"]);
+
+    const exact = make((_req, i) => ({
+      result: page(1000, i * 1000),
+      result_info: { page: i + 1, per_page: 1000, total_count: 1000 },
+    }));
+    expect(await exact.client.workers.listDurableObjectNamespaces()).toHaveLength(1000);
+    expect(exact.fake.calls).toHaveLength(1);
+  });
+
+  it("listDurableObjectNamespaces measures a short page against the per_page answered", async () => {
+    const page = (n: number, from: number) =>
+      Array.from({ length: n }, (_, i) => ({ id: `ns${from + i}`, script: "w", class: "C" }));
+    // A server that answers fewer per page than asked, without a total.
+    const capped = make((_req, i) =>
+      i === 0
+        ? { result: page(500, 0), result_info: { page: 1, per_page: 500 } }
+        : { result: page(20, 500), result_info: { page: 2, per_page: 500 } },
+    );
+    expect(await capped.client.workers.listDurableObjectNamespaces()).toHaveLength(520);
+    expect(capped.fake.calls).toHaveLength(2);
+
+    // A total that says more goes on past a short page, and an empty page ends it.
+    const short = make((_req, i) =>
+      i === 0
+        ? { result: page(900, 0), result_info: { page: 1, per_page: 1000, total_count: 950 } }
+        : i === 1
+          ? { result: page(40, 900), result_info: { page: 2, per_page: 1000, total_count: 950 } }
+          : { result: [], result_info: { page: 3, per_page: 1000, total_count: 950 } },
+    );
+    expect(await short.client.workers.listDurableObjectNamespaces()).toHaveLength(940);
+    expect(short.fake.calls.map((c) => c.query.get("page"))).toEqual(["1", "2", "3"]);
+  });
+
+  it("listDurableObjectNamespaces throws on an answer without the list", async () => {
+    const page = Array.from({ length: 1000 }, (_, i) => ({
+      id: `ns${i}`,
+      script: "w",
+      class: "C",
+    }));
+    const { client } = make((_req, i) =>
+      i === 0
+        ? { result: page, result_info: { page: 1, per_page: 1000, total_count: 1500 } }
+        : { result: null, result_info: { page: 2, per_page: 1000, total_count: 1500 } },
+    );
+    const error = await client.workers.listDurableObjectNamespaces().catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(Error);
+    expect((error as Error).name).toBe("UnreadableDurableObjectNamespaces");
+  });
+
+  it("getDurableObjectNamespace -> GET /workers/durable_objects/namespaces/{id}", async () => {
+    const { fake, client } = make({
+      result: { id: "ns1", script: "appflare-sandbox", class: "Sandbox" },
+    });
+    expect(await client.workers.getDurableObjectNamespace("ns1")).toEqual({
+      id: "ns1",
+      script: "appflare-sandbox",
+      class: "Sandbox",
+    });
+    expect(fake.last().path).toBe(
+      `/client/v4/accounts/${ACCOUNT}/workers/durable_objects/namespaces/ns1`,
+    );
+    // A namespace that does not exist (recorded live).
+    const gone = make({
+      status: 404,
+      errors: [{ code: 10066, message: "Durable Object namespace ID 'ns2' not found." }],
+    });
+    const error = await gone.client.workers
+      .getDurableObjectNamespace("ns2")
+      .catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(CloudflareApiError);
+    expect((error as CloudflareApiError).status).toBe(404);
   });
 });

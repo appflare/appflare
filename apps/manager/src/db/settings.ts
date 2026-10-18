@@ -195,6 +195,11 @@ export const SETTING = {
   managerPendingFailedAt: "manager_pending_failed_at",
   managerPendingFailure: "manager_pending_failure",
   /**
+   * How many moves to the pending address Cloudflare never started (their
+   * Workflow instance never ran) were started again by themselves.
+   */
+  managerPendingLostStarts: "manager_pending_lost_starts",
+  /**
    * UTC day (`YYYY-MM-DD`) the cron last finished looking for Workflows of
    * installed apps that do not exist in Cloudflare (installs/workflow-repair.server.ts).
    */

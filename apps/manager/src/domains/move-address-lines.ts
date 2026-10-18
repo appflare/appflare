@@ -28,6 +28,8 @@ export const MOVE_STEPS = {
 const DOMAINS_SETTINGS = settingsPlace("domains", "address");
 
 export const MOVE_LINES = {
+  alreadyEnded: () =>
+    "This move had already ended before Cloudflare started it, so it stops here and changes nothing.",
   start: (hostname: string, from: string | null) =>
     from === null
       ? `Moving Appflare to ${hostname}.`

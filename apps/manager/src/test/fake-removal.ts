@@ -1,12 +1,15 @@
 import type { FetchLike } from "@appflare/cf-api";
+import { SANDBOX_CONTAINERS } from "@appflare/schema";
 import { ACC, TOKEN } from "./fake-account";
 
 /**
  * Test-only stateful fake of every Cloudflare call the danger zone makes
  * (the auth secret write, and removing Appflare):
  * the account, Worker bindings, the build bucket and its objects, the
- * gateway's zone pieces, Access applications, and the deletes. What a
- * delete removes answers 404 afterwards, so a second run sees it gone.
+ * gateway's zone pieces, Access applications, container applications and
+ * Durable Object namespaces, and the deletes. What a delete removes answers
+ * 404 afterwards, so a second run sees it gone; the sandbox Worker's
+ * namespaces go with it.
  * `fail` makes one call answer an error; `calls` records `METHOD path` in
  * order, the path without `/client/v4` and with `/accounts/<id>` as `/a`.
  */
@@ -28,9 +31,22 @@ export interface FakeRemovalOptions {
    * or refused to the token (403, no Containers group).
    */
   containers?: "present" | "none" | "denied";
+  /** More container applications on the account, beside the sandbox Worker's own. */
+  moreApps?: FakeApp[];
+  /** More Durable Object namespaces: the sandbox Worker's (`script` "appflare-sandbox") or others'. */
+  moreNamespaces?: Array<{ id: string; script: string; class: string }>;
   /** A 400 on the gateway record's delete this many times. */
   recordBusy?: number;
 }
+
+export interface FakeApp {
+  id: string;
+  name: string;
+  durable_objects: { namespace_id: string };
+}
+
+/** The namespace of each sandbox container class, while the sandbox Worker exists. */
+export const sandboxNamespaceId = (className: string) => `ns-${className.toLowerCase()}`;
 
 export function fakeRemovalAccount(options: FakeRemovalOptions = {}) {
   const calls: string[] = [];
@@ -45,6 +61,19 @@ export function fakeRemovalAccount(options: FakeRemovalOptions = {}) {
     Response.json({ success: true, errors: [], messages: [], result, ...extra });
   const error = (status: number, code: number, message = "error") =>
     Response.json({ success: false, errors: [{ code, message }], messages: [] }, { status });
+
+  // Its namespaces exist while the sandbox Worker does.
+  const namespaces = () => {
+    const sandboxThere = sandbox && !gone.has("/a/workers/scripts/appflare-sandbox");
+    return [
+      ...SANDBOX_CONTAINERS.map((c) => ({
+        id: sandboxNamespaceId(c.class_name),
+        script: "appflare-sandbox",
+        class: c.class_name,
+      })),
+      ...(options.moreNamespaces ?? []),
+    ].filter((n) => n.script !== "appflare-sandbox" || sandboxThere);
+  };
 
   const fetch: FetchLike = async (input, init) => {
     const request = new Request(input, init);
@@ -88,10 +117,33 @@ export function fakeRemovalAccount(options: FakeRemovalOptions = {}) {
     if (key === "GET /a/containers/applications") {
       const containers = options.containers ?? "present";
       if (containers === "denied") return error(403, 10000, "Authentication error");
-      const name = url.searchParams.get("name") ?? "";
-      const id = `app-${name.replace("appflare-sandbox-", "")}`;
-      const listed = containers === "present" && !gone.has(`/a/containers/applications/${id}`);
-      return ok(listed ? [{ id, name }] : []);
+      const own: FakeApp[] =
+        containers === "present"
+          ? SANDBOX_CONTAINERS.map((c) => ({
+              id: `app-${c.name.replace("appflare-sandbox-", "")}`,
+              name: c.name,
+              durable_objects: { namespace_id: sandboxNamespaceId(c.class_name) },
+            }))
+          : [];
+      const name = url.searchParams.get("name");
+      return ok(
+        [...own, ...(options.moreApps ?? [])].filter(
+          (a) =>
+            (name === null || a.name === name) && !gone.has(`/a/containers/applications/${a.id}`),
+        ),
+      );
+    }
+    if (key === "GET /a/workers/durable_objects/namespaces") {
+      const all = namespaces();
+      return ok(all, { result_info: { page: 1, per_page: 1000, total_count: all.length } });
+    }
+    const namespace = /^GET \/a\/workers\/durable_objects\/namespaces\/([^/]+)$/.exec(key);
+    if (namespace?.[1] !== undefined) {
+      const id = decodeURIComponent(namespace[1]);
+      const found = namespaces().find((n) => n.id === id);
+      return found === undefined
+        ? error(404, 10066, `Durable Object namespace ID '${id}' not found.`)
+        : ok(found);
     }
     if (key === "GET /a/r2/buckets") {
       return ok({

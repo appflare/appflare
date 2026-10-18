@@ -12,11 +12,13 @@ import { StepLog } from "./step-log";
  * the dashboard, an engine failure), leaving the row `queued` or `running`
  * for good, which would also block every later job of its install. Pages that
  * show a job call this first: an instance that errored, was terminated, or is
- * unknown fails its job; one that completed succeeds it. A failed install job
- * also fails its install, so the install can be retried or uninstalled; a
- * failed update, rollback or settings change returns its install from `updating` to
- * `installed` (the version record changes only inside the job, when it
- * promotes, so it is already right).
+ * unknown fails its job (an unknown one of a job that never recorded its
+ * start was never started by Cloudflare, and says so); one that completed
+ * succeeds it. A failed install job also fails its install, so the install
+ * can be retried or uninstalled; a failed update, rollback or settings
+ * change returns its install from `updating` to `installed` (the version
+ * record changes only inside the job, when it promotes, so it is already
+ * right).
  *
  * A database restore and a rollback of Appflare itself run inside a server
  * function, not a Workflow; their job rows have no instance. One still
@@ -50,6 +52,26 @@ export interface ActiveJobRow {
 }
 
 const DEAD = new Set(["errored", "terminated", "unknown"]);
+
+/** Why a job is failed whose Workflow instance the engine does not know. */
+export const INSTANCE_GONE = "the job's Workflow instance no longer exists";
+
+/**
+ * The same, for a job that never recorded its start (every job does so in its
+ * first step): Cloudflare created no instance that ran, though creating it
+ * returned an id, so nothing of the job ran either.
+ */
+export const INSTANCE_NEVER_STARTED = "Cloudflare never started the job's Workflow instance";
+
+/** Whether the job recorded its start; read from D1 when `row` was read without it. */
+async function recordedStart(db: D1Database, row: ActiveJobRow): Promise<boolean> {
+  if (row.started_at !== undefined) return row.started_at !== null;
+  const found = await db
+    .prepare("SELECT started_at FROM jobs WHERE id = ?1")
+    .bind(row.id)
+    .first<{ started_at: number | null }>();
+  return found?.started_at != null;
+}
 
 /** A queued enable job without a Workflow instance after this long never gets one. */
 export const STRANDED_ENABLE_MS = 5 * 60 * 1000;
@@ -237,7 +259,9 @@ async function reconcileJob(
   } else if (DEAD.has(status)) {
     const error =
       status === "unknown"
-        ? "the job's Workflow instance no longer exists"
+        ? (await recordedStart(db, row))
+          ? INSTANCE_GONE
+          : INSTANCE_NEVER_STARTED
         : `the job's Workflow instance ${status === "errored" ? "failed" : "was terminated"}${message ? `: ${message}` : ""}`;
     const updated = await orm
       .update(jobs)
@@ -252,6 +276,12 @@ async function reconcileJob(
         .where(and(eq(installs.id, row.install_id), eq(installs.status, "installing")));
     }
     await settleUpdating(orm, row, at);
+    if (error === INSTANCE_NEVER_STARTED) {
+      console.warn("a job's Workflow instance was never started", {
+        jobId: row.id,
+        kind: row.kind,
+      });
+    }
     // An uninstall leaves its install `uninstalling`; the install page offers a retry.
     log.error(`Stopped: ${error}.`);
   } else {

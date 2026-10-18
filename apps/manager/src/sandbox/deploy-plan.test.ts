@@ -1,3 +1,4 @@
+import { CloudflareApiError } from "@appflare/cf-api";
 import { SANDBOX_CONTAINERS } from "@appflare/schema";
 import { describe, expect, it } from "vitest";
 import { sandboxRelease } from "../test/fake-sandbox-account";
@@ -8,6 +9,7 @@ import {
   containerProgress,
   isSandboxWorker,
   migrationsToUpload,
+  orphanedNamespace,
   rolloutSteps,
   runsConfiguration,
   sandboxScriptMetadata,
@@ -191,7 +193,40 @@ describe("containerChange", () => {
         durable_objects: { namespace_id: "ns-other" },
       }),
     );
-    expect(change.kind).toBe("conflict");
+    expect(change).toMatchObject({ kind: "conflict", boundTo: "ns-other" });
+  });
+
+  it("calls a namespace orphaned only when Cloudflare says it does not exist", async () => {
+    const reading = (answer: () => Promise<unknown>) => ({
+      workers: { getDurableObjectNamespace: answer },
+    });
+    const refused = (status: number, code: number) => async () => {
+      throw new CloudflareApiError({
+        status,
+        errors: [{ code, message: "refused" }],
+        method: "GET",
+        path: "/workers/durable_objects/namespaces/ns-1",
+      });
+    };
+    expect(await orphanedNamespace(reading(refused(404, 10066)), "ns-1")).toBe(true);
+    expect(
+      await orphanedNamespace(
+        reading(async () => ({ id: "ns-1" })),
+        "ns-1",
+      ),
+    ).toBe(false);
+    // Anything else is no answer, and deletes nothing.
+    expect(await orphanedNamespace(reading(refused(404, 7003)), "ns-1")).toBe(false);
+    expect(await orphanedNamespace(reading(refused(403, 10000)), "ns-1")).toBe(false);
+    expect(await orphanedNamespace(reading(refused(500, 10013)), "ns-1")).toBe(false);
+    expect(
+      await orphanedNamespace(
+        reading(async () => {
+          throw new TypeError("fetch failed");
+        }),
+        "ns-1",
+      ),
+    ).toBe(false);
   });
 
   it("rolls one instance at once and more in two steps", () => {

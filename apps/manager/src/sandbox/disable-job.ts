@@ -1,6 +1,6 @@
 import { NonRetryableError } from "cloudflare:workflows";
 import { CloudflareApiError } from "@appflare/cf-api";
-import { SANDBOX_BUCKET_NAME, SANDBOX_CONTAINERS, SANDBOX_WORKER_NAME } from "@appflare/schema";
+import { SANDBOX_BUCKET_NAME, SANDBOX_WORKER_NAME } from "@appflare/schema";
 import { eq } from "drizzle-orm";
 import { z } from "zod";
 import { requireConnection } from "../cloudflare/connection.server";
@@ -16,6 +16,7 @@ import { settleUnit } from "../jobs/units/result";
 import { runningVersion } from "../server/build-version";
 import { installsNeedingSandbox, sandboxInUseMessage } from "./blockers";
 import { planSandboxBindingChange, SandboxConnectError } from "./connect.server";
+import { findSandboxContainerApps } from "./container-apps";
 import { isSandboxWorker } from "./deploy-plan";
 import { requireSelf } from "./enable-job";
 import { NO_CONTAINERS_PERMISSION_REASON } from "./preflight";
@@ -30,16 +31,22 @@ import { clearSandboxWorkerDeleted, markSandboxWorkerDeleted } from "./worker-de
  * too). Each removal first checks the thing is still there, so a retried or
  * repeated run converges.
  *
- * 1. Delete the sandbox Worker with `?force=true`: Cloudflare refuses a
+ * 1. Find the sandbox Worker's container applications, while its Durable
+ *    Object namespaces still say which they are (./container-apps.ts): every
+ *    one of its classes, whichever release made them, and any by its prefix
+ *    an earlier sandbox Worker left behind, once Cloudflare reports its
+ *    namespace gone. One by that prefix not shown to be its is left, with a
+ *    warning saying why.
+ * 2. Delete the sandbox Worker with `?force=true`: Cloudflare refuses a
  *    plain delete (code 10142) while any version of another Worker binds it,
  *    and the manager's serving version still does. Its Durable Object
  *    namespaces go with it, and so do its secrets: the records of the
  *    GitHub access tokens it held are deleted next. The same step records
  *    the binding as pointing at a deleted Worker (./worker-deleted.ts), so
  *    pages read sandbox builds as off from then on.
- * 2. Delete the container applications, which outlive the Worker.
- * 3. Empty the build bucket, a page per job unit, and delete it.
- * 4. Disconnect the manager: a new version of its Worker without `SANDBOX`,
+ * 3. Delete those container applications, which outlive the Worker.
+ * 4. Empty the build bucket, a page per job unit, and delete it.
+ * 5. Disconnect the manager: a new version of its Worker without `SANDBOX`,
  *    checked on its preview, then deployed; the job is recorded as done in
  *    the same step. By then Cloudflare reports that binding with no service
  *    name (`service_deleted`), as it does every binding to a deleted Worker,
@@ -107,7 +114,37 @@ export async function runSandboxDisable(ctx: JobContext): Promise<void> {
     });
     steps.setAccountId(started.accountId);
 
-    // 1. The Worker, while the manager still binds it (hence `force`).
+    // 1. Its container applications, found while its namespaces exist.
+    const containers = await run("find container applications", async ({ log, cf }) => {
+      try {
+        const found = await findSandboxContainerApps(cf());
+        log.info(
+          found.apps.length === 0
+            ? "There are no container applications of the sandbox Worker."
+            : `Container applications of the sandbox Worker: ${found.apps.map((a) => a.name).join(", ")}.`,
+        );
+        for (const app of found.left) {
+          log.warn(
+            `Leaving the container application ${app.name} as it is: ${app.reason}. If it is Appflare's, delete it in the Cloudflare dashboard under Workers > Containers.`,
+          );
+        }
+        return { apps: found.apps.map((a) => ({ id: a.id, name: a.name })) };
+      } catch (error) {
+        if (error instanceof CloudflareApiError && error.status === 403) {
+          throw new JobError(`${NO_CONTAINERS_PERMISSION_REASON} Nothing was deleted.`);
+        }
+        if (error instanceof CloudflareApiError && error.status === 401) {
+          // Containers refused to the account (no longer on Workers Paid).
+          log.warn(
+            "Cloudflare refuses Containers on this account now, so the sandbox Worker's container applications could not be checked. If any is still listed under Workers > Containers in the dashboard, delete it there.",
+          );
+          return { apps: [] };
+        }
+        throw error;
+      }
+    });
+
+    // 2. The Worker, while the manager still binds it (hence `force`).
     await run(`delete Worker ${SANDBOX_WORKER_NAME}`, async ({ log, cf, orm }) => {
       const api = cf();
       if (!(await api.workers.listScripts()).some((s) => s.id === SANDBOX_WORKER_NAME)) {
@@ -142,45 +179,21 @@ export async function runSandboxDisable(ctx: JobContext): Promise<void> {
       return {};
     });
 
-    // 2. The container applications.
-    for (const container of SANDBOX_CONTAINERS) {
-      await run(`delete container application ${container.name}`, async ({ log, cf }) => {
-        const api = cf();
-        let found: Awaited<ReturnType<typeof api.containers.listApplications>>;
+    // 3. The container applications.
+    for (const app of containers.apps) {
+      await run(`delete container application ${app.name} (${app.id})`, async ({ log, cf }) => {
         try {
-          found = (await api.containers.listApplications({ name: container.name })).filter(
-            (a) => a.name === container.name,
-          );
+          await cf().containers.deleteApplication(app.id);
+          log.info(`Deleted the container application ${app.name}.`);
         } catch (error) {
-          if (error instanceof CloudflareApiError && error.status === 403) {
-            throw new JobError(NO_CONTAINERS_PERMISSION_REASON);
-          }
-          if (error instanceof CloudflareApiError && error.status === 401) {
-            // Containers refused to the account (no longer on Workers Paid).
-            log.warn(
-              `Cloudflare refuses Containers on this account now, so ${container.name} could not be checked. If it is still listed under Workers > Containers in the dashboard, delete it there.`,
-            );
-            return {};
-          }
-          throw error;
+          if (!isNotFound(error)) throw error;
+          log.info(`The container application ${app.name} was already gone.`);
         }
-        if (found.length === 0) {
-          log.info(`There is no container application ${container.name}.`);
-          return {};
-        }
-        for (const app of found) {
-          try {
-            await api.containers.deleteApplication(app.id);
-          } catch (error) {
-            if (!isNotFound(error)) throw error;
-          }
-        }
-        log.info(`Deleted the container application ${container.name}.`);
         return {};
       });
     }
 
-    // 3. The bucket: emptied a page per unit, then deleted.
+    // 4. The bucket: emptied a page per unit, then deleted.
     const pageLimit = R2_MAX_PAGES_PER_RUN;
     const perPage = R2_OBJECTS_PER_STEP;
     let previousFirst: string | null = null;
@@ -232,7 +245,7 @@ export async function runSandboxDisable(ctx: JobContext): Promise<void> {
       return {};
     });
 
-    // 4. The manager's own binding, last: see the module comment.
+    // 5. The manager's own binding, last: see the module comment.
     const subdomain = await lookupSubdomainPhase(steps);
     await run("disconnect Appflare from the sandbox Worker", async ({ log, orm }) => {
       settleUnit(

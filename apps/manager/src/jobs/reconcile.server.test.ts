@@ -6,6 +6,7 @@ import { migrations } from "../db/migrations/index";
 import { startUninstallCore } from "../installs/start-uninstall.server";
 import {
   type ActiveJobRow,
+  INSTANCE_NEVER_STARTED,
   RECONCILE_CONCURRENCY,
   RESTORE_STALE_MS,
   reconcileJobs,
@@ -37,7 +38,9 @@ async function seed(installStatus: string, jobs: Array<[string, string, string, 
     .run();
   for (const [id, kind, status, instance] of jobs) {
     await env.DB.prepare(
-      "INSERT INTO jobs (id, install_id, kind, status, workflow_instance_id) VALUES (?1, 'i1', ?2, ?3, ?4)",
+      // A running job recorded its start; a queued one has not yet.
+      `INSERT INTO jobs (id, install_id, kind, status, workflow_instance_id, started_at)
+       VALUES (?1, 'i1', ?2, ?3, ?4, CASE WHEN ?3 = 'running' THEN 1 END)`,
     )
       .bind(id, kind, status, instance)
       .run();
@@ -154,8 +157,37 @@ describe("reconcileJobs", () => {
 
     await reset();
     await createMigrator(migrations).ensure(env.DB);
+    await seed("installing", [["j1", "install", "running", "j1"]]);
+    await reconcileJobs(env.DB, fakeWorkflows({}).binding, await rows(), () => NOW);
+    expect((await job("j1"))?.error).toBe("the job's Workflow instance no longer exists");
+  });
+
+  it("says Cloudflare never started a job's instance when the job never recorded its start", async () => {
+    await seed("installing", [["j1", "install", "queued", "j1"]]);
+    const read = async () =>
+      (
+        await env.DB.prepare(
+          "SELECT id, kind, status, install_id, workflow_instance_id, started_at FROM jobs",
+        ).all<ActiveJobRow>()
+      ).results;
+    await reconcileJobs(env.DB, fakeWorkflows({}).binding, await read(), () => NOW);
+    expect((await job("j1"))?.error).toBe(INSTANCE_NEVER_STARTED);
+    expect(INSTANCE_NEVER_STARTED).toBe("Cloudflare never started the job's Workflow instance");
+    const logs = await env.DB.prepare("SELECT message FROM job_logs WHERE job_id = 'j1'").all();
+    expect(logs.results).toEqual([
+      { message: "Stopped: Cloudflare never started the job's Workflow instance." },
+    ]);
+    // Rows read without `started_at` are looked up: the same answer.
+    await reset();
+    await createMigrator(migrations).ensure(env.DB);
     await seed("installing", [["j1", "install", "queued", "j1"]]);
     await reconcileJobs(env.DB, fakeWorkflows({}).binding, await rows(), () => NOW);
+    expect((await job("j1"))?.error).toBe(INSTANCE_NEVER_STARTED);
+    // One that started and then lost its instance keeps the plain message.
+    await reset();
+    await createMigrator(migrations).ensure(env.DB);
+    await seed("installing", [["j1", "install", "running", "j1"]]);
+    await reconcileJobs(env.DB, fakeWorkflows({}).binding, await read(), () => NOW);
     expect((await job("j1"))?.error).toBe("the job's Workflow instance no longer exists");
   });
 

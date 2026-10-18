@@ -33,6 +33,7 @@ import {
   containerChange,
   containerNamespaces,
   isSandboxWorker,
+  orphanedNamespace,
   sandboxScriptMetadata,
   sandboxVersionOf,
   VERSION_NOT_READY_CODE,
@@ -65,7 +66,9 @@ import { clearSandboxWorkerDeleted } from "./worker-deleted";
  * 6. Turn its `workers.dev` URL and previews off.
  * 7. Read the Durable Object namespace of each container class.
  * 8. Each container application: create it, or patch it and roll it out to
- *    the release's image.
+ *    the release's image. One by that name backing a Durable Object
+ *    namespace that no longer exists (an earlier sandbox Worker's) is
+ *    deleted and created again; one backing another Worker's is refused.
  * 9. Wait until the applications are ready for builds (job units poll them).
  * 10. Connect the manager (its `SANDBOX` binding, in place of one to a
  *     deleted Worker if an earlier disable left it), unless it already is,
@@ -373,7 +376,20 @@ export async function runSandboxEnable(ctx: JobContext): Promise<void> {
             if (!isNotFound(error)) throw error;
           }
         }
-        const change = containerChange(container, version, namespaceId, logs, existing, active);
+        let change = containerChange(container, version, namespaceId, logs, existing, active);
+        if (change.kind === "conflict" && existing !== null) {
+          // Left behind by a sandbox Worker that was deleted: nobody's any more.
+          if (!(await orphanedNamespace(api, change.boundTo))) throw new JobError(change.message);
+          try {
+            await api.containers.deleteApplication(existing.id);
+          } catch (error) {
+            if (!isNotFound(error)) throw error;
+          }
+          log.info(
+            `Deleted the container application ${container.name}: it backed a Durable Object namespace that no longer exists (${change.boundTo}), left behind by an earlier sandbox Worker.`,
+          );
+          change = containerChange(container, version, namespaceId, logs, null);
+        }
         const base = { name: container.name, maxInstances: container.max_instances };
         switch (change.kind) {
           case "conflict":

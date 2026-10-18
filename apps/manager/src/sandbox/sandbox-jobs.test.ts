@@ -629,6 +629,57 @@ describe("enable sandbox builds", () => {
     expect(r.world.state.uploads).toEqual([]);
   });
 
+  it("replaces a container application left behind by a deleted sandbox Worker", async () => {
+    // Two applications by the sandbox's names from an earlier sandbox Worker,
+    // backing namespaces deleted with it.
+    const orphans = [
+      app(2, "0.1.0", { id: "orphan-3", durable_objects: { namespace_id: "ns-gone-3" } }),
+      app(3, "0.1.0", { id: "orphan-4", durable_objects: { namespace_id: "ns-gone-4" } }),
+    ];
+    const r = await enable({ apps: orphans });
+    expect(r.error).toBeNull();
+    expect(r.job).toMatchObject({ kind: "sandbox_enable", status: "succeeded" });
+    expect(r.world.state.apps.map((a) => [a.name, a.durable_objects.namespace_id])).toEqual([
+      ["appflare-sandbox-standard-1", "ns-sandbox"],
+      ["appflare-sandbox-standard-2", "ns-largesandbox"],
+      ["appflare-sandbox-self-deploying-standard-1", "ns-selfdeployingsandbox"],
+      ["appflare-sandbox-self-deploying-standard-2", "ns-largeselfdeployingsandbox"],
+    ]);
+    expect(r.world.state.apps.map((a) => a.id)).not.toContain("orphan-3");
+    expect(r.world.order).toContain("DELETE /containers/applications/orphan-3");
+    expect(r.world.order).toContain("DELETE /containers/applications/orphan-4");
+    expect(r.logs).toContain(
+      "Deleted the container application appflare-sandbox-self-deploying-standard-1: it backed a Durable Object namespace that no longer exists (ns-gone-3), left behind by an earlier sandbox Worker.",
+    );
+  });
+
+  it("still refuses an application backing another Worker's namespace, or one it cannot check", async () => {
+    const theirs = app(2, "0.1.0", {
+      id: "theirs",
+      durable_objects: { namespace_id: "ns-theirs" },
+    });
+    const other = { id: "ns-theirs", script: "someone-else", class: "Box" };
+    const r = await enable({ apps: [theirs], otherNamespaces: [other] });
+    expect(String(r.error)).toMatch(
+      /the container application appflare-sandbox-self-deploying-standard-1 backs another Durable Object namespace \(ns-theirs\)/,
+    );
+    expect(r.world.state.apps.map((a) => a.id)).toContain("theirs");
+    expect(r.world.order).not.toContain("DELETE /containers/applications/theirs");
+
+    // A namespace read that answers neither "found" nor "not found" deletes nothing.
+    await reset();
+    await createMigrator(migrations).ensure(env.DB);
+    await writeSettings(createDb(env.DB), {
+      [SETTING.accountId]: ACC,
+      [SETTING.workerName]: MANAGER,
+      [SETTING.accountSubdomain]: SUBDOMAIN,
+    });
+    const orphan = app(2, "0.1.0", { id: "orphan", durable_objects: { namespace_id: "ns-gone" } });
+    const unsure = await enable({ apps: [orphan], namespaceReadFails: 403 });
+    expect(String(unsure.error)).toMatch(/backs another Durable Object namespace \(ns-gone\)/);
+    expect(unsure.world.state.apps.map((a) => a.id)).toContain("orphan");
+  });
+
   it("starts only while no other job runs", async () => {
     await env.DB.prepare(
       "INSERT INTO jobs (id, kind, status, workflow_instance_id) VALUES ('other', 'install', 'running', 'wf')",
@@ -707,6 +758,95 @@ describe("disable sandbox builds", () => {
     expect(r.logs.at(-1)).toBe(
       "Sandbox builds are off, and nothing of them is left in the account.",
     );
+  });
+
+  it("deletes every container application of the sandbox Worker, also of classes this version does not know", async () => {
+    const release = await sandboxRelease(VERSION);
+    const on = enabledAt(VERSION);
+    const world = fakeSandboxAccount(
+      release,
+      {
+        ...on,
+        // A class a newer sandbox release added, by a name this version does not know.
+        namespaces: { ...on.namespaces, GpuSandbox: "ns-gpu" },
+        otherNamespaces: [{ id: "ns-theirs", script: "someone-else", class: "Box" }],
+        apps: [
+          ...(on.apps ?? []),
+          app(0, VERSION, {
+            id: "gpu",
+            name: "appflare-sandbox-gpu",
+            durable_objects: { namespace_id: "ns-gpu" },
+          }),
+          // Left behind by an earlier sandbox Worker.
+          app(2, "0.1.0", { id: "left", durable_objects: { namespace_id: "ns-gone" } }),
+          // Another Worker's, by one of the sandbox's names.
+          app(3, "0.1.0", { id: "theirs", durable_objects: { namespace_id: "ns-theirs" } }),
+        ],
+      },
+      { previews: [healthy], ...connected },
+    );
+    const { params } = await start(world, { action: "disable", confirm: "appflare-sandbox" });
+    const r = await runJob(world, params, release);
+    expect(r.error).toBeNull();
+    expect(world.state.apps.map((a) => a.id)).toEqual(["theirs"]);
+    // Found while the Worker and its namespaces existed, deleted after it.
+    const find = world.order.indexOf("GET /containers/applications");
+    const workerDelete = world.order.indexOf("DELETE /workers/scripts/appflare-sandbox");
+    expect(find).toBeGreaterThan(-1);
+    expect(find).toBeLessThan(workerDelete);
+    expect(world.order.indexOf("DELETE /containers/applications/gpu")).toBeGreaterThan(
+      workerDelete,
+    );
+    expect(r.logs).toContain("Deleted the container application appflare-sandbox-gpu.");
+    expect(r.logs).toContain(
+      "Leaving the container application appflare-sandbox-self-deploying-standard-2 as it is: it backs a Durable Object namespace of the Worker someone-else. If it is Appflare's, delete it in the Cloudflare dashboard under Workers > Containers.",
+    );
+  });
+
+  it("leaves an application by its prefix when Cloudflare does not confirm its namespace is gone", async () => {
+    const release = await sandboxRelease(VERSION);
+    const on = enabledAt(VERSION);
+    const world = fakeSandboxAccount(
+      release,
+      {
+        ...on,
+        apps: [
+          ...(on.apps ?? []).filter((a) => a.name !== "appflare-sandbox-self-deploying-standard-1"),
+          app(2, "0.1.0", { id: "unsure", durable_objects: { namespace_id: "ns-unsure" } }),
+        ],
+        namespaceReadFails: 500,
+      },
+      { previews: [healthy], ...connected },
+    );
+    const { params } = await start(world, { action: "disable", confirm: "appflare-sandbox" });
+    const r = await runJob(world, params, release);
+    expect(r.error).toBeNull();
+    expect(world.state.apps.map((a) => a.id)).toEqual(["unsure"]);
+    expect(world.order).toContain("GET /workers/durable_objects/namespaces/ns-unsure");
+    expect(
+      r.logs.some((l) =>
+        l.startsWith(
+          "Leaving the container application appflare-sandbox-self-deploying-standard-1 as it is: Cloudflare did not confirm",
+        ),
+      ),
+    ).toBe(true);
+  });
+
+  it("stops before deleting anything when the token loses Containers after the start", async () => {
+    const release = await sandboxRelease(VERSION);
+    const world = fakeSandboxAccount(release, enabledAt(VERSION), {
+      previews: [healthy],
+      ...connected,
+    });
+    const { params } = await start(world, { action: "disable", confirm: "appflare-sandbox" });
+    world.state.containersAllowed = false;
+    const r = await runJob(world, params, release);
+    expect(r.job?.status).toBe("failed");
+    expect(r.job?.error).toMatch(
+      /^find container applications: .*lacks Containers: Edit.*Nothing was deleted\.$/,
+    );
+    expect(world.state.deletes).toEqual([]);
+    expect(world.state.worker).not.toBeNull();
   });
 
   it("records the sandbox Worker as deleted once it is gone, until the disconnect finishes", async () => {

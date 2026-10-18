@@ -34,7 +34,9 @@ import type { ManagerTargets, RemovalTargets } from "./removal-plan.server";
  *    origin and the gateway's DNS record when Appflare set them, its routing
  *    table (the same pieces, in the same order, as turning it off);
  * 3. the sandbox Worker, then its container applications (which Cloudflare
- *    keeps when the Worker goes) when the token has Containers;
+ *    keeps when the Worker goes) when the token has Containers; one named
+ *    like them that is not shown to be the sandbox Worker's is reported and
+ *    left;
  * 4. the manager's KV namespace; then, for apps protected with Cloudflare
  *    Access, each app's own service token is taken out of its Access
  *    application and deleted (the `releaseAppAccess` job unit, a few apps
@@ -312,6 +314,14 @@ export async function runRemoval(deps: RemovalDeps): Promise<RemovalOutcome> {
       await step(`Delete the container application ${app.name}`, () =>
         deletedOrGone(() => api.containers.deleteApplication(app.id)),
       );
+    }
+    // Named like them but not shown to be the sandbox Worker's: left, saying why.
+    for (const app of targets.sandbox.containerAppsLeft) {
+      await show({
+        label: `Delete the container application ${app.name}`,
+        status: "skipped",
+        detail: `Left as it is: ${app.reason}. If it is Appflare's, delete it in the Cloudflare dashboard under Workers, Containers.`,
+      });
     }
 
     // 4. The manager's own data. Nothing is recorded after the D1 database goes.

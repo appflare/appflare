@@ -71,7 +71,12 @@ export interface SandboxAccountState {
   uploads: Array<{ metadata: Record<string, unknown>; modules: string[] }>;
   subdomainCalls: unknown[];
   deletes: Array<{ force: boolean }>;
+  /** The sandbox Worker's Durable Object namespace of each class. */
   namespaces: Record<string, string>;
+  /** Durable Object namespaces of other Workers on the account. */
+  otherNamespaces: Array<{ id: string; script: string; class: string }>;
+  /** When set, reading one namespace fails with this status (any other answer than found or not). */
+  namespaceReadFails?: number;
   buckets: Set<string>;
   objects: Record<string, string[]>;
   apps: FakeContainerApp[];
@@ -152,6 +157,7 @@ export function fakeSandboxAccount(
     subdomainCalls: [],
     deletes: [],
     namespaces: {},
+    otherNamespaces: [],
     buckets: new Set(),
     objects: {},
     apps: [],
@@ -187,6 +193,10 @@ export function fakeSandboxAccount(
       health: { instances: { healthy: ready ? n : 0, starting: ready ? 0 : n, scheduling: 0 } },
     };
   };
+  const allNamespaces = () => [
+    ...Object.entries(state.namespaces).map(([cls, id]) => ({ id, script: SANDBOX, class: cls })),
+    ...state.otherNamespaces,
+  ];
   const sandboxBindings = () =>
     ((state.worker?.metadata.bindings as Array<Record<string, unknown>> | undefined) ?? []).map(
       (b) =>
@@ -224,7 +234,7 @@ export function fakeSandboxAccount(
       sandboxRoute ||
       path.startsWith("/r2/") ||
       path.startsWith("/containers/") ||
-      path === "/workers/durable_objects/namespaces";
+      path.startsWith("/workers/durable_objects/namespaces");
     if (!mine) return null;
     state.calls.push(key);
 
@@ -313,15 +323,13 @@ export function fakeSandboxAccount(
                 { id: "sd", versions: [{ version_id: state.worker.versionId, percentage: 100 }] },
               ],
             });
-      case "GET /workers/durable_objects/namespaces":
-        return ok(
-          Object.entries(state.namespaces).map(([cls, id]) => ({
-            id,
-            script: SANDBOX,
-            class: cls,
-          })),
-          { result_info: { page: 1, total_pages: 1 } },
-        );
+      case "GET /workers/durable_objects/namespaces": {
+        // Cloudflare reports a total count here, not a page count (recorded live).
+        const all = allNamespaces();
+        return ok(all, {
+          result_info: { page: 1, per_page: 1000, count: all.length, total_count: all.length },
+        });
+      }
       case "GET /r2/buckets": {
         const contains = url.searchParams.get("name_contains") ?? "";
         const buckets = [...state.buckets].filter((b) => b.includes(contains));
@@ -358,6 +366,16 @@ export function fakeSandboxAccount(
       }
     }
 
+    const namespace = /^GET \/workers\/durable_objects\/namespaces\/([^/]+)$/.exec(key);
+    if (namespace !== null) {
+      if (state.namespaceReadFails !== undefined) {
+        return fail(state.namespaceReadFails, 10013, "internal error");
+      }
+      const found = allNamespaces().find((n) => n.id === namespace[1]);
+      return found === undefined
+        ? fail(404, 10066, `Durable Object namespace ID '${namespace[1]}' not found.`)
+        : ok(found);
+    }
     const version = new RegExp(`^GET /workers/scripts/${SANDBOX}/versions/([^/]+)$`).exec(key);
     if (version !== null) {
       return state.worker?.versionId === version[1]

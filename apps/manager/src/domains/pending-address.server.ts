@@ -1,6 +1,7 @@
 import type { CloudflareClient } from "@appflare/cf-api";
 import { createDb } from "../db/client";
 import { readSettings, SETTING } from "../db/settings";
+import { INSTANCE_NEVER_STARTED } from "../jobs/reconcile.server";
 import {
   ADDRESS_MESSAGES,
   activeMoveJob,
@@ -31,6 +32,11 @@ import { identityVerdict } from "./manager-identity";
  * nothing more happens by itself: Settings, Domains offers Try again (one
  * move, by an admin) and Stay at workers.dev (`stayAtWorkersDev`). A failed
  * job sends its one "move finished" notification as every move job does.
+ * One exception: a move whose Workflow instance Cloudflare never started
+ * (its job failed with reconcile's `INSTANCE_NEVER_STARTED` and never
+ * recorded its start) did nothing at all, so the next look starts the move
+ * again, up to {@link LOST_STARTS_RETRIED} times; after that the failure
+ * stands.
  * A pending domain that is no longer attached to the Worker is dropped.
  *
  * Any change of address deletes the pending rows (`switchAddress`), so a
@@ -45,7 +51,12 @@ export interface PendingAddress {
   /** When the move failed, and why; no automatic try after that. */
   failedAt: string | null;
   failure: string | null;
+  /** Moves Cloudflare never started that were started again by themselves. */
+  lostStarts: number;
 }
+
+/** How many times a move Cloudflare never started is started again by itself. */
+export const LOST_STARTS_RETRIED = 3;
 
 const PENDING_KEYS = [
   SETTING.managerPendingHostname,
@@ -53,6 +64,7 @@ const PENDING_KEYS = [
   SETTING.managerPendingJobId,
   SETTING.managerPendingFailedAt,
   SETTING.managerPendingFailure,
+  SETTING.managerPendingLostStarts,
 ] as const;
 
 export async function readPendingAddress(db: D1Database): Promise<PendingAddress | null> {
@@ -66,6 +78,7 @@ export async function readPendingAddress(db: D1Database): Promise<PendingAddress
     jobId: s.manager_pending_job_id || null,
     failedAt: s.manager_pending_failed_at || null,
     failure: s.manager_pending_failure || null,
+    lostStarts: Number(s.manager_pending_lost_starts) || 0,
   };
 }
 
@@ -140,8 +153,8 @@ export type PendingMove =
   | { status: "busy" }
   /** The domain does not answer as this Appflare yet. */
   | { status: "not-serving"; last: string }
-  /** The move job started. */
-  | { status: "started"; jobId: string }
+  /** The move job started; `restarted` when Cloudflare never started the one before. */
+  | { status: "started"; jobId: string; restarted?: true }
   /** The move refused to start; marked failed like a failed job. */
   | { status: "refused"; reason: string };
 
@@ -160,9 +173,42 @@ async function ownerExists(db: D1Database): Promise<boolean> {
 
 async function jobOf(db: D1Database, id: string) {
   return db
-    .prepare("SELECT status, error FROM jobs WHERE id = ?1")
+    .prepare("SELECT status, error, started_at FROM jobs WHERE id = ?1")
     .bind(id)
-    .first<{ status: string; error: string | null }>();
+    .first<{ status: string; error: string | null; started_at: number | null }>();
+}
+
+/**
+ * Forgets the move job Cloudflare never started, so the look starts the move
+ * again, and counts it, in one batch: the count is written only while that
+ * job is still the one recorded. False when another look did so first (the
+ * job id recorded is no longer this one).
+ */
+async function forgetLostStart(
+  db: D1Database,
+  jobId: string,
+  lostStarts: number,
+  now: Date,
+): Promise<boolean> {
+  const [, forgot] = await db.batch([
+    db
+      .prepare(
+        `INSERT INTO settings (key, value, updated_at)
+         SELECT ?1, ?2, ?3 WHERE EXISTS (SELECT 1 FROM settings WHERE key = ?4 AND value = ?5)
+         ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`,
+      )
+      .bind(
+        SETTING.managerPendingLostStarts,
+        String(lostStarts),
+        now.getTime(),
+        SETTING.managerPendingJobId,
+        jobId,
+      ),
+    db
+      .prepare("DELETE FROM settings WHERE key = ?1 AND value = ?2 RETURNING key")
+      .bind(SETTING.managerPendingJobId, jobId),
+  ]);
+  return (forgot?.results.length ?? 0) > 0;
 }
 
 /** The error a move that lost a race to another look ends with. */
@@ -191,12 +237,22 @@ export async function movePendingAddress(deps: PendingMoveDeps): Promise<Pending
     return { status: "cleared" };
   }
   if (pending.failedAt !== null) return { status: "failed" };
+  let restarted = false;
   if (pending.jobId !== null) {
     const job = await jobOf(deps.db, pending.jobId);
     if (job?.status === "queued" || job?.status === "running") {
       return { status: "moving", jobId: pending.jobId };
     }
-    if (job === null || job.status === "failed") {
+    const neverStarted =
+      job?.status === "failed" && job.error === INSTANCE_NEVER_STARTED && job.started_at === null;
+    if (neverStarted && pending.lostStarts < LOST_STARTS_RETRIED) {
+      // Nothing of that move ran: start it again, as if it had never begun.
+      const lostStarts = pending.lostStarts + 1;
+      if (!(await forgetLostStart(deps.db, pending.jobId, lostStarts, now))) {
+        return { status: "busy" };
+      }
+      restarted = true;
+    } else if (job === null || job.status === "failed") {
       const reason = job?.error ?? "The move job is gone.";
       await markFailed(deps.db, reason, now);
       return { status: "move-failed", hostname: pending.hostname, reason };
@@ -239,12 +295,15 @@ export async function movePendingAddress(deps: PendingMoveDeps): Promise<Pending
     return { status: "refused", reason };
   }
   await upsert(deps.db, SETTING.managerPendingJobId, moved.jobId, now).run();
-  return { status: "started", jobId: moved.jobId };
+  return restarted
+    ? { status: "started", jobId: moved.jobId, restarted: true }
+    : { status: "started", jobId: moved.jobId };
 }
 
 /**
  * Try again, by an admin, after the move failed: one move to the pending
- * address, followed like any other (no automatic try after it either).
+ * address, followed like any other (no automatic try after it either, but
+ * for moves Cloudflare never started, counted afresh).
  */
 export async function retryPendingMove(
   deps: ManagerAddressDeps,
@@ -262,8 +321,12 @@ export async function retryPendingMove(
     await deps.db.batch([
       upsert(deps.db, SETTING.managerPendingJobId, moved.jobId, now),
       deps.db
-        .prepare("DELETE FROM settings WHERE key IN (?1, ?2)")
-        .bind(SETTING.managerPendingFailedAt, SETTING.managerPendingFailure),
+        .prepare("DELETE FROM settings WHERE key IN (?1, ?2, ?3)")
+        .bind(
+          SETTING.managerPendingFailedAt,
+          SETTING.managerPendingFailure,
+          SETTING.managerPendingLostStarts,
+        ),
     ]);
   }
   return moved;
@@ -296,7 +359,9 @@ export const PENDING_MESSAGES = {
 export function pendingMoveLog(result: PendingMove): string | null {
   switch (result.status) {
     case "started":
-      return `address: the pending domain serves Appflare; moving there (job ${result.jobId})`;
+      return result.restarted
+        ? `address: Cloudflare never started the last move to the pending domain; moving there again (job ${result.jobId})`
+        : `address: the pending domain serves Appflare; moving there (job ${result.jobId})`;
     case "refused":
       return `address: could not start the move to the pending domain: ${result.reason}`;
     case "move-failed":

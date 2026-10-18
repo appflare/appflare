@@ -69,7 +69,13 @@ describe("DangerZone", () => {
       targets: {
         accountName: "Acme",
         gateway: null,
-        sandbox: { worker: "none", bucket: false, appTokens: 0, containerApps: [] },
+        sandbox: {
+          worker: "none",
+          bucket: false,
+          appTokens: 0,
+          containerApps: [],
+          containerAppsLeft: [],
+        },
         manager: { workerName: "appflare", kvId: null, d1Id: null },
         accessAppIds: [],
         appAccessInstalls: [],
@@ -82,5 +88,37 @@ describe("DangerZone", () => {
     const alerts = [...dialog.querySelectorAll('[role="alert"]')].map((a) => a.textContent);
     expect(alerts.some((t) => t?.includes("A job is running"))).toBe(true);
     expect(alerts.some((t) => t?.includes("Remove these external domains first"))).toBe(true);
+  });
+
+  it("lists a container application it leaves, with the reason, under what stays", async () => {
+    calls.getRemovalReview.mockResolvedValue({
+      targets: {
+        accountName: "Acme",
+        gateway: null,
+        sandbox: {
+          worker: "missing",
+          bucket: false,
+          appTokens: 0,
+          containerApps: [],
+          containerAppsLeft: [
+            {
+              id: "a1",
+              name: "appflare-sandbox-gpu",
+              reason: "it backs a Durable Object namespace of the Worker someone-else",
+            },
+          ],
+        },
+        manager: { workerName: "appflare", kvId: null, d1Id: null },
+        accessAppIds: [],
+        appAccessInstalls: [],
+      },
+      stays: { apps: [], customDomains: 0, protectedApps: [], usersPolicy: false },
+      activeJobs: [],
+      externalDomains: [],
+    });
+    const dialog = await openRemove();
+    expect(dialog.textContent).toContain(
+      "The container application appflare-sandbox-gpu: it backs a Durable Object namespace of the Worker someone-else. If it is Appflare's, delete it in the Cloudflare dashboard under Workers, Containers.",
+    );
   });
 });
