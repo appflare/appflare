@@ -126,6 +126,37 @@ export async function recordPendingAddress(deps: {
 }
 
 /** Marks the pending address failed: nothing more is tried by itself. */
+/**
+ * Marks the pending address failed because its move job `jobId` failed, only
+ * while that job is still the one recorded: another look may have marked it
+ * already and an admin started a new move since, which this must not undo.
+ * False when the job was no longer recorded.
+ */
+async function markJobFailed(
+  db: D1Database,
+  jobId: string,
+  reason: string,
+  now: Date,
+): Promise<boolean> {
+  const stillRecorded = "EXISTS (SELECT 1 FROM settings WHERE key = ?4 AND value = ?5)";
+  const upsertIfRecorded = (key: string, value: string) =>
+    db
+      .prepare(
+        `INSERT INTO settings (key, value, updated_at)
+         SELECT ?1, ?2, ?3 WHERE ${stillRecorded}
+         ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`,
+      )
+      .bind(key, value, now.getTime(), SETTING.managerPendingJobId, jobId);
+  const [, , forgot] = await db.batch<{ key: string }>([
+    upsertIfRecorded(SETTING.managerPendingFailedAt, now.toISOString()),
+    upsertIfRecorded(SETTING.managerPendingFailure, reason),
+    db
+      .prepare("DELETE FROM settings WHERE key = ?1 AND value = ?2 RETURNING key")
+      .bind(SETTING.managerPendingJobId, jobId),
+  ]);
+  return (forgot?.results.length ?? 0) > 0;
+}
+
 async function markFailed(db: D1Database, reason: string, now: Date): Promise<void> {
   await db.batch([
     db.prepare("DELETE FROM settings WHERE key = ?1").bind(SETTING.managerPendingJobId),
@@ -254,7 +285,7 @@ export async function movePendingAddress(deps: PendingMoveDeps): Promise<Pending
       restarted = true;
     } else if (job === null || job.status === "failed") {
       const reason = job?.error ?? "The move job is gone.";
-      await markFailed(deps.db, reason, now);
+      if (!(await markJobFailed(deps.db, pending.jobId, reason, now))) return { status: "busy" };
       return { status: "move-failed", hostname: pending.hostname, reason };
     }
   }

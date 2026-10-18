@@ -676,7 +676,10 @@ describe("enable sandbox builds", () => {
     });
     const orphan = app(2, "0.1.0", { id: "orphan", durable_objects: { namespace_id: "ns-gone" } });
     const unsure = await enable({ apps: [orphan], namespaceReadFails: 403 });
-    expect(String(unsure.error)).toMatch(/backs another Durable Object namespace \(ns-gone\)/);
+    expect(String(unsure.error)).toMatch(
+      /Cloudflare did not confirm that the Durable Object namespace ns-gone of the container application appflare-sandbox-\S+ is gone/,
+    );
+    expect(String(unsure.error)).not.toMatch(/backs another Durable Object namespace/);
     expect(unsure.world.state.apps.map((a) => a.id)).toContain("orphan");
   });
 

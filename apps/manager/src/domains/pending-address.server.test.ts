@@ -266,6 +266,28 @@ describe("movePendingAddress", () => {
     expect(await readPendingAddress(env.DB)).toMatchObject({ failedAt: null, lostStarts: 1 });
   });
 
+  it("marks a failed move once when two looks see it at the same moment, and keeps a later Try again", async () => {
+    const w = installedFor();
+    await pending(w);
+    const d = moveDeps(w);
+    const jobId = await started(await movePendingAddress(d));
+    await env.DB.prepare(
+      "UPDATE jobs SET status = 'failed', started_at = 1, error = 'boom' WHERE id = ?1",
+    )
+      .bind(jobId)
+      .run();
+    const results = await Promise.all([movePendingAddress(d), movePendingAddress(d)]);
+    expect(results.map((r) => r.status).sort()).toEqual(["busy", "move-failed"]);
+    // An admin's Try again records its own job; a look that still read the
+    // failed one finds it no longer recorded and leaves the new move alone.
+    const retried = await retryPendingMove({ ...d, api: w.api });
+    if (!retried.ok) throw new Error("not started");
+    expect(await readPendingAddress(env.DB)).toMatchObject({
+      jobId: retried.jobId,
+      failedAt: null,
+    });
+  });
+
   it("marks a refusal to start as failed too, and tries nothing more", async () => {
     const w = installedFor();
     await pending(w);

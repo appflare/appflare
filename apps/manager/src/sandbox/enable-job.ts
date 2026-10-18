@@ -33,7 +33,7 @@ import {
   containerChange,
   containerNamespaces,
   isSandboxWorker,
-  orphanedNamespace,
+  readNamespaceState,
   sandboxScriptMetadata,
   sandboxVersionOf,
   VERSION_NOT_READY_CODE,
@@ -379,7 +379,15 @@ export async function runSandboxEnable(ctx: JobContext): Promise<void> {
         let change = containerChange(container, version, namespaceId, logs, existing, active);
         if (change.kind === "conflict" && existing !== null) {
           // Left behind by a sandbox Worker that was deleted: nobody's any more.
-          if (!(await orphanedNamespace(api, change.boundTo))) throw new JobError(change.message);
+          const read = await readNamespaceState(api, change.boundTo);
+          if (read.state === "exists") throw new JobError(change.message);
+          if (read.state === "unknown") {
+            // Neither found nor gone: nothing is deleted on a guess, and the
+            // step tries again, as a passing failure may answer next time.
+            throw new Error(
+              `Cloudflare did not confirm that the Durable Object namespace ${change.boundTo} of the container application ${container.name} is gone: ${read.answer}`,
+            );
+          }
           try {
             await api.containers.deleteApplication(existing.id);
           } catch (error) {
