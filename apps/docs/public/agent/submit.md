@@ -29,7 +29,8 @@ packing an app never touches an account.
 ## Steps
 
 1. Check that the app qualifies. If it does not, stop and tell the user why.
-   - A public GitHub repository. Any license qualifies, source-available ones and none at all included; the catalog shows the license, it does not decide on it.
+   - A public GitHub repository with at least 50 stars (those of the main project's repository, when the app builds from a template or packaging fork). The catalog closes a pull request that adds an app under the bar. Check with `gh api repos/<owner>/<repo> --jq .stargazers_count`.
+   - Any license qualifies, source-available ones and none at all included; the catalog shows the license, it does not decide on it.
    - Not a proxy, tunnel, or circumvention tool.
    - It deploys with wrangler: it has its own wrangler config (`wrangler.jsonc`, `wrangler.json`, or `wrangler.toml`).
    - It is self-contained: its own Worker defines its Durable Objects and Workflows, and its only service binding, if any, points at its own Worker.
@@ -81,4 +82,4 @@ packing an app never touches an account.
 
 ## End with
 
-The pull request's URL and a list of what is left for the user: the review on the pull request, and, as the entry's maintainer, reviewing its version bumps later (https://appflare.dev/catalog/bumps.md). Pull requests from forks get no CI secrets, so they fail the catalog's `verify` check until the appflare/appflare repository is public; if the pull request comes from a fork, say so in that list.
+The pull request's URL and a list of what is left for the user: the review on the pull request; once the app is merged, asking the upstream project to add the Install with Appflare badge to its README (https://appflare.dev/catalog/install-badge/; a request, not a requirement); and, as the entry's maintainer, reviewing its version bumps later (https://appflare.dev/catalog/bumps.md). Pull requests from forks get no CI secrets, so they fail the catalog's `verify` check until the appflare/appflare repository is public; if the pull request comes from a fork, say so in that list.

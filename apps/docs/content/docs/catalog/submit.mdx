@@ -9,6 +9,11 @@ app's own repository.
 
 ## Before you start
 
+- **The app's repository needs at least 50 GitHub stars.** The stars counted are
+  those of `upstreamRepo` when the entry sets it, else of `repo`. A pull request that
+  adds an app under the bar is closed automatically with a comment; reopen it once the
+  repository has the stars. The bar may rise over time, and is checked only when an
+  app is added.
 - **The app needs a public repository.** Its license does not decide whether it is
   listed: the catalog takes any app the platform can run, open-source,
   source-available, or with no license at all, and shows the license as the
@@ -1088,6 +1093,11 @@ in the catalog checkout and commit the result; CI fails if it is out of date.
 Merging to `main` publishes the app: CI packs it again, signs it, creates the
 release `<slug>@<version>`, and adds it to `index.json`. Managers pick it up at their
 next catalog refresh, within 30 minutes.
+
+Once the app is listed, please ask its upstream project to add the
+[Install badge](/catalog/install-badge/) to its README, or add it yourself if the
+project is yours. Its link works only after the merge, so ask then. It is a request,
+not a requirement: the app stays listed either way.
 
 To change a published app's manifest, re-pin `source` in the same pull request.
 A change to a released version without a new pin fails to publish, with two
