@@ -29,7 +29,6 @@ import {
   type GithubAccessState,
   getGithubAccess,
 } from "../github/tokens.functions";
-import { ENABLE_SANDBOX_PLACE, UPDATE_SANDBOX_HINT } from "../sandbox/connect-copy";
 import { BusyMark, busyActionProps } from "./busy-button";
 import { ConfirmDialog } from "./confirm-dialog";
 import { DocsLink } from "./docs-link";
