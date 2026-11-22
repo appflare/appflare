@@ -65,8 +65,11 @@ export class FakeWorld {
   bucketSize = 2;
   cronLimit = false;
   acceptedToken = TOKEN;
-  /** `METHOD /suffix` (the path after `/accounts/<id>`) answered once with this status, nothing done. */
-  failOnce = new Map<string, number>();
+  /**
+   * `METHOD /suffix` (the path after `/accounts/<id>`) answered once with this
+   * status, or this status and Cloudflare error, nothing done.
+   */
+  failOnce = new Map<string, number | { status: number; code: number; message: string }>();
   /** `METHOD /suffix`: the work is done, then the answer is lost (500) once. */
   loseOnce = new Set<string>();
   /** Every request, in order: `METHOD url-without-query`. */
@@ -233,6 +236,9 @@ export class FakeWorld {
     const failure = this.failOnce.get(key);
     if (failure !== undefined) {
       this.failOnce.delete(key);
+      if (typeof failure !== "number") {
+        return this.fail(failure.status, failure.code, failure.message);
+      }
       return this.fail(failure, failure === 503 ? 0 : 10000, "failed on purpose");
     }
     const response = await this.route(method, path, suffix, url, request);

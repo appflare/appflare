@@ -1,5 +1,5 @@
 import { createClient, type UsageRow } from "@appflare/cf-api";
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ACCOUNT_DAY_PRODUCTS } from "./account-day";
 import {
   ACCOUNT_DAY_DATASETS,
@@ -22,6 +22,16 @@ import {
 } from "./collect-fixtures";
 
 const HOUR_NOW = Math.floor(RECORDED_NOW / HOUR) * HOUR; // 16:00 UTC
+
+// cf-api's usage reads start no earlier than each dataset's retention back
+// from `Date.now` (31 or 32 days for some), so the answers recorded on
+// 2026-10-12 are read as of then, not dropped as too old once that has passed.
+beforeEach(() => {
+  vi.spyOn(Date, "now").mockReturnValue(RECORDED_NOW * 1000);
+});
+afterEach(() => {
+  vi.restoreAllMocks();
+});
 
 function target(over: Partial<CollectTarget> & { installId: string }): CollectTarget {
   return {

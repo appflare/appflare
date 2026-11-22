@@ -1,6 +1,12 @@
 import type { CloudflareClient, FetchLike } from "@appflare/cf-api";
 import { type Budget, BudgetExceededError } from "../budget";
-import { CONNECT_AGAIN, classifyCloudflareError, errorCodes } from "../cloudflare";
+import {
+  CONNECT_AGAIN,
+  classifyCloudflareError,
+  cloudflareSaid,
+  errorCodes,
+  hasCode,
+} from "../cloudflare";
 import type { InstallerConfig } from "../config";
 import type { InstallationRow } from "../db/schema";
 import { InstallerError } from "../http";
@@ -167,20 +173,29 @@ async function failed(
   }
   const kind = classifyCloudflareError(error);
   logError("step_error", { step: stepId, kind, codes: errorCodes(error) });
-  switch (kind) {
-    case "auth":
-      throw new InstallerError(401, "cloudflare_auth", CONNECT_AGAIN);
-    case "transient":
-      return set("waiting", "Cloudflare is busy. Trying again shortly.", TRANSIENT_RETRY_MS);
-    case "forbidden":
-      return set(
-        "failed",
-        `Cloudflare did not let this sign-in ${STEP_ACTIONS[stepId]}. Connect your Cloudflare account again with every permission Appflare asks for, then continue.`,
-      );
-    default:
-      return set("failed", `Cloudflare could not ${STEP_ACTIONS[stepId]}. Try again.`);
+  if (kind === "auth") throw new InstallerError(401, "cloudflare_auth", CONNECT_AGAIN);
+  if (kind === "transient") {
+    return set("waiting", "Cloudflare is busy. Trying again shortly.", TRANSIENT_RETRY_MS);
   }
+  // Refusals a new sign-in cannot fix, whatever their HTTP status.
+  if (hasCode(error, D1_LIMIT_CODE)) return set("failed", D1_LIMIT);
+  // Cloudflare's own words go with every refusal: a 403 is not always a
+  // missing permission (#98), and only Cloudflare knows which it is.
+  const said = cloudflareSaid(error);
+  const because = said === null ? "." : `. Cloudflare said: ${said}.`;
+  if (kind === "forbidden") {
+    return set(
+      "failed",
+      `Cloudflare did not let this sign-in ${STEP_ACTIONS[stepId]}${because} Check that your Cloudflare user may make changes in this account, and connect your Cloudflare account again with every permission Appflare asks for if you left any out. Then continue.`,
+    );
+  }
+  return set("failed", `Cloudflare could not ${STEP_ACTIONS[stepId]}${because} Try again.`);
 }
+
+/** D1's "the account has as many databases as its plan allows". */
+const D1_LIMIT_CODE = 7406;
+const D1_LIMIT =
+  "This Cloudflare account already has as many D1 databases as its plan allows (10 on the Workers Free plan). Delete a database you no longer use in the Cloudflare dashboard, or move to the Workers Paid plan, then continue.";
 
 /** Each step as the end of "Cloudflare could not …". */
 const STEP_ACTIONS: Record<StepId, string> = {
