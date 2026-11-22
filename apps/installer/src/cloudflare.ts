@@ -53,6 +53,29 @@ export function isNotFound(error: unknown): boolean {
   return error instanceof CloudflareApiError && error.status === 404;
 }
 
+/** The longest explanation of Cloudflare's kept in a step's message. */
+const SAID_MAX = 300;
+
+/**
+ * What Cloudflare itself said about `error`, for the visitor: each error's
+ * message and code, as in `Your account … (code 7403)`. Null when it said
+ * nothing. Never logged: messages can name the visitor's resources.
+ */
+export function cloudflareSaid(error: unknown): string | null {
+  if (!(error instanceof CloudflareApiError)) return null;
+  const said = error.errors
+    .map((e) => {
+      // Control characters and runs of spaces become one space.
+      const text = String(e.message ?? "")
+        .replace(/[\s\p{Cc}]+/gu, " ")
+        .trim();
+      return text === "" ? `code ${e.code}` : `${text} (code ${e.code})`;
+    })
+    .join("; ");
+  if (said === "") return null;
+  return said.length > SAID_MAX ? `${said.slice(0, SAID_MAX - 1)}…` : said;
+}
+
 /** The Cloudflare error codes of `error`, for a log line (numbers only). */
 export function errorCodes(error: unknown): string {
   return error instanceof CloudflareApiError ? error.errors.map((e) => e.code).join(",") : "";

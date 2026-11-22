@@ -256,6 +256,44 @@ describe("resuming", () => {
     expect(world.kv).toHaveLength(1);
   });
 
+  it("says what Cloudflare said when it refuses a step (#98)", async () => {
+    const created = await createInstallation(call);
+    await stepUntil(call, created, (a) => a.step.id === "database");
+    world.failOnce.set("POST /d1/database", {
+      status: 403,
+      code: 7403,
+      message: "The given account is not valid or is not authorized to access this service",
+    });
+    const refused = await call<StepAnswer>(`installations/${created.installationId}/step`, {
+      key: created.key,
+    });
+    expect(refused.body).toMatchObject({ status: "failed", step: { id: "database" } });
+    expect(refused.body.message).toContain(
+      "Cloudflare did not let this sign-in create the database. Cloudflare said: The given account is not valid or is not authorized to access this service (code 7403).",
+    );
+    // Asking again runs the step again.
+    await stepUntil(call, created, (a) => a.step.id === "storage");
+    expect(world.d1).toHaveLength(1);
+  });
+
+  it("names D1's database limit instead of a missing permission", async () => {
+    const created = await createInstallation(call);
+    await stepUntil(call, created, (a) => a.step.id === "database");
+    for (const status of [400, 403]) {
+      world.failOnce.set("POST /d1/database", {
+        status,
+        code: 7406,
+        message: "System limit reached: databases per account (10)",
+      });
+      const refused = await call<StepAnswer>(`installations/${created.installationId}/step`, {
+        key: created.key,
+      });
+      expect(refused.body).toMatchObject({ status: "failed", step: { id: "database" } });
+      expect(refused.body.message).toMatch(/as many D1 databases as its plan allows/);
+      expect(refused.body.message).not.toMatch(/sign-in/);
+    }
+  });
+
   it("answers 401 and changes nothing when Cloudflare no longer accepts the token", async () => {
     const created = await createInstallation(call);
     world.acceptedToken = "a-fresh-token-the-browser-has-not-got-yet";
