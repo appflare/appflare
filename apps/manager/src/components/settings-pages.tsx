@@ -213,6 +213,7 @@ export function UsersSettingsView({
         // From the list, which heals a missing owner as it loads (users.server.ts).
         viewerIsOwner={users?.some((u) => u.id === viewer.id && u.isOwner) ?? false}
         emailReset={recovery?.email.enabled ?? false}
+        accessSignIn={accessStatus.signInEnabled}
       />
       {recovery !== null && <PasswordRecoveryCard settings={recovery} />}
       <PasskeysSection passkeys={passkeys} afterMove={passkeysAfterMove} />

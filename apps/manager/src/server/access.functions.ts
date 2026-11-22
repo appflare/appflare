@@ -2,7 +2,8 @@ import { env } from "cloudflare:workers";
 import { CloudflareApiError } from "@appflare/cf-api";
 import { createServerFn } from "@tanstack/react-start";
 import { getRequest } from "@tanstack/react-start/server";
-import { readAccessConfig } from "../access/config";
+import { z } from "zod";
+import { readAccessSignInState } from "../access/config";
 import { accessGate } from "../access/gate";
 import {
   type AccessCheck,
@@ -15,18 +16,20 @@ import {
   enableAccess,
   listAdminEmails,
   type SyncAccessResult,
+  setAccessSignIn as storeAccessSignIn,
   syncAccessAdmins,
 } from "../access/toggle.server";
 import { hasRole } from "../auth/roles";
 import { CfTokenNotConfiguredError, getCfClient } from "../cloudflare/client.server";
 import { inConnectionWordsOf } from "../cloudflare/sign-in-words.server";
-import { requireRole, requireSession } from "./auth.server";
+import { accessSignInOffer, requireRole, requireSession } from "./auth.server";
 
 export type { AccessCheck } from "../access/toggle.server";
 
 /**
  * Settings → Cloudflare Access. Reading the state is open to every signed-in
- * user; checking, turning on or off, and re-syncing the policy are admin only.
+ * user; checking, turning on or off, re-syncing the policy, and the "Sign in
+ * with Cloudflare Access" switch are admin only.
  * Every call goes through the manager's own Cloudflare connection; errors carry
  * fixed messages or `CloudflareApiError` text (method, path, status), never
  * the token.
@@ -40,6 +43,8 @@ export interface AccessStatus {
   teamDomain: string | null;
   /** ISO 8601, when on. */
   enabledAt: string | null;
+  /** "Sign in with Cloudflare Access": only ever true while protection is on. */
+  signInEnabled: boolean;
   /** The emails the allow policy should list (admins only; null for members). */
   adminEmails: string[] | null;
   /** The hostname this page was loaded on. */
@@ -90,13 +95,14 @@ async function userFacing<T>(run: () => Promise<T>): Promise<T> {
 export const getAccessStatus = createServerFn({ method: "GET" }).handler(
   async (): Promise<AccessStatus> => {
     const session = await requireSession();
-    const config = await readAccessConfig(env.DB);
+    const { config, signInEnabled } = await readAccessSignInState(env.DB);
     const isAdmin = hasRole(session.user.role, "admin");
     return {
       enabled: config !== null,
       domain: config?.domain || null,
       teamDomain: config?.teamDomain || null,
       enabledAt: config?.enabledAt || null,
+      signInEnabled,
       adminEmails: isAdmin ? await listAdminEmails(env.DB) : null,
       currentHostname: new URL(getRequest().url).hostname,
     };
@@ -144,5 +150,29 @@ export const resyncAccessAdmins = createServerFn({ method: "POST" }).handler(
         actorEmail: session.user.email,
       }),
     );
+  },
+);
+
+/**
+ * Admin only: turns "Sign in with Cloudflare Access" on or off. Read fresh
+ * from D1 on every sign-in, so no cache needs dropping.
+ */
+export const setAccessSignIn = createServerFn({ method: "POST" })
+  .validator(z.object({ enabled: z.boolean() }))
+  .handler(async ({ data }): Promise<{ enabled: boolean }> => {
+    await requireRole("admin");
+    return userFacing(() => storeAccessSignIn({ db: env.DB }, data.enabled));
+  });
+
+/**
+ * For the sign-in page, without a session: the email of the existing user
+ * this request's verified Cloudflare Access sign-in belongs to, while "Sign
+ * in with Cloudflare Access" is on; otherwise null. Only the person signed in
+ * to Access as that email can get it.
+ */
+export const getAccessSignInOffer = createServerFn({ method: "GET" }).handler(
+  async (): Promise<{ email: string } | null> => {
+    const email = await accessSignInOffer(getRequest());
+    return email === null ? null : { email };
   },
 );

@@ -4,8 +4,10 @@ import { passkey } from "@better-auth/passkey";
 import { drizzleAdapter } from "better-auth/adapters/drizzle";
 import { betterAuth } from "better-auth/minimal";
 import { admin } from "better-auth/plugins";
+import type { AccessSignInDeps } from "../access/sign-in.server";
 import type { Database } from "../db/client";
 import * as schema from "../db/schema";
+import { accessSignIn } from "./access-sign-in-plugin";
 import {
   RESET_LINK_TTL_SECONDS,
   resetPasswordUrl,
@@ -49,6 +51,12 @@ export interface AuthDeps {
    * recovery code endpoint and no reset email; tests of other parts omit it.
    */
   recovery?: RecoveryAuthDeps;
+  /**
+   * "Sign in with Cloudflare Access" (see `access/sign-in.server.ts`).
+   * Without it there is no `/access/sign-in` endpoint; tests of other parts
+   * omit it.
+   */
+  accessSignIn?: AccessSignInDeps;
 }
 
 export interface RecoveryAuthDeps extends RecoveryPluginDeps {
@@ -86,8 +94,11 @@ export interface RecoveryAuthDeps extends RecoveryPluginDeps {
  * - A forgotten password is reset with a recovery code (always) or an emailed
  *   link (when the owner turned reset emails on); both sign the user out
  *   everywhere.
+ * - While Cloudflare Access protects the manager and an admin turned on "Sign
+ *   in with Cloudflare Access", a verified Access sign-in opens a session for
+ *   the existing user with that email (`/access/sign-in`); it never creates one.
  */
-export function createAuth({ db, secret, baseURL, recovery }: AuthDeps) {
+export function createAuth({ db, secret, baseURL, recovery, accessSignIn: access }: AuthDeps) {
   return betterAuth({
     appName: "Appflare",
     baseURL,
@@ -169,6 +180,7 @@ export function createAuth({ db, secret, baseURL, recovery }: AuthDeps) {
       }),
       passkey({ rpName: "Appflare", ...passkeyRelyingParty(baseURL) }),
       ...(recovery === undefined ? [] : [recoveryCodes(recovery)]),
+      ...(access === undefined ? [] : [accessSignIn(access)]),
     ],
   });
 }

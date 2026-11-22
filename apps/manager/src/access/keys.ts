@@ -115,3 +115,10 @@ export function createAccessKeyStore(options: AccessKeyStoreOptions = {}): Acces
     },
   };
 }
+
+/**
+ * The isolate's one key store: the request gate and "Sign in with Cloudflare
+ * Access" verify against the same cached keys, so signing in costs no extra
+ * fetch of the team's certificates.
+ */
+export const accessKeyStore: AccessKeyStore = createAccessKeyStore();

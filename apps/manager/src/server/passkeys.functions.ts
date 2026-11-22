@@ -10,7 +10,7 @@ import {
 } from "../auth/passkeys.server";
 import { readPasskeyHosts } from "../domains/manager-address.server";
 import { passkeyMoveNotice } from "../domains/pending-address.server";
-import { currentAuth, requireSession } from "./auth.server";
+import { authHeaders, currentAuth, requireSession } from "./auth.server";
 import { removePasskeyInput } from "./schemas";
 import { authErrorMessage } from "./users.server";
 
@@ -29,7 +29,7 @@ export const listPasskeys = createServerFn({ method: "GET" }).handler(
   async (): Promise<PasskeyRow[]> => {
     await requireSession();
     const request = getRequest();
-    const rows = await listOwnPasskeys(currentAuth(), request.headers);
+    const rows = await listOwnPasskeys(currentAuth(), authHeaders(request));
     const hosts = await readPasskeyHosts(
       env.DB,
       rows.map((r) => r.id),
@@ -60,7 +60,7 @@ export const getPasskeyOffer = createServerFn({ method: "GET" }).handler(
     const session = await requireSession();
     const request = getRequest();
     const host = new URL(request.url).hostname;
-    const rows = await listOwnPasskeys(currentAuth(), request.headers);
+    const rows = await listOwnPasskeys(currentAuth(), authHeaders(request));
     const hosts = await readPasskeyHosts(
       env.DB,
       rows.map((r) => r.id),
@@ -90,7 +90,7 @@ export const removePasskey = createServerFn({ method: "POST" })
   .handler(async ({ data }) => {
     await requireSession();
     try {
-      await removeOwnPasskey(currentAuth(), getRequest().headers, data.id);
+      await removeOwnPasskey(currentAuth(), authHeaders(getRequest()), data.id);
     } catch (error) {
       throw new Error(authErrorMessage(error, "Could not remove the passkey."));
     }

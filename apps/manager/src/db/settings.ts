@@ -70,6 +70,15 @@ export const SETTING = {
   /** ISO 8601 time Access protection was turned on. */
   accessEnabledAt: "access_enabled_at",
   /**
+   * ISO 8601 time an admin turned on "Sign in with Cloudflare Access": while
+   * protection is on, a verified Access sign-in whose email belongs to an
+   * existing user opens an Appflare session (access/sign-in.server.ts).
+   * Absent means off. Under the `access_` prefix, so turning protection off
+   * and the lockout recovery remove it too, but it does not count as
+   * protection being on (access/config.ts).
+   */
+  accessSignInEnabledAt: "access_sign_in_enabled_at",
+  /**
    * The reusable "Appflare users" Access policy every installed app protected
    * with Cloudflare Access references (access/install-access.server.ts), and
    * the ISO 8601 time its last update after a user change failed (absent once

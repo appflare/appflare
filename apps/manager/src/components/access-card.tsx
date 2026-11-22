@@ -1,15 +1,26 @@
 import { AppflareLoader } from "@appflare/brand/loader";
-import { Badge, Banner, Button, Checkbox, LayerDialog, LinkButton, Text } from "@cloudflare/kumo";
+import {
+  Badge,
+  Banner,
+  Button,
+  Checkbox,
+  LayerDialog,
+  LinkButton,
+  Switch,
+  Text,
+} from "@cloudflare/kumo";
 import { ArrowsClockwiseIcon, LockKeyIcon, LockKeyOpenIcon } from "@phosphor-icons/react";
 import { useRouter } from "@tanstack/react-router";
 import { useState } from "react";
 import { ACCESS_RECOVERY_COMMAND, accessRecoverySteps } from "../access/recovery";
+import { ACCESS_SIGN_IN_COPY } from "../auth/access-sign-in";
 import { zeroTrustDashboardUrl } from "../cloudflare/dashboard-links";
 import {
   type AccessCheck,
   type AccessStatus,
   checkAccess,
   resyncAccessAdmins,
+  setAccessSignIn,
   turnOffAccess,
   turnOnAccess,
 } from "../server/access.functions";
@@ -38,7 +49,8 @@ const ZERO_TRUST_DASHBOARD_PATH = "home";
  * behind Cloudflare Access, and (admins) turning that on (the header's
  * action) or off and re-syncing the allow policy with the current admins.
  * Adding an admin in Users updates the policy by itself; "Re-sync admins"
- * covers changes made anywhere else.
+ * covers changes made anywhere else. While it is on, the "Sign in with
+ * Cloudflare Access" switch (admins change it, members see it).
  */
 export function AccessCard({
   status,
@@ -133,6 +145,7 @@ function EnabledDetails({ status, isAdmin }: { status: AccessStatus; isAdmin: bo
         </StatusRegion>
       </div>
       {error !== null && <ErrorMessageBanner message={error} />}
+      <SignInSwitch enabled={status.signInEnabled} isAdmin={isAdmin} />
       {isAdmin && (
         <div className="flex flex-wrap justify-end gap-2">
           <BusyButton
@@ -147,6 +160,52 @@ function EnabledDetails({ status, isAdmin }: { status: AccessStatus; isAdmin: bo
         </div>
       )}
     </>
+  );
+}
+
+/**
+ * "Sign in with Cloudflare Access": shows the change at once while it saves,
+ * then the saved setting again (the new one, or the old one if saving
+ * failed), so a change another admin made shows once the page reads it.
+ */
+function SignInSwitch({ enabled, isAdmin }: { enabled: boolean; isAdmin: boolean }) {
+  const router = useRouter();
+  // The value being saved, shown until the save ends; null otherwise.
+  const [saving, setSaving] = useState<boolean | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const pending = saving !== null;
+  const checked = saving ?? enabled;
+
+  async function onChange(next: boolean) {
+    setSaving(next);
+    setError(null);
+    try {
+      await setAccessSignIn({ data: { enabled: next } });
+      await router.invalidate();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not save the change.");
+    }
+    setSaving(null);
+  }
+
+  return (
+    <div className="grid gap-1">
+      <Switch
+        label={ACCESS_SIGN_IN_COPY.switchLabel}
+        checked={checked}
+        disabled={!isAdmin || pending}
+        onCheckedChange={(next: boolean) => void onChange(next)}
+      />
+      <Text variant="secondary" size="sm">
+        {ACCESS_SIGN_IN_COPY.switchDescription}
+      </Text>
+      {!isAdmin && (
+        <Text variant="secondary" size="sm">
+          {ACCESS_SIGN_IN_COPY.membersOnly}
+        </Text>
+      )}
+      {error !== null && <ErrorMessageBanner message={error} />}
+    </div>
   );
 }
 

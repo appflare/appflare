@@ -11,7 +11,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
  */
 const page = vi.hoisted(() => ({
   search: {} as Record<string, unknown>,
-  context: { version: "1.0.0", emailReset: true } as Record<string, unknown>,
+  context: { version: "1.0.0", emailReset: true, accessEmail: null } as Record<string, unknown>,
   navigate: vi.fn(async (_opts: unknown) => {}),
 }));
 vi.mock("@tanstack/react-router", () => ({
@@ -52,11 +52,17 @@ vi.mock("../server/passkeys.functions", () => ({
   getPasskeyOffer: async () => offer.due,
   dismissPasskeyOffer: offer.dismiss,
 }));
+/** What the server says about this request's Cloudflare Access sign-in. */
+const access = vi.hoisted(() => ({ offer: null as { email: string } | null }));
+vi.mock("../server/access.functions", () => ({
+  getAccessSignInOffer: async () => access.offer,
+}));
 vi.mock("../server/recovery.functions", () => ({
   getPasswordRecoveryOptions: async () => ({ emailReset: true }),
 }));
 
 const { MOVED_HERE_NOTE, PASSKEY_OFFER } = await import("../domains/moved-note");
+const { ACCESS_SIGN_IN_COPY, ACCESS_SIGN_IN_PATH } = await import("../auth/access-sign-in");
 const { Route: Login } = await import("../routes/login");
 const { Route: ForgotPassword } = await import("../routes/forgot-password");
 const { Route: ResetPassword } = await import("../routes/reset-password");
@@ -88,7 +94,8 @@ beforeEach(() => {
   offer.due = true;
   offer.dismiss.mockClear();
   localStorage.clear();
-  page.context = { version: "1.0.0", emailReset: true };
+  page.context = { version: "1.0.0", emailReset: true, accessEmail: null };
+  access.offer = null;
   (globalThis as { PublicKeyCredential?: unknown }).PublicKeyCredential = () => {};
 });
 
@@ -177,9 +184,51 @@ describe("the sign-in page with a page to return to", () => {
   });
 });
 
+describe("the sign-in page with Sign in with Cloudflare Access", () => {
+  it("offers nothing by itself when the request has no matching Access sign-in", async () => {
+    const beforeLoad = Login.options.beforeLoad as (args: unknown) => Promise<unknown>;
+    expect(await beforeLoad({ search: {} })).toMatchObject({ accessEmail: null });
+    open(Login, {});
+    expect(container.textContent).not.toContain("Continue as");
+  });
+
+  it("passes the matching email to the page, and never signs in by itself", async () => {
+    access.offer = { email: "ada@example.com" };
+    const beforeLoad = Login.options.beforeLoad as (args: unknown) => Promise<unknown>;
+    expect(await beforeLoad({ search: {} })).toMatchObject({ accessEmail: "ada@example.com" });
+    expect(auth.$fetch).not.toHaveBeenCalled();
+  });
+
+  it("continues as that user above the other ways in, then opens the page asked for", async () => {
+    page.context = { version: "1.0.0", accessEmail: "ada@example.com" };
+    open(Login, { returnTo: "/apps/01J9ZQ7K3M#secrets" });
+    const continueAs = button(ACCESS_SIGN_IN_COPY.continueAs("ada@example.com"));
+    const buttons = [...document.querySelectorAll("button")];
+    expect(buttons.indexOf(continueAs)).toBeLessThan(buttons.indexOf(button("Sign in")));
+    expect(button("Sign in with a passkey")).toBeDefined();
+    await act(async () => continueAs.click());
+    expect(auth.$fetch).toHaveBeenCalledWith(ACCESS_SIGN_IN_PATH, { method: "POST", body: {} });
+    expect(page.navigate).toHaveBeenCalledWith({
+      href: "/apps/01J9ZQ7K3M#secrets",
+      replace: true,
+    });
+  });
+
+  it("says so and stays when Access does not sign the visitor in", async () => {
+    auth.$fetch.mockResolvedValueOnce({
+      error: { status: 403, code: "ACCESS_SIGN_IN_REFUSED" },
+    });
+    page.context = { version: "1.0.0", accessEmail: "ada@example.com" };
+    open(Login, {});
+    await act(async () => button(ACCESS_SIGN_IN_COPY.continueAs("ada@example.com")).click());
+    expect(container.textContent).toContain(ACCESS_SIGN_IN_COPY.refused);
+    expect(page.navigate).not.toHaveBeenCalled();
+  });
+});
+
 describe("the sign-in page right after Appflare moved here", () => {
   it("says why, then offers a passkey; adding one ends the offer for good", async () => {
-    page.context = { version: "1.0.0", movedHere: true };
+    page.context = { version: "1.0.0", movedHere: true, accessEmail: null };
     open(Login, { returnTo: "/catalog" });
     expect(container.textContent).toContain(MOVED_HERE_NOTE);
     await submit(document.querySelector("form"));
@@ -192,7 +241,7 @@ describe("the sign-in page right after Appflare moved here", () => {
   });
 
   it("ends the offer for good with Not now too", async () => {
-    page.context = { version: "1.0.0", movedHere: true };
+    page.context = { version: "1.0.0", movedHere: true, accessEmail: null };
     open(Login, {});
     await submit(document.querySelector("form"));
     await act(async () => button("Not now").click());
@@ -202,7 +251,7 @@ describe("the sign-in page right after Appflare moved here", () => {
   });
 
   it("goes on at once when the offer is not due for this user", async () => {
-    page.context = { version: "1.0.0", movedHere: true };
+    page.context = { version: "1.0.0", movedHere: true, accessEmail: null };
     offer.due = false;
     open(Login, {});
     await submit(document.querySelector("form"));
@@ -210,7 +259,7 @@ describe("the sign-in page right after Appflare moved here", () => {
   });
 
   it("says Appflare moved only until someone signed in here in this browser", async () => {
-    page.context = { version: "1.0.0", movedHere: true };
+    page.context = { version: "1.0.0", movedHere: true, accessEmail: null };
     offer.due = false;
     open(Login, {});
     expect(container.textContent).toContain(MOVED_HERE_NOTE);

@@ -47,6 +47,8 @@ export const ACCESS_MESSAGES = {
   unsupportedHost: (hostname: string) =>
     `Cloudflare Access cannot protect "${hostname}". Open the manager at its workers.dev address or custom domain and try again.`,
   alreadyOn: "Cloudflare Access protection is already on.",
+  signInNeedsProtection:
+    "Sign in with Cloudflare Access works only while Cloudflare Access protects the manager. Turn the protection on first.",
   busy: "Another Access change is in progress. Try again in a minute.",
   keysUnreachable:
     "The Access application was created, but the team's signing keys could not be fetched, so protection was not turned on and the application was removed. Try again in a minute.",

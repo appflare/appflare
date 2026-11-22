@@ -3,7 +3,8 @@ import { deleteSettings, readSettings, SETTING, writeSettings } from "../db/sett
 
 /**
  * Cloudflare Access protection as stored in `settings`. Present only while it
- * is on: turning it on writes every row at once, turning it off deletes them.
+ * is on: turning it on writes every row at once, turning it off deletes them,
+ * together with the "Sign in with Cloudflare Access" switch.
  */
 export interface AccessConfig {
   /** The self-hosted Access application protecting the manager's hostname. */
@@ -36,10 +37,40 @@ const KEYS = [
  * The stored protection, or null when it is off. A row set that is only
  * partly present (never written that way) counts as on as long as the values
  * the request check needs exist, so a damaged row set fails closed rather than
- * silently turning protection off.
+ * silently turning protection off. The "Sign in with Cloudflare Access" row
+ * is not one of them: alone, it leaves protection off.
  */
 export async function readAccessConfig(d1: D1Database): Promise<AccessConfig | null> {
-  const s = await readSettings(createDb(d1), KEYS);
+  return configFrom(await readSettings(createDb(d1), KEYS));
+}
+
+/**
+ * The stored protection and whether "Sign in with Cloudflare Access" is on,
+ * in one read. The switch counts only while protection is on.
+ */
+export async function readAccessSignInState(
+  d1: D1Database,
+): Promise<{ config: AccessConfig | null; signInEnabled: boolean }> {
+  const s = await readSettings(createDb(d1), [...KEYS, SETTING.accessSignInEnabledAt]);
+  const config = configFrom(s);
+  return { config, signInEnabled: config !== null && (s.access_sign_in_enabled_at ?? "") !== "" };
+}
+
+/** Turns "Sign in with Cloudflare Access" on (stamped with `now`) or off. */
+export async function writeAccessSignIn(
+  d1: D1Database,
+  enabled: boolean,
+  now: Date = new Date(),
+): Promise<void> {
+  const db = createDb(d1);
+  if (enabled) {
+    await writeSettings(db, { [SETTING.accessSignInEnabledAt]: now.toISOString() }, now);
+  } else {
+    await deleteSettings(db, [SETTING.accessSignInEnabledAt]);
+  }
+}
+
+function configFrom(s: Partial<Record<(typeof KEYS)[number], string>>): AccessConfig | null {
   const anyPresent = KEYS.some((key) => (s[key] ?? "") !== "");
   if (!anyPresent) return null;
   return {
@@ -73,6 +104,7 @@ export async function writeAccessConfig(
   );
 }
 
+/** Removes the protection and the "Sign in with Cloudflare Access" switch with it. */
 export async function clearAccessConfig(d1: D1Database): Promise<void> {
-  await deleteSettings(createDb(d1), KEYS);
+  await deleteSettings(createDb(d1), [...KEYS, SETTING.accessSignInEnabledAt]);
 }

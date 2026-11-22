@@ -833,6 +833,9 @@ export function fixture(name: string, args: unknown[]): unknown {
     enterSetup: () => setupEntry(),
     // The sign-in page, at the address Appflare just moved to (`?fixture=address-moved-here`).
     getSetupStatus: () => ({ needsSetup: false, movedHere: variant === "address-moved-here" }),
+    // "Continue as" on the sign-in page (`?fixture=access-sign-in`).
+    getAccessSignInOffer: () =>
+      variant === "access-sign-in" ? { email: "ada@example.com" } : null,
     redeemOwnerClaim: () => ({
       outcome: variant === "setup-claim-refused" ? "refused" : "rate-limited",
     }),
@@ -1055,6 +1058,7 @@ export function fixture(name: string, args: unknown[]): unknown {
       domain: "manager.example.com",
       teamDomain: "example.cloudflareaccess.com",
       enabledAt: "2026-09-02T10:00:00.000Z",
+      signInEnabled: false,
       adminEmails: ["ada@example.com", "grace@example.com"],
       currentHostname: "manager.example.com",
     }),

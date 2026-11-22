@@ -70,17 +70,8 @@ export async function readGate(inputs: GateInputs): Promise<GateRead> {
   const tokenConfigured = setting.get(SETTING.cfTokenConfigured) === "1";
   // The claim only matters before the owner exists.
   const setupClaimed = !hasUser && tokenConfigured ? await inputs.setupClaimed() : false;
-  const isAdmin = session !== null && hasRole(session.user.role, "admin");
-  const viewer: Viewer | null =
-    session === null
-      ? null
-      : {
-          id: session.user.id,
-          email: session.user.email,
-          name: session.user.name,
-          role: isAdmin ? "admin" : "member",
-          isOwner: isAdmin && session.user.isOwner === true,
-        };
+  const viewer = session === null ? null : viewerOf(session.user);
+  const isAdmin = viewer?.role === "admin";
   return {
     state: {
       hasUser,
@@ -95,6 +86,18 @@ export async function readGate(inputs: GateInputs): Promise<GateRead> {
     },
     viewer,
     accountId: setting.get(SETTING.accountId) || null,
+  };
+}
+
+/** Who is looking, from a session's user (or the user an Access sign-in opened one for). */
+export function viewerOf(sessionUser: GateSession["user"]): Viewer {
+  const isAdmin = hasRole(sessionUser.role, "admin");
+  return {
+    id: sessionUser.id,
+    email: sessionUser.email,
+    name: sessionUser.name,
+    role: isAdmin ? "admin" : "member",
+    isOwner: isAdmin && sessionUser.isOwner === true,
   };
 }
 

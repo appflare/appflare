@@ -18,6 +18,7 @@ import {
   clearAccessConfig,
   readAccessConfig,
   writeAccessConfig,
+  writeAccessSignIn,
 } from "./config";
 import { ACCESS_MESSAGES } from "./messages";
 import { accessAppName } from "./recovery";
@@ -289,6 +290,11 @@ export async function enableAccess(deps: AccessToggleDeps): Promise<EnableAccess
         domain: hostname,
         enabledAt: now.toISOString(),
       };
+      // Protection starts with "Sign in with Cloudflare Access" off, even if
+      // a row survived from before (an older version, which did not know it,
+      // may have turned protection off after a rollback). Cleared first, so
+      // a failure here leaves nothing stored.
+      await writeAccessSignIn(deps.db, false);
       await writeAccessConfig(deps.db, config, now);
     } catch (error) {
       await deleteApps(deps.client, created.reverse());
@@ -326,6 +332,24 @@ export async function disableAccess(
     }
     await clearAccessConfig(deps.db);
     return { ok: true, wasOn: true };
+  });
+}
+
+/**
+ * Turns "Sign in with Cloudflare Access" on or off. On only while protection
+ * is on, checked under the lock every Access change takes, so it cannot slip
+ * in after protection was turned off (which removes it).
+ */
+export async function setAccessSignIn(
+  deps: Pick<AccessToggleDeps, "db" | "now">,
+  enabled: boolean,
+): Promise<{ enabled: boolean }> {
+  return withLock(deps.db, async () => {
+    if (enabled && (await readAccessConfig(deps.db)) === null) {
+      throw new AccessToggleError(ACCESS_MESSAGES.signInNeedsProtection);
+    }
+    await writeAccessSignIn(deps.db, enabled, (deps.now ?? (() => new Date()))());
+    return { enabled };
   });
 }
 
