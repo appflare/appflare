@@ -204,7 +204,10 @@ app, never the manager's.
   from the browser that installed it, and that browser gets the setup claim through
   its one-time link. Until then, a pasted token works there too.
 - **Better Auth.** Users sign in with email and password, or with a passkey they
-  added in **Settings > Users and sign-in > Your passkeys**. Passkeys are bound to the manager's own hostname. There is no
+  added in **Settings > Users and sign-in > Your passkeys**. Passkeys are bound to the manager's own hostname. While
+  [Cloudflare Access](#protect-with-cloudflare-access) protects the manager, an admin
+  can also let the Access sign-in count as Appflare's
+  ([Sign in with Cloudflare Access](#sign-in-with-cloudflare-access)). There is no
   public sign-up; admins create users. Session cookies are `HttpOnly`, `Secure`, and
   `SameSite=Lax`, and only the manager's own URL is a trusted origin. Sign-in
   attempts are rate limited, with the counters in the manager's D1 database.
@@ -265,7 +268,8 @@ What turning it on does:
 - Keeps the allow list current: adding an admin in **Settings > Users and sign-in** adds their email, and
   **Re-sync admins** rewrites the list after any other change.
 
-Turning it off deletes both applications and stops the checks. The manager's own
+Turning it off deletes both applications, stops the checks, and turns off
+[Sign in with Cloudflare Access](#sign-in-with-cloudflare-access). The manager's own
 sign-in keeps protecting it either way.
 
 This protects the manager. Installed apps can be protected too, each on its own,
@@ -276,6 +280,48 @@ Access protects one hostname. When an admin
 [moves Appflare to a domain](/guides/appflare-address/), changes it, or goes back to
 `workers.dev`, Access moves with the address: both applications then protect the
 new hostname.
+
+### Sign in with Cloudflare Access
+
+With protection on, you sign in twice: to Access, then to Appflare. To sign in
+once, an admin turns on **Sign in with Cloudflare Access** in the same section.
+It is off until an admin turns it on, and only admins can change it.
+
+While it is on:
+
+- Opening any page of the manager without an Appflare session signs you in as the
+  existing user whose email matches your Access sign-in, ignoring case. Appflare
+  checks the Access token itself for this, against the same application and keys as
+  every other request.
+- It never adds users. An Access email that no user has, a banned user, and a
+  service token (which carries no email) all get the usual sign-in page.
+- Signing out sticks. After you sign out, that browser is not signed in through
+  Access by itself again until someone signs in there: the sign-in page offers
+  **Continue as <your email>** above the password and passkey options, and any of the
+  three signs you back in. Appflare remembers the sign-out in a cookie that holds no
+  personal data.
+- Password and passkey sign-in keep working, for when Access is not in the way, such
+  as after protection is turned off.
+
+The Access allow policy lists only admins, so in practice this signs in admins.
+Sessions it opens are ordinary Appflare sessions. The token is never logged.
+**Continue as** is rate limited like the other sign-ins. The automatic sign-in when
+a page opens is not, but it works only with a valid Access token for an existing
+user. Turning protection off turns this off too, and so does the recovery below.
+
+What it changes about security:
+
+- **Access becomes the only sign-in factor.** Appflare no longer asks for a password
+  or passkey on top of Access, so the manager is exactly as safe as your Access
+  login. Use only login methods (identity providers) on the Access application that
+  verify the email they report, such as One-time PIN or a provider that confirms
+  addresses. Anyone holding a valid Access cookie or token for an existing user's
+  email gets an Appflare session.
+- **Signing someone out no longer keeps them out.** A password reset, a recovery
+  code, and any other way of signing a user out everywhere still end their Appflare
+  sessions, but a browser that still holds a valid Access sign-in is signed in again
+  on its next page load. To cut someone off, ban or remove the user in Appflare, or
+  revoke them in the Zero Trust dashboard.
 
 ### Before you turn it on
 

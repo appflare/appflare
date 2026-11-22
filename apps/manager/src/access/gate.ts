@@ -2,7 +2,7 @@ import { type AccessConfig, readAccessConfig } from "./config";
 import { ACCESS_DENIED_CODE, SERVER_FN_HEADER } from "./denied";
 import { renderAccessDeniedPage } from "./denied-page";
 import { ACCESS_JWT_HEADER, type AccessJwtFailure, verifyAccessJwt } from "./jwt";
-import { type AccessKeyStore, createAccessKeyStore } from "./keys";
+import { type AccessKeyStore, accessKeyStore } from "./keys";
 import { accessRecoverySteps } from "./recovery";
 
 /**
@@ -56,7 +56,7 @@ export interface AccessGate {
 }
 
 export function createAccessGate(options: AccessGateOptions = {}): AccessGate {
-  const keys = options.keys ?? createAccessKeyStore();
+  const keys = options.keys ?? accessKeyStore;
   const now = options.now ?? Date.now;
   const configTtlMs = options.configTtlMs ?? 15_000;
   const readConfig = options.readConfig ?? readAccessConfig;

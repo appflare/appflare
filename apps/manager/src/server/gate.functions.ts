@@ -3,13 +3,14 @@ import { redirect } from "@tanstack/react-router";
 import { createServerFn } from "@tanstack/react-start";
 import { getCookie, getRequest } from "@tanstack/react-start/server";
 import { z } from "zod";
+import { signedOutHere } from "../auth/access-sign-in";
 import { MAX_RETURN_PATH_LENGTH } from "../components/internal-path";
 import { readPendingAddress } from "../domains/pending-address.server";
 import { handoffHashOf } from "../handoff/handoff-proof";
 import { installerOriginOf } from "../handoff/installer-completion.server";
-import { authSecretBound, sessionFor } from "./auth.server";
-import { appGate, redirectHref, type SetupStep, setupGate } from "./gate";
-import { type GateRead, readGate, recordOpened } from "./gate.server";
+import { authSecretBound, sessionFor, signInWithAccess } from "./auth.server";
+import { appGate, mayTryAccessSignIn, redirectHref, type SetupStep, setupGate } from "./gate";
+import { type GateRead, readGate, recordOpened, viewerOf } from "./gate.server";
 import type { Viewer } from "./session.functions";
 import { SETUP_CLAIM_COOKIE, setupClaimMatches } from "./setup.server";
 
@@ -49,6 +50,10 @@ export interface AppEntry {
  * session) or `/setup` (setup incomplete), carrying the page asked for
  * (`returnTo`: the browser's own address, section included, checked again
  * before use). UX only; every server function still enforces its own guard.
+ * Without a session once setup is done, "Sign in with Cloudflare Access"
+ * gets a try first, except in a browser that signed out and has not signed
+ * in since: when it opens a session (its cookies go out with this answer),
+ * the page opens as that user instead of sending them to sign in.
  * Also records the day for the daily "manager opened" usage-data event, after
  * the answer is sent (at most one write per isolate per day; never fails the
  * page).
@@ -56,7 +61,20 @@ export interface AppEntry {
 export const enterApp = createServerFn({ method: "GET" })
   .validator(returnToInput)
   .handler(async ({ data }): Promise<AppEntry> => {
-    const { state, viewer, accountId } = await loadGateState();
+    const read = await loadGateState();
+    const { accountId } = read;
+    let { state, viewer } = read;
+    const request = getRequest();
+    if (
+      viewer === null &&
+      mayTryAccessSignIn(state, { signedOut: signedOutHere(request.headers) })
+    ) {
+      const signedIn = await signInWithAccess(request);
+      if (signedIn !== null) {
+        viewer = viewerOf(signedIn);
+        state = { ...state, signedIn: true, isAdmin: viewer.role === "admin" };
+      }
+    }
     const gate = appGate(state);
     if ("redirect" in gate) throw redirect({ href: redirectHref(gate.redirect, data.returnTo) });
     if (viewer === null) throw redirect({ href: redirectHref("/login", data.returnTo) });

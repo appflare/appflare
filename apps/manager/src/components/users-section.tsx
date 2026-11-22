@@ -59,12 +59,15 @@ export function UsersSection({
   viewerId,
   viewerIsOwner,
   emailReset,
+  accessSignIn = false,
 }: {
   users: UserRow[] | null;
   viewerId: string;
   viewerIsOwner: boolean;
   /** Password reset emails are on, so a reset can be a link. */
   emailReset: boolean;
+  /** "Sign in with Cloudflare Access" is on: a reset does not sign a browser out for good. */
+  accessSignIn?: boolean;
 }) {
   const addButton = useRef<HTMLButtonElement>(null);
   return (
@@ -88,6 +91,7 @@ export function UsersSection({
           viewerId={viewerId}
           viewerIsOwner={viewerIsOwner}
           emailReset={emailReset}
+          accessSignIn={accessSignIn}
           addButton={addButton}
         />
       )}
@@ -100,12 +104,14 @@ function UsersTable({
   viewerId,
   viewerIsOwner,
   emailReset,
+  accessSignIn,
   addButton,
 }: {
   users: UserRow[];
   viewerId: string;
   viewerIsOwner: boolean;
   emailReset: boolean;
+  accessSignIn: boolean;
   /** The header's "Add user", which takes the focus once a row is gone. */
   addButton: RefObject<HTMLButtonElement | null>;
 }) {
@@ -213,6 +219,7 @@ function UsersTable({
         }}
         onDeleted={setRemoved}
         emailReset={emailReset}
+        accessSignIn={accessSignIn}
       />
     </>
   );
@@ -322,6 +329,7 @@ function UserActionDialogs({
   onClosed,
   onDeleted,
   emailReset,
+  accessSignIn,
 }: {
   /** The last action picked; kept after closing so the dialog's content stays while it animates out. */
   picked: { user: UserRow; action: UserAction } | null;
@@ -332,6 +340,7 @@ function UserActionDialogs({
   /** A user was deleted. */
   onDeleted: (userId: string) => void;
   emailReset: boolean;
+  accessSignIn: boolean;
 }) {
   const onOpenChangeComplete = (opened: boolean) => {
     if (!opened) onClosed();
@@ -342,6 +351,7 @@ function UserActionDialogs({
       <ResetPasswordDialog
         user={picked?.user ?? NO_USER}
         emailReset={emailReset}
+        accessSignIn={accessSignIn}
         open={open && picked?.action.kind === "reset"}
         onOpenChange={onOpenChange}
         onOpenChangeComplete={onOpenChangeComplete}

@@ -9,7 +9,9 @@ import {
   type AccessConfig,
   clearAccessConfig,
   readAccessConfig,
+  readAccessSignInState,
   writeAccessConfig,
+  writeAccessSignIn,
 } from "./config";
 
 const CONFIG: AccessConfig = {
@@ -65,5 +67,41 @@ describe("Access settings", () => {
     const config = await readAccessConfig(env.DB);
     expect(config).not.toBeNull();
     expect(config?.aud).toBe("");
+  });
+
+  it("does not count the sign-in switch alone as protection being on", async () => {
+    await writeAccessSignIn(env.DB, true);
+    expect(await readAccessConfig(env.DB)).toBeNull();
+    expect(await readAccessSignInState(env.DB)).toEqual({ config: null, signInEnabled: false });
+  });
+
+  it("reads the sign-in switch with the protection, and turns it off", async () => {
+    await writeAccessConfig(env.DB, CONFIG);
+    expect(await readAccessSignInState(env.DB)).toEqual({ config: CONFIG, signInEnabled: false });
+    await writeAccessSignIn(env.DB, true, new Date("2026-09-24T08:00:00.000Z"));
+    expect(await readAccessSignInState(env.DB)).toEqual({ config: CONFIG, signInEnabled: true });
+    expect(await readSettings(createDb(env.DB), [SETTING.accessSignInEnabledAt])).toEqual({
+      access_sign_in_enabled_at: "2026-09-24T08:00:00.000Z",
+    });
+    await writeAccessSignIn(env.DB, false);
+    expect(await readAccessSignInState(env.DB)).toEqual({ config: CONFIG, signInEnabled: false });
+  });
+
+  it("removes the sign-in switch when protection is cleared", async () => {
+    await writeAccessConfig(env.DB, CONFIG);
+    await writeAccessSignIn(env.DB, true);
+    await clearAccessConfig(env.DB);
+    expect(await readSettings(createDb(env.DB), [SETTING.accessSignInEnabledAt])).toEqual({});
+    // Turning protection on again starts with the switch off.
+    await writeAccessConfig(env.DB, CONFIG);
+    expect((await readAccessSignInState(env.DB)).signInEnabled).toBe(false);
+  });
+
+  it("is removed by the lockout recovery's statement", async () => {
+    await writeAccessConfig(env.DB, CONFIG);
+    await writeAccessSignIn(env.DB, true);
+    await env.DB.prepare("DELETE FROM settings WHERE key LIKE 'access_%'").run();
+    expect(await readAccessSignInState(env.DB)).toEqual({ config: null, signInEnabled: false });
+    expect(await readSettings(createDb(env.DB), [SETTING.accessSignInEnabledAt])).toEqual({});
   });
 });

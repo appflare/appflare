@@ -1,5 +1,6 @@
 import { Banner, ClipboardText, LayerDialog, Radio, Text } from "@cloudflare/kumo";
 import { useState } from "react";
+import { ACCESS_SIGN_IN_COPY } from "../auth/access-sign-in";
 import { serverErrorMessage } from "../auth/sign-in-errors";
 import { issuePasswordRecoveryCode, sendPasswordResetLink } from "../server/recovery.functions";
 import { BusyMark, busyActionProps } from "./busy-button";
@@ -18,6 +19,7 @@ type Outcome = { kind: "link"; email: string } | { kind: "code"; email: string; 
 export function ResetPasswordDialog({
   user,
   emailReset,
+  accessSignIn = false,
   open,
   onOpenChange,
   onOpenChangeComplete,
@@ -25,6 +27,8 @@ export function ResetPasswordDialog({
   user: { id: string; name: string; email: string };
   /** Password reset emails are on. */
   emailReset: boolean;
+  /** "Sign in with Cloudflare Access" is on, so a reset does not keep everyone out. */
+  accessSignIn?: boolean;
   open: boolean;
   onOpenChange: (open: boolean) => void;
   /** The dialog finished opening or closing, its animation included. */
@@ -79,7 +83,9 @@ export function ResetPasswordDialog({
         <LayerDialog.Title>{`Reset ${user.name}'s password`}</LayerDialog.Title>
         <LayerDialog.Description>
           {outcome === null
-            ? `${user.email} chooses a new password themselves. Their current password works until they do; then they are signed out everywhere.`
+            ? accessSignIn
+              ? ACCESS_SIGN_IN_COPY.resetSignsOut(user.email)
+              : `${user.email} chooses a new password themselves. Their current password works until they do; then they are signed out everywhere.`
             : outcome.kind === "code"
               ? `Give ${outcome.email} this recovery code. It is shown only once.`
               : `A reset link is on its way to ${outcome.email}.`}

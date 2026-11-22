@@ -8,7 +8,7 @@ import { migrations } from "../db/migrations/index";
 import { user } from "../db/schema";
 import { certsFetch, createTestAccessTeam } from "../test/access-jwt";
 import { type FakeRoute, FORBIDDEN, fakeCloudflare } from "../test/fake-cloudflare";
-import { readAccessConfig, writeAccessConfig } from "./config";
+import { readAccessConfig, readAccessSignInState, writeAccessConfig } from "./config";
 import {
   ACCESS_MESSAGES,
   AccessToggleError,
@@ -18,6 +18,7 @@ import {
   enableAccess,
   listAdminEmails,
   loginMethodName,
+  setAccessSignIn,
   syncAccessAdmins,
 } from "./toggle.server";
 
@@ -371,6 +372,46 @@ describe("disableAccess", () => {
     const { api, deps } = setup(readyRoutes());
     expect(await disableAccess(deps)).toEqual({ ok: true, wasOn: false });
     expect(api.calls).toHaveLength(0);
+  });
+});
+
+describe("setAccessSignIn", () => {
+  it("starts off when protection is turned on, even if a row was left from before", async () => {
+    // As an older version, which does not know the switch, would leave it.
+    await env.DB.prepare(
+      "INSERT INTO settings (key, value, updated_at) VALUES ('access_sign_in_enabled_at', '2026-09-01T00:00:00.000Z', 0)",
+    ).run();
+    const { deps } = setup(readyRoutes());
+    await enableAccess(deps);
+    expect(await readAccessSignInState(env.DB)).toMatchObject({ signInEnabled: false });
+  });
+
+  it("refuses to turn on while protection is off, and stores nothing", async () => {
+    const { deps } = setup(readyRoutes());
+    await expect(setAccessSignIn(deps, true)).rejects.toThrow(
+      ACCESS_MESSAGES.signInNeedsProtection,
+    );
+    const stored = await env.DB.prepare(
+      "SELECT key FROM settings WHERE key = 'access_sign_in_enabled_at'",
+    ).all();
+    expect(stored.results).toHaveLength(0);
+  });
+
+  it("turns on and off while protection is on, and goes away when protection is turned off", async () => {
+    const { deps } = setup(readyRoutes());
+    await enableAccess(deps);
+    expect((await readAccessSignInState(env.DB)).signInEnabled).toBe(false);
+    expect(await setAccessSignIn(deps, true)).toEqual({ enabled: true });
+    expect((await readAccessSignInState(env.DB)).signInEnabled).toBe(true);
+    expect(await setAccessSignIn(deps, false)).toEqual({ enabled: false });
+    expect((await readAccessSignInState(env.DB)).signInEnabled).toBe(false);
+
+    await setAccessSignIn(deps, true);
+    await disableAccess(deps);
+    const stored = await env.DB.prepare(
+      "SELECT key FROM settings WHERE key = 'access_sign_in_enabled_at'",
+    ).all();
+    expect(stored.results).toHaveLength(0);
   });
 });
 

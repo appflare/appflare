@@ -8,7 +8,12 @@ import { migrations } from "../db/migrations/index";
 import { session, user } from "../db/schema";
 import { probeRoundTrips, type RoundTrips } from "../test/round-trips";
 import { type Auth, createAuth, SESSION_COOKIE_CACHE_SECONDS } from "./server";
-import { isSessionCopyCookie, mayUseSessionCopy, withoutSessionCopy } from "./session-cookie";
+import {
+  isSessionCopyCookie,
+  mayUseSessionCopy,
+  withoutSessionCopy,
+  withSetCookies,
+} from "./session-cookie";
 
 const BASE = "https://appflare.appflare-dev.workers.dev";
 const SECRET = "test-only-better-auth-secret-0000000000000";
@@ -157,5 +162,35 @@ describe("the session cookie cache", () => {
       cookie: cookieHeader(response.headers.getSetCookie(), headers.get("cookie") ?? ""),
     });
     expect(await auth.api.getSession({ headers: after })).toBeNull();
+  });
+});
+
+describe("withSetCookies", () => {
+  it("replaces, adds and removes cookies the way a browser would", () => {
+    const before = new Headers({
+      cookie: "theme=dark; __Secure-better-auth.session_token=old; gone=1",
+      accept: "text/html",
+    });
+    const after = withSetCookies(before, [
+      "__Secure-better-auth.session_token=new.sig; Path=/; HttpOnly; Secure; SameSite=Lax",
+      "__Secure-better-auth.session_data=copy; Max-Age=60; Path=/",
+      "gone=; Max-Age=0; Path=/",
+    ]);
+    expect(after.get("cookie")).toBe(
+      "theme=dark; __Secure-better-auth.session_token=new.sig; __Secure-better-auth.session_data=copy",
+    );
+    expect(after.get("accept")).toBe("text/html");
+    // The original is left alone.
+    expect(before.get("cookie")).toContain("session_token=old");
+  });
+
+  it("returns the headers as they are when nothing was set", () => {
+    const headers = new Headers({ cookie: "a=1" });
+    expect(withSetCookies(headers, [])).toBe(headers);
+  });
+
+  it("drops the header when every cookie was removed", () => {
+    const after = withSetCookies(new Headers({ cookie: "a=1" }), ["a=; Max-Age=0"]);
+    expect(after.has("cookie")).toBe(false);
   });
 });

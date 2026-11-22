@@ -16,6 +16,7 @@ const server = vi.hoisted(() => ({
   })),
   turnOnAccess: vi.fn(),
   turnOffAccess: vi.fn(),
+  setAccessSignIn: vi.fn(async ({ data }: { data: { enabled: boolean } }) => data),
 }));
 vi.mock("../server/access.functions", () => server);
 vi.mock("./use-account-id", () => ({ useAccountId: () => "0123456789abcdef0123456789abcdef" }));
@@ -30,6 +31,7 @@ const OFF: AccessStatus = {
   domain: null,
   teamDomain: null,
   enabledAt: null,
+  signInEnabled: false,
   adminEmails: ["ada@example.com"],
   currentHostname: "appflare.ada.workers.dev",
 };
@@ -50,6 +52,7 @@ beforeEach(() => {
   document.body.appendChild(container);
   root = createRoot(container);
   server.checkAccess.mockReset();
+  server.setAccessSignIn.mockClear();
 });
 
 afterEach(() => {
@@ -111,5 +114,67 @@ describe("a check that finds a problem", () => {
     expect(document.querySelector('[role="alert"]')).toBeNull();
     const notes = [...document.querySelectorAll('[role="status"]')].map((n) => n.textContent);
     expect(notes.some((t) => t?.includes("Create a Zero Trust organization first"))).toBe(true);
+  });
+});
+
+describe("the Sign in with Cloudflare Access switch", () => {
+  function signInSwitch(): HTMLButtonElement | null {
+    return container.querySelector('button[role="switch"]');
+  }
+
+  it("is not shown while protection is off", () => {
+    act(() => root.render(<AccessCard status={OFF} isAdmin viewerEmail="ada@example.com" />));
+    expect(signInSwitch()).toBeNull();
+    expect(container.textContent).not.toContain("Sign in with Cloudflare Access");
+  });
+
+  it("says what it does and turns on for an admin", async () => {
+    act(() => root.render(<AccessCard status={ON} isAdmin viewerEmail="ada@example.com" />));
+    const control = signInSwitch();
+    expect(control?.getAttribute("aria-checked")).toBe("false");
+    expect(container.textContent).toContain("Sign in with Cloudflare Access");
+    expect(container.textContent).toContain("it never adds users");
+    await act(async () => control?.click());
+    await settle();
+    expect(server.setAccessSignIn).toHaveBeenCalledWith({ data: { enabled: true } });
+    expect(signInSwitch()?.getAttribute("aria-checked")).toBe("true");
+  });
+
+  it("goes back and says why when saving fails", async () => {
+    server.setAccessSignIn.mockRejectedValueOnce(
+      new Error("Another Access change is in progress."),
+    );
+    act(() =>
+      root.render(
+        <AccessCard
+          status={{ ...ON, signInEnabled: true }}
+          isAdmin
+          viewerEmail="ada@example.com"
+        />,
+      ),
+    );
+    await act(async () => signInSwitch()?.click());
+    await settle();
+    expect(server.setAccessSignIn).toHaveBeenCalledWith({ data: { enabled: false } });
+    expect(signInSwitch()?.getAttribute("aria-checked")).toBe("true");
+    expect(container.textContent).toContain("Another Access change is in progress.");
+  });
+
+  it("shows members the state without letting them change it", () => {
+    act(() =>
+      root.render(
+        <AccessCard
+          status={{ ...ON, signInEnabled: true, adminEmails: null }}
+          isAdmin={false}
+          viewerEmail="ada@example.com"
+        />,
+      ),
+    );
+    const control = signInSwitch();
+    expect(control?.getAttribute("aria-checked")).toBe("true");
+    expect(
+      control?.hasAttribute("disabled") || control?.getAttribute("aria-disabled") === "true",
+    ).toBe(true);
+    expect(container.textContent).toContain("Only admins can change this.");
   });
 });

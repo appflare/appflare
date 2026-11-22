@@ -1,9 +1,11 @@
 import { env, waitUntil } from "cloudflare:workers";
 import { redirect } from "@tanstack/react-router";
 import { getRequest, getResponseHeaders } from "@tanstack/react-start/server";
+import { type AccessSignInUser, accessSignInOfferFor } from "../access/sign-in.server";
 import * as guards from "../auth/guards";
 import { deleteRecoverySecret, sendResetEmailFromSettings } from "../auth/password-email.server";
 import { versionCreatedAt } from "../auth/recovery.server";
+import { createRequestSessions } from "../auth/request-sessions.server";
 import type { Role } from "../auth/roles";
 import { type Auth, createAuth, type RecoveryAuthDeps } from "../auth/server";
 import { createDb } from "../db/client";
@@ -55,6 +57,7 @@ export function authFor(request: Request): Auth {
     secret,
     baseURL: origin,
     recovery: recoveryDeps(),
+    accessSignIn: { d1: env.DB },
   });
   if (authByOrigin.size >= MAX_ORIGINS) authByOrigin.clear();
   authByOrigin.set(origin, { secret, auth });
@@ -86,6 +89,19 @@ export function currentAuth(): Auth {
   return authFor(getRequest());
 }
 
+/** Sessions "Sign in with Cloudflare Access" opened during a request (see the module). */
+const requestSessions = createRequestSessions();
+
+/**
+ * The headers to forward to Better Auth for `request`: its own, plus the
+ * session cookies a sign-in earlier in the same request set. Every
+ * `auth.api` call that acts for the visitor passes these, never
+ * `request.headers`, so it sees a session opened while the page renders.
+ */
+export function authHeaders(request: Request): Headers {
+  return requestSessions.headersFor(request);
+}
+
 /**
  * The session `request` carries, or null; always null while no auth secret
  * is bound. Answered from the signed session cookie while it is fresh (see
@@ -97,7 +113,7 @@ export function currentAuth(): Auth {
 export async function sessionFor(request: Request, opts: { fresh?: boolean } = {}) {
   if (!authSecretBound()) return null;
   const { headers, response } = await authFor(request).api.getSession({
-    headers: request.headers,
+    headers: authHeaders(request),
     ...(opts.fresh === true ? { query: { disableCookieCache: true } } : {}),
     returnHeaders: true,
   });
@@ -105,9 +121,36 @@ export async function sessionFor(request: Request, opts: { fresh?: boolean } = {
   return response;
 }
 
+/**
+ * "Sign in with Cloudflare Access" for the request being served: opens a
+ * session for the user its verified Access sign-in belongs to and passes the
+ * session cookies on to the browser. Null whenever that does not happen
+ * (protection or the switch off, no Access token, no matching user, or a
+ * failure, which is logged by kind only), so the caller falls back to the
+ * sign-in page. A request without an Access token costs nothing. Later
+ * Better Auth calls in the same request see the new session, as long as
+ * they forward `authHeaders(request)`.
+ */
+export async function signInWithAccess(request: Request): Promise<AccessSignInUser | null> {
+  if (!authSecretBound()) return null;
+  const result = await requestSessions.signInWithAccess(authFor(request), request);
+  if (result === null) return null;
+  passOnCookies(result.setCookies);
+  return result.user;
+}
+
+/**
+ * The email the sign-in page offers to continue as: the user the request's
+ * verified Access sign-in belongs to, while "Sign in with Cloudflare Access"
+ * is on. Checks only; signing in is the endpoint's job.
+ */
+export function accessSignInOffer(request: Request): Promise<string | null> {
+  return accessSignInOfferFor({ d1: env.DB }, request.headers);
+}
+
 /** Adds the `Set-Cookie` headers of a Better Auth call to the response being served, if any. */
-function passOnCookies(headers: Headers): void {
-  const cookies = headers.getSetCookie();
+function passOnCookies(headers: Headers | readonly string[]): void {
+  const cookies = headers instanceof Headers ? headers.getSetCookie() : headers;
   if (cookies.length === 0) return;
   try {
     const response = getResponseHeaders();

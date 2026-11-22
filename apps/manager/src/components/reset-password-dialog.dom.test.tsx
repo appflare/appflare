@@ -81,3 +81,25 @@ describe("the reset password dialog, mounted before it opens", () => {
     expect(region?.querySelector('[role="status"]')).toBeNull();
   });
 });
+
+describe("the reset password dialog with Sign in with Cloudflare Access on", () => {
+  it("does not promise a sign-out a Cloudflare Access sign-in would undo", () => {
+    render(true, false);
+    expect(document.body.textContent).toContain("then they are signed out everywhere.");
+    act(() =>
+      root.render(
+        <ResetPasswordDialog
+          user={user}
+          emailReset={false}
+          accessSignIn
+          open
+          onOpenChange={() => {}}
+        />,
+      ),
+    );
+    expect(document.body.textContent).toContain(
+      "a browser still signed in to Cloudflare Access signs them back in",
+    );
+    expect(document.body.textContent).toContain("ban or remove them");
+  });
+});

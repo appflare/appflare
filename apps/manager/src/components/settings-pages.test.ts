@@ -345,6 +345,7 @@ describe("UsersSettingsView", () => {
     domain: null,
     teamDomain: null,
     enabledAt: null,
+    signInEnabled: false,
     adminEmails: ["owner@example.com"],
     currentHostname: "appflare.example.com",
   };

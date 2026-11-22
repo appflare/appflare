@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { appGate, type GateState, redirectHref, setupGate } from "./gate";
+import { appGate, type GateState, mayTryAccessSignIn, redirectHref, setupGate } from "./gate";
 
 const state = (over: Partial<GateState>): GateState => ({
   hasUser: true,
@@ -126,5 +126,36 @@ describe("setupGate (/setup)", () => {
     expect(setupGate(state({ isAdmin: false, tokenConfigured: false }))).toEqual({
       step: "wait-for-admin",
     });
+  });
+});
+
+describe("mayTryAccessSignIn (a page without a session)", () => {
+  const here = { signedOut: false };
+
+  it("tries once setup is done and nobody is signed in", () => {
+    expect(mayTryAccessSignIn(state({ signedIn: false, isAdmin: false }), here)).toBe(true);
+  });
+
+  it("does not try for someone already signed in", () => {
+    expect(mayTryAccessSignIn(state({}), here)).toBe(false);
+  });
+
+  it("never tries before setup is done", () => {
+    expect(mayTryAccessSignIn(fresh(), here)).toBe(false);
+    expect(mayTryAccessSignIn(fresh({ tokenConfigured: true, setupClaimed: true }), here)).toBe(
+      false,
+    );
+    expect(
+      mayTryAccessSignIn(state({ signedIn: false, isAdmin: false, tokenConfigured: false }), here),
+    ).toBe(false);
+    expect(
+      mayTryAccessSignIn(state({ signedIn: false, isAdmin: false, authReady: false }), here),
+    ).toBe(false);
+  });
+
+  it("never tries in a browser that signed out, until it signs in again", () => {
+    expect(
+      mayTryAccessSignIn(state({ signedIn: false, isAdmin: false }), { signedOut: true }),
+    ).toBe(false);
   });
 });

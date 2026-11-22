@@ -54,6 +54,19 @@ export function appGate(state: GateState): Redirect | { allow: true } {
   return { allow: true };
 }
 
+/**
+ * Whether a page request without a session may try "Sign in with Cloudflare
+ * Access" before being sent to `/login`: only once setup is done (the owner
+ * exists, Cloudflare is connected, the auth secret serves), so setup keeps
+ * its own steps, and never in a browser that signed out (`signedOut`, the
+ * sign-out marker cookie) until it signs in again, so signing out sticks.
+ */
+export function mayTryAccessSignIn(state: GateState, opts: { signedOut: boolean }): boolean {
+  return (
+    !opts.signedOut && !state.signedIn && state.hasUser && state.tokenConfigured && state.authReady
+  );
+}
+
 export type SetupStep =
   /** Step 1: paste an API token for this account (anyone, before any user exists). */
   | "connect"

@@ -1,7 +1,12 @@
 import { Banner, Button, Input, Link, Text } from "@cloudflare/kumo";
-import { FingerprintIcon, InfoIcon } from "@phosphor-icons/react";
+import { FingerprintIcon, InfoIcon, LockKeyIcon } from "@phosphor-icons/react";
 import { createFileRoute, redirect, useRouter } from "@tanstack/react-router";
 import { type FormEvent, useState } from "react";
+import {
+  ACCESS_SIGN_IN_COPY,
+  ACCESS_SIGN_IN_PATH,
+  accessSignInErrorMessage,
+} from "../auth/access-sign-in";
 import { authClient } from "../auth/client";
 import {
   PASSKEY_MESSAGES,
@@ -23,6 +28,7 @@ import {
   showsMovedNote,
   signedInHereBefore,
 } from "../domains/moved-note";
+import { getAccessSignInOffer } from "../server/access.functions";
 import { dismissPasskeyOffer, getPasskeyOffer } from "../server/passkeys.functions";
 import { getSetupStatus } from "../server/setup.functions";
 import { loadAppflareVersion } from "../server/version.functions";
@@ -40,18 +46,28 @@ import { loadAppflareVersion } from "../server/version.functions";
  * sign-in it offers a passkey for this address once per user: until they
  * add one or choose Not now (stored for them on the server), and never when
  * one of theirs works here already.
+ *
+ * While Cloudflare Access protects the manager and an admin turned on "Sign
+ * in with Cloudflare Access", a visitor whose Access sign-in belongs to an
+ * existing user gets "Continue as <email>" above the other ways in. Never
+ * by itself: signing out leads here, and an automatic sign-in on this page
+ * would undo it. Other pages sign such a visitor in by themselves
+ * (`enterApp`), except in a browser that signed out and has not signed in
+ * since.
  */
 export const Route = createFileRoute("/login")({
   staticData: { title: "Sign in" },
   validateSearch: loginSearchSchema,
   beforeLoad: async ({ search }) => {
-    const [{ needsSetup, movedHere }, version] = await Promise.all([
+    const [{ needsSetup, movedHere }, version, accessOffer] = await Promise.all([
       getSetupStatus(),
       loadAppflareVersion(),
+      // Not knowing is no reason to hold the sign-in page up.
+      getAccessSignInOffer().catch(() => null),
     ]);
     // Until the owner exists, everything leads to /setup.
     if (needsSetup) throw redirect({ href: withReturnTo("/setup", search.returnTo) });
-    return { version, movedHere };
+    return { version, movedHere, accessEmail: accessOffer?.email ?? null };
   },
   component: LoginPage,
 });
@@ -68,13 +84,13 @@ async function offersPasskey(): Promise<boolean> {
 }
 
 function LoginPage() {
-  const { version, movedHere } = Route.useRouteContext();
+  const { version, movedHere, accessEmail } = Route.useRouteContext();
   const search = Route.useSearch();
   const { returnTo } = search;
   const router = useRouter();
   const signedIn = () => router.navigate({ href: afterSignIn(returnTo), replace: true });
   const [error, setError] = useState<string | null>(null);
-  const [pending, setPending] = useState<"password" | "passkey" | null>(null);
+  const [pending, setPending] = useState<"password" | "passkey" | "access" | null>(null);
   const [offer, setOffer] = useState(false);
   const moved = showsMovedNote(search) || movedHere;
   // The line that Appflare moved is for people who have not signed in here yet.
@@ -120,6 +136,22 @@ function LoginPage() {
     await signedIn();
   }
 
+  async function onAccess() {
+    setPending("access");
+    setError(null);
+    const { error: signInError } = await authClient.$fetch<{ user: { email: string } }>(
+      ACCESS_SIGN_IN_PATH,
+      { method: "POST", body: {} },
+    );
+    if (signInError) {
+      setError(accessSignInErrorMessage(signInError));
+      setPending(null);
+      return;
+    }
+    rememberSignedInHere();
+    await signedIn();
+  }
+
   if (offer) {
     return (
       <AuthLayout
@@ -147,6 +179,21 @@ function LoginPage() {
           />
         )}
         {error !== null && <AuthError message={error} />}
+        {accessEmail !== null && (
+          <>
+            <BusyButton
+              pending={pending === "access"}
+              variant="primary"
+              icon={<LockKeyIcon />}
+              className={FULL_WIDTH_ACTION}
+              disabled={pending !== null && pending !== "access"}
+              onClick={onAccess}
+            >
+              {ACCESS_SIGN_IN_COPY.continueAs(accessEmail)}
+            </BusyButton>
+            <OrDivider />
+          </>
+        )}
         <form className="grid gap-4" onSubmit={onSubmit}>
           <Input label="Email" name="email" type="email" autoComplete="username" required />
           <PasswordInput label="Password" name="password" autoComplete="current-password" />
@@ -156,9 +203,10 @@ function LoginPage() {
           <BusyButton
             pending={pending === "password"}
             type="submit"
-            variant="primary"
+            // One primary action: continuing with Access, when offered.
+            variant={accessEmail === null ? "primary" : "secondary"}
             className={FULL_WIDTH_ACTION}
-            disabled={pending === "passkey"}
+            disabled={pending === "passkey" || pending === "access"}
           >
             Sign in
           </BusyButton>
@@ -169,7 +217,7 @@ function LoginPage() {
           variant="secondary"
           icon={<FingerprintIcon />}
           className={FULL_WIDTH_ACTION}
-          disabled={pending === "password"}
+          disabled={pending === "password" || pending === "access"}
           onClick={onPasskey}
         >
           Sign in with a passkey
