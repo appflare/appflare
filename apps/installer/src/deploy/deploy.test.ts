@@ -276,6 +276,17 @@ describe("resuming", () => {
     expect(world.d1).toHaveLength(1);
   });
 
+  it("keeps Cloudflare's error code when its explanation is cut short", async () => {
+    const created = await createInstallation(call);
+    await stepUntil(call, created, (a) => a.step.id === "database");
+    world.failOnce.set("POST /d1/database", { status: 403, code: 7403, message: "x".repeat(500) });
+    const refused = await call<StepAnswer>(`installations/${created.installationId}/step`, {
+      key: created.key,
+    });
+    expect(refused.body.message).toContain(`${"x".repeat(199)}… (code 7403).`);
+    expect(refused.body.message).not.toContain("x".repeat(200));
+  });
+
   it("names D1's database limit instead of a missing permission", async () => {
     const created = await createInstallation(call);
     await stepUntil(call, created, (a) => a.step.id === "database");
