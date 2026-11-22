@@ -164,27 +164,28 @@ function EnabledDetails({ status, isAdmin }: { status: AccessStatus; isAdmin: bo
 }
 
 /**
- * "Sign in with Cloudflare Access": shows the change at once and puts it
- * back if saving fails.
+ * "Sign in with Cloudflare Access": shows the change at once while it saves,
+ * then the saved setting again (the new one, or the old one if saving
+ * failed), so a change another admin made shows once the page reads it.
  */
 function SignInSwitch({ enabled, isAdmin }: { enabled: boolean; isAdmin: boolean }) {
   const router = useRouter();
-  const [checked, setChecked] = useState(enabled);
-  const [pending, setPending] = useState(false);
+  // The value being saved, shown until the save ends; null otherwise.
+  const [saving, setSaving] = useState<boolean | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const pending = saving !== null;
+  const checked = saving ?? enabled;
 
   async function onChange(next: boolean) {
-    setChecked(next);
-    setPending(true);
+    setSaving(next);
     setError(null);
     try {
       await setAccessSignIn({ data: { enabled: next } });
       await router.invalidate();
     } catch (err) {
-      setChecked(!next);
       setError(err instanceof Error ? err.message : "Could not save the change.");
     }
-    setPending(false);
+    setSaving(null);
   }
 
   return (

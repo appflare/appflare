@@ -134,10 +134,46 @@ describe("the Sign in with Cloudflare Access switch", () => {
     expect(control?.getAttribute("aria-checked")).toBe("false");
     expect(container.textContent).toContain("Sign in with Cloudflare Access");
     expect(container.textContent).toContain("it never adds users");
+    let save: () => void = () => {};
+    server.setAccessSignIn.mockImplementationOnce(
+      ({ data }) => new Promise((resolve) => (save = () => resolve(data))),
+    );
     await act(async () => control?.click());
-    await settle();
+    // On at once while it saves, and not changeable twice.
     expect(server.setAccessSignIn).toHaveBeenCalledWith({ data: { enabled: true } });
     expect(signInSwitch()?.getAttribute("aria-checked")).toBe("true");
+    expect(signInSwitch()?.hasAttribute("disabled")).toBe(true);
+    // Saved: the page reads the setting again and shows it.
+    await act(async () => save());
+    act(() =>
+      root.render(
+        <AccessCard
+          status={{ ...ON, signInEnabled: true }}
+          isAdmin
+          viewerEmail="ada@example.com"
+        />,
+      ),
+    );
+    await settle();
+    expect(signInSwitch()?.getAttribute("aria-checked")).toBe("true");
+    expect(signInSwitch()?.hasAttribute("disabled")).toBe(false);
+  });
+
+  it("follows the saved setting when the page reads it again", () => {
+    const render = (signInEnabled: boolean) =>
+      act(() =>
+        root.render(
+          <AccessCard status={{ ...ON, signInEnabled }} isAdmin viewerEmail="ada@example.com" />,
+        ),
+      );
+    render(false);
+    expect(signInSwitch()?.getAttribute("aria-checked")).toBe("false");
+    // Another admin turned it on.
+    render(true);
+    expect(signInSwitch()?.getAttribute("aria-checked")).toBe("true");
+    // And off again.
+    render(false);
+    expect(signInSwitch()?.getAttribute("aria-checked")).toBe("false");
   });
 
   it("goes back and says why when saving fails", async () => {
