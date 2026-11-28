@@ -15,10 +15,12 @@
 # provides the sandbox control server (the entrypoint), git, s3fs and FUSE for
 # mounting the build bucket, and bun. Node.js is replaced with Node 22, the
 # version Appflare builds with, copied the same way the Sandbox image installs
-# its own Node.
+# its own Node. Bun is replaced with Bun 1.4 too: the base image's Bun 1.3
+# cannot read a bun.lock that Bun 1.4 wrote (lockfileVersion 2).
 
 ARG SANDBOX_IMAGE=docker.io/cloudflare/sandbox:0.12.10@sha256:35c932d3e5b35f28d350800cf00551cac46dfe28274afb54e16325b8d8f560d1
 ARG NODE_IMAGE=docker.io/library/node:22-bookworm-slim@sha256:48e4b67d85f87bd551df43704e24d252f56cc5f8e9718841aace50f19948f0f9
+ARG BUN_IMAGE=docker.io/oven/bun:1.4.5-slim@sha256:b780593f3e10918cbdaec3d5a08d52224b9198069a65eb47812085c2ec007643
 
 # ---------------------------------------------------------------------------
 # The packer, built from this checkout with the lockfile's exact dependencies.
@@ -37,6 +39,8 @@ RUN pnpm exec turbo run build --filter=@appflare/pack...
 RUN pnpm --filter @appflare/pack deploy --prod --legacy /opt/appflare-pack
 
 FROM ${NODE_IMAGE} AS node
+
+FROM ${BUN_IMAGE} AS bun
 
 # ---------------------------------------------------------------------------
 # The runtime.
@@ -64,7 +68,13 @@ COPY --from=packer /opt/appflare-pack /opt/appflare-pack
 RUN ln -s /opt/appflare-pack/bin/appflare-pack.js /usr/local/bin/appflare-pack \
   && ln -s /opt/appflare-pack/node_modules/wrangler/bin/wrangler.js /usr/local/bin/wrangler
 
-# `bunx` beside the base image's bun, as bun's own installers provide it: bun
+# Bun 1.4 in place of the base image's Bun 1.3, which refuses a bun.lock that
+# Bun 1.4 wrote ("Unknown lockfile version"), so a current bun project could
+# not install. Bun 1.4 still reads the older lockfiles.
+RUN rm -f /usr/local/bin/bun /usr/local/bin/bunx
+COPY --from=bun /usr/local/bin/bun /usr/local/bin/bun
+
+# `bunx` beside bun, as bun's own installers provide it: bun
 # projects call it in their build scripts (glance builds its web UI with
 # `bunx vite build`). Bun acts as `bunx` when it runs under that name.
 RUN ln -s /usr/local/bin/bun /usr/local/bin/bunx
@@ -88,6 +98,7 @@ RUN npx --yes pnpm@9.15.9 --version
 
 # Fail the image build, not a user's build, when a tool is missing.
 RUN node --version | grep -q '^v22\.' \
+  && bun --version | grep -q '^1\.4\.' \
   && pnpm --version && yarn --version && corepack --version && bun --version && bunx --version \
   && git --version \
   && s3fs --version | head -n 1 \
